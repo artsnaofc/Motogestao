@@ -1512,123 +1512,103 @@ export function Investments() {
                   <div 
                     key={p.ticker}
                     onClick={() => setSelectedAssetDetail(p)}
-                    className="p-4 rounded-2xl border border-border/50 bg-card hover:border-primary/50 hover:shadow-md transition-all flex flex-col justify-between gap-3 group relative cursor-pointer"
+                    className="p-5 rounded-2xl border border-border/50 bg-card/65 backdrop-blur-xs hover:border-primary/50 hover:shadow-lg transition-all duration-300 flex flex-col justify-between gap-4 group relative cursor-pointer"
                     role="button"
                     tabIndex={0}
                     onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelectedAssetDetail(p); } }}
                   >
                     {/* Header: Ticker, Type, CNPJ, Price & Variation */}
-                    <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-start justify-between gap-3">
                       <div className="flex items-center gap-3">
-                        <div className={`w-11 h-11 rounded-2xl flex items-center justify-center font-black text-xs tracking-wider border shadow-2xs shrink-0 ${getTypeColor(p.type)}`}>
-                          {p.ticker.slice(0, 4)}
+                        <div className={`w-12 h-12 rounded-xl flex flex-col items-center justify-center font-black text-xs tracking-wider border shadow-2xs shrink-0 ${getTypeColor(p.type)}`}>
+                          <span className="text-[10px] opacity-75">{p.type.slice(0, 3).toUpperCase()}</span>
+                          <span className="text-[11px] font-black">{p.ticker.slice(0, 4)}</span>
                         </div>
                         <div>
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <h4 className="text-base font-black tracking-tight group-hover:text-primary transition-colors">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <h4 className="text-base sm:text-lg font-black tracking-tight group-hover:text-primary transition-colors">
                               {p.ticker}
                             </h4>
-                            <span className="text-[9px] font-extrabold px-1.5 py-0.5 rounded-md bg-secondary text-secondary-foreground uppercase">
+                            <span className="text-[8.5px] font-black px-1.5 py-0.5 rounded-md bg-secondary text-secondary-foreground uppercase tracking-wide">
                               {p.type}
                             </span>
                             {currentAssetCnpj && (
-                              <span className="text-[9px] font-medium text-muted-foreground hidden sm:inline">
-                                CNPJ: {formatCnpj(currentAssetCnpj)}
+                              <span className="text-[8.5px] font-bold text-muted-foreground hidden sm:inline">
+                                {formatCnpj(currentAssetCnpj)}
                               </span>
                             )}
                           </div>
-                          <p className="text-xs text-muted-foreground font-medium mt-0.5">
-                            {p.totalQuantity} cotas • PM: <span className="font-semibold text-foreground">{formatCurrency(p.averagePrice)}</span>
-                          </p>
+                          {(() => {
+                            const meta = b3AssetsMetadata[cleanTicker];
+                            const subtitleText = meta
+                              ? (p.type === 'Ação' || p.type === 'BDR' ? meta.sector : meta.fiiSegment)
+                              : null;
+                            return (
+                              <p className="text-[11px] text-muted-foreground font-semibold mt-0.5 truncate max-w-[200px]">
+                                {subtitleText || 'Ativo da B3'}
+                              </p>
+                            );
+                          })()}
                         </div>
                       </div>
 
                       <div className="text-right shrink-0">
-                        <p className="text-base font-black tracking-tight">
+                        <p className="text-base sm:text-lg font-black tracking-tight text-foreground">
                           {p.currentPrice ? formatCurrency(p.currentPrice) : formatCurrency(p.averagePrice)}
                         </p>
-                        <div className={`text-xs font-bold flex items-center justify-end gap-1 ${isPos ? 'text-emerald-500' : 'text-rose-500'}`}>
-                          {isPos ? <TrendingUp className="w-3.5 h-3.5" /> : <TrendingDown className="w-3.5 h-3.5" />}
+                        <div className={`text-[10.5px] font-extrabold flex items-center justify-end gap-0.5 ${isPos ? 'text-emerald-500' : 'text-rose-500'}`}>
+                          {isPos ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
                           <span>{isPos ? '+' : ''}{profitPerc.toFixed(2)}%</span>
                         </div>
                       </div>
                     </div>
 
-                    {/* Financial Metrics Box */}
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 p-2.5 rounded-xl bg-muted/25 border border-border/30 text-xs">
-                      {/* Posição Atual */}
-                      <div>
-                        <span className="text-[10px] font-semibold text-muted-foreground block">Posição Atual</span>
-                        <p className="font-black text-foreground text-sm">{formatCurrency(curVal)}</p>
-                        <span className="text-[10px] text-muted-foreground">Investido: {formatCurrency(p.totalInvested)}</span>
+                    {/* Financial Metrics Box - Structured Row & Columns */}
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-3 rounded-xl bg-muted/20 border border-border/30 text-xs">
+                      {/* Custódia */}
+                      <div className="space-y-0.5">
+                        <span className="text-[9.5px] font-bold text-muted-foreground uppercase tracking-wider block">Custódia</span>
+                        <p className="font-extrabold text-foreground text-xs sm:text-sm">{p.totalQuantity} <span className="text-[10px] text-muted-foreground">un.</span></p>
+                        <p className="text-[10px] text-muted-foreground font-medium truncate">PM: {formatCurrency(p.averagePrice)}</p>
                       </div>
 
-                      {/* Lucro / Prejuízo */}
-                      <div>
-                        <span className="text-[10px] font-semibold text-muted-foreground block">Resultado Cota</span>
-                        <p className={`font-black text-sm ${isPos ? 'text-emerald-500' : 'text-rose-500'}`}>
+                      {/* Patrimônio */}
+                      <div className="space-y-0.5">
+                        <span className="text-[9.5px] font-bold text-muted-foreground uppercase tracking-wider block">Patrimônio</span>
+                        <p className="font-extrabold text-foreground text-xs sm:text-sm">{formatCurrency(curVal)}</p>
+                        <p className="text-[10px] text-muted-foreground font-medium truncate">Aplicado: {formatCurrency(p.totalInvested)}</p>
+                      </div>
+
+                      {/* Retorno */}
+                      <div className="space-y-0.5">
+                        <span className="text-[9.5px] font-bold text-muted-foreground uppercase tracking-wider block">Retorno</span>
+                        <p className={`font-extrabold text-xs sm:text-sm ${isPos ? 'text-emerald-500' : 'text-rose-500'}`}>
                           {isPos ? '+' : ''}{formatCurrency(profitR$)}
                         </p>
-                        <span className="text-[10px] text-muted-foreground">Capital: {isPos ? '+' : ''}{profitPerc.toFixed(1)}%</span>
+                        <p className={`text-[10px] font-semibold ${isPos ? 'text-emerald-500/90' : 'text-rose-500/90'}`}>
+                          {isPos ? '+' : ''}{profitPerc.toFixed(1)}%
+                        </p>
                       </div>
 
-                      {/* DY Projetado 12M */}
-                      <div>
-                        <span className="text-[10px] font-semibold text-muted-foreground block">DY Projetado (12M)</span>
-                        <p className="font-black text-amber-500 text-sm">
-                          {proj.projectedDividendYield.toFixed(2)}% <span className="text-[10px] font-semibold text-muted-foreground">a.a.</span>
+                      {/* Proventos */}
+                      <div className="space-y-0.5">
+                        <span className="text-[9.5px] font-bold text-muted-foreground uppercase tracking-wider block">Proventos</span>
+                        <p className="font-extrabold text-amber-500 text-xs sm:text-sm">
+                          {proj.projectedDividendYield.toFixed(2)}% <span className="text-[8.5px] font-bold text-muted-foreground">DY</span>
                         </p>
-                        <span className="text-[10px] text-muted-foreground">Est. {formatCurrency(proj.projectedAnnualIncome)}/ano</span>
-                      </div>
-
-                      {/* Yield on Cost / Proventos Recebidos */}
-                      <div>
-                        <span className="text-[10px] font-semibold text-muted-foreground block">Yield on Cost</span>
-                        <p className="font-black text-indigo-500 text-sm">
-                          {p.yieldOnCost.toFixed(2)}%
-                        </p>
-                        <span className="text-[10px] text-muted-foreground">Pago: {formatCurrency(p.dividendsReceived)}</span>
+                        <p className="text-[10px] text-muted-foreground font-medium truncate">Pago: {formatCurrency(p.dividendsReceived)}</p>
                       </div>
                     </div>
-
-                    {/* Bazin Ceiling Price & Safety Margin Strip (if available) */}
-                    {proj.bazinCeilingPrice !== null && proj.bazinCeilingPrice > 0 && (
-                      <div className="flex items-center justify-between text-[11px] px-2.5 py-1.5 rounded-xl bg-secondary/40 border border-border/30">
-                        <div className="flex items-center gap-1.5">
-                          <Calculator className="w-3.5 h-3.5 text-primary" />
-                          <span className="font-bold text-muted-foreground">
-                            {proj.isCustomValuation 
-                              ? `Preço Teto (${proj.bazinTargetYield.toFixed(0)}% DY):`
-                              : 'Preço Teto Bazin (6%):'}
-                          </span>
-                          <span className="font-black text-foreground">{formatCurrency(proj.bazinCeilingPrice)}</span>
-                          {proj.isCustomValuation && (
-                            <span className="text-[9px] font-bold px-1 py-0.2 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
-                              Salvo
-                            </span>
-                          )}
-                        </div>
-                        {proj.bazinMarginOfSafety !== null && (
-                          <span className={`text-[10px] font-black px-1.5 py-0.5 rounded-md ${
-                            proj.bazinMarginOfSafety >= 0 
-                              ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20' 
-                              : 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20'
-                          }`}>
-                            {proj.bazinMarginOfSafety >= 0 ? `+${proj.bazinMarginOfSafety.toFixed(1)}% Desconto` : `${proj.bazinMarginOfSafety.toFixed(1)}% Ágio`}
-                          </span>
-                        )}
-                      </div>
-                    )}
 
                     {/* Portfolio Weight Bar */}
                     <div className="space-y-1">
                       <div className="flex justify-between text-[10px] text-muted-foreground font-bold">
-                        <span>Peso na Carteira: {portfolioWeight.toFixed(1)}%</span>
+                        <span>Alocação na Carteira: {portfolioWeight.toFixed(1)}%</span>
                         <span className="text-primary font-bold group-hover:underline flex items-center gap-0.5">
-                          Ver Raio-X <ArrowRight className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" />
+                          Raio-X do Ativo <ArrowRight className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" />
                         </span>
                       </div>
-                      <div className="w-full h-1.5 rounded-full bg-muted/50 overflow-hidden">
+                      <div className="w-full h-1 rounded-full bg-muted/60 overflow-hidden">
                         <div 
                           className="h-full rounded-full bg-primary transition-all duration-300"
                           style={{ width: `${Math.min(100, portfolioWeight)}%` }}
@@ -1636,9 +1616,9 @@ export function Investments() {
                       </div>
                     </div>
 
-                    <div className="h-px w-full bg-border/40 my-0.5"></div>
+                    <div className="h-px w-full bg-border/40"></div>
 
-                    {/* Action Buttons (e.stopPropagation prevents opening modal when clicking specific buttons) */}
+                    {/* Action Buttons */}
                     <div className="flex items-center justify-between gap-2 text-xs">
                       <div className="flex items-center gap-1.5 flex-wrap">
                         <button
@@ -1647,7 +1627,7 @@ export function Investments() {
                             e.stopPropagation();
                             openAddModal(p.ticker, 'buy', p.type);
                           }}
-                          className="px-2.5 py-1 text-[11px] font-bold rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 transition-all flex items-center gap-1 border border-emerald-500/20 min-h-[30px]"
+                          className="px-2.5 py-1 text-[10.5px] font-bold rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 transition-all flex items-center gap-1 border border-emerald-500/20 min-h-[28px]"
                           title={`Adicionar novo aporte em ${p.ticker}`}
                         >
                           <PlusCircle className="w-3.5 h-3.5" />
@@ -1660,24 +1640,11 @@ export function Investments() {
                             e.stopPropagation();
                             openAddDivModal(p.ticker);
                           }}
-                          className="px-2.5 py-1 text-[11px] font-bold rounded-lg bg-sky-500/10 text-sky-600 dark:text-sky-400 hover:bg-sky-500/20 transition-all flex items-center gap-1 border border-sky-500/20 min-h-[30px]"
+                          className="px-2.5 py-1 text-[10.5px] font-bold rounded-lg bg-sky-500/10 text-sky-600 dark:text-sky-400 hover:bg-sky-500/20 transition-all flex items-center gap-1 border border-sky-500/20 min-h-[28px]"
                           title={`Lançar provento para ${p.ticker}`}
                         >
                           <DollarSign className="w-3.5 h-3.5" />
-                          $ Provento
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleSelectAssetForAnalytics(p.ticker);
-                          }}
-                          className="px-2.5 py-1 text-[11px] font-bold rounded-lg bg-primary/10 text-primary hover:bg-primary/20 transition-all flex items-center gap-1 border border-primary/20 min-h-[30px]"
-                          title="Calculadora Preço Teto Bazin / Graham"
-                        >
-                          <Calculator className="w-3.5 h-3.5" />
-                          Teto
+                          + Provento
                         </button>
 
                         <div onClick={(e) => e.stopPropagation()}>
@@ -1685,8 +1652,8 @@ export function Investments() {
                         </div>
                       </div>
 
-                      <div className="text-[11px] font-black text-muted-foreground group-hover:text-primary transition-colors flex items-center gap-1">
-                        Raio-X ↗
+                      <div className="text-[10.5px] font-extrabold text-muted-foreground group-hover:text-primary transition-colors flex items-center gap-0.5">
+                        Ver Detalhes ↗
                       </div>
                     </div>
                   </div>
