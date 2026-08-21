@@ -4,6 +4,9 @@ import { CvmDocumentButton } from '../CvmDocumentButton';
 import { calculateAssetDividendProjection } from '../../lib/investmentCalculations';
 import { getAssetCnpj, formatCnpj } from '../../lib/cnpjUtils';
 import { useData } from '../../contexts/DataContext';
+import { useInvestments } from '../../contexts/InvestmentsContext';
+import { getB3AssetFundamental, B3StockFundamental, B3FiiFundamental } from '../../lib/b3Fundamentals';
+import { calculateUniversalAssetScore, getScoreColor, getGradeColor } from '../../lib/scoringEngine';
 import { toast } from 'sonner';
 import { 
   Info, 
@@ -20,6 +23,7 @@ import {
   Calendar, 
   Briefcase,
   CheckCircle2,
+  AlertTriangle,
   Clock,
   Copy,
   Check,
@@ -80,12 +84,49 @@ export function AssetRaioXModal({
   analysisMode = 'received_only'
 }: AssetRaioXModalProps) {
   const { settings, valuationTargets } = useData();
-  const [activeTab, setActiveTab] = useState<'geral' | 'proventos' | 'valuation' | 'historico'>('geral');
+  const { b3AssetsMetadata, loadAssetHistory } = useInvestments();
+  const [activeTab, setActiveTab] = useState<'geral' | 'proventos' | 'valuation' | 'historico' | 'fundamentos'>('geral');
   const [copiedCnpj, setCopiedCnpj] = useState(false);
+  const [historyRecords, setHistoryRecords] = useState<any[]>([]);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
 
   const cleanTicker = position.ticker.toUpperCase().trim();
   const cnpj = getAssetCnpj(cleanTicker, settings);
   const savedValuation = valuationTargets[cleanTicker];
+
+  // Dynamic fundamental and score calculation
+  const fundamental = useMemo(() => {
+    return getB3AssetFundamental(
+      cleanTicker,
+      position.type,
+      position.currentPrice || position.averagePrice || 10,
+      b3AssetsMetadata
+    );
+  }, [cleanTicker, position.type, position.currentPrice, position.averagePrice, b3AssetsMetadata]);
+
+  const scoreResult = useMemo(() => {
+    return calculateUniversalAssetScore(fundamental);
+  }, [fundamental]);
+
+  // Load history records from b3_assets_history
+  React.useEffect(() => {
+    let isMounted = true;
+    const fetchHistory = async () => {
+      setIsLoadingHistory(true);
+      try {
+        const data = await loadAssetHistory(cleanTicker);
+        if (isMounted) {
+          setHistoryRecords(data || []);
+        }
+      } catch (err) {
+        console.error('Error fetching asset history:', err);
+      } finally {
+        if (isMounted) setIsLoadingHistory(false);
+      }
+    };
+    fetchHistory();
+    return () => { isMounted = false; };
+  }, [cleanTicker, loadAssetHistory]);
 
   const assetTxs = useMemo(() => {
     return transactions
@@ -307,6 +348,18 @@ export function AssetRaioXModal({
           >
             <History className="w-3.5 h-3.5 text-sky-500" />
             Lançamentos ({assetTxs.length})
+          </button>
+
+          <button
+            onClick={() => setActiveTab('fundamentos')}
+            className={`px-3.5 py-2 text-xs font-black rounded-t-xl transition-all border-b-2 flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
+              activeTab === 'fundamentos'
+                ? 'border-primary text-primary bg-card shadow-xs'
+                : 'border-transparent text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            <Sparkles className="w-3.5 h-3.5 text-emerald-500" />
+            Fundamentos & Histórico B3
           </button>
         </div>
 
@@ -1056,6 +1109,332 @@ export function AssetRaioXModal({
                   </table>
                 </div>
               )}
+            </div>
+          )}
+
+          {/* TAB 5: FUNDAMENTOS & HISTÓRICO B3 */}
+          {activeTab === 'fundamentos' && (
+            <div className="space-y-6">
+              {/* 1. Universal Score Card */}
+              <div className="p-5 rounded-3xl bg-gradient-to-br from-card via-card to-muted/20 border border-border/80 shadow-xs space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <div 
+                      className="w-13 h-13 rounded-2xl flex items-center justify-center font-black text-xl shadow-xs"
+                      style={{
+                        backgroundColor: `${getScoreColor(scoreResult.totalScore)}20`,
+                        color: getScoreColor(scoreResult.totalScore),
+                        border: `1px solid ${getScoreColor(scoreResult.totalScore)}40`
+                      }}
+                    >
+                      {scoreResult.totalScore}
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h4 className="text-base font-black text-foreground">Score B3 & Diagnóstico de Qualidade</h4>
+                        <span 
+                          className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md"
+                          style={{
+                            backgroundColor: `${getScoreColor(scoreResult.totalScore)}15`,
+                            color: getScoreColor(scoreResult.totalScore)
+                          }}
+                        >
+                          {scoreResult.grade}
+                        </span>
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Algoritmo multicritério ponderado para {fundamental.type === 'FII' ? 'Fundos Imobiliários' : 'Ações B3'}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="text-right">
+                    <span className="text-[11px] font-bold text-muted-foreground">Última Cotação Registrada</span>
+                    <p className="text-base font-black text-foreground">
+                      {fundamental.lastPrice ? formatCurrency(fundamental.lastPrice) : 'R$ -'}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Score Pillars Progress Bars */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-2">
+                  {scoreResult.pillars.map((pillar, i) => (
+                    <div key={i} className="p-3 rounded-2xl bg-muted/20 border border-border/50 space-y-1.5">
+                      <div className="flex justify-between text-xs font-bold">
+                        <span className="text-foreground text-[11px]">{pillar.name}</span>
+                        <span className="text-primary">{pillar.score.toFixed(0)}/100</span>
+                      </div>
+                      <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
+                        <div 
+                          className="h-full rounded-full transition-all duration-500"
+                          style={{
+                            width: `${pillar.score}%`,
+                            backgroundColor: getScoreColor(scoreResult.totalScore)
+                          }}
+                        />
+                      </div>
+                      <p className="text-[10px] text-muted-foreground truncate">{pillar.description}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* 2. Full Fundamentals Matrix */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-black uppercase tracking-wider text-foreground flex items-center gap-2">
+                    <Layers className="w-4 h-4 text-primary" />
+                    Matriz de Indicadores Fundamentalistas ({fundamental.type})
+                  </h4>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-muted text-muted-foreground">
+                    Origem: {fundamental.source || 'Base de Dados'}
+                  </span>
+                </div>
+
+                {fundamental.type === 'Ação' ? (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+                    <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
+                      <span className="text-[10px] font-bold text-muted-foreground uppercase">P/L (Preço/Lucro)</span>
+                      <p className="text-lg font-black text-foreground">
+                        {(fundamental as B3StockFundamental).pl ? `${(fundamental as B3StockFundamental).pl.toFixed(1)}x` : '-'}
+                      </p>
+                      <p className="text-[10px] text-muted-foreground">Múltiplo de lucros</p>
+                    </div>
+
+                    <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
+                      <span className="text-[10px] font-bold text-muted-foreground uppercase">P/VP</span>
+                      <p className="text-lg font-black text-foreground">
+                        {fundamental.pvp ? fundamental.pvp.toFixed(2) : '-'}
+                      </p>
+                      <p className="text-[10px] text-muted-foreground">Preço vs Patrimônio</p>
+                    </div>
+
+                    <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
+                      <span className="text-[10px] font-bold text-muted-foreground uppercase">Dividend Yield 12M</span>
+                      <p className="text-lg font-black text-emerald-600">
+                        {fundamental.dividendYield ? `${fundamental.dividendYield.toFixed(1)}%` : '-'}
+                      </p>
+                      <p className="text-[10px] text-muted-foreground">Proventos distribuídos</p>
+                    </div>
+
+                    <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
+                      <span className="text-[10px] font-bold text-muted-foreground uppercase">ROE</span>
+                      <p className="text-lg font-black text-foreground">
+                        {(fundamental as B3StockFundamental).roe ? `${(fundamental as B3StockFundamental).roe.toFixed(1)}%` : '-'}
+                      </p>
+                      <p className="text-[10px] text-muted-foreground">Retorno s/ Patrimônio</p>
+                    </div>
+
+                    <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
+                      <span className="text-[10px] font-bold text-muted-foreground uppercase">ROIC</span>
+                      <p className="text-lg font-black text-foreground">
+                        {(fundamental as B3StockFundamental).roic ? `${(fundamental as B3StockFundamental).roic.toFixed(1)}%` : '-'}
+                      </p>
+                      <p className="text-[10px] text-muted-foreground">Retorno s/ Capital Inv.</p>
+                    </div>
+
+                    <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
+                      <span className="text-[10px] font-bold text-muted-foreground uppercase">Margem Líquida</span>
+                      <p className="text-lg font-black text-foreground">
+                        {(fundamental as B3StockFundamental).netMargin ? `${(fundamental as B3StockFundamental).netMargin.toFixed(1)}%` : '-'}
+                      </p>
+                      <p className="text-[10px] text-muted-foreground">Lucro / Receita Líq.</p>
+                    </div>
+
+                    <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
+                      <span className="text-[10px] font-bold text-muted-foreground uppercase">Dívida Líq. / EBITDA</span>
+                      <p className="text-lg font-black text-foreground">
+                        {(fundamental as B3StockFundamental).netDebtOverEbitda !== undefined ? `${(fundamental as B3StockFundamental).netDebtOverEbitda.toFixed(1)}x` : '-'}
+                      </p>
+                      <p className="text-[10px] text-muted-foreground">Alavancagem financeira</p>
+                    </div>
+
+                    <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
+                      <span className="text-[10px] font-bold text-muted-foreground uppercase">Cresc. Receita 5a</span>
+                      <p className="text-lg font-black text-foreground">
+                        {(fundamental as B3StockFundamental).revenueCagr5y ? `${(fundamental as B3StockFundamental).revenueCagr5y.toFixed(1)}%` : '-'}
+                      </p>
+                      <p className="text-[10px] text-muted-foreground">CAGR histórico</p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+                    <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
+                      <span className="text-[10px] font-bold text-muted-foreground uppercase">P/VP</span>
+                      <p className="text-lg font-black text-foreground">
+                        {fundamental.pvp ? fundamental.pvp.toFixed(2) : '-'}
+                      </p>
+                      <p className="text-[10px] text-muted-foreground">Preço vs Patrimônio</p>
+                    </div>
+
+                    <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
+                      <span className="text-[10px] font-bold text-muted-foreground uppercase">Dividend Yield 12M</span>
+                      <p className="text-lg font-black text-emerald-600">
+                        {fundamental.dividendYield ? `${fundamental.dividendYield.toFixed(1)}%` : '-'}
+                      </p>
+                      <p className="text-[10px] text-muted-foreground">Rendimentos anuais</p>
+                    </div>
+
+                    <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
+                      <span className="text-[10px] font-bold text-muted-foreground uppercase">FFO Yield</span>
+                      <p className="text-lg font-black text-foreground">
+                        {(fundamental as B3FiiFundamental).ffoYield ? `${(fundamental as B3FiiFundamental).ffoYield.toFixed(1)}%` : '-'}
+                      </p>
+                      <p className="text-[10px] text-muted-foreground">Geração de caixa operacional</p>
+                    </div>
+
+                    <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
+                      <span className="text-[10px] font-bold text-muted-foreground uppercase">Vacância Média</span>
+                      <p className="text-lg font-black text-foreground">
+                        {(fundamental as B3FiiFundamental).physicalVacancy !== undefined ? `${(fundamental as B3FiiFundamental).physicalVacancy.toFixed(1)}%` : '-'}
+                      </p>
+                      <p className="text-[10px] text-muted-foreground">Área desocupada</p>
+                    </div>
+
+                    <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
+                      <span className="text-[10px] font-bold text-muted-foreground uppercase">Cap Rate Médio</span>
+                      <p className="text-lg font-black text-foreground">
+                        {(fundamental as B3FiiFundamental).capRate ? `${(fundamental as B3FiiFundamental).capRate.toFixed(1)}%` : '-'}
+                      </p>
+                      <p className="text-[10px] text-muted-foreground">Renda imobiliária bruta</p>
+                    </div>
+
+                    <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
+                      <span className="text-[10px] font-bold text-muted-foreground uppercase">Qtd de Imóveis</span>
+                      <p className="text-lg font-black text-foreground">
+                        {(fundamental as B3FiiFundamental).propertiesCount !== undefined ? `${(fundamental as B3FiiFundamental).propertiesCount}` : '-'}
+                      </p>
+                      <p className="text-[10px] text-muted-foreground">Diversificação física</p>
+                    </div>
+
+                    <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
+                      <span className="text-[10px] font-bold text-muted-foreground uppercase">Segmento</span>
+                      <p className="text-sm font-black text-foreground truncate">
+                        {(fundamental as B3FiiFundamental).fiiSegment || '-'}
+                      </p>
+                      <p className="text-[10px] text-muted-foreground">Tipo: {(fundamental as B3FiiFundamental).fiiType || 'Tijolo'}</p>
+                    </div>
+
+                    <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
+                      <span className="text-[10px] font-bold text-muted-foreground uppercase">Liquidez Média Diária</span>
+                      <p className="text-sm font-black text-foreground truncate">
+                        {fundamental.dailyLiquidity ? formatCurrency(fundamental.dailyLiquidity) : '-'}
+                      </p>
+                      <p className="text-[10px] text-muted-foreground">Volume de negociação</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* 3. Strengths & Warnings */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="p-4 rounded-3xl bg-emerald-500/10 border border-emerald-500/20 space-y-2">
+                  <h5 className="text-xs font-black text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5">
+                    <CheckCircle2 className="w-4 h-4" />
+                    Pontos Fortes ({scoreResult.strengths.length})
+                  </h5>
+                  <ul className="space-y-1 text-xs text-foreground font-medium">
+                    {scoreResult.strengths.map((s, i) => (
+                      <li key={i} className="flex items-start gap-1.5">
+                        <span className="text-emerald-500 font-bold">•</span>
+                        <span>{s}</span>
+                      </li>
+                    ))}
+                    {scoreResult.strengths.length === 0 && (
+                      <li className="text-xs text-muted-foreground">Nenhum destaque registrado.</li>
+                    )}
+                  </ul>
+                </div>
+
+                <div className="p-4 rounded-3xl bg-amber-500/10 border border-amber-500/20 space-y-2">
+                  <h5 className="text-xs font-black text-amber-600 dark:text-amber-400 flex items-center gap-1.5">
+                    <AlertTriangle className="w-4 h-4" />
+                    Pontos de Atenção ({scoreResult.warnings.length})
+                  </h5>
+                  <ul className="space-y-1 text-xs text-foreground font-medium">
+                    {scoreResult.warnings.map((w, i) => (
+                      <li key={i} className="flex items-start gap-1.5">
+                        <span className="text-amber-500 font-bold">•</span>
+                        <span>{w}</span>
+                      </li>
+                    ))}
+                    {scoreResult.warnings.length === 0 && (
+                      <li className="text-xs text-muted-foreground">Nenhum alerta crítico encontrado.</li>
+                    )}
+                  </ul>
+                </div>
+              </div>
+
+              {/* 4. Historical Snapshots in Supabase */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-black uppercase tracking-wider text-foreground flex items-center gap-2">
+                    <History className="w-4 h-4 text-primary" />
+                    Evolução Histórica dos Fundamentos ({historyRecords.length} snapshots)
+                  </h4>
+                  {isLoadingHistory && (
+                    <span className="text-[10px] text-muted-foreground">Carregando histórico...</span>
+                  )}
+                </div>
+
+                {historyRecords.length === 0 ? (
+                  <div className="p-6 text-center rounded-2xl border border-dashed border-border/60 bg-muted/10 space-y-1">
+                    <p className="text-xs font-bold text-muted-foreground">Nenhum snapshot histórico salvo para este ativo ainda.</p>
+                    <p className="text-[10px] text-muted-foreground">
+                      A cada importação do Fundamentus ou salvamento manual, um registro de data e indicadores é arquivado automaticamente.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="rounded-2xl border border-border/60 bg-card overflow-hidden shadow-xs">
+                    <table className="w-full text-left text-xs whitespace-nowrap">
+                      <thead className="bg-muted/30 text-[10px] font-bold text-muted-foreground uppercase border-b border-border/40">
+                        <tr>
+                          <th className="px-3.5 py-2.5">Data Snapshot</th>
+                          <th className="px-3.5 py-2.5">Origem</th>
+                          <th className="px-3.5 py-2.5 text-right">Cotação</th>
+                          <th className="px-3.5 py-2.5 text-right">P/VP</th>
+                          <th className="px-3.5 py-2.5 text-right">DY 12M</th>
+                          <th className="px-3.5 py-2.5 text-right">{fundamental.type === 'Ação' ? 'P/L' : 'FFO Yield'}</th>
+                          <th className="px-3.5 py-2.5 text-right">{fundamental.type === 'Ação' ? 'ROE' : 'Vacância'}</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-border/30 font-medium">
+                        {historyRecords.map((rec, idx) => (
+                          <tr key={idx} className="hover:bg-muted/20 transition-colors">
+                            <td className="px-3.5 py-2.5 text-foreground font-semibold">
+                              {rec.snapshot_date ? new Date(rec.snapshot_date + 'T12:00:00Z').toLocaleDateString('pt-BR', { timeZone: 'UTC' }) : (rec.created_at ? new Date(rec.created_at).toLocaleDateString('pt-BR') : '-')}
+                            </td>
+                            <td className="px-3.5 py-2.5">
+                              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-muted/60 text-muted-foreground">
+                                {rec.source || 'Importação'}
+                              </span>
+                            </td>
+                            <td className="px-3.5 py-2.5 text-right font-black text-foreground">
+                              {rec.last_price ? formatCurrency(rec.last_price) : '-'}
+                            </td>
+                            <td className="px-3.5 py-2.5 text-right font-bold">
+                              {rec.pvp ? rec.pvp.toFixed(2) : '-'}
+                            </td>
+                            <td className="px-3.5 py-2.5 text-right font-bold text-emerald-600">
+                              {rec.dividend_yield ? `${rec.dividend_yield.toFixed(1)}%` : '-'}
+                            </td>
+                            <td className="px-3.5 py-2.5 text-right">
+                              {fundamental.type === 'Ação' 
+                                ? (rec.pl ? `${rec.pl.toFixed(1)}x` : '-')
+                                : (rec.ffo_yield ? `${rec.ffo_yield.toFixed(1)}%` : '-')}
+                            </td>
+                            <td className="px-3.5 py-2.5 text-right">
+                              {fundamental.type === 'Ação' 
+                                ? (rec.roe ? `${rec.roe.toFixed(1)}%` : '-')
+                                : (rec.physical_vacancy ? `${rec.physical_vacancy.toFixed(1)}%` : '-')}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
             </div>
           )}
 

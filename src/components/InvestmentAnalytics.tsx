@@ -2,6 +2,7 @@ import React, { useMemo, useState, useEffect } from 'react';
 import { InvestmentTransaction, Dividend, Reserve, UserSettings, ValuationTarget } from '../types';
 import { useData } from '../contexts/DataContext';
 import { supabase } from '../lib/supabase';
+import { fetchSingleQuote } from '../lib/quoteService';
 import { toast } from 'sonner';
 import { CvmDocumentButton } from './CvmDocumentButton';
 import { 
@@ -529,12 +530,24 @@ export function InvestmentAnalytics({
 
     // Live market quote price
     const liveQ = quotes[tk] || pos?.currentPrice;
-    const currentQ = (liveQ && liveQ > 0)
-      ? liveQ
-      : (saved?.calc_current_price && saved.calc_current_price > 0)
+    if (liveQ && liveQ > 0) {
+      setCalcCurrentPrice(liveQ);
+    } else {
+      // Auto fetch live quote in background for this ticker
+      if (tk.length >= 4) {
+        fetchSingleQuote(tk, settings?.brapi_token)
+          .then(res => {
+            if (res && res.price > 0) {
+              setCalcCurrentPrice(res.price);
+            }
+          })
+          .catch(() => {});
+      }
+      const currentQ = (saved?.calc_current_price && saved.calc_current_price > 0)
         ? saved.calc_current_price
         : pos?.avgPrice || 30.0;
-    setCalcCurrentPrice(currentQ);
+      setCalcCurrentPrice(currentQ);
+    }
 
     // If we have saved data for this ticker, populate it!
     if (saved) {
@@ -560,7 +573,7 @@ export function InvestmentAnalytics({
       setPlTarget(1);
       setPvpTarget(isFii ? 1.0 : 0);
     }
-  }, [selectedTicker, savedValuations, quotes, analyticsData.activePositions]);
+  }, [selectedTicker, savedValuations, quotes, analyticsData.activePositions, settings]);
 
   // Handle ticker selection
   const handleSelectCalculatorTicker = (tk: string) => {

@@ -1,9 +1,14 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useData } from '../contexts/DataContext';
+import { useInvestments } from '../contexts/InvestmentsContext';
 import { CurrencyInput } from '../components/CurrencyInput';
 import { InvestmentAnalytics } from '../components/InvestmentAnalytics';
 import { CvmDocumentButton } from '../components/CvmDocumentButton';
 import { RebalanceWizard } from '../components/investments/RebalanceWizard';
+import { PortfolioDiagnosisDashboard } from '../components/investments/PortfolioDiagnosisDashboard';
+import { FundamentalAnalysisView } from '../components/investments/FundamentalAnalysisView';
+import { ProfessionalRebalanceEngineView } from '../components/investments/ProfessionalRebalanceEngineView';
+import { runPortfolioDiagnosis } from '../lib/portfolioDiagnosis';
 import { AssetRaioXModal } from '../components/investments/AssetRaioXModal';
 import { DividendSummaryCards } from '../components/investments/DividendSummaryCards';
 import { PortfolioReportModal } from '../components/investments/PortfolioReportModal';
@@ -48,7 +53,11 @@ import {
   Sliders,
   Zap,
   Percent,
-  Sparkles
+  Sparkles,
+  ShieldCheck,
+  AlertTriangle,
+  BarChart3,
+  Target
 } from 'lucide-react';
 
 interface Position {
@@ -59,6 +68,7 @@ interface Position {
   averagePrice: number;
   currentPrice: number | null;
   currentValue: number | null;
+  currentPct?: number;
   dividendsReceived: number;
   yieldOnCost: number;
   realizedGain?: number;
@@ -89,11 +99,18 @@ export function Investments() {
     valuationTargets
   } = useData();
 
+  const {
+    targetAllocations,
+    saveTargetAllocations,
+    rulesConfig,
+    saveRulesConfig
+  } = useInvestments();
+
   // Quote Provider Modal State
   const [isQuoteProviderModalOpen, setIsQuoteProviderModalOpen] = useState(false);
 
   // Navigation & Tabs
-  const [activeTab, setActiveTab] = useState<'carteira' | 'rebalanceamento' | 'proventos' | 'historico' | 'analise'>('carteira');
+  const [activeTab, setActiveTab] = useState<'carteira' | 'diagnostico' | 'fundamentalista' | 'rebalanceamento' | 'proventos' | 'historico' | 'analise'>('carteira');
   const [carteiraSubTab, setCarteiraSubTab] = useState<'carteira' | 'geral' | 'alocacao' | 'preco_teto'>('carteira');
   const [analyticsTicker, setAnalyticsTicker] = useState<string>('PETR4');
   const [tirMode, setTirMode] = useState<'dynamic' | 'period' | 'annual'>('dynamic');
@@ -591,11 +608,17 @@ export function Investments() {
     });
 
     const posArray = Object.values(posMap);
+    const totalPosValue = posArray.reduce((acc, p) => {
+      const q = quotes[p.ticker] || p.averagePrice || 0;
+      return acc + (q * p.totalQuantity);
+    }, 0);
+
     posArray.forEach(p => {
       if (quotes[p.ticker]) {
         p.currentPrice = quotes[p.ticker];
-        p.currentValue = p.currentPrice * p.totalQuantity;
       }
+      p.currentValue = (p.currentPrice || p.averagePrice || 0) * p.totalQuantity;
+      p.currentPct = totalPosValue > 0 ? (p.currentValue / totalPosValue) * 100 : 0;
       p.yieldOnCost = p.totalInvested > 0 ? (p.dividendsReceived / p.totalInvested) * 100 : 0;
     });
 
@@ -647,6 +670,24 @@ export function Investments() {
       dividendAnalysisMode
     );
   }, [investmentTransactions, dividends, quotes, totalCurrent, dividendAnalysisMode]);
+
+  // Professional Portfolio Diagnosis & Risk Engine
+  const portfolioDiagnosis = useMemo(() => {
+    return runPortfolioDiagnosis(
+      positions.map(p => ({
+        ticker: p.ticker,
+        type: p.type,
+        totalQuantity: p.totalQuantity,
+        averagePrice: p.averagePrice,
+        currentPrice: p.currentPrice,
+        totalInvested: p.totalInvested,
+        currentValue: p.currentValue,
+        dividendsReceived: p.dividendsReceived,
+        yieldOnCost: p.yieldOnCost || 0
+      })),
+      quotes
+    );
+  }, [positions, quotes]);
 
   const configuredReserve = useMemo(() => {
     return reserves.find(r => r.id === settings?.default_investment_reserve_id);
@@ -820,17 +861,17 @@ export function Investments() {
       </header>
 
       {/* NAVIGATION TABS */}
-      <div className="flex p-1 bg-muted/40 rounded-2xl border border-border/40 w-full overflow-x-auto custom-scrollbar">
+      <div className="flex p-1 bg-muted/40 rounded-2xl border border-border/40 w-full overflow-x-auto custom-scrollbar gap-1">
         <button
           onClick={() => setActiveTab('carteira')}
-          className={`px-3.5 py-2 text-xs font-black rounded-xl transition-all flex items-center justify-center gap-2 whitespace-nowrap flex-1 ${
+          className={`px-3 py-2 text-xs font-black rounded-xl transition-all flex items-center justify-center gap-2 whitespace-nowrap flex-1 min-w-[130px] ${
             activeTab === 'carteira' || activeTab === 'analise'
               ? 'bg-card text-foreground shadow-xs border border-border/50' 
               : 'text-muted-foreground hover:text-foreground'
           }`}
         >
           <Briefcase className="w-4 h-4 text-primary" />
-          Carteira & Análise
+          <span>Carteira</span>
           {positions.length > 0 && (
             <span className="px-1.5 py-0.5 text-[10px] rounded-full bg-primary/10 text-primary font-extrabold">
               {positions.length}
@@ -839,15 +880,64 @@ export function Investments() {
         </button>
 
         <button
+          onClick={() => setActiveTab('diagnostico')}
+          className={`px-3 py-2 text-xs font-black rounded-xl transition-all flex items-center justify-center gap-2 whitespace-nowrap flex-1 min-w-[155px] ${
+            activeTab === 'diagnostico' 
+              ? 'bg-card text-foreground shadow-xs border border-border/50' 
+              : 'text-muted-foreground hover:text-foreground'
+          }`}
+        >
+          <ShieldCheck className="w-4 h-4 text-emerald-500" />
+          <span>Diagnóstico & Risco</span>
+          {portfolioDiagnosis.alerts.length > 0 ? (
+            <span className="px-1.5 py-0.5 text-[10px] rounded-full bg-rose-500/10 text-rose-500 font-extrabold flex items-center gap-0.5">
+              <AlertTriangle className="w-2.5 h-2.5" />
+              {portfolioDiagnosis.alerts.length}
+            </span>
+          ) : (
+            <span className="px-1.5 py-0.5 text-[10px] rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-extrabold">
+              {portfolioDiagnosis.diversificationScore}/100
+            </span>
+          )}
+        </button>
+
+        <button
+          onClick={() => setActiveTab('fundamentalista')}
+          className={`px-3 py-2 text-xs font-black rounded-xl transition-all flex items-center justify-center gap-2 whitespace-nowrap flex-1 min-w-[165px] ${
+            activeTab === 'fundamentalista' 
+              ? 'bg-card text-foreground shadow-xs border border-border/50' 
+              : 'text-muted-foreground hover:text-foreground'
+          }`}
+        >
+          <Award className="w-4 h-4 text-amber-500" />
+          <span>Fundamentalista B3</span>
+          <span className="px-1.5 py-0.5 text-[10px] rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 font-extrabold">
+            Score
+          </span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('rebalanceamento')}
+          className={`px-3 py-2 text-xs font-black rounded-xl transition-all flex items-center justify-center gap-2 whitespace-nowrap flex-1 min-w-[155px] ${
+            activeTab === 'rebalanceamento' 
+              ? 'bg-card text-foreground shadow-xs border border-border/50' 
+              : 'text-muted-foreground hover:text-foreground'
+          }`}
+        >
+          <Scale className="w-4 h-4 text-indigo-500" />
+          <span>Rebalancear & Aportes</span>
+        </button>
+
+        <button
           onClick={() => setActiveTab('proventos')}
-          className={`px-3.5 py-2 text-xs font-black rounded-xl transition-all flex items-center justify-center gap-2 whitespace-nowrap flex-1 ${
+          className={`px-3 py-2 text-xs font-black rounded-xl transition-all flex items-center justify-center gap-2 whitespace-nowrap flex-1 min-w-[120px] ${
             activeTab === 'proventos' 
               ? 'bg-card text-foreground shadow-xs border border-border/50' 
               : 'text-muted-foreground hover:text-foreground'
           }`}
         >
           <DollarSign className="w-4 h-4 text-emerald-500" />
-          Proventos
+          <span>Proventos</span>
           {divTotals.provisioned > 0 && (
             <span className="px-1.5 py-0.5 text-[10px] rounded-full bg-amber-500/10 text-amber-500 font-extrabold animate-pulse">
               !
@@ -856,27 +946,15 @@ export function Investments() {
         </button>
 
         <button
-          onClick={() => setActiveTab('rebalanceamento')}
-          className={`px-3.5 py-2 text-xs font-black rounded-xl transition-all flex items-center justify-center gap-2 whitespace-nowrap flex-1 ${
-            activeTab === 'rebalanceamento' 
-              ? 'bg-card text-foreground shadow-xs border border-border/50' 
-              : 'text-muted-foreground hover:text-foreground'
-          }`}
-        >
-          <Scale className="w-4 h-4 text-indigo-500" />
-          Rebalancear
-        </button>
-
-        <button
           onClick={() => setActiveTab('historico')}
-          className={`px-3.5 py-2 text-xs font-black rounded-xl transition-all flex items-center justify-center gap-2 whitespace-nowrap flex-1 ${
+          className={`px-3 py-2 text-xs font-black rounded-xl transition-all flex items-center justify-center gap-2 whitespace-nowrap flex-1 min-w-[130px] ${
             activeTab === 'historico' 
               ? 'bg-card text-foreground shadow-xs border border-border/50' 
               : 'text-muted-foreground hover:text-foreground'
           }`}
         >
-          <History className="w-4 h-4 text-amber-500" />
-          Lançamentos
+          <History className="w-4 h-4 text-sky-500" />
+          <span>Lançamentos</span>
         </button>
       </div>
 
@@ -1750,7 +1828,44 @@ export function Investments() {
         </div>
       )}
 
-      {/* TAB 2: PROVENTOS */}
+      {/* TAB 2: DIAGNÓSTICO & GESTÃO DE RISCO B3 */}
+      {activeTab === 'diagnostico' && (
+        <PortfolioDiagnosisDashboard
+          diagnosis={portfolioDiagnosis}
+          hideValues={hideValues}
+          onSelectTicker={(tk) => handleSelectAssetForAnalytics(tk)}
+          onNavigateToRebalance={() => setActiveTab('rebalanceamento')}
+        />
+      )}
+
+      {/* TAB 3: ANÁLISE FUNDAMENTALISTA & SCORING B3 */}
+      {activeTab === 'fundamentalista' && (
+        <FundamentalAnalysisView
+          positions={positions}
+          quotes={quotes}
+          valuationTargets={valuationTargets}
+          hideValues={hideValues}
+          onSelectAsset={(p) => setSelectedAssetDetail(p)}
+        />
+      )}
+
+      {/* TAB 4: REBALANCEAMENTO PROFISSIONAL & MOTOR DE APORTES */}
+      {activeTab === 'rebalanceamento' && (
+        <ProfessionalRebalanceEngineView
+          positions={positions}
+          quotes={quotes}
+          valuationTargets={valuationTargets}
+          targetAllocations={targetAllocations}
+          onSaveTargets={saveTargetAllocations}
+          rulesConfig={rulesConfig}
+          onSaveRulesConfig={saveRulesConfig}
+          hideValues={hideValues}
+          onBatchBuy={handleBatchBuy}
+          onFetchQuote={handleFetchQuoteForTicker}
+        />
+      )}
+
+      {/* TAB 5: PROVENTOS */}
       {activeTab === 'proventos' && (
         <div className="space-y-6">
           <DividendSummaryCards
@@ -1871,19 +1986,6 @@ export function Investments() {
             </div>
           )}
         </div>
-      )}
-
-      {/* TAB 3: REBALANCEAMENTO INTELIGENTE */}
-      {activeTab === 'rebalanceamento' && (
-        <RebalanceWizard
-          positions={positions}
-          totalCurrentValue={totalCurrent}
-          hideValues={hideValues}
-          onBatchBuy={handleBatchBuy}
-          formatCurrency={formatCurrency}
-          quotes={quotes}
-          onFetchQuote={handleFetchQuoteForTicker}
-        />
       )}
 
       {/* TAB 4: HISTÓRICO DE LANÇAMENTOS */}

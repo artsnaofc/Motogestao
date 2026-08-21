@@ -792,11 +792,11 @@ export function RebalanceWizard({
             </div>
           </div>
 
-          {/* Action buttons */}
-          <div className="flex items-center gap-2 flex-wrap shrink-0">
+          {/* Action buttons with flex-wrap and responsive sizing */}
+          <div className="flex items-center gap-2 flex-wrap">
             <button
               onClick={() => setIsAddAssetModalOpen(true)}
-              className="px-3.5 py-2 text-xs font-black rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm shadow-indigo-500/20 transition-all flex items-center gap-1.5 cursor-pointer shrink-0"
+              className="px-3.5 py-2 text-xs font-black rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm shadow-indigo-500/20 transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
               title="Adicionar novo ativo ou planejado ao rebalanceamento"
             >
               <PlusCircle className="w-4 h-4 stroke-[2.5]" />
@@ -805,7 +805,7 @@ export function RebalanceWizard({
 
             <button
               onClick={() => setIsMacroClassModalOpen(true)}
-              className="px-3 py-2 text-xs font-bold rounded-xl border border-border/60 bg-card hover:bg-muted text-foreground transition-all flex items-center gap-1.5 shrink-0 cursor-pointer"
+              className="px-3 py-2 text-xs font-bold rounded-xl border border-border/60 bg-card hover:bg-muted text-foreground transition-all flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
               title="Configurar metas macro por classe de ativo (Ações, FIIs, etc.)"
             >
               <Layers className="w-3.5 h-3.5 text-indigo-500" />
@@ -814,7 +814,7 @@ export function RebalanceWizard({
 
             <button
               onClick={() => persistTargets(targets, true)}
-              className="px-3 py-2 text-xs font-bold rounded-xl border border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 transition-all flex items-center gap-1.5 shrink-0 cursor-pointer"
+              className="px-3 py-2 text-xs font-bold rounded-xl border border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 transition-all flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
               title="Salvar metas atuais para os próximos acessos"
             >
               <Save className="w-3.5 h-3.5" />
@@ -837,7 +837,7 @@ export function RebalanceWizard({
                 <button
                   type="button"
                   onClick={() => setContribution(reserveBalance.toFixed(2))}
-                  className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 px-2.5 py-1 rounded-lg transition-all flex items-center gap-1 shrink-0 max-w-full truncate cursor-pointer"
+                  className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 px-2.5 py-1 rounded-lg transition-all flex items-center gap-1 whitespace-nowrap max-w-full truncate cursor-pointer"
                   title={`Reserva: ${investmentReserve.name}`}
                 >
                   <Sparkles className="w-3 h-3 shrink-0" />
@@ -851,11 +851,11 @@ export function RebalanceWizard({
                 value={contribution}
                 onChange={setContribution}
                 placeholder="0,00"
-                className="flex-1 bg-card border border-border/70 rounded-2xl px-4 py-2.5 text-base md:text-lg font-black text-foreground focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all min-w-[180px]"
+                className="flex-1 bg-card border border-border/70 rounded-2xl px-4 py-2.5 text-base md:text-lg font-black text-foreground focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all min-w-[160px]"
               />
               
               {/* Quick Increment Buttons */}
-              <div className="flex items-center gap-1 shrink-0">
+              <div className="flex items-center gap-1 flex-wrap sm:flex-nowrap">
                 {[100, 500, 1000].map(amt => (
                   <button
                     key={amt}
@@ -882,7 +882,7 @@ export function RebalanceWizard({
 
           {/* Allocation Target Status & Helper Presets (5 cols on lg) */}
           <div className="lg:col-span-5 flex flex-col justify-between p-4 rounded-2xl bg-muted/30 border border-border/50 space-y-3">
-            <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
               <div>
                 <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Soma das Metas Definidas</p>
                 <div className="flex items-center gap-2">
@@ -900,7 +900,7 @@ export function RebalanceWizard({
               {Math.abs(totalTargetPct - 100) >= 0.5 && (
                 <button
                   onClick={handleNormalize}
-                  className="px-3 py-1.5 text-xs font-bold rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 transition-all flex items-center gap-1 shrink-0 cursor-pointer"
+                  className="px-3 py-1.5 text-xs font-bold rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 transition-all flex items-center gap-1 whitespace-nowrap cursor-pointer"
                   title="Normalizar todas as metas proporcionalmente para somar 100%"
                 >
                   <SlidersHorizontal className="w-3.5 h-3.5" />
@@ -1071,23 +1071,23 @@ export function RebalanceWizard({
           </div>
 
           {/* Legend Banner */}
-          <div className="flex items-center justify-between text-[11px] font-bold p-3 rounded-2xl bg-muted/30 border border-border/40 flex-wrap gap-2">
+          <div className="flex items-center justify-between text-xs font-bold p-3.5 rounded-2xl bg-muted/30 border border-border/40 flex-wrap gap-2.5">
             <div className="flex items-center gap-4 flex-wrap">
               <div className="flex items-center gap-1.5">
-                <span className="w-3 h-3 rounded-md bg-slate-400/50 dark:bg-slate-600/60 inline-block" />
+                <span className="w-3.5 h-3 rounded-md bg-slate-400 dark:bg-slate-600 inline-block" />
                 <span className="text-muted-foreground">Alocação Atual</span>
               </div>
               <div className="flex items-center gap-1.5">
-                <span className="w-3 h-3 rounded-md bg-gradient-to-r from-emerald-500 to-teal-400 inline-block shadow-xs" />
+                <span className="w-3.5 h-3 rounded-md bg-emerald-500 inline-block shadow-xs" />
                 <span className="text-emerald-600 dark:text-emerald-400 font-black">+ Impacto do Aporte</span>
               </div>
               <div className="flex items-center gap-1.5">
-                <span className="w-3 h-3 rounded-md bg-indigo-500/30 border border-indigo-500 inline-block" />
-                <span className="text-indigo-600 dark:text-indigo-400 font-extrabold">Meta Ideal</span>
+                <span className="w-1.5 h-3 bg-indigo-600 dark:bg-indigo-400 rounded-xs inline-block" />
+                <span className="text-indigo-600 dark:text-indigo-400 font-extrabold">Meta Alvo</span>
               </div>
             </div>
 
-            <div className="text-muted-foreground text-[10px]">
+            <div className="text-muted-foreground text-[11px] font-medium">
               {visualTab === 'assets' 
                 ? `Exibindo ${visualFilterOnlyBuying ? itemsToBuy.length : rebalancePlan.length} de ${combinedAssets.length} ativos`
                 : `${classPlan.length} classes de ativos`
@@ -1096,7 +1096,7 @@ export function RebalanceWizard({
           </div>
 
           {/* ITEM ROWS */}
-          <div className="space-y-3.5">
+          <div className="space-y-3">
             {visualTab === 'assets' ? (
               // ASSETS LIST
               (visualFilterOnlyBuying ? rebalancePlan.filter(i => i.recommendedQty > 0) : rebalancePlan).map(item => {
@@ -1105,16 +1105,16 @@ export function RebalanceWizard({
                 const distanceToTarget = item.targetPct - item.projectedPct;
 
                 return (
-                  <div key={item.ticker} className="p-3.5 rounded-2xl border border-border/40 bg-muted/10 hover:bg-muted/20 transition-all space-y-2.5">
+                  <div key={item.ticker} className="p-4 rounded-2xl border border-border/50 bg-card hover:bg-muted/10 transition-all space-y-3 shadow-xs">
                     {/* Row Header */}
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-black text-sm text-foreground tracking-tight">{item.ticker}</span>
-                        <span className="text-[10px] font-black px-2 py-0.5 rounded-md bg-secondary text-secondary-foreground uppercase">
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-secondary text-secondary-foreground uppercase">
                           {item.type}
                         </span>
                         {item.isCustom && (
-                          <span className="text-[9px] font-black px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-600 dark:text-amber-400">
+                          <span className="text-[9px] font-bold px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-600 dark:text-amber-400">
                             Novo
                           </span>
                         )}
@@ -1127,73 +1127,68 @@ export function RebalanceWizard({
                       </div>
 
                       {/* Percentage badges */}
-                      <div className="flex items-center gap-3 text-xs font-bold self-end sm:self-auto flex-wrap">
-                        <span className="text-muted-foreground">
+                      <div className="flex items-center gap-2 text-xs font-bold self-end sm:self-auto flex-wrap">
+                        <div className="px-2 py-0.5 rounded-lg bg-muted/50 border border-border/40 text-muted-foreground text-[11px]">
                           Atual: <strong className="text-foreground">{item.currentPct.toFixed(1)}%</strong>
-                        </span>
-                        <span className="text-emerald-600 dark:text-emerald-400 font-extrabold flex items-center gap-0.5">
-                          Pós: <strong className="text-base">{item.projectedPct.toFixed(1)}%</strong>
+                        </div>
+                        <div className="px-2 py-0.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-[11px] flex items-center gap-1">
+                          Pós-Aporte: <strong>{item.projectedPct.toFixed(1)}%</strong>
                           {pctGained > 0.05 && (
-                            <span className="text-[10px] bg-emerald-500/10 px-1 rounded">
+                            <span className="text-[10px] font-extrabold text-emerald-500">
                               (+{pctGained.toFixed(1)}%)
                             </span>
                           )}
-                        </span>
-                        <span className="text-indigo-600 dark:text-indigo-400 font-black">
-                          Meta: {item.targetPct.toFixed(1)}%
-                        </span>
+                        </div>
+                        <div className="px-2 py-0.5 rounded-lg bg-indigo-500/10 border border-indigo-500/20 text-indigo-600 dark:text-indigo-400 text-[11px]">
+                          Meta: <strong>{item.targetPct.toFixed(1)}%</strong>
+                        </div>
+                        {Math.abs(distanceToTarget) < 0.3 ? (
+                          <span className="text-[10px] font-bold text-emerald-600 bg-emerald-500/10 px-2 py-0.5 rounded-lg border border-emerald-500/20">
+                            ✓ Alinhado
+                          </span>
+                        ) : distanceToTarget > 0 ? (
+                          <span className="text-[10px] font-bold text-amber-600 bg-amber-500/10 px-2 py-0.5 rounded-lg border border-amber-500/20">
+                            Falta {distanceToTarget.toFixed(1)}%
+                          </span>
+                        ) : (
+                          <span className="text-[10px] font-bold text-indigo-600 bg-indigo-500/10 px-2 py-0.5 rounded-lg border border-indigo-500/20">
+                            +{Math.abs(distanceToTarget).toFixed(1)}% acima
+                          </span>
+                        )}
                       </div>
                     </div>
 
-                    {/* DUAL COMPARISON PROGRESS BARS */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 text-[10px]">
-                      {/* Bar A: Alocação Atual vs Pós-Aporte */}
-                      <div className="space-y-1">
-                        <div className="flex justify-between font-bold text-muted-foreground">
-                          <span>Evolução da Alocação</span>
-                          <span className={pctGained > 0 ? 'text-emerald-500 font-black' : ''}>
-                            {item.currentPct.toFixed(1)}% ➔ {item.projectedPct.toFixed(1)}%
-                          </span>
-                        </div>
-                        <div className="h-3 w-full bg-muted/60 rounded-xl relative overflow-hidden flex p-0.5 border border-border/30">
-                          {/* Current Allocation segment */}
+                    {/* UNIFIED COMPARISON PROGRESS TRACK */}
+                    <div className="space-y-1">
+                      <div className="h-4 w-full bg-muted/60 rounded-xl relative overflow-hidden flex p-0.5 border border-border/40">
+                        {/* Current weight */}
+                        <div 
+                          style={{ width: `${Math.min(100, item.currentPct)}%` }} 
+                          className="h-full bg-slate-400/80 dark:bg-slate-500/80 rounded-l-lg transition-all"
+                          title={`Atual: ${item.currentPct.toFixed(1)}%`}
+                        />
+                        {/* Added Aporte segment */}
+                        {pctGained > 0.05 && (
                           <div 
-                            style={{ width: `${Math.min(100, item.currentPct)}%` }} 
-                            className="h-full bg-slate-400/70 dark:bg-slate-500/70 rounded-l-lg transition-all"
-                            title={`Atual: ${item.currentPct.toFixed(1)}%`}
+                            style={{ width: `${Math.min(100 - item.currentPct, pctGained)}%` }} 
+                            className="h-full bg-gradient-to-r from-emerald-500 to-teal-400 rounded-r-lg transition-all shadow-xs"
+                            title={`Novo Aporte: +${pctGained.toFixed(1)}%`}
                           />
-                          {/* Added Aporte segment */}
-                          {pctGained > 0.05 && (
-                            <div 
-                              style={{ width: `${Math.min(100 - item.currentPct, pctGained)}%` }} 
-                              className="h-full bg-gradient-to-r from-emerald-500 to-teal-400 rounded-r-lg transition-all shadow-xs"
-                              title={`Novo Aporte: +${pctGained.toFixed(1)}%`}
-                            />
-                          )}
-                        </div>
+                        )}
+                        {/* Target Marker Pin */}
+                        {item.targetPct > 0 && (
+                          <div 
+                            style={{ left: `${Math.min(99, Math.max(1, item.targetPct))}%` }} 
+                            className="w-1 h-full bg-indigo-600 dark:bg-indigo-400 absolute top-0 z-30 rounded-xs shadow-md"
+                            title={`Meta Alvo: ${item.targetPct.toFixed(1)}%`}
+                          />
+                        )}
                       </div>
 
-                      {/* Bar B: Meta Ideal vs Distância */}
-                      <div className="space-y-1">
-                        <div className="flex justify-between font-bold text-muted-foreground">
-                          <span>Meta Desejada ({item.targetPct.toFixed(1)}%)</span>
-                          <span>
-                            {Math.abs(distanceToTarget) < 0.3 ? (
-                              <span className="text-emerald-500 font-extrabold">🎯 Meta Atingida</span>
-                            ) : distanceToTarget > 0 ? (
-                              <span className="text-amber-500 font-bold">Falta {distanceToTarget.toFixed(1)}%</span>
-                            ) : (
-                              <span className="text-indigo-400 font-bold">+{Math.abs(distanceToTarget).toFixed(1)}% acima</span>
-                            )}
-                          </span>
-                        </div>
-                        <div className="h-3 w-full bg-muted/60 rounded-xl relative overflow-hidden p-0.5 border border-border/30">
-                          <div 
-                            style={{ width: `${Math.min(100, item.targetPct)}%` }} 
-                            className="h-full bg-indigo-500/40 dark:bg-indigo-500/50 border border-indigo-500/60 rounded-lg transition-all"
-                            title={`Meta: ${item.targetPct.toFixed(1)}%`}
-                          />
-                        </div>
+                      <div className="flex justify-between text-[10px] text-muted-foreground font-semibold px-0.5">
+                        <span>Valor Atual: {formatCurrency(item.currentValue)}</span>
+                        <span>Preço Cota: {formatCurrency(item.price)}</span>
+                        <span>Projeção: {formatCurrency(item.currentValue + item.purchaseSubtotal)}</span>
                       </div>
                     </div>
                   </div>
@@ -1206,7 +1201,7 @@ export function RebalanceWizard({
                 const distanceToTarget = cls.targetPct - cls.projectedPct;
 
                 return (
-                  <div key={cls.type} className="p-4 rounded-2xl border border-border/50 bg-card hover:bg-muted/10 transition-all space-y-3">
+                  <div key={cls.type} className="p-4 rounded-2xl border border-border/50 bg-card hover:bg-muted/10 transition-all space-y-3 shadow-xs">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-black text-sm text-foreground">{cls.type}</span>
@@ -1220,24 +1215,26 @@ export function RebalanceWizard({
                         )}
                       </div>
 
-                      <div className="flex items-center gap-3 text-xs font-bold flex-wrap">
-                        <span className="text-muted-foreground">Atual: {cls.currentPct.toFixed(1)}%</span>
-                        <span className="text-emerald-600 dark:text-emerald-400 font-extrabold">
-                          Pós: {cls.projectedPct.toFixed(1)}% {pctGained > 0.05 && `(+${pctGained.toFixed(1)}%)`}
-                        </span>
-                        <span className="text-indigo-600 dark:text-indigo-400 font-black">
-                          Meta: {cls.targetPct.toFixed(1)}%
-                        </span>
+                      <div className="flex items-center gap-2.5 text-xs font-bold flex-wrap">
+                        <div className="px-2 py-0.5 rounded-lg bg-muted/50 border border-border/40 text-muted-foreground text-[11px]">
+                          Atual: <strong className="text-foreground">{cls.currentPct.toFixed(1)}%</strong>
+                        </div>
+                        <div className="px-2 py-0.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-[11px]">
+                          Pós: <strong>{cls.projectedPct.toFixed(1)}%</strong> {pctGained > 0.05 && `(+${pctGained.toFixed(1)}%)`}
+                        </div>
+                        <div className="px-2 py-0.5 rounded-lg bg-indigo-500/10 border border-indigo-500/20 text-indigo-600 dark:text-indigo-400 text-[11px]">
+                          Meta: <strong>{cls.targetPct.toFixed(1)}%</strong>
+                        </div>
                       </div>
                     </div>
 
                     {/* Class progress track */}
                     <div className="space-y-1">
-                      <div className="h-3.5 w-full bg-muted/60 rounded-xl relative overflow-hidden flex p-0.5 border border-border/30">
+                      <div className="h-4 w-full bg-muted/60 rounded-xl relative overflow-hidden flex p-0.5 border border-border/40">
                         {/* Current weight */}
                         <div 
                           style={{ width: `${Math.min(100, cls.currentPct)}%` }} 
-                          className="h-full bg-slate-400/70 dark:bg-slate-500/70 rounded-l-lg transition-all"
+                          className="h-full bg-slate-400/80 dark:bg-slate-500/80 rounded-l-lg transition-all"
                           title={`Atual: ${cls.currentPct.toFixed(1)}%`}
                         />
                         {/* Added Aporte segment */}
@@ -1248,23 +1245,21 @@ export function RebalanceWizard({
                             title={`Novo Aporte: +${pctGained.toFixed(1)}%`}
                           />
                         )}
-                        {/* Target Marker */}
-                        <div 
-                          style={{ left: `${Math.min(99, cls.targetPct)}%` }} 
-                          className="w-1.5 h-full bg-indigo-500 absolute top-0 z-30 rounded-xs shadow-xs"
-                          title={`Meta: ${cls.targetPct.toFixed(1)}%`}
-                        />
+                        {/* Target Marker Pin */}
+                        {cls.targetPct > 0 && (
+                          <div 
+                            style={{ left: `${Math.min(99, Math.max(1, cls.targetPct))}%` }} 
+                            className="w-1 h-full bg-indigo-600 dark:bg-indigo-400 absolute top-0 z-30 rounded-xs shadow-md"
+                            title={`Meta: ${cls.targetPct.toFixed(1)}%`}
+                          />
+                        )}
                       </div>
-                      <div className="flex justify-between text-[10px] text-muted-foreground font-bold pt-0.5 flex-wrap gap-1">
-                        <span>Atual: {formatCurrency(cls.currentValue)}</span>
+                      <div className="flex justify-between text-[10px] text-muted-foreground font-semibold pt-0.5 flex-wrap gap-1">
+                        <span>Patrimônio Atual: {formatCurrency(cls.currentValue)}</span>
                         <span>
-                          {Math.abs(distanceToTarget) < 0.5 ? (
-                            <span className="text-emerald-500 font-bold">✓ Classe Alinhada com a Meta</span>
-                          ) : distanceToTarget > 0 ? (
-                            <span className="text-amber-500">Falta {distanceToTarget.toFixed(1)}% para a meta macro</span>
-                          ) : (
-                            <span className="text-indigo-400">Sobre-alocada ({cls.projectedPct.toFixed(1)}%)</span>
-                          )}
+                          {Math.abs(distanceToTarget) < 0.3 
+                            ? '✓ Meta atingida' 
+                            : distanceToTarget > 0 ? `Falta ${distanceToTarget.toFixed(1)}% para a meta` : `+${Math.abs(distanceToTarget).toFixed(1)}% acima da meta`}
                         </span>
                       </div>
                     </div>
