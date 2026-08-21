@@ -19,7 +19,9 @@ import {
   HelpCircle,
   Target,
   AlertCircle,
-  PlusCircle
+  PlusCircle,
+  X,
+  Wallet
 } from 'lucide-react';
 import { 
   simulatePortfolioContribution, 
@@ -104,6 +106,13 @@ export const ProfessionalRebalanceEngineView: React.FC<ProfessionalRebalanceEngi
     return invReserve ? (invReserve.saldo_atual || 0) : 0;
   }, [invReserve]);
 
+  const [localQuotes, setLocalQuotes] = useState<Record<string, number>>({});
+  const [pendingOrders, setPendingOrders] = useState<any[] | null>(null);
+
+  const effectiveQuotes = useMemo(() => {
+    return { ...quotes, ...localQuotes };
+  }, [quotes, localQuotes]);
+
   const [activeStrategy, setActiveStrategy] = useState<RebalanceStrategyType>(initialRulesConfig?.activeStrategy || 'rebalance');
   const [rulesConfig, setRulesConfig] = useState<RebalanceRulesConfig>(initialRulesConfig || DEFAULT_REBALANCE_RULES);
   const [stockWeights, setStockWeights] = useState<any>(undefined);
@@ -140,32 +149,57 @@ export const ProfessionalRebalanceEngineView: React.FC<ProfessionalRebalanceEngi
     setEditableTargets(effectiveTargets);
   }, [effectiveTargets]);
 
-  // Normalize positions for rebalance engine
+  // Normalize positions for rebalance engine (including assets from target goals that have 0 current quantity)
   const normalizedPositions: PositionForRebalance[] = useMemo(() => {
-    const totalVal = positions.reduce((acc, p) => {
-      const quote = quotes[p.ticker] || p.currentPrice || p.averagePrice || 0;
-      const qty = p.totalQuantity ?? p.quantity ?? 0;
-      return acc + (quote * qty);
-    }, 0);
-
-    return positions
+    // 1. Map existing holding positions
+    const holdings = positions
       .filter(p => (p.totalQuantity ?? p.quantity ?? 0) > 0)
       .map(p => {
         const qty = p.totalQuantity ?? p.quantity ?? 0;
-        const quote = quotes[p.ticker] || p.currentPrice || p.averagePrice || 0;
+        const quote = effectiveQuotes[p.ticker] || p.currentPrice || p.averagePrice || 10;
         const curVal = quote * qty;
-        const curPct = totalVal > 0 ? (curVal / totalVal) * 100 : 0;
         return {
-          ticker: p.ticker,
-          type: p.type,
+          ticker: p.ticker.toUpperCase().trim(),
+          type: p.type || 'Ação',
           quantity: qty,
           averagePrice: p.averagePrice ?? (p.totalInvested && qty > 0 ? p.totalInvested / qty : 0),
           currentPrice: quote,
           currentValue: curVal,
-          currentPct: curPct
+          currentPct: 0 // Calculated dynamically below
         };
       });
-  }, [positions, quotes]);
+
+    const holdingTickers = new Set(holdings.map(h => h.ticker));
+
+    // 2. Map targets that are not in holding positions (custom study assets / newly added assets)
+    const watchlistAssets: PositionForRebalance[] = [];
+    Object.keys(editableTargets).forEach(ticker => {
+      const tickerUpper = ticker.toUpperCase().trim();
+      if (!holdingTickers.has(tickerUpper)) {
+        const targetSpec = editableTargets[ticker];
+        // Fallback pricing hierarchy: effectiveQuotes > targetSpec's lastPrice if any > standard placeholder 10
+        const quote = effectiveQuotes[tickerUpper] || (targetSpec as any).lastPrice || 10;
+        watchlistAssets.push({
+          ticker: tickerUpper,
+          type: targetSpec.type || 'Ação',
+          quantity: 0,
+          averagePrice: 0,
+          currentPrice: quote,
+          currentValue: 0,
+          currentPct: 0
+        });
+      }
+    });
+
+    const combined = [...holdings, ...watchlistAssets];
+    
+    // 3. Calculate accurate percentages based on combined total current value
+    const totalVal = combined.reduce((acc, p) => acc + p.currentValue, 0);
+    return combined.map(p => ({
+      ...p,
+      currentPct: totalVal > 0 ? (p.currentValue / totalVal) * 100 : 0
+    }));
+  }, [positions, effectiveQuotes, editableTargets]);
 
   // Run Real-Time Rebalance Simulation
   const simulation = useMemo(() => {
@@ -178,12 +212,12 @@ export const ProfessionalRebalanceEngineView: React.FC<ProfessionalRebalanceEngi
       editableTargets,
       contributionAmount,
       activeRules,
-      quotes,
+      effectiveQuotes,
       { ...b3AssetsMetadata, ...customMetadata },
       stockWeights,
       fiiWeights
     );
-  }, [normalizedPositions, editableTargets, contributionAmount, activeStrategy, rulesConfig, quotes, b3AssetsMetadata, stockWeights, fiiWeights, customMetadata]);
+  }, [normalizedPositions, editableTargets, contributionAmount, activeStrategy, rulesConfig, effectiveQuotes, b3AssetsMetadata, stockWeights, fiiWeights, customMetadata]);
 
   // Handle Save Targets
   const handleSaveTargetAllocations = async () => {
@@ -198,16 +232,20 @@ export const ProfessionalRebalanceEngineView: React.FC<ProfessionalRebalanceEngi
     }
   };
 
-  // Handle Quick Execute Orders
-  const handleExecuteContributionOrders = async () => {
+  // Handle Quick Execute Orders (opens individual fee confirmation modal)
+  const handleExecuteContributionOrders = () => {
     const ordersToExecute = simulation.suggestions
       .filter(s => s.suggestedQuantity > 0)
       .map(s => ({
         ticker: s.ticker,
         type: s.type,
         price: s.currentPrice,
+        priceStr: s.currentPrice.toString(),
         quantity: s.suggestedQuantity,
-        amount: s.suggestedAmount
+        quantityStr: s.suggestedQuantity.toString(),
+        amount: s.suggestedAmount,
+        costs: 0, // Default starting fee is 0.00
+        costsStr: "0.00"
       }));
 
     if (ordersToExecute.length === 0) {
@@ -215,16 +253,24 @@ export const ProfessionalRebalanceEngineView: React.FC<ProfessionalRebalanceEngi
       return;
     }
 
+    setPendingOrders(ordersToExecute);
+  };
+
+  // Perform transaction insertion with manually defined fees
+  const handleConfirmBatchBuy = async () => {
+    if (!pendingOrders || isExecuting) return;
     setIsExecuting(true);
     try {
       if (onBatchBuy) {
-        await onBatchBuy(ordersToExecute);
+        await onBatchBuy(pendingOrders);
       } else if (onExecuteOrders) {
-        await onExecuteOrders(ordersToExecute);
+        await onExecuteOrders(pendingOrders);
       }
-      toast.success(`${ordersToExecute.length} ordens de aporte executadas com sucesso na carteira!`);
+      toast.success(`${pendingOrders.length} ordens de aporte executadas com sucesso com taxas personalizadas!`);
+      setPendingOrders(null);
     } catch (err) {
-      toast.error('Erro ao registrar ordens de aporte.');
+      console.error(err);
+      toast.error('Erro ao registrar lançamentos de aporte.');
     } finally {
       setIsExecuting(false);
     }
@@ -561,18 +607,23 @@ export const ProfessionalRebalanceEngineView: React.FC<ProfessionalRebalanceEngi
         isOpen={isAddAssetModalOpen}
         onClose={() => setIsAddAssetModalOpen(false)}
         onAddAsset={(newAsset) => {
+          const tickerUpper = newAsset.ticker.toUpperCase().trim();
           setEditableTargets(prev => ({
             ...prev,
-            [newAsset.ticker]: {
-              ticker: newAsset.ticker,
+            [tickerUpper]: {
+              ticker: tickerUpper,
               type: newAsset.type as any,
               targetPct: newAsset.targetPct,
               minPct: Math.max(0, newAsset.targetPct - 2),
               maxPct: newAsset.targetPct + 5,
-              locked: false
+              locked: false,
+              lastPrice: newAsset.price // Preserve the price in target allocation metadata
             }
           }));
-          if (!quotes[newAsset.ticker] && onFetchQuote) onFetchQuote(newAsset.ticker);
+          if (newAsset.price > 0) {
+            setLocalQuotes(prev => ({ ...prev, [tickerUpper]: newAsset.price }));
+          }
+          if (!effectiveQuotes[tickerUpper] && onFetchQuote) onFetchQuote(tickerUpper);
         }}
         existingTickers={Object.keys(editableTargets)}
         leftoverTargetPct={Math.max(0, 100 - Object.values(editableTargets).reduce((acc, t) => acc + (t.targetPct || 0), 0))}
@@ -781,6 +832,219 @@ export const ProfessionalRebalanceEngineView: React.FC<ProfessionalRebalanceEngi
             <div className="p-4 sm:p-6 md:p-8 border-t border-slate-800 bg-slate-900/50 flex items-center justify-end gap-3.5">
               <button onClick={() => setIsEditingRules(false)} className="px-5 py-2.5 text-xs font-black text-slate-400 hover:text-white uppercase tracking-wider transition-all">Cancelar</button>
               <button onClick={() => { if(onSaveRulesConfig) onSaveRulesConfig(rulesConfig); setIsEditingRules(false); toast.success('Regras aplicadas!'); }} className="px-6 py-3 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black uppercase tracking-widest rounded-xl shadow-lg shadow-emerald-600/10 transition-all">Aplicar Travas</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CONFIRMAÇÃO DE APORTES E TAXAS MODAL */}
+      {pendingOrders !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/90 backdrop-blur-xl animate-in fade-in duration-300">
+          <div className="bg-slate-900 border border-slate-800 w-full max-w-lg max-h-[92vh] sm:max-h-[90vh] rounded-3xl md:rounded-[2rem] shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-300">
+            {/* Header */}
+            <div className="p-4 sm:p-6 border-b border-slate-800 flex items-center justify-between bg-slate-900/50">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shrink-0">
+                  <Coins className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm sm:text-base font-black text-white tracking-tight">Confirmar Lançamentos</h3>
+                  <p className="text-[9px] text-slate-500 font-bold uppercase tracking-widest mt-0.5">Defina as taxas de corretagem e emolumentos</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setPendingOrders(null)} 
+                className="p-2 bg-slate-800 hover:bg-slate-700 rounded-xl text-slate-400 transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Scrollable pending orders list */}
+            <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4 custom-scrollbar">
+              <div className="space-y-3.5">
+                {pendingOrders.map((order, index) => {
+                  const subtotal = order.price * order.quantity;
+                  const totalWithCosts = subtotal + (order.costs || 0);
+
+                  return (
+                    <div 
+                      key={order.ticker} 
+                      className="p-4 rounded-2xl border border-slate-800 bg-slate-950/40 space-y-3.5 transition-colors hover:border-slate-700/80"
+                    >
+                      {/* Top Row: Info & Subtotal */}
+                      <div className="flex items-start justify-between">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-base font-black text-white tracking-tight">{order.ticker}</span>
+                            <span className="text-[9px] font-black text-indigo-400 bg-indigo-500/10 border border-indigo-500/20 px-1.5 py-0.5 rounded uppercase tracking-wider">{order.type}</span>
+                          </div>
+                          <span className="text-[10px] font-bold text-slate-400 block mt-1">
+                            Lançamento de compra individualizado
+                          </span>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-[10px] font-bold text-slate-500 block uppercase tracking-wider">Subtotal</span>
+                          <span className="text-sm font-black text-white">
+                            R$ {subtotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* 3 inputs in parallel for fast mobile touch typing and customization */}
+                      <div className="grid grid-cols-3 gap-2.5 pt-3 border-t border-slate-800/60">
+                        {/* Qtd */}
+                        <div className="space-y-1">
+                          <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest block">Qtd</label>
+                          <input 
+                            type="text" 
+                            inputMode="numeric"
+                            value={order.quantityStr ?? "0"}
+                            onChange={(e) => {
+                              const inputVal = e.target.value.replace(',', '.');
+                              // Allow numbers and optionally decimal digits
+                              if (inputVal === '' || /^[0-9]*\.?[0-9]*$/.test(inputVal)) {
+                                const parsedQty = parseFloat(inputVal) || 0;
+                                const parsedCosts = parseFloat(order.costsStr || "0") || 0;
+                                const parsedPrice = parseFloat(order.priceStr || "0") || 0;
+                                const newSubtotal = parsedPrice * parsedQty;
+                                setPendingOrders(prev => {
+                                  if (!prev) return null;
+                                  return prev.map((o, idx) => 
+                                    idx === index 
+                                      ? { 
+                                          ...o, 
+                                          quantityStr: inputVal, 
+                                          quantity: parsedQty,
+                                          amount: Math.round((newSubtotal + parsedCosts) * 100) / 100
+                                        } 
+                                      : o
+                                  );
+                                });
+                              }
+                            }}
+                            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1.5 text-xs font-black text-white focus:border-indigo-500 outline-none transition-all"
+                          />
+                        </div>
+
+                        {/* Preço */}
+                        <div className="space-y-1">
+                          <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest block">Preço (R$)</label>
+                          <input 
+                            type="text" 
+                            inputMode="decimal"
+                            value={order.priceStr ?? "0.00"}
+                            onChange={(e) => {
+                              const inputVal = e.target.value.replace(',', '.');
+                              if (inputVal === '' || /^[0-9]*\.?[0-9]*$/.test(inputVal)) {
+                                const parsedQty = parseFloat(order.quantityStr || "0") || 0;
+                                const parsedCosts = parseFloat(order.costsStr || "0") || 0;
+                                const parsedPrice = parseFloat(inputVal) || 0;
+                                const newSubtotal = parsedPrice * parsedQty;
+                                setPendingOrders(prev => {
+                                  if (!prev) return null;
+                                  return prev.map((o, idx) => 
+                                    idx === index 
+                                      ? { 
+                                          ...o, 
+                                          priceStr: inputVal, 
+                                          price: parsedPrice,
+                                          amount: Math.round((newSubtotal + parsedCosts) * 100) / 100
+                                        } 
+                                      : o
+                                  );
+                                });
+                              }
+                            }}
+                            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1.5 text-xs font-black text-white focus:border-indigo-500 outline-none transition-all"
+                          />
+                        </div>
+
+                        {/* Taxa */}
+                        <div className="space-y-1">
+                          <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest block">Taxa (R$)</label>
+                          <input 
+                            type="text" 
+                            inputMode="decimal"
+                            value={order.costsStr ?? "0.00"}
+                            onChange={(e) => {
+                              const inputVal = e.target.value.replace(',', '.');
+                              if (inputVal === '' || /^[0-9]*\.?[0-9]*$/.test(inputVal)) {
+                                const parsedQty = parseFloat(order.quantityStr || "0") || 0;
+                                const parsedPrice = parseFloat(order.priceStr || "0") || 0;
+                                const parsedCosts = parseFloat(inputVal) || 0;
+                                const newSubtotal = parsedPrice * parsedQty;
+                                setPendingOrders(prev => {
+                                  if (!prev) return null;
+                                  return prev.map((o, idx) => 
+                                    idx === index 
+                                      ? { 
+                                          ...o, 
+                                          costsStr: inputVal, 
+                                          costs: parsedCosts,
+                                          amount: Math.round((newSubtotal + parsedCosts) * 100) / 100
+                                        } 
+                                      : o
+                                  );
+                                });
+                              }
+                            }}
+                            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1.5 text-xs font-black text-white focus:border-emerald-500 outline-none transition-all"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Line total */}
+                      <div className="flex items-center justify-between pt-1 text-right">
+                        <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest block">Total deste Lançamento</span>
+                        <span className="text-xs sm:text-sm font-black text-emerald-400 block">
+                          R$ {totalWithCosts.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Resume Summary & Footer */}
+            <div className="p-4 sm:p-6 border-t border-slate-800 bg-slate-950/60 space-y-4">
+              <div className="space-y-2">
+                <div className="flex justify-between text-xs font-bold text-slate-400">
+                  <span>Subtotal dos Ativos:</span>
+                  <span className="text-white">
+                    R$ {pendingOrders.reduce((acc, o) => acc + (o.price * o.quantity), 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  </span>
+                </div>
+                <div className="flex justify-between text-xs font-bold text-slate-400">
+                  <span>Taxas Totais:</span>
+                  <span className="text-white">
+                    R$ {pendingOrders.reduce((acc, o) => acc + (o.costs || 0), 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center pt-2 border-t border-slate-800/80">
+                  <span className="text-xs font-black text-slate-300 uppercase tracking-widest">Dedução Total do Caixa:</span>
+                  <span className="text-base sm:text-lg font-black text-white">
+                    R$ {pendingOrders.reduce((acc, o) => acc + (o.price * o.quantity) + (o.costs || 0), 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  </span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3.5 pt-1.5">
+                <button 
+                  onClick={() => setPendingOrders(null)} 
+                  className="w-full py-3 border border-slate-800 hover:border-slate-700 bg-slate-900/40 text-slate-400 hover:text-white text-[11px] font-black uppercase tracking-widest rounded-xl transition-all"
+                >
+                  Cancelar
+                </button>
+                <button 
+                  onClick={handleConfirmBatchBuy}
+                  disabled={isExecuting}
+                  className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-black uppercase tracking-widest rounded-xl shadow-lg shadow-emerald-600/15 transition-all flex items-center justify-center gap-2"
+                >
+                  {isExecuting ? 'PROCESSANDO...' : 'CONFIRMAR LANÇAMENTOS'}
+                </button>
+              </div>
             </div>
           </div>
         </div>

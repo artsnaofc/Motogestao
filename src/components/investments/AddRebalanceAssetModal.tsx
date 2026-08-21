@@ -185,50 +185,50 @@ export function AddRebalanceAssetModal({
   ).slice(0, 6);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm animate-fade-in overflow-y-auto">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-slate-950/90 backdrop-blur-md animate-fade-in overflow-y-auto">
       <div 
-        className="w-full max-w-lg bg-card border border-border rounded-3xl shadow-2xl overflow-hidden my-8 animate-scale-up"
+        className="w-full max-w-lg bg-card border border-border rounded-2xl sm:rounded-3xl shadow-2xl flex flex-col max-h-[92vh] overflow-hidden my-auto animate-scale-up"
         onClick={e => e.stopPropagation()}
       >
         {/* MODAL HEADER */}
-        <div className="p-5 border-b border-border/60 flex items-center justify-between bg-muted/20">
+        <div className="p-4 sm:p-5 border-b border-border/60 flex items-center justify-between bg-muted/20 shrink-0">
           <div className="flex items-center gap-3">
-            <div className="p-2.5 rounded-2xl bg-indigo-500/10 text-indigo-500">
+            <div className="p-2.5 rounded-xl bg-indigo-500/10 text-indigo-500 shrink-0">
               <PlusCircle className="w-5 h-5 stroke-[2.5]" />
             </div>
             <div>
-              <h3 className="text-base font-black text-foreground">
+              <h3 className="text-sm sm:text-base font-black text-foreground">
                 Adicionar Ativo ao Rebalanceamento
               </h3>
-              <p className="text-xs text-muted-foreground">
-                Inclua um novo ativo em estudo ou planejado para receber aportes.
+              <p className="text-[10px] sm:text-xs text-muted-foreground">
+                Inclua um novo ativo em estudo para receber aportes.
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="p-2 rounded-xl text-muted-foreground hover:text-foreground hover:bg-muted/80 transition-colors"
+            className="p-2 rounded-xl text-muted-foreground hover:text-foreground hover:bg-muted/85 transition-colors shrink-0"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
         {/* MODAL FORM */}
-        <form onSubmit={handleSubmit} className="p-5 space-y-4">
+        <form onSubmit={handleSubmit} className="p-4 sm:p-5 space-y-4 overflow-y-auto flex-1 no-scrollbar">
           {/* Quick Suggestions Chips */}
           {availableSuggestions.length > 0 && (
             <div className="space-y-1.5">
-              <label className="text-[11px] font-bold text-muted-foreground flex items-center gap-1">
+              <label className="text-[10px] sm:text-[11px] font-bold text-muted-foreground flex items-center gap-1">
                 <Sparkles className="w-3 h-3 text-amber-500" />
                 Sugestões Rápidas:
               </label>
-              <div className="flex flex-wrap gap-1.5">
+              <div className="flex flex-wrap gap-1.5 max-h-[100px] overflow-y-auto p-0.5 no-scrollbar">
                 {availableSuggestions.map(s => (
                   <button
                     key={s.ticker}
                     type="button"
                     onClick={() => handleSelectSuggested(s)}
-                    className="px-2.5 py-1 text-xs font-bold rounded-xl border border-border/60 bg-muted/40 hover:bg-indigo-500/10 hover:border-indigo-500/30 hover:text-indigo-600 dark:hover:text-indigo-400 transition-all flex items-center gap-1.5"
+                    className="px-2.5 py-1 text-xs font-bold rounded-lg border border-border/60 bg-muted/40 hover:bg-indigo-500/10 hover:border-indigo-500/30 hover:text-indigo-600 dark:hover:text-indigo-400 transition-all flex items-center gap-1.5 shrink-0"
                   >
                     <span>{s.ticker}</span>
                     <span className="text-[9px] px-1 py-0.2 rounded bg-secondary text-secondary-foreground">
@@ -242,8 +242,8 @@ export function AddRebalanceAssetModal({
 
           {/* Ticker & Type */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-muted-foreground">
+            <div className="space-y-1">
+              <label className="text-[11px] font-bold text-muted-foreground">
                 Código / Ticker <span className="text-rose-500">*</span>
               </label>
               <div className="relative">
@@ -252,7 +252,7 @@ export function AddRebalanceAssetModal({
                   value={ticker}
                   onChange={e => handleTickerChange(e.target.value)}
                   placeholder="Ex: WEGE3, MXRF11"
-                  className="w-full bg-background border border-border/70 rounded-2xl px-3.5 py-2.5 text-sm font-black text-foreground uppercase tracking-wider outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500 transition-all pr-10"
+                  className="w-full bg-background border border-border/70 rounded-xl px-3 py-2 text-sm font-black text-foreground uppercase tracking-wider outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500 transition-all pr-10"
                   required
                 />
                 <button
@@ -267,14 +267,14 @@ export function AddRebalanceAssetModal({
               </div>
             </div>
 
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-muted-foreground">
+            <div className="space-y-1">
+              <label className="text-[11px] font-bold text-muted-foreground">
                 Tipo de Ativo
               </label>
               <select
                 value={type}
                 onChange={e => setType(e.target.value)}
-                className="w-full bg-background border border-border/70 rounded-2xl px-3.5 py-2.5 text-xs font-bold text-foreground outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500 transition-all"
+                className="w-full bg-background border border-border/70 rounded-xl px-3 py-2.5 text-xs font-black text-foreground outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500 transition-all"
               >
                 {COMMON_ASSET_TYPES.map(t => (
                   <option key={t} value={t}>{t}</option>
@@ -285,14 +285,14 @@ export function AddRebalanceAssetModal({
 
           {/* Price & Target % */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div className="space-y-1.5">
+            <div className="space-y-1">
               <div className="flex items-center justify-between">
-                <label className="text-xs font-bold text-muted-foreground flex items-center gap-1">
+                <label className="text-[11px] font-bold text-muted-foreground flex items-center gap-1">
                   <DollarSign className="w-3.5 h-3.5 text-emerald-500" />
-                  Preço Cota Estimado (R$) <span className="text-rose-500">*</span>
+                  Preço Estimado (R$) <span className="text-rose-500">*</span>
                 </label>
                 {quoteProviderUsed && (
-                  <span className="text-[9px] font-extrabold text-indigo-500 uppercase bg-indigo-500/10 px-1.5 py-0.5 rounded">
+                  <span className="text-[8.5px] font-extrabold text-indigo-500 uppercase bg-indigo-500/10 px-1.5 py-0.5 rounded">
                     {quoteProviderUsed}
                   </span>
                 )}
@@ -301,14 +301,14 @@ export function AddRebalanceAssetModal({
                 value={priceStr}
                 onChange={setPriceStr}
                 placeholder="0,00"
-                className="w-full bg-background border border-border/70 rounded-2xl px-3.5 py-2.5 text-sm font-black text-foreground outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500 transition-all"
+                className="w-full bg-background border border-border/70 rounded-xl px-3 py-2 text-sm font-black text-foreground outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500 transition-all"
                 required
               />
             </div>
 
-            <div className="space-y-1.5">
+            <div className="space-y-1">
               <div className="flex items-center justify-between">
-                <label className="text-xs font-bold text-muted-foreground flex items-center gap-1">
+                <label className="text-[11px] font-bold text-muted-foreground flex items-center gap-1">
                   <Percent className="w-3.5 h-3.5 text-indigo-500" />
                   Meta Ideal (%) <span className="text-rose-500">*</span>
                 </label>
@@ -316,7 +316,7 @@ export function AddRebalanceAssetModal({
                   <button
                     type="button"
                     onClick={() => setTargetPct(Number(leftoverTargetPct.toFixed(1)))}
-                    className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 hover:underline"
+                    className="text-[9.5px] font-bold text-emerald-600 dark:text-emerald-400 hover:underline"
                   >
                     Usar folga ({leftoverTargetPct.toFixed(1)}%)
                   </button>
@@ -330,7 +330,7 @@ export function AddRebalanceAssetModal({
                   step="0.1"
                   value={targetPct}
                   onChange={e => setTargetPct(Number(e.target.value))}
-                  className="w-full bg-background border border-border/70 rounded-2xl px-3.5 py-2.5 text-sm font-black text-foreground outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500 transition-all"
+                  className="w-full bg-background border border-border/70 rounded-xl px-3 py-2 text-sm font-black text-foreground outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500 transition-all"
                   required
                 />
                 <span className="text-sm font-black text-muted-foreground">%</span>
@@ -340,7 +340,7 @@ export function AddRebalanceAssetModal({
 
           {/* Quick preset buttons for target pct */}
           <div className="flex items-center gap-1.5 flex-wrap pt-1">
-            <span className="text-[10px] font-bold text-muted-foreground uppercase mr-1">Metas Rápidas:</span>
+            <span className="text-[9px] font-bold text-muted-foreground uppercase mr-1">Metas Rápidas:</span>
             {[5, 10, 15, 20, 25].map(p => (
               <button
                 key={p}
@@ -358,28 +358,28 @@ export function AddRebalanceAssetModal({
           </div>
 
           {/* Info Banner */}
-          <div className="p-3 rounded-2xl bg-indigo-500/5 border border-indigo-500/20 text-xs text-muted-foreground space-y-1">
+          <div className="p-3 rounded-xl bg-indigo-500/5 border border-indigo-500/20 text-xs text-muted-foreground space-y-1">
             <div className="flex items-center gap-1.5 font-bold text-indigo-600 dark:text-indigo-400">
               <CheckCircle2 className="w-3.5 h-3.5" />
               Como funciona no Rebalanceamento?
             </div>
-            <p className="text-[11px] leading-relaxed">
+            <p className="text-[10px] leading-relaxed">
               Como você ainda não possui cotas desse ativo, a carteira o considerará com <strong>0 cotas atuais</strong>. O assistente calculará a quantidade ideal de cotas para comprar com o seu novo aporte até atingir a meta estipulada.
             </p>
           </div>
 
           {/* ACTIONS */}
-          <div className="flex items-center justify-end gap-2 pt-3 border-t border-border/50">
+          <div className="flex items-center justify-end gap-2 pt-3 border-t border-border/50 shrink-0">
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2.5 text-xs font-bold rounded-2xl border border-border/60 bg-card text-muted-foreground hover:text-foreground transition-all"
+              className="px-4 py-2 text-xs font-bold rounded-xl border border-border/60 bg-card text-muted-foreground hover:text-foreground transition-all"
             >
               Cancelar
             </button>
             <button
               type="submit"
-              className="px-5 py-2.5 text-xs font-bold rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white shadow-md shadow-indigo-500/20 transition-all flex items-center gap-1.5"
+              className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-md shadow-indigo-500/10 transition-all flex items-center gap-1.5"
             >
               <PlusCircle className="w-4 h-4" />
               Adicionar ao Plano
