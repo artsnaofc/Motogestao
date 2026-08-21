@@ -244,7 +244,7 @@ export function calculateStockScore(
   // Calculate weighted total score
   const totalWeight = Object.values(weights).reduce((a, b) => a + b, 0);
   const rawTotalScore = pillars.reduce((acc, p) => acc + p.weightedScore, 0);
-  const totalScore = Math.round((rawTotalScore / (totalWeight || 100)) * 100) / 100;
+  const totalScore = Math.round(totalWeight > 0 ? (rawTotalScore * 100) / totalWeight : rawTotalScore);
 
   const grade: 'A+' | 'A' | 'B+' | 'B' | 'C' | 'D' = 
     totalScore >= 88 ? 'A+' :
@@ -476,7 +476,7 @@ export function calculateFiiScore(
 
   const totalWeight = Object.values(weights).reduce((a, b) => a + b, 0);
   const rawTotalScore = pillars.reduce((acc, p) => acc + p.weightedScore, 0);
-  const totalScore = Math.round((rawTotalScore / (totalWeight || 100)) * 100) / 100;
+  const totalScore = Math.round(totalWeight > 0 ? (rawTotalScore * 100) / totalWeight : rawTotalScore);
 
   const grade: 'A+' | 'A' | 'B+' | 'B' | 'C' | 'D' = 
     totalScore >= 88 ? 'A+' :

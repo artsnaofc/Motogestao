@@ -67,6 +67,7 @@ interface AssetRaioXModalProps {
   formatCurrency: (val: number) => string;
   formatPercent: (val: number) => string;
   analysisMode?: 'received_only' | 'include_provisioned';
+  initialTab?: 'geral' | 'proventos' | 'valuation' | 'historico' | 'fundamentos';
 }
 
 export function AssetRaioXModal({
@@ -81,11 +82,12 @@ export function AssetRaioXModal({
   onDeleteTx,
   formatCurrency,
   formatPercent,
-  analysisMode = 'received_only'
+  analysisMode = 'received_only',
+  initialTab = 'geral'
 }: AssetRaioXModalProps) {
   const { settings, valuationTargets } = useData();
   const { b3AssetsMetadata, loadAssetHistory } = useInvestments();
-  const [activeTab, setActiveTab] = useState<'geral' | 'proventos' | 'valuation' | 'historico' | 'fundamentos'>('geral');
+  const [activeTab, setActiveTab] = useState<'geral' | 'proventos' | 'valuation' | 'historico' | 'fundamentos'>(initialTab);
   const [copiedCnpj, setCopiedCnpj] = useState(false);
   const [historyRecords, setHistoryRecords] = useState<any[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
@@ -1210,6 +1212,14 @@ export function AssetRaioXModal({
                     </div>
 
                     <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
+                      <span className="text-[10px] font-bold text-muted-foreground uppercase">PSR (Preço/Receita)</span>
+                      <p className="text-lg font-black text-foreground">
+                        {(fundamental as B3StockFundamental).psr !== undefined && (fundamental as B3StockFundamental).psr !== null ? `${(fundamental as B3StockFundamental).psr.toFixed(2)}` : '-'}
+                      </p>
+                      <p className="text-[10px] text-muted-foreground">Preço sobre Vendas</p>
+                    </div>
+
+                    <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
                       <span className="text-[10px] font-bold text-muted-foreground uppercase">Dividend Yield 12M</span>
                       <p className="text-lg font-black text-emerald-600">
                         {fundamental.dividendYield ? `${fundamental.dividendYield.toFixed(1)}%` : '-'}
@@ -1218,19 +1228,67 @@ export function AssetRaioXModal({
                     </div>
 
                     <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
-                      <span className="text-[10px] font-bold text-muted-foreground uppercase">ROE</span>
+                      <span className="text-[10px] font-bold text-muted-foreground uppercase">P/Ativo</span>
                       <p className="text-lg font-black text-foreground">
-                        {(fundamental as B3StockFundamental).roe ? `${(fundamental as B3StockFundamental).roe.toFixed(1)}%` : '-'}
+                        {(fundamental as B3StockFundamental).pAtivo !== undefined && (fundamental as B3StockFundamental).pAtivo !== null ? `${(fundamental as B3StockFundamental).pAtivo.toFixed(2)}` : '-'}
                       </p>
-                      <p className="text-[10px] text-muted-foreground">Retorno s/ Patrimônio</p>
+                      <p className="text-[10px] text-muted-foreground">Preço sobre Ativos</p>
                     </div>
 
                     <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
-                      <span className="text-[10px] font-bold text-muted-foreground uppercase">ROIC</span>
+                      <span className="text-[10px] font-bold text-muted-foreground uppercase">P/Cap. Giro</span>
                       <p className="text-lg font-black text-foreground">
-                        {(fundamental as B3StockFundamental).roic ? `${(fundamental as B3StockFundamental).roic.toFixed(1)}%` : '-'}
+                        {(fundamental as B3StockFundamental).pCapGiro !== undefined && (fundamental as B3StockFundamental).pCapGiro !== null ? `${(fundamental as B3StockFundamental).pCapGiro.toFixed(2)}` : '-'}
                       </p>
-                      <p className="text-[10px] text-muted-foreground">Retorno s/ Capital Inv.</p>
+                      <p className="text-[10px] text-muted-foreground">Preço sobre Cap. Giro</p>
+                    </div>
+
+                    <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
+                      <span className="text-[10px] font-bold text-muted-foreground uppercase">P/EBIT</span>
+                      <p className="text-lg font-black text-foreground">
+                        {(fundamental as B3StockFundamental).pEbit !== undefined && (fundamental as B3StockFundamental).pEbit !== null ? `${(fundamental as B3StockFundamental).pEbit.toFixed(2)}` : '-'}
+                      </p>
+                      <p className="text-[10px] text-muted-foreground">Preço sobre Lucro Op.</p>
+                    </div>
+
+                    <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
+                      <span className="text-[10px] font-bold text-muted-foreground uppercase">P/Ativ Circ. Liq</span>
+                      <p className="text-lg font-black text-foreground">
+                        {(fundamental as B3StockFundamental).pAtivCircLiq !== undefined && (fundamental as B3StockFundamental).pAtivCircLiq !== null ? `${(fundamental as B3StockFundamental).pAtivCircLiq.toFixed(2)}` : '-'}
+                      </p>
+                      <p className="text-[10px] text-muted-foreground">Preço / Ativ. Circ. Liq.</p>
+                    </div>
+
+                    <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
+                      <span className="text-[10px] font-bold text-muted-foreground uppercase">EV/EBIT</span>
+                      <p className="text-lg font-black text-foreground">
+                        {(fundamental as B3StockFundamental).evEbit !== undefined && (fundamental as B3StockFundamental).evEbit !== null ? `${(fundamental as B3StockFundamental).evEbit.toFixed(2)}` : '-'}
+                      </p>
+                      <p className="text-[10px] text-muted-foreground">Valuation / Operacional</p>
+                    </div>
+
+                    <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
+                      <span className="text-[10px] font-bold text-muted-foreground uppercase">EV/EBITDA</span>
+                      <p className="text-lg font-black text-foreground">
+                        {(fundamental as B3StockFundamental).evEbitda !== undefined && (fundamental as B3StockFundamental).evEbitda !== null ? `${(fundamental as B3StockFundamental).evEbitda.toFixed(2)}` : '-'}
+                      </p>
+                      <p className="text-[10px] text-muted-foreground">Valuation / Caixa</p>
+                    </div>
+
+                    <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
+                      <span className="text-[10px] font-bold text-muted-foreground uppercase">Margem Bruta</span>
+                      <p className="text-lg font-black text-foreground">
+                        {(fundamental as B3StockFundamental).grossMargin !== undefined && (fundamental as B3StockFundamental).grossMargin !== null ? `${(fundamental as B3StockFundamental).grossMargin.toFixed(1)}%` : '-'}
+                      </p>
+                      <p className="text-[10px] text-muted-foreground">Lucro Bruto / Receita</p>
+                    </div>
+
+                    <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
+                      <span className="text-[10px] font-bold text-muted-foreground uppercase">Margem EBIT</span>
+                      <p className="text-lg font-black text-foreground">
+                        {(fundamental as B3StockFundamental).ebitMargin !== undefined && (fundamental as B3StockFundamental).ebitMargin !== null ? `${(fundamental as B3StockFundamental).ebitMargin.toFixed(1)}%` : '-'}
+                      </p>
+                      <p className="text-[10px] text-muted-foreground">EBIT / Receita Líq.</p>
                     </div>
 
                     <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
@@ -1242,11 +1300,53 @@ export function AssetRaioXModal({
                     </div>
 
                     <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
-                      <span className="text-[10px] font-bold text-muted-foreground uppercase">Dívida Líq. / EBITDA</span>
+                      <span className="text-[10px] font-bold text-muted-foreground uppercase">Liq. Corrente</span>
                       <p className="text-lg font-black text-foreground">
-                        {(fundamental as B3StockFundamental).netDebtOverEbitda !== undefined ? `${(fundamental as B3StockFundamental).netDebtOverEbitda.toFixed(1)}x` : '-'}
+                        {(fundamental as B3StockFundamental).currentLiquidity !== undefined && (fundamental as B3StockFundamental).currentLiquidity !== null ? `${(fundamental as B3StockFundamental).currentLiquidity.toFixed(2)}` : '-'}
                       </p>
-                      <p className="text-[10px] text-muted-foreground">Alavancagem financeira</p>
+                      <p className="text-[10px] text-muted-foreground">Ativo Circ / Passivo Circ</p>
+                    </div>
+
+                    <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
+                      <span className="text-[10px] font-bold text-muted-foreground uppercase">ROIC</span>
+                      <p className="text-lg font-black text-foreground">
+                        {(fundamental as B3StockFundamental).roic ? `${(fundamental as B3StockFundamental).roic.toFixed(1)}%` : '-'}
+                      </p>
+                      <p className="text-[10px] text-muted-foreground">Retorno s/ Capital Inv.</p>
+                    </div>
+
+                    <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
+                      <span className="text-[10px] font-bold text-muted-foreground uppercase">ROE</span>
+                      <p className="text-lg font-black text-foreground">
+                        {(fundamental as B3StockFundamental).roe ? `${(fundamental as B3StockFundamental).roe.toFixed(1)}%` : '-'}
+                      </p>
+                      <p className="text-[10px] text-muted-foreground">Retorno s/ Patrimônio</p>
+                    </div>
+
+                    <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
+                      <span className="text-[10px] font-bold text-muted-foreground uppercase">Liquidez (2 meses)</span>
+                      <p className="text-sm font-black text-foreground truncate">
+                        {fundamental.dailyLiquidity ? formatCurrency(fundamental.dailyLiquidity) : '-'}
+                      </p>
+                      <p className="text-[10px] text-muted-foreground">Volume diário médio</p>
+                    </div>
+
+                    <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
+                      <span className="text-[10px] font-bold text-muted-foreground uppercase">Patrimônio Líquido</span>
+                      <p className="text-sm font-black text-foreground truncate">
+                        {(fundamental as B3StockFundamental).netWorth ? formatCurrency((fundamental as B3StockFundamental).netWorth) : '-'}
+                      </p>
+                      <p className="text-[10px] text-muted-foreground">Valor patrimonial</p>
+                    </div>
+
+                    <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
+                      <span className="text-[10px] font-bold text-muted-foreground uppercase">Dív. Líq. / Patrimônio</span>
+                      <p className="text-lg font-black text-foreground">
+                        {(fundamental as B3StockFundamental).netDebtOverEquity !== undefined && (fundamental as B3StockFundamental).netDebtOverEquity !== null ? `${(fundamental as B3StockFundamental).netDebtOverEquity.toFixed(2)}` : (
+                          (fundamental as B3StockFundamental).netDebtOverEbitda !== undefined ? `${(fundamental as B3StockFundamental).netDebtOverEbitda.toFixed(1)}x` : '-'
+                        )}
+                      </p>
+                      <p className="text-[10px] text-muted-foreground">Alavancagem s/ Patrimônio</p>
                     </div>
 
                     <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
@@ -1259,6 +1359,14 @@ export function AssetRaioXModal({
                   </div>
                 ) : (
                   <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+                    <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
+                      <span className="text-[10px] font-bold text-muted-foreground uppercase">Segmento</span>
+                      <p className="text-sm font-black text-foreground truncate">
+                        {(fundamental as B3FiiFundamental).fiiSegment || '-'}
+                      </p>
+                      <p className="text-[10px] text-muted-foreground">Tipo: {(fundamental as B3FiiFundamental).fiiType || 'Tijolo'}</p>
+                    </div>
+
                     <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
                       <span className="text-[10px] font-bold text-muted-foreground uppercase">P/VP</span>
                       <p className="text-lg font-black text-foreground">
@@ -1284,19 +1392,19 @@ export function AssetRaioXModal({
                     </div>
 
                     <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
-                      <span className="text-[10px] font-bold text-muted-foreground uppercase">Vacância Média</span>
-                      <p className="text-lg font-black text-foreground">
-                        {(fundamental as B3FiiFundamental).physicalVacancy !== undefined ? `${(fundamental as B3FiiFundamental).physicalVacancy.toFixed(1)}%` : '-'}
+                      <span className="text-[10px] font-bold text-muted-foreground uppercase">Valor de Mercado</span>
+                      <p className="text-sm font-black text-foreground truncate">
+                        {(fundamental as B3FiiFundamental).marketCap ? formatCurrency((fundamental as B3FiiFundamental).marketCap) : '-'}
                       </p>
-                      <p className="text-[10px] text-muted-foreground">Área desocupada</p>
+                      <p className="text-[10px] text-muted-foreground">Cap. Bolsa</p>
                     </div>
 
                     <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
-                      <span className="text-[10px] font-bold text-muted-foreground uppercase">Cap Rate Médio</span>
-                      <p className="text-lg font-black text-foreground">
-                        {(fundamental as B3FiiFundamental).capRate ? `${(fundamental as B3FiiFundamental).capRate.toFixed(1)}%` : '-'}
+                      <span className="text-[10px] font-bold text-muted-foreground uppercase">Liquidez Diária</span>
+                      <p className="text-sm font-black text-foreground truncate">
+                        {fundamental.dailyLiquidity ? formatCurrency(fundamental.dailyLiquidity) : '-'}
                       </p>
-                      <p className="text-[10px] text-muted-foreground">Renda imobiliária bruta</p>
+                      <p className="text-[10px] text-muted-foreground">Volume de negociação</p>
                     </div>
 
                     <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
@@ -1308,19 +1416,35 @@ export function AssetRaioXModal({
                     </div>
 
                     <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
-                      <span className="text-[10px] font-bold text-muted-foreground uppercase">Segmento</span>
+                      <span className="text-[10px] font-bold text-muted-foreground uppercase">Preço do m²</span>
                       <p className="text-sm font-black text-foreground truncate">
-                        {(fundamental as B3FiiFundamental).fiiSegment || '-'}
+                        {(fundamental as B3FiiFundamental).pricePerSqm ? `R$ ${(fundamental as B3FiiFundamental).pricePerSqm.toLocaleString('pt-BR')}` : '-'}
                       </p>
-                      <p className="text-[10px] text-muted-foreground">Tipo: {(fundamental as B3FiiFundamental).fiiType || 'Tijolo'}</p>
+                      <p className="text-[10px] text-muted-foreground">Valor por m² construído</p>
                     </div>
 
                     <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
-                      <span className="text-[10px] font-bold text-muted-foreground uppercase">Liquidez Média Diária</span>
+                      <span className="text-[10px] font-bold text-muted-foreground uppercase">Aluguel por m²</span>
                       <p className="text-sm font-black text-foreground truncate">
-                        {fundamental.dailyLiquidity ? formatCurrency(fundamental.dailyLiquidity) : '-'}
+                        {(fundamental as B3FiiFundamental).rentPerSqm ? `R$ ${(fundamental as B3FiiFundamental).rentPerSqm.toLocaleString('pt-BR')}` : '-'}
                       </p>
-                      <p className="text-[10px] text-muted-foreground">Volume de negociação</p>
+                      <p className="text-[10px] text-muted-foreground">Renda mensal por m²</p>
+                    </div>
+
+                    <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
+                      <span className="text-[10px] font-bold text-muted-foreground uppercase">Cap Rate Médio</span>
+                      <p className="text-lg font-black text-foreground">
+                        {(fundamental as B3FiiFundamental).capRate ? `${(fundamental as B3FiiFundamental).capRate.toFixed(1)}%` : '-'}
+                      </p>
+                      <p className="text-[10px] text-muted-foreground">Renda imobiliária bruta</p>
+                    </div>
+
+                    <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
+                      <span className="text-[10px] font-bold text-muted-foreground uppercase">Vacância Média</span>
+                      <p className="text-lg font-black text-foreground">
+                        {(fundamental as B3FiiFundamental).physicalVacancy !== undefined ? `${(fundamental as B3FiiFundamental).physicalVacancy.toFixed(1)}%` : '-'}
+                      </p>
+                      <p className="text-[10px] text-muted-foreground">Área desocupada</p>
                     </div>
                   </div>
                 )}

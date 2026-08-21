@@ -19,7 +19,7 @@ import { toast } from 'sonner';
 interface FundamentusImportModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onImport: (items: any[], source?: string) => Promise<{ created: number; updated: number; errors: number }>;
+  onImport: (items: any[], source?: string) => Promise<{ created: number; updated: number; errors: number; supabaseError?: string | null }>;
 }
 
 export const FundamentusImportModal: React.FC<FundamentusImportModalProps> = ({
@@ -30,7 +30,7 @@ export const FundamentusImportModal: React.FC<FundamentusImportModalProps> = ({
   const [pastedText, setPastedText] = useState('');
   const [selectedTypeOverride, setSelectedTypeOverride] = useState<'auto' | 'Ação' | 'FII'>('auto');
   const [isProcessing, setIsProcessing] = useState(false);
-  const [importReport, setImportReport] = useState<{ created: number; updated: number; errors: number } | null>(null);
+  const [importReport, setImportReport] = useState<{ created: number; updated: number; errors: number; supabaseError?: string | null } | null>(null);
 
   // Real-time parsing of pasted text
   const parseResult: FundamentusParseResult = useMemo(() => {
@@ -136,9 +136,27 @@ VISC11\tShoppings\t118,20\t8,80%\t8,60%\t0,96\t3.800.000.000,00\t4.800.000,00\t2
               <div className="space-y-1">
                 <h3 className="text-xl font-black text-foreground">Importação Finalizada com Sucesso!</h3>
                 <p className="text-xs text-muted-foreground max-w-md mx-auto">
-                  A base de dados e os registros históricos foram atualizados. Os novos ativos já estão prontos para análise e rebalanceamento.
+                  A base de dados local e os registros foram atualizados. Os ativos já estão prontos para análise e rebalanceamento.
                 </p>
               </div>
+
+              {/* Supabase Status Banner */}
+              {importReport.supabaseError ? (
+                <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-2xl max-w-md mx-auto text-left text-xs space-y-1 text-amber-900 dark:text-amber-200">
+                  <div className="font-bold flex items-center gap-1.5 text-amber-700 dark:text-amber-400">
+                    <AlertCircle className="w-4 h-4 shrink-0" />
+                    <span>Salvo no Cache Local (Aviso Supabase)</span>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground leading-relaxed">
+                    Os dados estão salvos e ativos no navegador. Para persistir diretamente no Supabase sem erros, execute o arquivo <code className="bg-amber-500/20 px-1 py-0.5 rounded text-[10px] font-mono">supabase_b3_metadata.sql</code> no seu SQL Editor.
+                  </p>
+                </div>
+              ) : (
+                <div className="p-2.5 bg-emerald-500/10 border border-emerald-500/30 rounded-2xl max-w-md mx-auto text-xs font-bold text-emerald-600 dark:text-emerald-400 flex items-center justify-center gap-2">
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>Sincronizado e Salvo com Sucesso no Supabase (Nuvem)</span>
+                </div>
+              )}
 
               <div className="grid grid-cols-3 gap-3 max-w-md mx-auto pt-2">
                 <div className="p-4 rounded-2xl bg-emerald-500/5 border border-emerald-500/20 text-center">

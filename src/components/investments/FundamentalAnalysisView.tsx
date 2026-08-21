@@ -86,12 +86,23 @@ export const FundamentalAnalysisView: React.FC<FundamentalAnalysisViewProps> = (
     return positions.map(p => p.ticker);
   }, [explicitTickers, positions]);
 
+  // Saved Filters from LocalStorage
+  const savedFilters = useMemo(() => {
+    try {
+      const saved = localStorage.getItem('b3_fundamental_filters_v2');
+      if (saved) return JSON.parse(saved);
+    } catch (e) {
+      console.error('Failed to load saved fundamental filters:', e);
+    }
+    return null;
+  }, []);
+
   // Strategy & View State
-  const [rankingMethod, setRankingMethod] = useState<RankingMethod>('score_b3');
-  const [activeTypeTab, setActiveTypeTab] = useState<'all' | 'Ação' | 'FII'>('all');
+  const [rankingMethod, setRankingMethod] = useState<RankingMethod>(savedFilters?.rankingMethod || 'score_b3');
+  const [activeTypeTab, setActiveTypeTab] = useState<'all' | 'Ação' | 'FII'>(savedFilters?.activeTypeTab || 'all');
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedSector, setSelectedSector] = useState<string>('all');
-  const [onlyPortfolio, setOnlyPortfolio] = useState<boolean>(false);
+  const [selectedSector, setSelectedSector] = useState<string>(savedFilters?.selectedSector || 'all');
+  const [onlyPortfolio, setOnlyPortfolio] = useState<boolean>(savedFilters?.onlyPortfolio || false);
   const [selectedAssetForScore, setSelectedAssetForScore] = useState<AssetScoreResult | null>(null);
   const [showConfigModal, setShowConfigModal] = useState(false);
 
@@ -103,8 +114,8 @@ export const FundamentalAnalysisView: React.FC<FundamentalAnalysisViewProps> = (
   const [pageSize, setPageSize] = useState<number>(20);
 
   // Custom Sorting State
-  const [sortField, setSortField] = useState<string>('score');
-  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
+  const [sortField, setSortField] = useState<string>(savedFilters?.sortField || 'default');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>(savedFilters?.sortOrder || 'desc');
 
   // Modals for Import & Manual Create/Edit
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
@@ -115,53 +126,154 @@ export const FundamentalAnalysisView: React.FC<FundamentalAnalysisViewProps> = (
   const [stockWeights, setStockWeights] = useState<StockScoreWeights>(DEFAULT_STOCK_WEIGHTS);
   const [fiiWeights, setFiiWeights] = useState<FiiScoreWeights>(DEFAULT_FII_WEIGHTS);
 
-  // Filters State
-  const [minRoe, setMinRoe] = useState<number>(0);
-  const [maxPl, setMaxPl] = useState<number>(100);
-  const [maxDebtEbitda, setMaxDebtEbitda] = useState<number>(5.0);
-  const [minDy, setMinDy] = useState<number>(0);
-  const [maxVacancy, setMaxVacancy] = useState<number>(50);
-  const [maxPvpFii, setMaxPvpFii] = useState<number>(1.5);
+  // Expanded Filters State
+  const [minRoe, setMinRoe] = useState<number>(savedFilters?.minRoe ?? 0);
+  const [minRoic, setMinRoic] = useState<number>(savedFilters?.minRoic ?? 0);
+  const [maxPl, setMaxPl] = useState<number>(savedFilters?.maxPl ?? 100);
+  const [maxDebtEbitda, setMaxDebtEbitda] = useState<number>(savedFilters?.maxDebtEbitda ?? 5.0);
+  const [minDy, setMinDy] = useState<number>(savedFilters?.minDy ?? 0);
+  const [maxDy, setMaxDy] = useState<number>(savedFilters?.maxDy ?? 100);
+  const [maxVacancy, setMaxVacancy] = useState<number>(savedFilters?.maxVacancy ?? 50);
+  const [maxPvpFii, setMaxPvpFii] = useState<number>(savedFilters?.maxPvpFii ?? 1.5);
+  const [minNetMargin, setMinNetMargin] = useState<number>(savedFilters?.minNetMargin ?? -100);
+  const [minLiquidity, setMinLiquidity] = useState<number>(savedFilters?.minLiquidity ?? 0); // in Millions
+  const [minFfoYield, setMinFfoYield] = useState<number>(savedFilters?.minFfoYield ?? 0);
 
-  // Reset all filters
+  // Persist filter states to LocalStorage on changes
+  React.useEffect(() => {
+    try {
+      const stateToSave = {
+        rankingMethod,
+        activeTypeTab,
+        selectedSector,
+        onlyPortfolio,
+        minRoe,
+        minRoic,
+        maxPl,
+        maxDebtEbitda,
+        minDy,
+        maxDy,
+        maxVacancy,
+        maxPvpFii,
+        minNetMargin,
+        minLiquidity,
+        minFfoYield,
+        sortField,
+        sortOrder,
+      };
+      localStorage.setItem('b3_fundamental_filters_v2', JSON.stringify(stateToSave));
+    } catch (e) {
+      console.error('Failed to save fundamental filters:', e);
+    }
+  }, [
+    rankingMethod, activeTypeTab, selectedSector, onlyPortfolio,
+    minRoe, minRoic, maxPl, maxDebtEbitda, minDy, maxDy,
+    maxVacancy, maxPvpFii, minNetMargin, minLiquidity, minFfoYield,
+    sortField, sortOrder
+  ]);
+
+  // Reset all filters & sorting
   const handleResetFilters = () => {
+    try {
+      localStorage.removeItem('b3_fundamental_filters_v2');
+    } catch (e) {
+      console.error(e);
+    }
     setMinRoe(0);
+    setMinRoic(0);
     setMaxPl(100);
     setMaxDebtEbitda(5.0);
     setMinDy(0);
+    setMaxDy(100);
     setMaxVacancy(50);
     setMaxPvpFii(1.5);
+    setMinNetMargin(-100);
+    setMinLiquidity(0);
+    setMinFfoYield(0);
     setSearchQuery('');
     setSelectedSector('all');
     setOnlyPortfolio(false);
+    setSortField('default');
+    setSortOrder('desc');
     setCurrentPage(1);
-    toast.info('Filtros restaurados para o padrão.');
+    toast.info('Filtros e ordenação restaurados para o padrão.');
+  };
+
+  // Trigger Raio-X Modal
+  const handleTriggerRaioX = (item: any) => {
+    const tk = typeof item === 'string' ? item : item.ticker;
+    if (onOpenRaioX) {
+      onOpenRaioX(tk);
+    } else if (onSelectAsset) {
+      const existing = positions.find((p: any) => p.ticker === tk);
+      if (existing) {
+        onSelectAsset(existing);
+      } else {
+        const itemObj = typeof item === 'object' ? item : null;
+        onSelectAsset({
+          ticker: tk,
+          name: itemObj?.fund?.name || tk,
+          type: itemObj?.fund?.type || (tk.endsWith('11') ? 'FII' : 'Ação'),
+          assetType: itemObj?.fund?.type || (tk.endsWith('11') ? 'FII' : 'Ação'),
+          quantity: 0,
+          averagePrice: 0,
+          totalInvested: 0,
+          currentPrice: itemObj?.quote || itemObj?.fund?.lastPrice || 0,
+          currentTotal: 0,
+          profitability: 0,
+          profitabilityAmount: 0,
+          allocationPct: 0,
+        });
+      }
+    }
+  };
+
+  // Toggle Column Sort
+  const handleSortColumn = (field: string) => {
+    if (sortField === field) {
+      setSortOrder(prev => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortField(field);
+      setSortOrder(field === 'ticker' || field === 'magic_score' ? 'asc' : 'desc');
+    }
   };
 
   // Apply method preset
   const handleApplyMethodPreset = (method: RankingMethod) => {
     setRankingMethod(method);
+    setSortField('default');
+    setSortOrder('desc');
     setCurrentPage(1);
 
-    if (method === 'barsi_bazin') {
+    if (method === 'score_b3' || method === 'custom') {
+      setActiveTypeTab('all');
+      if (method === 'score_b3') {
+        toast.success('Score B3 Universal ativado (Aba: Todos os Ativos).');
+      }
+    } else if (method === 'barsi_bazin') {
+      setActiveTypeTab('Ação');
       setMinDy(6);
+      setMaxDy(100);
       setMinRoe(8);
       setMaxDebtEbitda(3.5);
-      toast.success('Método Barsi/Bazin ativado: Filtro DY >= 6% e dívida equilibrada.');
+      toast.success('Método Barsi/Bazin ativado: DY >= 6%, ROE >= 8% (Aba: Ações).');
     } else if (method === 'graham') {
+      setActiveTypeTab('Ação');
       setMaxPl(15);
       setMinRoe(10);
-      toast.success('Fórmula de Graham ativada: Filtro P/L <= 15 e ROE >= 10%.');
+      toast.success('Fórmula de Graham ativada: P/L <= 15, ROE >= 10% (Aba: Ações).');
     } else if (method === 'greenblatt') {
       setActiveTypeTab('Ação');
       setMinRoe(12);
-      toast.success('Magic Formula de Greenblatt ativada: Ranks de ROIC e P/L.');
+      setMinRoic(12);
+      toast.success('Magic Formula de Greenblatt ativada: ROIC Mín 12% (Aba: Ações).');
     } else if (method === 'fii_quality') {
       setActiveTypeTab('FII');
-      setMaxVacancy(15);
-      setMaxPvpFii(1.15);
-      setMinDy(7);
-      toast.success('FIIs High Quality ativado: Vacância < 15% e P/VP justo.');
+      setMaxVacancy(10);
+      setMaxPvpFii(1.10);
+      setMinDy(6.5);
+      setMaxDy(16.0);
+      toast.success('FIIs High Quality ativado: Vacância < 10%, DY 6,5%-16%, P/VP <= 1.10 (Aba: FIIs).');
     }
   };
 
@@ -332,19 +444,27 @@ export const FundamentalAnalysisView: React.FC<FundamentalAnalysisViewProps> = (
     };
   }, [b3AssetsMetadata]);
 
-  // Extract unique Sectors / Segments for Filter Dropdown
+  // Extract unique Sectors / Segments for Filter Dropdown (filtering only those with data available for active type)
   const availableSectors = useMemo(() => {
     const sectors = new Set<string>();
     baseComputedAssets.forEach(item => {
+      if (activeTypeTab !== 'all' && item.fund.type !== activeTypeTab) return;
       const sec = item.fund.type === 'Ação' 
         ? item.fund.sector 
         : item.fund.fiiSegment;
-      if (sec && sec !== 'Outros' && sec !== 'Geral') {
-        sectors.add(sec);
+      if (sec && sec.trim() && sec !== 'Outros' && sec !== 'Geral' && sec !== 'N/A') {
+        sectors.add(sec.trim());
       }
     });
     return Array.from(sectors).sort();
-  }, [baseComputedAssets]);
+  }, [baseComputedAssets, activeTypeTab]);
+
+  // Reset selectedSector if no longer in availableSectors
+  React.useEffect(() => {
+    if (selectedSector !== 'all' && !availableSectors.includes(selectedSector)) {
+      setSelectedSector('all');
+    }
+  }, [availableSectors, selectedSector]);
 
   // 2. Filter & Rank Assets
   const filteredAssets = useMemo(() => {
@@ -372,28 +492,83 @@ export const FundamentalAnalysisView: React.FC<FundamentalAnalysisViewProps> = (
         if (!matchTicker && !matchName && !matchSector) return false;
       }
 
+      // Liquidity Filter (All)
+      if (minLiquidity > 0) {
+        const rawLiq = item.fund.dailyLiquidity || 0;
+        // Normalize if rawLiq is given in thousands (e.g. 1500 = R$ 1.5M) vs raw Reais
+        const liqInReais = (rawLiq > 0 && rawLiq < 50000) ? rawLiq * 1000 : rawLiq;
+        if (liqInReais < minLiquidity * 1_000_000) return false;
+      }
+
       // Stock Filters
       if (item.fund.type === 'Ação') {
         const sf = item.fund as B3StockFundamental;
         if (minRoe > 0 && sf.roe < minRoe) return false;
+        if (minRoic > 0 && (sf.roic || 0) < minRoic) return false;
         if (maxPl < 100 && sf.pl > maxPl) return false;
         if (maxDebtEbitda < 5.0 && sf.sector !== 'Financeiro' && sf.netDebtOverEbitda > maxDebtEbitda) return false;
         if (minDy > 0 && sf.dividendYield < minDy) return false;
+        if (maxDy < 100 && sf.dividendYield > maxDy) return false;
+        if (minNetMargin > -100 && (sf.netMargin || 0) < minNetMargin) return false;
       }
 
       // FII Filters
       if (item.fund.type === 'FII') {
         const ff = item.fund as B3FiiFundamental;
         if (minDy > 0 && ff.dividendYield < minDy) return false;
+        if (maxDy < 100 && ff.dividendYield > maxDy) return false;
         if (maxVacancy < 50 && ff.fiiType === 'Tijolo' && ff.physicalVacancy > maxVacancy) return false;
         if (maxPvpFii < 1.5 && ff.pvp > maxPvpFii) return false;
+        if (minFfoYield > 0 && (ff.ffoYield || 0) < minFfoYield) return false;
       }
 
       return true;
     });
 
-    // Ranking Logic according to selected methodology
+    // Ranking Logic according to selected methodology or custom column click
     result.sort((a, b) => {
+      // If user clicked a specific column to sort by, prioritize custom column sort
+      if (sortField !== 'default') {
+        let valA: any = 0;
+        let valB: any = 0;
+
+        if (sortField === 'ticker') { valA = a.ticker; valB = b.ticker; }
+        else if (sortField === 'score') { valA = a.score.totalScore; valB = b.score.totalScore; }
+        else if (sortField === 'price') { valA = a.quote || 0; valB = b.quote || 0; }
+        else if (sortField === 'pvp') { valA = a.fund.pvp || 0; valB = b.fund.pvp || 0; }
+        else if (sortField === 'dy') { valA = a.fund.dividendYield || 0; valB = b.fund.dividendYield || 0; }
+        else if (sortField === 'barsi_margin') { valA = a.barsiMarginPct; valB = b.barsiMarginPct; }
+        else if (sortField === 'graham_discount') { valA = a.grahamDiscountPct; valB = b.grahamDiscountPct; }
+        else if (sortField === 'magic_score') { valA = a.magicRankScore; valB = b.magicRankScore; }
+        else if (sortField === 'pl_ffo') {
+          valA = a.fund.type === 'Ação' ? (a.fund as B3StockFundamental).pl || 0 : (a.fund as B3FiiFundamental).ffoYield || 0;
+          valB = b.fund.type === 'Ação' ? (b.fund as B3StockFundamental).pl || 0 : (b.fund as B3FiiFundamental).ffoYield || 0;
+        }
+        else if (sortField === 'roe_vacancy') {
+          valA = a.fund.type === 'Ação' ? (a.fund as B3StockFundamental).roe || 0 : -(a.fund as B3FiiFundamental).physicalVacancy || 0;
+          valB = b.fund.type === 'Ação' ? (b.fund as B3StockFundamental).roe || 0 : -(b.fund as B3FiiFundamental).physicalVacancy || 0;
+        }
+        else if (sortField === 'margin_cap') {
+          valA = a.fund.type === 'Ação' ? (a.fund as B3StockFundamental).netMargin || 0 : (a.fund as B3FiiFundamental).capRate || 0;
+          valB = b.fund.type === 'Ação' ? (b.fund as B3StockFundamental).netMargin || 0 : (b.fund as B3FiiFundamental).capRate || 0;
+        }
+        else if (sortField === 'liquidity') {
+          const rawA = a.fund.dailyLiquidity || 0;
+          const rawB = b.fund.dailyLiquidity || 0;
+          valA = (rawA > 0 && rawA < 50000) ? rawA * 1000 : rawA;
+          valB = (rawB > 0 && rawB < 50000) ? rawB * 1000 : rawB;
+        }
+
+        if (typeof valA === 'string' && typeof valB === 'string') {
+          return sortOrder === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
+        }
+
+        if (valA < valB) return sortOrder === 'asc' ? -1 : 1;
+        if (valA > valB) return sortOrder === 'asc' ? 1 : -1;
+        return 0;
+      }
+
+      // Default methodology sorting
       if (rankingMethod === 'score_b3') {
         return b.score.totalScore - a.score.totalScore;
       }
@@ -410,20 +585,7 @@ export const FundamentalAnalysisView: React.FC<FundamentalAnalysisViewProps> = (
         return b.fiiQualityScore - a.fiiQualityScore;
       }
 
-      // Custom Sorting
-      let valA: any = a.score.totalScore;
-      let valB: any = b.score.totalScore;
-
-      if (sortField === 'ticker') { valA = a.ticker; valB = b.ticker; }
-      else if (sortField === 'price') { valA = a.quote; valB = b.quote; }
-      else if (sortField === 'pvp') { valA = a.fund.pvp; valB = b.fund.pvp; }
-      else if (sortField === 'dy') { valA = a.fund.dividendYield; valB = b.fund.dividendYield; }
-      else if (sortField === 'pl') { valA = (a.fund as B3StockFundamental).pl || 0; valB = (b.fund as B3StockFundamental).pl || 0; }
-      else if (sortField === 'roe') { valA = (a.fund as B3StockFundamental).roe || 0; valB = (b.fund as B3StockFundamental).roe || 0; }
-
-      if (valA < valB) return sortOrder === 'asc' ? -1 : 1;
-      if (valA > valB) return sortOrder === 'asc' ? 1 : -1;
-      return 0;
+      return b.score.totalScore - a.score.totalScore;
     });
 
     return result;
@@ -433,12 +595,17 @@ export const FundamentalAnalysisView: React.FC<FundamentalAnalysisViewProps> = (
     onlyPortfolio, 
     selectedSector, 
     deferredSearchQuery, 
-    minRoe, 
+    minRoe,
+    minRoic,
     maxPl, 
     maxDebtEbitda, 
-    minDy, 
+    minDy,
+    maxDy,
     maxVacancy, 
     maxPvpFii, 
+    minNetMargin,
+    minLiquidity,
+    minFfoYield,
     rankingMethod,
     sortField,
     sortOrder
@@ -500,98 +667,131 @@ export const FundamentalAnalysisView: React.FC<FundamentalAnalysisViewProps> = (
 
   return (
     <div className="space-y-6">
-      {/* 1. Header & Quick Controls */}
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-card border border-border/80 p-5 rounded-3xl shadow-xs">
-        <div>
-          <div className="flex items-center gap-2.5">
-            <div className="p-2.5 rounded-2xl bg-primary/10 text-primary">
+      {/* 1. Header & Quick Controls - Redesigned Desktop/Mobile Hierarchy */}
+      <div className="bg-card border border-border/80 p-5 rounded-3xl shadow-sm space-y-4">
+        {/* Top Row: Title, Subtitle, Info Badges */}
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-border/50">
+          <div className="flex items-start gap-3">
+            <div className="p-2.5 rounded-2xl bg-gradient-to-br from-primary/20 to-primary/10 text-primary border border-primary/20 shrink-0">
               <Sparkles className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="text-base font-black text-foreground flex items-center gap-2">
-                Análise Fundamentalista B3 & Raking de Valuation
-                <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="text-base font-black text-foreground tracking-tight">
+                  Análise Fundamentalista B3 & Valuation Engine
+                </h3>
+                <span className="text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">
                   {baseComputedAssets.length} Ativos Base
                 </span>
-              </h3>
+              </div>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Otimizado para alta performance. Filtre e ranqueie por Barsi, Graham, Greenblatt ou Score B3.
+                Painel analítico para seleção de ações e fundos imobiliários por Valuation, Saúde Financeira e Score Multicritério.
               </p>
             </div>
           </div>
-        </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          {/* Class Switcher Tabs */}
-          <div className="flex items-center bg-muted/40 p-1 rounded-2xl border border-border/60 text-xs font-bold">
-            <button
-              onClick={() => { setActiveTypeTab('all'); setCurrentPage(1); }}
-              className={`px-3 py-1.5 rounded-xl transition-all ${
-                activeTypeTab === 'all' ? 'bg-card text-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              Todos ({baseComputedAssets.length})
-            </button>
-            <button
-              onClick={() => { setActiveTypeTab('Ação'); setCurrentPage(1); }}
-              className={`px-3 py-1.5 rounded-xl transition-all ${
-                activeTypeTab === 'Ação' ? 'bg-card text-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              Ações ({baseComputedAssets.filter(a => a.fund.type === 'Ação').length})
-            </button>
-            <button
-              onClick={() => { setActiveTypeTab('FII'); setCurrentPage(1); }}
-              className={`px-3 py-1.5 rounded-xl transition-all ${
-                activeTypeTab === 'FII' ? 'bg-card text-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              FIIs ({baseComputedAssets.filter(a => a.fund.type === 'FII').length})
-            </button>
-          </div>
-
-          {/* Freshness Status Indicator */}
+          {/* Freshness Status Badge */}
           {importFreshness.status !== 'empty' && (
-            <div className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold border transition-all ${
+            <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-2xl text-xs font-bold border transition-all shrink-0 ${
               importFreshness.isStale 
                 ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30' 
                 : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30'
             }`}>
-              <Clock className="w-3.5 h-3.5" />
-              <span>Base B3: {importFreshness.label}</span>
+              <Clock className="w-3.5 h-3.5 shrink-0" />
+              <div className="text-left leading-tight">
+                <span className="block text-[10px] text-muted-foreground font-semibold">Base de Dados Fundamentus</span>
+                <span className="font-extrabold">{importFreshness.label}</span>
+              </div>
             </div>
           )}
+        </div>
 
-          {/* Action: Import Fundamentus */}
-          <button
-            onClick={() => setIsImportModalOpen(true)}
-            className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 rounded-xl text-xs font-black border border-emerald-500/20 transition-all shadow-xs cursor-pointer"
-          >
-            <UploadCloud className="w-4 h-4" />
-            Importar Fundamentus
-          </button>
+        {/* Bottom Row: Control Groups */}
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+          {/* Control Group 1: Asset Type Segment Switcher */}
+          <div className="flex items-center bg-muted/40 p-1 rounded-2xl border border-border/60 text-xs font-bold shadow-xs">
+            <button
+              onClick={() => { setActiveTypeTab('all'); setCurrentPage(1); }}
+              className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl transition-all cursor-pointer ${
+                activeTypeTab === 'all' 
+                  ? 'bg-card text-foreground shadow-xs ring-1 ring-border/80 font-black' 
+                  : 'text-muted-foreground hover:text-foreground hover:bg-muted/40'
+              }`}
+            >
+              <Layers className="w-3.5 h-3.5 text-primary" />
+              <span>Todos</span>
+              <span className={`px-2 py-0.2 text-[10px] rounded-full font-extrabold ${
+                activeTypeTab === 'all' ? 'bg-primary/15 text-primary' : 'bg-muted text-muted-foreground'
+              }`}>
+                {baseComputedAssets.length}
+              </span>
+            </button>
 
-          {/* Action: Manual Asset */}
-          <button
-            onClick={() => {
-              setEditingAssetData(null);
-              setIsManualModalOpen(true);
-            }}
-            className="flex items-center gap-1.5 px-3.5 py-2 bg-primary text-primary-foreground hover:bg-primary/90 rounded-xl text-xs font-black transition-all shadow-xs"
-          >
-            <PlusCircle className="w-4 h-4" />
-            Novo Ativo
-          </button>
+            <button
+              onClick={() => { setActiveTypeTab('Ação'); setCurrentPage(1); }}
+              className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl transition-all cursor-pointer ${
+                activeTypeTab === 'Ação' 
+                  ? 'bg-card text-foreground shadow-xs ring-1 ring-border/80 font-black' 
+                  : 'text-muted-foreground hover:text-foreground hover:bg-muted/40'
+              }`}
+            >
+              <TrendingUp className="w-3.5 h-3.5 text-emerald-500" />
+              <span>Ações</span>
+              <span className={`px-2 py-0.2 text-[10px] rounded-full font-extrabold ${
+                activeTypeTab === 'Ação' ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400' : 'bg-muted text-muted-foreground'
+              }`}>
+                {baseComputedAssets.filter(a => a.fund.type === 'Ação').length}
+              </span>
+            </button>
 
-          {/* Config Score Weights Button */}
-          <button
-            onClick={() => setShowConfigModal(true)}
-            className="flex items-center gap-1.5 px-3 py-2 bg-muted/40 hover:bg-muted/70 text-muted-foreground hover:text-foreground rounded-xl text-xs font-bold border border-border/60 transition-all"
-            title="Ajustar pesos dos pilares do Score B3"
-          >
-            <SlidersHorizontal className="w-3.5 h-3.5" />
-            Pesos
-          </button>
+            <button
+              onClick={() => { setActiveTypeTab('FII'); setCurrentPage(1); }}
+              className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl transition-all cursor-pointer ${
+                activeTypeTab === 'FII' 
+                  ? 'bg-card text-foreground shadow-xs ring-1 ring-border/80 font-black' 
+                  : 'text-muted-foreground hover:text-foreground hover:bg-muted/40'
+              }`}
+            >
+              <Building2 className="w-3.5 h-3.5 text-sky-500" />
+              <span>FIIs</span>
+              <span className={`px-2 py-0.2 text-[10px] rounded-full font-extrabold ${
+                activeTypeTab === 'FII' ? 'bg-sky-500/15 text-sky-600 dark:text-sky-400' : 'bg-muted text-muted-foreground'
+              }`}>
+                {baseComputedAssets.filter(a => a.fund.type === 'FII').length}
+              </span>
+            </button>
+          </div>
+
+          {/* Control Group 2: Action Buttons */}
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => setIsImportModalOpen(true)}
+              className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 rounded-xl text-xs font-black border border-emerald-500/20 transition-all shadow-xs cursor-pointer"
+            >
+              <UploadCloud className="w-4 h-4 text-emerald-500" />
+              Importar Fundamentus
+            </button>
+
+            <button
+              onClick={() => {
+                setEditingAssetData(null);
+                setIsManualModalOpen(true);
+              }}
+              className="flex items-center gap-1.5 px-3.5 py-2 bg-primary text-primary-foreground hover:bg-primary/90 rounded-xl text-xs font-black transition-all shadow-xs cursor-pointer"
+            >
+              <PlusCircle className="w-4 h-4" />
+              Novo Ativo
+            </button>
+
+            <button
+              onClick={() => setShowConfigModal(true)}
+              className="flex items-center gap-1.5 px-3 py-2 bg-muted/40 hover:bg-muted/70 text-muted-foreground hover:text-foreground rounded-xl text-xs font-bold border border-border/60 transition-all cursor-pointer"
+              title="Ajustar pesos dos pilares do Score B3"
+            >
+              <SlidersHorizontal className="w-3.5 h-3.5" />
+              Pesos
+            </button>
+          </div>
         </div>
       </div>
 
@@ -649,156 +849,292 @@ export const FundamentalAnalysisView: React.FC<FundamentalAnalysisViewProps> = (
       )}
 
       {/* 2. Valuation Ranking Strategy Method Selector */}
-      <div className="bg-card border border-border/80 p-5 rounded-3xl space-y-4 shadow-xs">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Trophy className="w-4 h-4 text-amber-500" />
-            <h4 className="text-xs font-black uppercase tracking-wider text-foreground">
-              Metodologia de Seleção & Ranking
-            </h4>
+      <div className="bg-card border border-border/80 p-5 rounded-3xl space-y-4 shadow-sm relative overflow-hidden">
+        <div className="absolute -top-12 -right-12 w-48 h-48 bg-primary/5 rounded-full blur-2xl pointer-events-none" />
+        
+        {/* Card Header */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border/40 pb-3.5">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 bg-gradient-to-br from-amber-500/20 to-primary/20 text-amber-600 dark:text-amber-400 rounded-2xl border border-amber-500/20 shadow-xs">
+              <Trophy className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="text-sm font-black text-foreground tracking-tight flex items-center gap-2">
+                Análise Fundamentalista B3 & Ranking de Valuation
+                <span className="text-[9px] uppercase font-black px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">
+                  Valuation Engine
+                </span>
+              </h3>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Escolha a estratégia de seleção ou fórmula intrínseca para ordenar e ranquear sua base de ativos.
+              </p>
+            </div>
           </div>
-          <span className="text-[11px] font-bold text-muted-foreground">
-            Ordenando por: <strong className="text-primary font-black uppercase">{rankingMethod.replace('_', ' ')}</strong>
-          </span>
+
+          <div className="flex items-center gap-2 self-start sm:self-center">
+            <div className="px-3 py-1.5 bg-muted/50 border border-border/60 rounded-xl text-xs font-bold text-muted-foreground flex items-center gap-2">
+              <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+              <span>
+                Ativos qualificados: <strong className="text-foreground font-black">{filteredAssets.length}</strong>
+              </span>
+            </div>
+          </div>
         </div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
+        {/* Strategy Buttons Grid */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
           {/* Method 1: Score B3 */}
           <button
             onClick={() => handleApplyMethodPreset('score_b3')}
-            className={`p-3 rounded-2xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
+            className={`p-3.5 rounded-2xl border text-left transition-all cursor-pointer flex flex-col justify-between group relative overflow-hidden ${
               rankingMethod === 'score_b3'
-                ? 'bg-primary/10 border-primary text-foreground shadow-xs ring-1 ring-primary/30'
+                ? 'bg-primary/10 border-primary text-foreground shadow-md ring-2 ring-primary/40'
                 : 'bg-muted/20 border-border/60 hover:bg-muted/40 text-muted-foreground hover:text-foreground'
             }`}
           >
             <div className="flex items-center justify-between mb-2">
-              <Crown className={`w-4 h-4 ${rankingMethod === 'score_b3' ? 'text-primary' : 'text-muted-foreground'}`} />
-              <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-muted text-muted-foreground">Score</span>
+              <div className={`p-1.5 rounded-xl ${rankingMethod === 'score_b3' ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}`}>
+                <Crown className="w-4 h-4" />
+              </div>
+              <span className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded-md ${
+                rankingMethod === 'score_b3' ? 'bg-primary/20 text-primary' : 'bg-muted text-muted-foreground'
+              }`}>
+                0 - 100
+              </span>
             </div>
             <div>
-              <p className="text-xs font-black">Score B3</p>
-              <p className="text-[10px] text-muted-foreground leading-tight mt-0.5">Multicritério Ponderado</p>
+              <p className="text-xs font-black text-foreground group-hover:text-primary transition-colors">Score B3</p>
+              <p className="text-[10px] text-muted-foreground leading-tight mt-0.5 font-medium">Multicritério Ponderado</p>
             </div>
           </button>
 
           {/* Method 2: Barsi / Bazin */}
           <button
             onClick={() => handleApplyMethodPreset('barsi_bazin')}
-            className={`p-3 rounded-2xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
+            className={`p-3.5 rounded-2xl border text-left transition-all cursor-pointer flex flex-col justify-between group relative overflow-hidden ${
               rankingMethod === 'barsi_bazin'
-                ? 'bg-emerald-500/10 border-emerald-500 text-foreground shadow-xs ring-1 ring-emerald-500/30'
+                ? 'bg-emerald-500/10 border-emerald-500 text-foreground shadow-md ring-2 ring-emerald-500/40'
                 : 'bg-muted/20 border-border/60 hover:bg-muted/40 text-muted-foreground hover:text-foreground'
             }`}
           >
             <div className="flex items-center justify-between mb-2">
-              <Coins className={`w-4 h-4 ${rankingMethod === 'barsi_bazin' ? 'text-emerald-500' : 'text-muted-foreground'}`} />
-              <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">Teto 6%</span>
+              <div className={`p-1.5 rounded-xl ${rankingMethod === 'barsi_bazin' ? 'bg-emerald-500 text-white' : 'bg-muted text-muted-foreground'}`}>
+                <Coins className="w-4 h-4" />
+              </div>
+              <span className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded-md ${
+                rankingMethod === 'barsi_bazin' ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400' : 'bg-muted text-muted-foreground'
+              }`}>
+                Teto 6%
+              </span>
             </div>
             <div>
-              <p className="text-xs font-black">Barsi & Bazin</p>
-              <p className="text-[10px] text-muted-foreground leading-tight mt-0.5">Margem Teto Dividendos</p>
+              <p className="text-xs font-black text-foreground group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors">Barsi & Bazin</p>
+              <p className="text-[10px] text-muted-foreground leading-tight mt-0.5 font-medium">Preço Teto Dividendos</p>
             </div>
           </button>
 
           {/* Method 3: Graham */}
           <button
             onClick={() => handleApplyMethodPreset('graham')}
-            className={`p-3 rounded-2xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
+            className={`p-3.5 rounded-2xl border text-left transition-all cursor-pointer flex flex-col justify-between group relative overflow-hidden ${
               rankingMethod === 'graham'
-                ? 'bg-blue-500/10 border-blue-500 text-foreground shadow-xs ring-1 ring-blue-500/30'
+                ? 'bg-blue-500/10 border-blue-500 text-foreground shadow-md ring-2 ring-blue-500/40'
                 : 'bg-muted/20 border-border/60 hover:bg-muted/40 text-muted-foreground hover:text-foreground'
             }`}
           >
             <div className="flex items-center justify-between mb-2">
-              <ShieldCheck className={`w-4 h-4 ${rankingMethod === 'graham' ? 'text-blue-500' : 'text-muted-foreground'}`} />
-              <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-600 dark:text-blue-400">Intrínseco</span>
+              <div className={`p-1.5 rounded-xl ${rankingMethod === 'graham' ? 'bg-blue-500 text-white' : 'bg-muted text-muted-foreground'}`}>
+                <ShieldCheck className="w-4 h-4" />
+              </div>
+              <span className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded-md ${
+                rankingMethod === 'graham' ? 'bg-blue-500/20 text-blue-600 dark:text-blue-400' : 'bg-muted text-muted-foreground'
+              }`}>
+                Intrínseco
+              </span>
             </div>
             <div>
-              <p className="text-xs font-black">Benjamin Graham</p>
-              <p className="text-[10px] text-muted-foreground leading-tight mt-0.5">Valor Intrínseco VI</p>
+              <p className="text-xs font-black text-foreground group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">Benjamin Graham</p>
+              <p className="text-[10px] text-muted-foreground leading-tight mt-0.5 font-medium">Valor Intrínseco VI</p>
             </div>
           </button>
 
           {/* Method 4: Greenblatt Magic Formula */}
           <button
             onClick={() => handleApplyMethodPreset('greenblatt')}
-            className={`p-3 rounded-2xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
+            className={`p-3.5 rounded-2xl border text-left transition-all cursor-pointer flex flex-col justify-between group relative overflow-hidden ${
               rankingMethod === 'greenblatt'
-                ? 'bg-purple-500/10 border-purple-500 text-foreground shadow-xs ring-1 ring-purple-500/30'
+                ? 'bg-purple-500/10 border-purple-500 text-foreground shadow-md ring-2 ring-purple-500/40'
                 : 'bg-muted/20 border-border/60 hover:bg-muted/40 text-muted-foreground hover:text-foreground'
             }`}
           >
             <div className="flex items-center justify-between mb-2">
-              <Zap className={`w-4 h-4 ${rankingMethod === 'greenblatt' ? 'text-purple-500' : 'text-muted-foreground'}`} />
-              <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-600 dark:text-purple-400">Magic</span>
+              <div className={`p-1.5 rounded-xl ${rankingMethod === 'greenblatt' ? 'bg-purple-500 text-white' : 'bg-muted text-muted-foreground'}`}>
+                <Zap className="w-4 h-4" />
+              </div>
+              <span className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded-md ${
+                rankingMethod === 'greenblatt' ? 'bg-purple-500/20 text-purple-600 dark:text-purple-400' : 'bg-muted text-muted-foreground'
+              }`}>
+                Magic
+              </span>
             </div>
             <div>
-              <p className="text-xs font-black">Magic Formula</p>
-              <p className="text-[10px] text-muted-foreground leading-tight mt-0.5">ROIC + P/L (Greenblatt)</p>
+              <p className="text-xs font-black text-foreground group-hover:text-purple-600 dark:group-hover:text-purple-400 transition-colors">Magic Formula</p>
+              <p className="text-[10px] text-muted-foreground leading-tight mt-0.5 font-medium">ROIC + P/L (Greenblatt)</p>
             </div>
           </button>
 
           {/* Method 5: FII High Quality */}
           <button
             onClick={() => handleApplyMethodPreset('fii_quality')}
-            className={`p-3 rounded-2xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
+            className={`p-3.5 rounded-2xl border text-left transition-all cursor-pointer flex flex-col justify-between group relative overflow-hidden ${
               rankingMethod === 'fii_quality'
-                ? 'bg-sky-500/10 border-sky-500 text-foreground shadow-xs ring-1 ring-sky-500/30'
+                ? 'bg-sky-500/10 border-sky-500 text-foreground shadow-md ring-2 ring-sky-500/40'
                 : 'bg-muted/20 border-border/60 hover:bg-muted/40 text-muted-foreground hover:text-foreground'
             }`}
           >
             <div className="flex items-center justify-between mb-2">
-              <Building2 className={`w-4 h-4 ${rankingMethod === 'fii_quality' ? 'text-sky-500' : 'text-muted-foreground'}`} />
-              <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-600 dark:text-sky-400">FIIs</span>
+              <div className={`p-1.5 rounded-xl ${rankingMethod === 'fii_quality' ? 'bg-sky-500 text-white' : 'bg-muted text-muted-foreground'}`}>
+                <Building2 className="w-4 h-4" />
+              </div>
+              <span className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded-md ${
+                rankingMethod === 'fii_quality' ? 'bg-sky-500/20 text-sky-600 dark:text-sky-400' : 'bg-muted text-muted-foreground'
+              }`}>
+                FIIs
+              </span>
             </div>
             <div>
-              <p className="text-xs font-black">FII High Quality</p>
-              <p className="text-[10px] text-muted-foreground leading-tight mt-0.5">Vacância & Yield Ponderado</p>
+              <p className="text-xs font-black text-foreground group-hover:text-sky-600 dark:group-hover:text-sky-400 transition-colors">FII High Quality</p>
+              <p className="text-[10px] text-muted-foreground leading-tight mt-0.5 font-medium">Vacância & Yield Ponderado</p>
             </div>
           </button>
 
           {/* Method 6: Custom / All */}
           <button
             onClick={() => { setRankingMethod('custom'); setCurrentPage(1); }}
-            className={`p-3 rounded-2xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
+            className={`p-3.5 rounded-2xl border text-left transition-all cursor-pointer flex flex-col justify-between group relative overflow-hidden ${
               rankingMethod === 'custom'
-                ? 'bg-amber-500/10 border-amber-500 text-foreground shadow-xs ring-1 ring-amber-500/30'
+                ? 'bg-amber-500/10 border-amber-500 text-foreground shadow-md ring-2 ring-amber-500/40'
                 : 'bg-muted/20 border-border/60 hover:bg-muted/40 text-muted-foreground hover:text-foreground'
             }`}
           >
             <div className="flex items-center justify-between mb-2">
-              <SlidersHorizontal className={`w-4 h-4 ${rankingMethod === 'custom' ? 'text-amber-500' : 'text-muted-foreground'}`} />
-              <span className="text-[9px] font-black uppercase px-1.5 py-0.5 rounded bg-muted text-muted-foreground">Custom</span>
+              <div className={`p-1.5 rounded-xl ${rankingMethod === 'custom' ? 'bg-amber-500 text-white' : 'bg-muted text-muted-foreground'}`}>
+                <SlidersHorizontal className="w-4 h-4" />
+              </div>
+              <span className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded-md ${
+                rankingMethod === 'custom' ? 'bg-amber-500/20 text-amber-600 dark:text-amber-400' : 'bg-muted text-muted-foreground'
+              }`}>
+                Filtros Sliders
+              </span>
             </div>
             <div>
-              <p className="text-xs font-black">Personalizado</p>
-              <p className="text-[10px] text-muted-foreground leading-tight mt-0.5">Filtro e Ordenação Livre</p>
+              <p className="text-xs font-black text-foreground group-hover:text-amber-600 dark:group-hover:text-amber-400 transition-colors">Personalizado</p>
+              <p className="text-[10px] text-muted-foreground leading-tight mt-0.5 font-medium">Filtros Livres em Sliders</p>
             </div>
           </button>
         </div>
 
-        {/* Method Description Banner */}
-        <div className="p-3.5 rounded-2xl bg-muted/20 border border-border/50 text-xs text-muted-foreground flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <Info className="w-4 h-4 text-primary shrink-0" />
-            <span>
-              {rankingMethod === 'score_b3' && 'Classifica os ativos calculando a nota de 0 a 100 com base na combinação de Qualidade, Valuation, Solvência e Dividendos.'}
-              {rankingMethod === 'barsi_bazin' && 'Calcula o Preço Teto Barsi (Provento 12M / 6%). O ranking coloca no topo os ativos com maior Margem de Segurança contra o Preço Teto.'}
-              {rankingMethod === 'graham' && 'Aplica a Fórmula de Benjamin Graham (VI = √(22.5 × LPA × VPA)). Destaca os ativos com maior desconto percentual em relação ao Valor Intrínseco.'}
-              {rankingMethod === 'greenblatt' && 'Combina o Ranking de Qualidade (ROIC) e o Ranking de Valuation (P/L). Menor pontuação somada = Empresa de excelente qualidade por preço de pechincha.'}
-              {rankingMethod === 'fii_quality' && 'Avalia Fundos Imobiliários cruzando Vacância Baixa, P/VP justo e DY/FFO Yield elevado.'}
-              {rankingMethod === 'custom' && 'Utilize os sliders e filtros abaixo para buscar ativos com especificações exatas de ROE, P/L, Dívida, Vacância e DY.'}
-            </span>
+        {/* Dynamic Explanation & Active Filter Values Strip for Selected Methodology */}
+        <div className="p-4 bg-muted/30 border border-border/60 rounded-2xl space-y-2.5 text-xs">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <Info className="w-4 h-4 text-primary shrink-0" />
+              <p className="text-foreground font-black text-xs uppercase tracking-wider">
+                {rankingMethod === 'score_b3' && 'Score B3 Universal (Multicritério 0-100)'}
+                {rankingMethod === 'barsi_bazin' && 'Método Décio Bazin & Luiz Barsi (Preço Teto 6%)'}
+                {rankingMethod === 'graham' && 'Fórmula de Benjamin Graham (Valor Intrínseco VI)'}
+                {rankingMethod === 'greenblatt' && 'Magic Formula de Joel Greenblatt (ROIC + P/L)'}
+                {rankingMethod === 'fii_quality' && 'FIIs High Quality & Renda Imobiliária'}
+                {rankingMethod === 'custom' && 'Filtro & Ordenação Personalizada'}
+              </p>
+            </div>
+            <button
+              onClick={handleResetFilters}
+              className="flex items-center gap-1 text-[11px] font-bold text-muted-foreground hover:text-rose-500 transition-colors shrink-0"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              Resetar Filtros
+            </button>
           </div>
 
-          <button
-            onClick={handleResetFilters}
-            className="flex items-center gap-1 text-[11px] font-bold text-muted-foreground hover:text-rose-500 transition-colors shrink-0"
-          >
-            <RotateCcw className="w-3.5 h-3.5" />
-            Limpar Filtros
-          </button>
+          <p className="text-muted-foreground leading-relaxed">
+            {rankingMethod === 'score_b3' && (
+              <>Calcula pontuação de 0 a 100 ponderando Dividendos, Saúde Financeira, Valuation, Rentabilidade e Liquidez.</>
+            )}
+            {rankingMethod === 'barsi_bazin' && (
+              <>Calcula o Preço Teto Bazin <span className="font-mono bg-muted/60 px-1 py-0.5 rounded text-[11px] text-foreground font-bold">(DPA ÷ 0,06)</span> e ranqueia ações com maior Margem de Segurança (%).</>
+            )}
+            {rankingMethod === 'graham' && (
+              <>Calcula o Valor Intrínseco VI = <span className="font-mono bg-muted/60 px-1 py-0.5 rounded text-[11px] text-foreground font-bold">√(22,5 × LPA × VPA)</span> e ranqueia as ações com maior Desconto.</>
+            )}
+            {rankingMethod === 'greenblatt' && (
+              <>Atribui Ranks para o Maior ROIC/ROE (Qualidade) e Menor P/L (Preço Barato) e soma as duas posições.</>
+            )}
+            {rankingMethod === 'fii_quality' && (
+              <>Pontua fundos imobiliários combinando FFO Yield, Dividend Yield, P/VP justo e baixa Vacância Física Média.</>
+            )}
+            {rankingMethod === 'custom' && (
+              <>Ajuste os sliders deslizantes para definir seus próprios critérios de busca.</>
+            )}
+          </p>
+
+          {/* Active Filter Threshold Pills */}
+          <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-border/40 text-[11px]">
+            <span className="font-black text-muted-foreground uppercase text-[10px] tracking-wider">Filtros Aplicados pelo Método:</span>
+            {rankingMethod === 'score_b3' && (
+              <>
+                <span className="px-2 py-0.5 rounded-lg bg-primary/10 text-primary border border-primary/20 font-bold">Alvo: Todos (Ações & FIIs)</span>
+                <span className="px-2 py-0.5 rounded-lg bg-muted border border-border/60 text-foreground font-bold">Pesos: Qualidade 25% | Valuation 20% | Solvência 20% | DY 15%</span>
+              </>
+            )}
+            {rankingMethod === 'barsi_bazin' && (
+              <>
+                <span className="px-2 py-0.5 rounded-lg bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20 font-bold">Alvo: Ações</span>
+                <span className="px-2 py-0.5 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 font-bold">DY 12M Mínimo: 6,0%</span>
+                <span className="px-2 py-0.5 rounded-lg bg-muted border border-border/60 text-foreground font-bold">ROE Mínimo: 8,0%</span>
+                <span className="px-2 py-0.5 rounded-lg bg-muted border border-border/60 text-foreground font-bold">Dívida Líq./EBITDA Máx: 3,5x</span>
+              </>
+            )}
+            {rankingMethod === 'graham' && (
+              <>
+                <span className="px-2 py-0.5 rounded-lg bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20 font-bold">Alvo: Ações</span>
+                <span className="px-2 py-0.5 rounded-lg bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20 font-bold">P/L Máximo: 15,0x</span>
+                <span className="px-2 py-0.5 rounded-lg bg-muted border border-border/60 text-foreground font-bold">ROE Mínimo: 10,0%</span>
+                <span className="px-2 py-0.5 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 font-bold">Fórmula VI = √(22,5 × LPA × VPA)</span>
+              </>
+            )}
+            {rankingMethod === 'greenblatt' && (
+              <>
+                <span className="px-2 py-0.5 rounded-lg bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20 font-bold">Alvo: Ações</span>
+                <span className="px-2 py-0.5 rounded-lg bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20 font-bold">ROE/ROIC Mínimo: 12,0%</span>
+                <span className="px-2 py-0.5 rounded-lg bg-muted border border-border/60 text-foreground font-bold">Combinação de Ranks ROIC + P/L</span>
+              </>
+            )}
+            {rankingMethod === 'fii_quality' && (
+              <>
+                <span className="px-2 py-0.5 rounded-lg bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20 font-bold">Alvo: FIIs</span>
+                <span className="px-2 py-0.5 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 font-bold">DY 12M: 6,5% a 16,0%</span>
+                <span className="px-2 py-0.5 rounded-lg bg-sky-500/10 text-sky-600 dark:text-sky-400 border border-sky-500/20 font-bold">P/VP Máximo: 1,10x</span>
+                <span className="px-2 py-0.5 rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 font-bold">Vacância Física Máx: 10,0%</span>
+              </>
+            )}
+            {rankingMethod === 'custom' && (
+              <>
+                <span className="px-2 py-0.5 rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 font-bold">Alvo: {activeTypeTab === 'all' ? 'Todos os Ativos' : activeTypeTab === 'Ação' ? 'Somente Ações' : 'Somente FIIs'}</span>
+                {minRoe > 0 && <span className="px-2 py-0.5 rounded-lg bg-muted border border-border/60 text-foreground font-bold">ROE Mín: {minRoe}%</span>}
+                {minRoic > 0 && <span className="px-2 py-0.5 rounded-lg bg-muted border border-border/60 text-foreground font-bold">ROIC Mín: {minRoic}%</span>}
+                {maxPl < 100 && <span className="px-2 py-0.5 rounded-lg bg-muted border border-border/60 text-foreground font-bold">P/L Máx: {maxPl}x</span>}
+                {maxDebtEbitda < 5 && <span className="px-2 py-0.5 rounded-lg bg-muted border border-border/60 text-foreground font-bold">Dívida Máx: {maxDebtEbitda}x</span>}
+                {minDy > 0 && <span className="px-2 py-0.5 rounded-lg bg-muted border border-border/60 text-foreground font-bold">DY Mín: {minDy}%</span>}
+                {maxDy < 100 && <span className="px-2 py-0.5 rounded-lg bg-muted border border-border/60 text-foreground font-bold">DY Máx: {maxDy}%</span>}
+                {maxVacancy < 50 && <span className="px-2 py-0.5 rounded-lg bg-muted border border-border/60 text-foreground font-bold">Vacância Máx: {maxVacancy}%</span>}
+                {maxPvpFii < 1.5 && <span className="px-2 py-0.5 rounded-lg bg-muted border border-border/60 text-foreground font-bold">P/VP Máx: {maxPvpFii}x</span>}
+                {minNetMargin > -100 && <span className="px-2 py-0.5 rounded-lg bg-muted border border-border/60 text-foreground font-bold">Margem Líq. Mín: {minNetMargin}%</span>}
+                {minFfoYield > 0 && <span className="px-2 py-0.5 rounded-lg bg-muted border border-border/60 text-foreground font-bold">FFO Yield Mín: {minFfoYield}%</span>}
+                {minLiquidity > 0 && <span className="px-2 py-0.5 rounded-lg bg-muted border border-border/60 text-foreground font-bold">Liquidez Mín: R$ {minLiquidity}M/dia</span>}
+              </>
+            )}
+          </div>
         </div>
       </div>
 
@@ -917,7 +1253,7 @@ export const FundamentalAnalysisView: React.FC<FundamentalAnalysisViewProps> = (
         </div>
       )}
 
-      {/* 4. Filter Bar */}
+      {/* 4. Filter & Search Bar */}
       <div className="bg-card border border-border/80 p-4 rounded-3xl space-y-4 shadow-xs">
         <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-center">
           {/* Search Input */}
@@ -946,8 +1282,19 @@ export const FundamentalAnalysisView: React.FC<FundamentalAnalysisViewProps> = (
             </select>
           </div>
 
-          {/* Only Portfolio Switch */}
-          <div className="md:col-span-3 flex items-center justify-end">
+          {/* Only Portfolio Switch & Reset Sort */}
+          <div className="md:col-span-3 flex items-center justify-end gap-2">
+            {sortField !== 'default' && (
+              <button
+                onClick={() => { setSortField('default'); setSortOrder('desc'); }}
+                className="px-2.5 py-2 bg-amber-500/10 hover:bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/30 rounded-2xl text-[11px] font-bold transition-all flex items-center gap-1 cursor-pointer shrink-0"
+                title="Voltar a ordenar pelo Rank padrão do método"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>Rank Padrão</span>
+              </button>
+            )}
+
             <label className="flex items-center gap-2 text-xs text-foreground font-bold cursor-pointer select-none bg-muted/20 px-3.5 py-2.5 rounded-2xl border border-border/60 w-full md:w-auto justify-center">
               <input
                 type="checkbox"
@@ -955,96 +1302,183 @@ export const FundamentalAnalysisView: React.FC<FundamentalAnalysisViewProps> = (
                 onChange={(e) => { setOnlyPortfolio(e.target.checked); setCurrentPage(1); }}
                 className="w-4 h-4 rounded text-primary focus:ring-0"
               />
-              Apenas Minha Carteira
+              Minha Carteira
             </label>
           </div>
         </div>
 
         {/* Fundamental Filter Sliders - ONLY rendered when Ranking Method is 'custom' */}
         {rankingMethod === 'custom' && (
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 pt-3 border-t border-border/40 text-xs animate-in fade-in duration-150">
-            {/* Min ROE */}
-            <div>
-              <label className="text-[11px] font-bold text-muted-foreground block mb-1">ROE Mín: {minRoe}%</label>
-              <input
-                type="range"
-                min={0}
-                max={30}
-                step={2}
-                value={minRoe}
-                onChange={(e) => { setMinRoe(Number(e.target.value)); setCurrentPage(1); }}
-                className="w-full accent-primary cursor-pointer"
-              />
+          <div className="space-y-3 pt-3 border-t border-border/40 text-xs animate-in fade-in duration-150">
+            <div className="flex items-center justify-between">
+              <span className="font-black text-foreground text-xs uppercase tracking-wider flex items-center gap-1.5">
+                <SlidersHorizontal className="w-3.5 h-3.5 text-primary" />
+                Filtros Avançados Personalizados
+              </span>
+              <button
+                onClick={handleResetFilters}
+                className="text-[11px] font-bold text-muted-foreground hover:text-primary transition-colors flex items-center gap-1"
+              >
+                <RotateCcw className="w-3 h-3" /> Resetar Filtros
+              </button>
             </div>
 
-            {/* Max P/L */}
-            <div>
-              <label className="text-[11px] font-bold text-muted-foreground block mb-1">P/L Máx: {maxPl === 100 ? 'Livre' : `${maxPl}x`}</label>
-              <input
-                type="range"
-                min={5}
-                max={100}
-                step={5}
-                value={maxPl}
-                onChange={(e) => { setMaxPl(Number(e.target.value)); setCurrentPage(1); }}
-                className="w-full accent-primary cursor-pointer"
-              />
-            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+              {/* Min ROE */}
+              <div>
+                <label className="text-[11px] font-bold text-muted-foreground block mb-1">ROE Mín (Ações): {minRoe}%</label>
+                <input
+                  type="range"
+                  min={0}
+                  max={30}
+                  step={2}
+                  value={minRoe}
+                  onChange={(e) => { setMinRoe(Number(e.target.value)); setCurrentPage(1); }}
+                  className="w-full accent-primary cursor-pointer"
+                />
+              </div>
 
-            {/* Max Debt/EBITDA */}
-            <div>
-              <label className="text-[11px] font-bold text-muted-foreground block mb-1">Dív./EBITDA: {maxDebtEbitda === 5.0 ? 'Livre' : `${maxDebtEbitda}x`}</label>
-              <input
-                type="range"
-                min={1.0}
-                max={5.0}
-                step={0.5}
-                value={maxDebtEbitda}
-                onChange={(e) => { setMaxDebtEbitda(Number(e.target.value)); setCurrentPage(1); }}
-                className="w-full accent-primary cursor-pointer"
-              />
-            </div>
+              {/* Min ROIC */}
+              <div>
+                <label className="text-[11px] font-bold text-muted-foreground block mb-1">ROIC Mín (Ações): {minRoic}%</label>
+                <input
+                  type="range"
+                  min={0}
+                  max={30}
+                  step={2}
+                  value={minRoic}
+                  onChange={(e) => { setMinRoic(Number(e.target.value)); setCurrentPage(1); }}
+                  className="w-full accent-primary cursor-pointer"
+                />
+              </div>
 
-            {/* Min DY */}
-            <div>
-              <label className="text-[11px] font-bold text-muted-foreground block mb-1">DY Mín: {minDy}%</label>
-              <input
-                type="range"
-                min={0}
-                max={15}
-                step={1}
-                value={minDy}
-                onChange={(e) => { setMinDy(Number(e.target.value)); setCurrentPage(1); }}
-                className="w-full accent-emerald-500 cursor-pointer"
-              />
-            </div>
+              {/* Max P/L */}
+              <div>
+                <label className="text-[11px] font-bold text-muted-foreground block mb-1">P/L Máx (Ações): {maxPl === 100 ? 'Livre' : `${maxPl}x`}</label>
+                <input
+                  type="range"
+                  min={5}
+                  max={100}
+                  step={5}
+                  value={maxPl}
+                  onChange={(e) => { setMaxPl(Number(e.target.value)); setCurrentPage(1); }}
+                  className="w-full accent-primary cursor-pointer"
+                />
+              </div>
 
-            {/* Max Vacancy (FIIs) */}
-            <div>
-              <label className="text-[11px] font-bold text-muted-foreground block mb-1">Vacância Máx: {maxVacancy === 50 ? 'Livre' : `${maxVacancy}%`}</label>
-              <input
-                type="range"
-                min={5}
-                max={50}
-                step={5}
-                value={maxVacancy}
-                onChange={(e) => { setMaxVacancy(Number(e.target.value)); setCurrentPage(1); }}
-                className="w-full accent-sky-500 cursor-pointer"
-              />
-            </div>
+              {/* Max Debt/EBITDA */}
+              <div>
+                <label className="text-[11px] font-bold text-muted-foreground block mb-1">Dív./EBITDA Máx: {maxDebtEbitda === 5.0 ? 'Livre' : `${maxDebtEbitda}x`}</label>
+                <input
+                  type="range"
+                  min={1.0}
+                  max={5.0}
+                  step={0.5}
+                  value={maxDebtEbitda}
+                  onChange={(e) => { setMaxDebtEbitda(Number(e.target.value)); setCurrentPage(1); }}
+                  className="w-full accent-primary cursor-pointer"
+                />
+              </div>
 
-            {/* Max P/VP (FIIs) */}
-            <div>
-              <label className="text-[11px] font-bold text-muted-foreground block mb-1">P/VP FII Máx: {maxPvpFii === 1.5 ? 'Livre' : `${maxPvpFii}x`}</label>
-              <input
-                type="range"
-                min={0.7}
-                max={1.5}
-                step={0.05}
-                value={maxPvpFii}
-                onChange={(e) => { setMaxPvpFii(Number(e.target.value)); setCurrentPage(1); }}
-                className="w-full accent-sky-500 cursor-pointer"
-              />
+              {/* Min Net Margin */}
+              <div>
+                <label className="text-[11px] font-bold text-muted-foreground block mb-1">Margem Líq. Mín: {minNetMargin === -100 ? 'Livre' : `${minNetMargin}%`}</label>
+                <input
+                  type="range"
+                  min={0}
+                  max={40}
+                  step={2}
+                  value={minNetMargin === -100 ? 0 : minNetMargin}
+                  onChange={(e) => { setMinNetMargin(Number(e.target.value) === 0 ? -100 : Number(e.target.value)); setCurrentPage(1); }}
+                  className="w-full accent-primary cursor-pointer"
+                />
+              </div>
+
+              {/* Min DY */}
+              <div>
+                <label className="text-[11px] font-bold text-muted-foreground block mb-1">DY Mínimo: {minDy}%</label>
+                <input
+                  type="range"
+                  min={0}
+                  max={15}
+                  step={1}
+                  value={minDy}
+                  onChange={(e) => { setMinDy(Number(e.target.value)); setCurrentPage(1); }}
+                  className="w-full accent-emerald-500 cursor-pointer"
+                />
+              </div>
+
+              {/* Max DY */}
+              <div>
+                <label className="text-[11px] font-bold text-muted-foreground block mb-1">DY Máximo: {maxDy === 100 ? 'Sem limite' : `${maxDy}%`}</label>
+                <input
+                  type="range"
+                  min={10}
+                  max={100}
+                  step={5}
+                  value={maxDy}
+                  onChange={(e) => { setMaxDy(Number(e.target.value)); setCurrentPage(1); }}
+                  className="w-full accent-emerald-500 cursor-pointer"
+                />
+              </div>
+
+              {/* Max Vacancy (FIIs) */}
+              <div>
+                <label className="text-[11px] font-bold text-muted-foreground block mb-1">Vacância Máx FII: {maxVacancy === 50 ? 'Livre' : `${maxVacancy}%`}</label>
+                <input
+                  type="range"
+                  min={5}
+                  max={50}
+                  step={5}
+                  value={maxVacancy}
+                  onChange={(e) => { setMaxVacancy(Number(e.target.value)); setCurrentPage(1); }}
+                  className="w-full accent-sky-500 cursor-pointer"
+                />
+              </div>
+
+              {/* Max P/VP (FIIs) */}
+              <div>
+                <label className="text-[11px] font-bold text-muted-foreground block mb-1">P/VP Máx FII: {maxPvpFii === 1.5 ? 'Livre' : `${maxPvpFii}x`}</label>
+                <input
+                  type="range"
+                  min={0.7}
+                  max={1.5}
+                  step={0.05}
+                  value={maxPvpFii}
+                  onChange={(e) => { setMaxPvpFii(Number(e.target.value)); setCurrentPage(1); }}
+                  className="w-full accent-sky-500 cursor-pointer"
+                />
+              </div>
+
+              {/* Min FFO Yield (FIIs) */}
+              <div>
+                <label className="text-[11px] font-bold text-muted-foreground block mb-1">FFO Yield Mín FII: {minFfoYield}%</label>
+                <input
+                  type="range"
+                  min={0}
+                  max={15}
+                  step={1}
+                  value={minFfoYield}
+                  onChange={(e) => { setMinFfoYield(Number(e.target.value)); setCurrentPage(1); }}
+                  className="w-full accent-sky-500 cursor-pointer"
+                />
+              </div>
+
+              {/* Min Daily Liquidity */}
+              <div>
+                <label className="text-[11px] font-bold text-muted-foreground block mb-1">
+                  Liq. Diária Mín: {minLiquidity === 0 ? 'Livre' : minLiquidity < 1 ? `R$ ${(minLiquidity * 1000).toFixed(0)} mil/dia` : `R$ ${minLiquidity.toFixed(1)}M/dia`}
+                </label>
+                <input
+                  type="range"
+                  min={0}
+                  max={10}
+                  step={0.05}
+                  value={minLiquidity}
+                  onChange={(e) => { setMinLiquidity(Number(e.target.value)); setCurrentPage(1); }}
+                  className="w-full accent-amber-500 cursor-pointer"
+                />
+              </div>
             </div>
           </div>
         )}
@@ -1085,27 +1519,205 @@ export const FundamentalAnalysisView: React.FC<FundamentalAnalysisViewProps> = (
             <table className="w-full text-left text-xs whitespace-nowrap">
               <thead className="bg-muted/30 text-muted-foreground font-bold border-b border-border/60 text-[10px] uppercase tracking-wider">
                 <tr>
-                  <th className="px-4 py-3.5 text-center w-12"># Rank</th>
-                  <th className="px-4 py-3.5">Ativo / Ticker</th>
-                  <th className="px-4 py-3.5 text-center">Score B3</th>
-                  <th className="px-4 py-3.5 text-right">Cotação</th>
-                  <th className="px-4 py-3.5 text-right">P/VP</th>
-                  <th className="px-4 py-3.5 text-right">DY 12M</th>
+                  <th 
+                    onClick={() => handleSortColumn('default')}
+                    className="px-4 py-3.5 text-center w-12 cursor-pointer hover:bg-muted/50 select-none transition-colors"
+                    title="Voltar ao Rank Padrão do Método"
+                  >
+                    <div className="flex items-center justify-center gap-1">
+                      <span># Rank</span>
+                      {sortField === 'default' && <span className="text-primary text-[9px]">●</span>}
+                    </div>
+                  </th>
+
+                  <th 
+                    onClick={() => handleSortColumn('ticker')}
+                    className="px-4 py-3.5 cursor-pointer hover:bg-muted/50 select-none transition-colors"
+                    title="Ordenar por Nome / Ticker"
+                  >
+                    <div className="flex items-center gap-1">
+                      <span>Ativo / Ticker</span>
+                      {sortField === 'ticker' ? (
+                        <span className="text-primary font-black">{sortOrder === 'asc' ? '▲' : '▼'}</span>
+                      ) : (
+                        <ArrowUpDown className="w-3 h-3 text-muted-foreground/40" />
+                      )}
+                    </div>
+                  </th>
+
+                  <th 
+                    onClick={() => handleSortColumn('score')}
+                    className="px-4 py-3.5 text-center cursor-pointer hover:bg-muted/50 select-none transition-colors"
+                    title="Ordenar por Score B3 (0-100)"
+                  >
+                    <div className="flex items-center justify-center gap-1">
+                      <span>Score B3</span>
+                      {sortField === 'score' ? (
+                        <span className="text-primary font-black">{sortOrder === 'asc' ? '▲' : '▼'}</span>
+                      ) : (
+                        <ArrowUpDown className="w-3 h-3 text-muted-foreground/40" />
+                      )}
+                    </div>
+                  </th>
+
+                  <th 
+                    onClick={() => handleSortColumn('price')}
+                    className="px-4 py-3.5 text-right cursor-pointer hover:bg-muted/50 select-none transition-colors"
+                    title="Ordenar por Cotação"
+                  >
+                    <div className="flex items-center justify-end gap-1">
+                      <span>Cotação</span>
+                      {sortField === 'price' ? (
+                        <span className="text-primary font-black">{sortOrder === 'asc' ? '▲' : '▼'}</span>
+                      ) : (
+                        <ArrowUpDown className="w-3 h-3 text-muted-foreground/40" />
+                      )}
+                    </div>
+                  </th>
+
+                  <th 
+                    onClick={() => handleSortColumn('pvp')}
+                    className="px-4 py-3.5 text-right cursor-pointer hover:bg-muted/50 select-none transition-colors"
+                    title="Ordenar por P/VP"
+                  >
+                    <div className="flex items-center justify-end gap-1">
+                      <span>P/VP</span>
+                      {sortField === 'pvp' ? (
+                        <span className="text-primary font-black">{sortOrder === 'asc' ? '▲' : '▼'}</span>
+                      ) : (
+                        <ArrowUpDown className="w-3 h-3 text-muted-foreground/40" />
+                      )}
+                    </div>
+                  </th>
+
+                  <th 
+                    onClick={() => handleSortColumn('dy')}
+                    className="px-4 py-3.5 text-right cursor-pointer hover:bg-muted/50 select-none transition-colors"
+                    title="Ordenar por Dividend Yield 12M"
+                  >
+                    <div className="flex items-center justify-end gap-1">
+                      <span>DY 12M</span>
+                      {sortField === 'dy' ? (
+                        <span className="text-primary font-black">{sortOrder === 'asc' ? '▲' : '▼'}</span>
+                      ) : (
+                        <ArrowUpDown className="w-3 h-3 text-muted-foreground/40" />
+                      )}
+                    </div>
+                  </th>
 
                   {/* Dynamic Method Metric Column */}
                   {rankingMethod === 'barsi_bazin' && (
-                    <th className="px-4 py-3.5 text-right text-emerald-600 font-black">Preço Teto Barsi (Margem)</th>
+                    <th 
+                      onClick={() => handleSortColumn('barsi_margin')}
+                      className="px-4 py-3.5 text-right text-emerald-600 font-black cursor-pointer hover:bg-muted/50 select-none transition-colors"
+                      title="Ordenar por Margem do Preço Teto Barsi"
+                    >
+                      <div className="flex items-center justify-end gap-1">
+                        <span>Preço Teto Barsi (Margem)</span>
+                        {sortField === 'barsi_margin' ? (
+                          <span className="text-emerald-600 font-black">{sortOrder === 'asc' ? '▲' : '▼'}</span>
+                        ) : (
+                          <ArrowUpDown className="w-3 h-3 text-emerald-600/40" />
+                        )}
+                      </div>
+                    </th>
                   )}
+
                   {rankingMethod === 'graham' && (
-                    <th className="px-4 py-3.5 text-right text-blue-600 font-black">Valor Intrínseco VI (Desconto)</th>
+                    <th 
+                      onClick={() => handleSortColumn('graham_discount')}
+                      className="px-4 py-3.5 text-right text-blue-600 font-black cursor-pointer hover:bg-muted/50 select-none transition-colors"
+                      title="Ordenar por Desconto do Valor Intrínseco VI"
+                    >
+                      <div className="flex items-center justify-end gap-1">
+                        <span>Valor Intrínseco VI (Desconto)</span>
+                        {sortField === 'graham_discount' ? (
+                          <span className="text-blue-600 font-black">{sortOrder === 'asc' ? '▲' : '▼'}</span>
+                        ) : (
+                          <ArrowUpDown className="w-3 h-3 text-blue-600/40" />
+                        )}
+                      </div>
+                    </th>
                   )}
+
                   {rankingMethod === 'greenblatt' && (
-                    <th className="px-4 py-3.5 text-center text-purple-600 font-black">Magic Rank (ROIC + P/L)</th>
+                    <th 
+                      onClick={() => handleSortColumn('magic_score')}
+                      className="px-4 py-3.5 text-center text-purple-600 font-black cursor-pointer hover:bg-muted/50 select-none transition-colors"
+                      title="Ordenar por Score Magic Formula (Menor é melhor)"
+                    >
+                      <div className="flex items-center justify-center gap-1">
+                        <span>Magic Rank (ROIC + P/L)</span>
+                        {sortField === 'magic_score' ? (
+                          <span className="text-purple-600 font-black">{sortOrder === 'asc' ? '▲' : '▼'}</span>
+                        ) : (
+                          <ArrowUpDown className="w-3 h-3 text-purple-600/40" />
+                        )}
+                      </div>
+                    </th>
                   )}
+
                   {(rankingMethod === 'score_b3' || rankingMethod === 'fii_quality' || rankingMethod === 'custom') && (
                     <>
-                      <th className="px-4 py-3.5 text-right">P/L ou FFO</th>
-                      <th className="px-4 py-3.5 text-right">ROE / Vacância</th>
+                      <th 
+                        onClick={() => handleSortColumn('pl_ffo')}
+                        className="px-4 py-3.5 text-right cursor-pointer hover:bg-muted/50 select-none transition-colors"
+                        title="Ordenar por P/L ou FFO"
+                      >
+                        <div className="flex items-center justify-end gap-1">
+                          <span>P/L ou FFO</span>
+                          {sortField === 'pl_ffo' ? (
+                            <span className="text-primary font-black">{sortOrder === 'asc' ? '▲' : '▼'}</span>
+                          ) : (
+                            <ArrowUpDown className="w-3 h-3 text-muted-foreground/40" />
+                          )}
+                        </div>
+                      </th>
+
+                      <th 
+                        onClick={() => handleSortColumn('roe_vacancy')}
+                        className="px-4 py-3.5 text-right cursor-pointer hover:bg-muted/50 select-none transition-colors"
+                        title="Ordenar por ROE ou Vacância"
+                      >
+                        <div className="flex items-center justify-end gap-1">
+                          <span>ROE / Vacância</span>
+                          {sortField === 'roe_vacancy' ? (
+                            <span className="text-primary font-black">{sortOrder === 'asc' ? '▲' : '▼'}</span>
+                          ) : (
+                            <ArrowUpDown className="w-3 h-3 text-muted-foreground/40" />
+                          )}
+                        </div>
+                      </th>
+
+                      <th 
+                        onClick={() => handleSortColumn('margin_cap')}
+                        className="px-4 py-3.5 text-right cursor-pointer hover:bg-muted/50 select-none transition-colors"
+                        title="Ordenar por Margem Líquida ou Cap Rate"
+                      >
+                        <div className="flex items-center justify-end gap-1">
+                          <span>Margem Líq. / Cap Rate</span>
+                          {sortField === 'margin_cap' ? (
+                            <span className="text-primary font-black">{sortOrder === 'asc' ? '▲' : '▼'}</span>
+                          ) : (
+                            <ArrowUpDown className="w-3 h-3 text-muted-foreground/40" />
+                          )}
+                        </div>
+                      </th>
+
+                      <th 
+                        onClick={() => handleSortColumn('liquidity')}
+                        className="px-4 py-3.5 text-right cursor-pointer hover:bg-muted/50 select-none transition-colors"
+                        title="Ordenar por Liquidez Diária Média"
+                      >
+                        <div className="flex items-center justify-end gap-1">
+                          <span>Liq. Diária</span>
+                          {sortField === 'liquidity' ? (
+                            <span className="text-primary font-black">{sortOrder === 'asc' ? '▲' : '▼'}</span>
+                          ) : (
+                            <ArrowUpDown className="w-3 h-3 text-muted-foreground/40" />
+                          )}
+                        </div>
+                      </th>
                     </>
                   )}
 
@@ -1136,8 +1748,12 @@ export const FundamentalAnalysisView: React.FC<FundamentalAnalysisViewProps> = (
 
                       {/* Ticker & Name */}
                       <td className="px-4 py-3">
-                        <div className="flex items-center gap-2.5">
-                          <div className={`w-8 h-8 rounded-xl flex items-center justify-center font-black text-xs shrink-0 ${
+                        <div 
+                          onClick={() => handleTriggerRaioX(item)}
+                          className="flex items-center gap-2.5 cursor-pointer group"
+                          title="Clique para abrir o Raio-X Completo deste ativo"
+                        >
+                          <div className={`w-8 h-8 rounded-xl flex items-center justify-center font-black text-xs shrink-0 group-hover:scale-105 transition-transform ${
                             isStock 
                               ? 'bg-blue-500/10 text-blue-600 border border-blue-500/20' 
                               : 'bg-purple-500/10 text-purple-600 border border-purple-500/20'
@@ -1146,7 +1762,7 @@ export const FundamentalAnalysisView: React.FC<FundamentalAnalysisViewProps> = (
                           </div>
                           <div>
                             <div className="flex items-center gap-1.5">
-                              <span className="font-black text-foreground">{item.ticker}</span>
+                              <span className="font-black text-foreground group-hover:text-primary transition-colors">{item.ticker}</span>
                               {item.isInPortfolio && (
                                 <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-primary/10 text-primary border border-primary/20">
                                   Carteira
@@ -1254,6 +1870,27 @@ export const FundamentalAnalysisView: React.FC<FundamentalAnalysisViewProps> = (
                               </div>
                             )}
                           </td>
+
+                          <td className="px-4 py-3 text-right font-medium">
+                            {isStock ? (
+                              <span className="text-foreground">{sf.netMargin !== undefined && sf.netMargin !== null ? `${sf.netMargin.toFixed(1)}%` : '-'}</span>
+                            ) : (
+                              <span className="text-foreground font-semibold">{ff.capRate !== undefined && ff.capRate !== null ? `${ff.capRate.toFixed(1)}%` : '-'}</span>
+                            )}
+                          </td>
+
+                          <td className="px-4 py-3 text-right font-medium">
+                            <span className="text-xs font-bold text-foreground">
+                              {(() => {
+                                const raw = item.fund.dailyLiquidity || 0;
+                                const realVal = (raw > 0 && raw < 50000) ? raw * 1000 : raw;
+                                if (!realVal) return '-';
+                                return realVal >= 1_000_000 
+                                  ? `R$ ${(realVal / 1_000_000).toFixed(1)}M` 
+                                  : `R$ ${(realVal / 1_000).toFixed(0)}k`;
+                              })()}
+                            </span>
+                          </td>
                         </>
                       )}
 
@@ -1277,8 +1914,8 @@ export const FundamentalAnalysisView: React.FC<FundamentalAnalysisViewProps> = (
                       <td className="px-4 py-3 text-center">
                         <div className="flex items-center justify-center gap-1">
                           <button
-                            onClick={() => onOpenRaioX && onOpenRaioX(item.ticker)}
-                            className="p-1.5 text-primary hover:bg-primary/10 rounded-lg transition-colors"
+                            onClick={() => handleTriggerRaioX(item)}
+                            className="p-1.5 text-primary hover:bg-primary/10 rounded-lg transition-colors cursor-pointer"
                             title="Abrir Raio-X Completo"
                           >
                             <ExternalLink className="w-3.5 h-3.5" />
@@ -1308,53 +1945,80 @@ export const FundamentalAnalysisView: React.FC<FundamentalAnalysisViewProps> = (
             </table>
           </div>
 
-          {/* Table Footer with Pagination Controls */}
-          <div className="p-4 bg-muted/20 border-t border-border/60 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
-            <div className="text-muted-foreground font-bold">
-              Mostrando <strong className="text-foreground">{(currentPageClamped - 1) * pageSize + 1}</strong> a <strong className="text-foreground">{Math.min(currentPageClamped * pageSize, filteredAssets.length)}</strong> de <strong className="text-foreground">{filteredAssets.length}</strong> ativos filtrados ({baseComputedAssets.length} total)
+          {/* Table Footer with Page Selection Tabs */}
+          <div className="p-4 bg-muted/20 border-t border-border/60 flex flex-col md:flex-row items-center justify-between gap-4 text-xs">
+            <div className="text-muted-foreground font-bold flex items-center gap-2">
+              <span>Mostrando <strong className="text-foreground font-black">{(currentPageClamped - 1) * pageSize + 1}</strong> a <strong className="text-foreground font-black">{Math.min(currentPageClamped * pageSize, filteredAssets.length)}</strong> de <strong className="text-foreground font-black">{filteredAssets.length}</strong> ativos ({baseComputedAssets.length} total)</span>
             </div>
 
-            <div className="flex items-center gap-3">
-              {/* Page Size Selector */}
-              <div className="flex items-center gap-1.5 text-muted-foreground font-bold">
-                <span>Itens por página:</span>
-                <select
-                  value={pageSize}
-                  onChange={(e) => { setPageSize(Number(e.target.value)); setCurrentPage(1); }}
-                  className="bg-card border border-border/60 rounded-xl px-2 py-1 text-xs text-foreground focus:outline-none"
-                >
-                  <option value={15}>15</option>
-                  <option value={20}>20</option>
-                  <option value={50}>50</option>
-                  <option value={100}>100</option>
-                  <option value={500}>500</option>
-                </select>
-              </div>
+            {/* Page Selection Number Tabs */}
+            <div className="flex flex-wrap items-center justify-center gap-1.5 bg-card/80 p-1.5 rounded-2xl border border-border/60 shadow-xs">
+              <button
+                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                disabled={currentPageClamped === 1}
+                className="px-2.5 py-1.5 rounded-xl border border-border/60 bg-muted/40 hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed text-foreground transition-all flex items-center gap-1 font-bold text-[11px] cursor-pointer"
+                title="Página Anterior"
+              >
+                <ChevronLeft className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Anterior</span>
+              </button>
 
-              {/* Navigation Controls */}
-              <div className="flex items-center gap-1">
-                <button
-                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                  disabled={currentPageClamped === 1}
-                  className="p-1.5 rounded-xl border border-border/60 bg-card hover:bg-muted disabled:opacity-40 disabled:cursor-not-allowed text-foreground transition-all"
-                  title="Página Anterior"
-                >
-                  <ChevronLeft className="w-4 h-4" />
-                </button>
+              {/* Page Number Pills */}
+              {Array.from({ length: totalPages }, (_, i) => i + 1)
+                .filter(p => p === 1 || p === totalPages || (p >= currentPageClamped - 2 && p <= currentPageClamped + 2))
+                .reduce<(number | string)[]>((acc, p, idx, arr) => {
+                  if (idx > 0 && typeof arr[idx - 1] === 'number' && (p as number) - (arr[idx - 1] as number) > 1) {
+                    acc.push('...');
+                  }
+                  acc.push(p);
+                  return acc;
+                }, [])
+                .map((item, idx) => {
+                  if (item === '...') {
+                    return <span key={`ellipsis-${idx}`} className="px-2 py-1 text-muted-foreground font-bold">...</span>;
+                  }
+                  const pageNum = item as number;
+                  const isActive = pageNum === currentPageClamped;
+                  return (
+                    <button
+                      key={pageNum}
+                      onClick={() => setCurrentPage(pageNum)}
+                      className={`min-w-[32px] h-8 px-2.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                        isActive
+                          ? 'bg-primary text-primary-foreground shadow-sm ring-2 ring-primary/30'
+                          : 'text-muted-foreground hover:text-foreground hover:bg-muted/60'
+                      }`}
+                    >
+                      {pageNum}
+                    </button>
+                  );
+                })}
 
-                <span className="px-3 py-1 font-black text-foreground">
-                  {currentPageClamped} / {totalPages}
-                </span>
+              <button
+                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                disabled={currentPageClamped >= totalPages}
+                className="px-2.5 py-1.5 rounded-xl border border-border/60 bg-muted/40 hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed text-foreground transition-all flex items-center gap-1 font-bold text-[11px] cursor-pointer"
+                title="Próxima Página"
+              >
+                <span className="hidden sm:inline">Próxima</span>
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
 
-                <button
-                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                  disabled={currentPageClamped >= totalPages}
-                  className="p-1.5 rounded-xl border border-border/60 bg-card hover:bg-muted disabled:opacity-40 disabled:cursor-not-allowed text-foreground transition-all"
-                  title="Próxima Página"
-                >
-                  <ChevronRight className="w-4 h-4" />
-                </button>
-              </div>
+            {/* Page Size Selector */}
+            <div className="flex items-center gap-2 text-muted-foreground font-bold">
+              <span>Por página:</span>
+              <select
+                value={pageSize}
+                onChange={(e) => { setPageSize(Number(e.target.value)); setCurrentPage(1); }}
+                className="bg-card border border-border/80 rounded-xl px-2.5 py-1.5 text-xs text-foreground font-black focus:outline-none shadow-xs cursor-pointer"
+              >
+                <option value={15}>15 itens</option>
+                <option value={20}>20 itens</option>
+                <option value={50}>50 itens</option>
+                <option value={100}>100 itens</option>
+                <option value={500}>500 itens</option>
+              </select>
             </div>
           </div>
         </div>

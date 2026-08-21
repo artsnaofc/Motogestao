@@ -1530,18 +1530,6 @@ export function InvestmentAnalytics({
             <PieIcon className="w-3.5 h-3.5 text-indigo-500" />
             Alocação
           </button>
-
-          <button
-            onClick={() => handleSubTabChange('preco_teto')}
-            className={`flex-1 min-w-[140px] px-3.5 py-2 text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 ${
-              activeSubTab === 'preco_teto' 
-                ? 'bg-primary text-primary-foreground shadow-xs' 
-                : 'text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            <Calculator className="w-3.5 h-3.5" />
-            Preço Teto & Valuation
-          </button>
         </div>
       )}
 

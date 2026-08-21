@@ -2,7 +2,7 @@ import React, { createContext, useContext, useState, useEffect, ReactNode, useCa
 import { supabase } from '../lib/supabase';
 import { InvestmentTransaction, Dividend, UserSettings, ReserveTransaction, DividendAnalysisMode, ValuationTarget } from '../types';
 import { AssetAllocationTarget, RebalanceRulesConfig, DEFAULT_REBALANCE_RULES } from '../lib/rebalanceEngine';
-import { B3AssetHistoryRecord } from '../lib/b3Fundamentals';
+import { B3AssetHistoryRecord, getAssetTypeForTicker } from '../lib/b3Fundamentals';
 import { toast } from 'sonner';
 
 export interface InvestmentsContextType {
@@ -877,7 +877,7 @@ export function InvestmentsProvider({
     const row = {
       user_id: userId,
       ticker,
-      asset_type: asset.asset_type || asset.type || (ticker.endsWith('11') ? 'FII' : 'Ação'),
+      asset_type: asset.asset_type || asset.type || getAssetTypeForTicker(ticker),
       name: asset.name || ticker,
       cnpj: asset.cnpj || null,
       sector: asset.sector || (asset.segment || 'Outros'),
@@ -1088,6 +1088,8 @@ export function InvestmentsProvider({
       return merged;
     });
 
+    let supabaseError: string | null = null;
+
     // Persist to Supabase in chunks of 50
     try {
       const chunkSize = 50;
@@ -1096,7 +1098,10 @@ export function InvestmentsProvider({
         const { error: batchErr } = await supabase
           .from('b3_assets_metadata')
           .upsert(chunk, { onConflict: 'ticker' });
-        if (batchErr) console.warn('Batch metadata upsert error:', batchErr);
+        if (batchErr) {
+          console.warn('Batch metadata upsert error:', batchErr);
+          supabaseError = batchErr.message || 'Erro ao atualizar tabela b3_assets_metadata no Supabase.';
+        }
       }
 
       for (let i = 0; i < histRows.length; i += chunkSize) {
@@ -1104,13 +1109,20 @@ export function InvestmentsProvider({
         const { error: histBatchErr } = await supabase
           .from('b3_assets_history')
           .insert(chunk);
-        if (histBatchErr) console.warn('Batch history insert error:', histBatchErr);
+        if (histBatchErr) {
+          console.warn('Batch history insert warning:', histBatchErr);
+          // Don't overwrite metadata error if already present
+          if (!supabaseError && histBatchErr.code !== '42P01') {
+            supabaseError = histBatchErr.message;
+          }
+        }
       }
-    } catch (e) {
+    } catch (e: any) {
       console.warn('Silent fallback in bulk metadata upsert:', e);
+      supabaseError = e?.message || 'Falha de comunicação com o Supabase.';
     }
 
-    return { created, updated, errors };
+    return { created, updated, errors, supabaseError };
   }, [b3AssetsMetadata]);
 
   // Delete Asset Metadata

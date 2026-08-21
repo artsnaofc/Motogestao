@@ -103,7 +103,8 @@ export function Investments() {
     targetAllocations,
     saveTargetAllocations,
     rulesConfig,
-    saveRulesConfig
+    saveRulesConfig,
+    b3AssetsMetadata,
   } = useInvestments();
 
   // Quote Provider Modal State
@@ -179,12 +180,6 @@ export function Investments() {
     }
   }, [settings?.default_investment_reserve_id]);
 
-  const handleSelectAssetForAnalytics = (assetTicker: string) => {
-    setAnalyticsTicker(assetTicker.toUpperCase());
-    setCarteiraSubTab('preco_teto');
-    setActiveTab('carteira');
-  };
-
   // Helper to fetch live quote for modal
   const handleFetchQuoteForTicker = async (targetTicker: string, force = false) => {
     const clean = targetTicker.toUpperCase().trim();
@@ -210,6 +205,42 @@ export function Investments() {
     } finally {
       setIsLoadingQuote(false);
     }
+  };
+
+  const [raioXInitialTab, setRaioXInitialTab] = useState<'geral' | 'proventos' | 'valuation' | 'historico' | 'fundamentos'>('geral');
+
+  const handleOpenRaioXModal = (ticker: string, initialTab: 'geral' | 'proventos' | 'valuation' | 'historico' | 'fundamentos' = 'geral') => {
+    setRaioXInitialTab(initialTab);
+    const clean = (ticker || '').toUpperCase().trim();
+    if (!clean) return;
+    const existing = positions.find(p => p.ticker.toUpperCase() === clean);
+    if (existing) {
+      setSelectedAssetDetail(existing);
+    } else {
+      const meta = b3AssetsMetadata[clean];
+      const livePrice = quotes[clean] || meta?.last_price || meta?.lastPrice || 0;
+      const isFii = meta?.asset_type === 'FII' || clean.endsWith('11');
+      setSelectedAssetDetail({
+        id: `synthetic-${clean}`,
+        ticker: clean,
+        name: meta?.name || `${clean} ${isFii ? 'FII' : 'S.A.'}`,
+        type: isFii ? 'FII' : 'Ação',
+        assetType: isFii ? 'FII' : 'Ação',
+        quantity: 0,
+        averagePrice: 0,
+        totalInvested: 0,
+        currentPrice: livePrice,
+        currentTotal: 0,
+        profitability: 0,
+        profitabilityAmount: 0,
+        allocationPct: 0,
+        totalQuantity: 0,
+      } as any);
+    }
+  };
+
+  const handleSelectAssetForAnalytics = (assetTicker: string) => {
+    handleOpenRaioXModal(assetTicker, 'valuation');
   };
 
   const getAssetTypeForTicker = (tk: string, explicitType?: string): 'Ação' | 'FII' => {
@@ -1301,18 +1332,6 @@ export function Investments() {
               <PieIcon className="w-3.5 h-3.5 text-indigo-500" />
               Alocação
             </button>
-
-            <button
-              onClick={() => setCarteiraSubTab('preco_teto')}
-              className={`flex-1 min-w-[150px] px-3.5 py-2 text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-                carteiraSubTab === 'preco_teto' 
-                  ? 'bg-primary text-primary-foreground shadow-xs' 
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              <Calculator className="w-3.5 h-3.5" />
-              Preço Teto & Valuation
-            </button>
           </div>
 
           {/* DYNAMIC MODULE CONTENTS */}
@@ -1846,6 +1865,7 @@ export function Investments() {
           valuationTargets={valuationTargets}
           hideValues={hideValues}
           onSelectAsset={(p) => setSelectedAssetDetail(p)}
+          onOpenRaioX={(ticker) => handleOpenRaioXModal(ticker, 'fundamentos')}
         />
       )}
 
@@ -2604,6 +2624,7 @@ export function Investments() {
           formatCurrency={formatCurrency}
           formatPercent={formatPercent}
           analysisMode={dividendAnalysisMode}
+          initialTab={raioXInitialTab}
         />
       )}
 

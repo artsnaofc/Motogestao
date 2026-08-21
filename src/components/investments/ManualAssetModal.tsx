@@ -38,11 +38,22 @@ export const ManualAssetModal: React.FC<ManualAssetModalProps> = ({
   // Stock specific
   const [pl, setPl] = useState<string>('');
   const [pvp, setPvp] = useState<string>('');
+  const [psr, setPsr] = useState<string>('');
+  const [pAtivo, setPAtivo] = useState<string>('');
+  const [pCapGiro, setPCapGiro] = useState<string>('');
+  const [pEbit, setPEbit] = useState<string>('');
+  const [pAtivCircLiq, setPAtivCircLiq] = useState<string>('');
+  const [evEbit, setEvEbit] = useState<string>('');
+  const [evEbitda, setEvEbitda] = useState<string>('');
   const [dividendYield, setDividendYield] = useState<string>('');
+  const [grossMargin, setGrossMargin] = useState<string>('');
+  const [ebitMargin, setEbitMargin] = useState<string>('');
+  const [netMargin, setNetMargin] = useState<string>('');
+  const [currentLiquidity, setCurrentLiquidity] = useState<string>('');
   const [roe, setRoe] = useState<string>('');
   const [roic, setRoic] = useState<string>('');
-  const [netMargin, setNetMargin] = useState<string>('');
   const [netDebtOverEbitda, setNetDebtOverEbitda] = useState<string>('');
+  const [netDebtOverEquity, setNetDebtOverEquity] = useState<string>('');
   const [revenueCagr5y, setRevenueCagr5y] = useState<string>('');
   const [dailyLiquidity, setDailyLiquidity] = useState<string>('');
 
@@ -52,6 +63,9 @@ export const ManualAssetModal: React.FC<ManualAssetModalProps> = ({
   const [physicalVacancy, setPhysicalVacancy] = useState<string>('');
   const [propertiesCount, setPropertiesCount] = useState<string>('');
   const [capRate, setCapRate] = useState<string>('');
+  const [pricePerSqm, setPricePerSqm] = useState<string>('');
+  const [rentPerSqm, setRentPerSqm] = useState<string>('');
+  const [marketCap, setMarketCap] = useState<string>('');
   const [netWorth, setNetWorth] = useState<string>('');
 
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -69,11 +83,22 @@ export const ManualAssetModal: React.FC<ManualAssetModalProps> = ({
       // Stocks
       setPl(initialData.pl !== undefined && initialData.pl !== null ? String(initialData.pl) : '');
       setPvp(initialData.pvp !== undefined && initialData.pvp !== null ? String(initialData.pvp) : '');
+      setPsr(initialData.psr !== undefined && initialData.psr !== null ? String(initialData.psr) : '');
+      setPAtivo(initialData.p_ativo !== undefined && initialData.p_ativo !== null ? String(initialData.p_ativo) : (initialData.pAtivo ? String(initialData.pAtivo) : ''));
+      setPCapGiro(initialData.p_cap_giro !== undefined && initialData.p_cap_giro !== null ? String(initialData.p_cap_giro) : (initialData.pCapGiro ? String(initialData.pCapGiro) : ''));
+      setPEbit(initialData.p_ebit !== undefined && initialData.p_ebit !== null ? String(initialData.p_ebit) : (initialData.pEbit ? String(initialData.pEbit) : ''));
+      setPAtivCircLiq(initialData.p_ativ_circ_liq !== undefined && initialData.p_ativ_circ_liq !== null ? String(initialData.p_ativ_circ_liq) : (initialData.pAtivCircLiq ? String(initialData.pAtivCircLiq) : ''));
+      setEvEbit(initialData.ev_ebit !== undefined && initialData.ev_ebit !== null ? String(initialData.ev_ebit) : (initialData.evEbit ? String(initialData.evEbit) : ''));
+      setEvEbitda(initialData.ev_ebitda !== undefined && initialData.ev_ebitda !== null ? String(initialData.ev_ebitda) : (initialData.evEbitda ? String(initialData.evEbitda) : ''));
       setDividendYield(initialData.dividend_yield !== undefined && initialData.dividend_yield !== null ? String(initialData.dividend_yield) : (initialData.dividendYield ? String(initialData.dividendYield) : ''));
+      setGrossMargin(initialData.gross_margin !== undefined && initialData.gross_margin !== null ? String(initialData.gross_margin) : (initialData.grossMargin ? String(initialData.grossMargin) : ''));
+      setEbitMargin(initialData.ebit_margin !== undefined && initialData.ebit_margin !== null ? String(initialData.ebit_margin) : (initialData.ebitMargin ? String(initialData.ebitMargin) : ''));
+      setNetMargin(initialData.net_margin !== undefined && initialData.net_margin !== null ? String(initialData.net_margin) : (initialData.netMargin ? String(initialData.netMargin) : ''));
+      setCurrentLiquidity(initialData.current_liquidity !== undefined && initialData.current_liquidity !== null ? String(initialData.current_liquidity) : (initialData.currentLiquidity ? String(initialData.currentLiquidity) : ''));
       setRoe(initialData.roe !== undefined && initialData.roe !== null ? String(initialData.roe) : '');
       setRoic(initialData.roic !== undefined && initialData.roic !== null ? String(initialData.roic) : '');
-      setNetMargin(initialData.net_margin !== undefined && initialData.net_margin !== null ? String(initialData.net_margin) : (initialData.netMargin ? String(initialData.netMargin) : ''));
       setNetDebtOverEbitda(initialData.net_debt_over_ebitda !== undefined && initialData.net_debt_over_ebitda !== null ? String(initialData.net_debt_over_ebitda) : (initialData.netDebtOverEbitda ? String(initialData.netDebtOverEbitda) : ''));
+      setNetDebtOverEquity(initialData.net_debt_over_equity !== undefined && initialData.net_debt_over_equity !== null ? String(initialData.net_debt_over_equity) : (initialData.netDebtOverEquity ? String(initialData.netDebtOverEquity) : ''));
       setRevenueCagr5y(initialData.revenue_cagr_5y !== undefined && initialData.revenue_cagr_5y !== null ? String(initialData.revenue_cagr_5y) : (initialData.revenueCagr5y ? String(initialData.revenueCagr5y) : ''));
       setDailyLiquidity(initialData.daily_liquidity !== undefined && initialData.daily_liquidity !== null ? String(initialData.daily_liquidity) : (initialData.dailyLiquidity ? String(initialData.dailyLiquidity) : ''));
 
@@ -97,6 +122,9 @@ export const ManualAssetModal: React.FC<ManualAssetModalProps> = ({
         initialData.capRate !== undefined && initialData.capRate !== null ? String(initialData.capRate) :
         initialData.caprate !== undefined && initialData.caprate !== null ? String(initialData.caprate) : ''
       );
+      setPricePerSqm(initialData.price_per_sqm !== undefined && initialData.price_per_sqm !== null ? String(initialData.price_per_sqm) : (initialData.pricePerSqm ? String(initialData.pricePerSqm) : ''));
+      setRentPerSqm(initialData.rent_per_sqm !== undefined && initialData.rent_per_sqm !== null ? String(initialData.rent_per_sqm) : (initialData.rentPerSqm ? String(initialData.rentPerSqm) : ''));
+      setMarketCap(initialData.market_cap !== undefined && initialData.market_cap !== null ? String(initialData.market_cap) : (initialData.marketCap ? String(initialData.marketCap) : ''));
       setNetWorth(initialData.net_worth !== undefined && initialData.net_worth !== null ? String(initialData.net_worth) : (initialData.netWorth ? String(initialData.netWorth) : ''));
     } else {
       setTicker('');
@@ -108,11 +136,22 @@ export const ManualAssetModal: React.FC<ManualAssetModalProps> = ({
       setLastPrice('');
       setPl('');
       setPvp('');
+      setPsr('');
+      setPAtivo('');
+      setPCapGiro('');
+      setPEbit('');
+      setPAtivCircLiq('');
+      setEvEbit('');
+      setEvEbitda('');
       setDividendYield('');
+      setGrossMargin('');
+      setEbitMargin('');
+      setNetMargin('');
+      setCurrentLiquidity('');
       setRoe('');
       setRoic('');
-      setNetMargin('');
       setNetDebtOverEbitda('');
+      setNetDebtOverEquity('');
       setRevenueCagr5y('');
       setDailyLiquidity('');
       setFiiType('Tijolo');
@@ -120,6 +159,9 @@ export const ManualAssetModal: React.FC<ManualAssetModalProps> = ({
       setPhysicalVacancy('');
       setPropertiesCount('');
       setCapRate('');
+      setPricePerSqm('');
+      setRentPerSqm('');
+      setMarketCap('');
       setNetWorth('');
     }
   }, [initialData, isOpen]);
@@ -151,10 +193,21 @@ export const ManualAssetModal: React.FC<ManualAssetModalProps> = ({
 
       if (assetType === 'Ação') {
         payload.pl = pl ? parseFloat(pl.replace(',', '.')) : null;
+        payload.psr = psr ? parseFloat(psr.replace(',', '.')) : null;
+        payload.p_ativo = pAtivo ? parseFloat(pAtivo.replace(',', '.')) : null;
+        payload.p_cap_giro = pCapGiro ? parseFloat(pCapGiro.replace(',', '.')) : null;
+        payload.p_ebit = pEbit ? parseFloat(pEbit.replace(',', '.')) : null;
+        payload.p_ativ_circ_liq = pAtivCircLiq ? parseFloat(pAtivCircLiq.replace(',', '.')) : null;
+        payload.ev_ebit = evEbit ? parseFloat(evEbit.replace(',', '.')) : null;
+        payload.ev_ebitda = evEbitda ? parseFloat(evEbitda.replace(',', '.')) : null;
+        payload.gross_margin = grossMargin ? parseFloat(grossMargin.replace(',', '.')) : null;
+        payload.ebit_margin = ebitMargin ? parseFloat(ebitMargin.replace(',', '.')) : null;
+        payload.net_margin = netMargin ? parseFloat(netMargin.replace(',', '.')) : null;
+        payload.current_liquidity = currentLiquidity ? parseFloat(currentLiquidity.replace(',', '.')) : null;
         payload.roe = roe ? parseFloat(roe.replace(',', '.')) : null;
         payload.roic = roic ? parseFloat(roic.replace(',', '.')) : null;
-        payload.net_margin = netMargin ? parseFloat(netMargin.replace(',', '.')) : null;
         payload.net_debt_over_ebitda = netDebtOverEbitda ? parseFloat(netDebtOverEbitda.replace(',', '.')) : null;
+        payload.net_debt_over_equity = netDebtOverEquity ? parseFloat(netDebtOverEquity.replace(',', '.')) : null;
         payload.revenue_cagr_5y = revenueCagr5y ? parseFloat(revenueCagr5y.replace(',', '.')) : null;
       } else {
         payload.fii_type = fiiType;
@@ -163,6 +216,9 @@ export const ManualAssetModal: React.FC<ManualAssetModalProps> = ({
         payload.physical_vacancy = physicalVacancy ? parseFloat(physicalVacancy.replace(',', '.')) : null;
         payload.properties_count = propertiesCount ? parseInt(propertiesCount, 10) : null;
         payload.cap_rate = capRate ? parseFloat(capRate.replace(',', '.')) : null;
+        payload.price_per_sqm = pricePerSqm ? parseFloat(pricePerSqm.replace(',', '.')) : null;
+        payload.rent_per_sqm = rentPerSqm ? parseFloat(rentPerSqm.replace(',', '.')) : null;
+        payload.market_cap = marketCap ? parseFloat(marketCap.replace(',', '.')) : null;
         payload.net_worth = netWorth ? parseFloat(netWorth.replace(',', '.')) : null;
       }
 
@@ -339,6 +395,127 @@ export const ManualAssetModal: React.FC<ManualAssetModalProps> = ({
                   </div>
 
                   <div>
+                    <label className="text-[10px] font-bold text-muted-foreground block mb-1">PSR (Preço / Receita)</label>
+                    <input
+                      type="text"
+                      value={psr}
+                      onChange={(e) => setPsr(e.target.value)}
+                      placeholder="Ex: 1,1"
+                      className="w-full bg-card border border-border/70 rounded-xl px-3 py-1.5 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-primary/20"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] font-bold text-muted-foreground block mb-1">P/Ativo</label>
+                    <input
+                      type="text"
+                      value={pAtivo}
+                      onChange={(e) => setPAtivo(e.target.value)}
+                      placeholder="Ex: 0,85"
+                      className="w-full bg-card border border-border/70 rounded-xl px-3 py-1.5 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-primary/20"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] font-bold text-muted-foreground block mb-1">P/Cap.Giro</label>
+                    <input
+                      type="text"
+                      value={pCapGiro}
+                      onChange={(e) => setPCapGiro(e.target.value)}
+                      placeholder="Ex: 4,2"
+                      className="w-full bg-card border border-border/70 rounded-xl px-3 py-1.5 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-primary/20"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] font-bold text-muted-foreground block mb-1">P/EBIT</label>
+                    <input
+                      type="text"
+                      value={pEbit}
+                      onChange={(e) => setPEbit(e.target.value)}
+                      placeholder="Ex: 5,1"
+                      className="w-full bg-card border border-border/70 rounded-xl px-3 py-1.5 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-primary/20"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] font-bold text-muted-foreground block mb-1">P/Ativ Circ.Liq</label>
+                    <input
+                      type="text"
+                      value={pAtivCircLiq}
+                      onChange={(e) => setPAtivCircLiq(e.target.value)}
+                      placeholder="Ex: -1,8"
+                      className="w-full bg-card border border-border/70 rounded-xl px-3 py-1.5 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-primary/20"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] font-bold text-muted-foreground block mb-1">EV/EBIT</label>
+                    <input
+                      type="text"
+                      value={evEbit}
+                      onChange={(e) => setEvEbit(e.target.value)}
+                      placeholder="Ex: 6,2"
+                      className="w-full bg-card border border-border/70 rounded-xl px-3 py-1.5 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-primary/20"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] font-bold text-muted-foreground block mb-1">EV/EBITDA</label>
+                    <input
+                      type="text"
+                      value={evEbitda}
+                      onChange={(e) => setEvEbitda(e.target.value)}
+                      placeholder="Ex: 4,8"
+                      className="w-full bg-card border border-border/70 rounded-xl px-3 py-1.5 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-primary/20"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] font-bold text-muted-foreground block mb-1">Margem Bruta (%)</label>
+                    <input
+                      type="text"
+                      value={grossMargin}
+                      onChange={(e) => setGrossMargin(e.target.value)}
+                      placeholder="Ex: 42,0"
+                      className="w-full bg-card border border-border/70 rounded-xl px-3 py-1.5 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-primary/20"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] font-bold text-muted-foreground block mb-1">Margem EBIT (%)</label>
+                    <input
+                      type="text"
+                      value={ebitMargin}
+                      onChange={(e) => setEbitMargin(e.target.value)}
+                      placeholder="Ex: 22,5"
+                      className="w-full bg-card border border-border/70 rounded-xl px-3 py-1.5 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-primary/20"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] font-bold text-muted-foreground block mb-1">Margem Líquida (%)</label>
+                    <input
+                      type="text"
+                      value={netMargin}
+                      onChange={(e) => setNetMargin(e.target.value)}
+                      placeholder="Ex: 14,5"
+                      className="w-full bg-card border border-border/70 rounded-xl px-3 py-1.5 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-primary/20"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] font-bold text-muted-foreground block mb-1">Liq. Corrente</label>
+                    <input
+                      type="text"
+                      value={currentLiquidity}
+                      onChange={(e) => setCurrentLiquidity(e.target.value)}
+                      placeholder="Ex: 1,8"
+                      className="w-full bg-card border border-border/70 rounded-xl px-3 py-1.5 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-primary/20"
+                    />
+                  </div>
+
+                  <div>
                     <label className="text-[10px] font-bold text-muted-foreground block mb-1">ROE (%)</label>
                     <input
                       type="text"
@@ -361,23 +538,12 @@ export const ManualAssetModal: React.FC<ManualAssetModalProps> = ({
                   </div>
 
                   <div>
-                    <label className="text-[10px] font-bold text-muted-foreground block mb-1">Margem Líquida (%)</label>
+                    <label className="text-[10px] font-bold text-muted-foreground block mb-1">Dív. Líq. / Patrimônio</label>
                     <input
                       type="text"
-                      value={netMargin}
-                      onChange={(e) => setNetMargin(e.target.value)}
-                      placeholder="Ex: 14,5"
-                      className="w-full bg-card border border-border/70 rounded-xl px-3 py-1.5 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-primary/20"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="text-[10px] font-bold text-muted-foreground block mb-1">Dívida Líq. / EBITDA</label>
-                    <input
-                      type="text"
-                      value={netDebtOverEbitda}
-                      onChange={(e) => setNetDebtOverEbitda(e.target.value)}
-                      placeholder="Ex: 1,2"
+                      value={netDebtOverEquity}
+                      onChange={(e) => setNetDebtOverEquity(e.target.value)}
+                      placeholder="Ex: 0,45"
                       className="w-full bg-card border border-border/70 rounded-xl px-3 py-1.5 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-primary/20"
                     />
                   </div>
@@ -435,6 +601,39 @@ export const ManualAssetModal: React.FC<ManualAssetModalProps> = ({
                       value={propertiesCount}
                       onChange={(e) => setPropertiesCount(e.target.value)}
                       placeholder="Ex: 24"
+                      className="w-full bg-card border border-border/70 rounded-xl px-3 py-1.5 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-primary/20"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] font-bold text-muted-foreground block mb-1">Preço m² (R$)</label>
+                    <input
+                      type="text"
+                      value={pricePerSqm}
+                      onChange={(e) => setPricePerSqm(e.target.value)}
+                      placeholder="Ex: 7800"
+                      className="w-full bg-card border border-border/70 rounded-xl px-3 py-1.5 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-primary/20"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] font-bold text-muted-foreground block mb-1">Aluguel m² (R$)</label>
+                    <input
+                      type="text"
+                      value={rentPerSqm}
+                      onChange={(e) => setRentPerSqm(e.target.value)}
+                      placeholder="Ex: 52"
+                      className="w-full bg-card border border-border/70 rounded-xl px-3 py-1.5 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-primary/20"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] font-bold text-muted-foreground block mb-1">Valor de Mercado (R$)</label>
+                    <input
+                      type="text"
+                      value={marketCap}
+                      onChange={(e) => setMarketCap(e.target.value)}
+                      placeholder="Ex: 3500000000"
                       className="w-full bg-card border border-border/70 rounded-xl px-3 py-1.5 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-primary/20"
                     />
                   </div>
