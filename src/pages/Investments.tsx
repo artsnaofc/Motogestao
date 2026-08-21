@@ -111,8 +111,8 @@ export function Investments() {
   const [isQuoteProviderModalOpen, setIsQuoteProviderModalOpen] = useState(false);
 
   // Navigation & Tabs
-  const [activeTab, setActiveTab] = useState<'carteira' | 'diagnostico' | 'fundamentalista' | 'rebalanceamento' | 'proventos' | 'historico' | 'analise'>('carteira');
-  const [carteiraSubTab, setCarteiraSubTab] = useState<'carteira' | 'geral' | 'alocacao' | 'preco_teto'>('carteira');
+  const [activeTab, setActiveTab] = useState<'carteira' | 'fundamentalista' | 'rebalanceamento' | 'proventos' | 'historico' | 'analise'>('carteira');
+  const [carteiraSubTab, setCarteiraSubTab] = useState<'carteira' | 'geral' | 'alocacao' | 'diagnostico'>('carteira');
   const [analyticsTicker, setAnalyticsTicker] = useState<string>('PETR4');
   const [tirMode, setTirMode] = useState<'dynamic' | 'period' | 'annual'>('dynamic');
   const [showTooltipInfo, setShowTooltipInfo] = useState<string | null>(null);
@@ -911,28 +911,6 @@ export function Investments() {
         </button>
 
         <button
-          onClick={() => setActiveTab('diagnostico')}
-          className={`px-3 py-2 text-xs font-black rounded-xl transition-all flex items-center justify-center gap-2 whitespace-nowrap flex-1 min-w-[155px] ${
-            activeTab === 'diagnostico' 
-              ? 'bg-card text-foreground shadow-xs border border-border/50' 
-              : 'text-muted-foreground hover:text-foreground'
-          }`}
-        >
-          <ShieldCheck className="w-4 h-4 text-emerald-500" />
-          <span>Diagnóstico & Risco</span>
-          {portfolioDiagnosis.alerts.length > 0 ? (
-            <span className="px-1.5 py-0.5 text-[10px] rounded-full bg-rose-500/10 text-rose-500 font-extrabold flex items-center gap-0.5">
-              <AlertTriangle className="w-2.5 h-2.5" />
-              {portfolioDiagnosis.alerts.length}
-            </span>
-          ) : (
-            <span className="px-1.5 py-0.5 text-[10px] rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-extrabold">
-              {portfolioDiagnosis.diversificationScore}/100
-            </span>
-          )}
-        </button>
-
-        <button
           onClick={() => setActiveTab('fundamentalista')}
           className={`px-3 py-2 text-xs font-black rounded-xl transition-all flex items-center justify-center gap-2 whitespace-nowrap flex-1 min-w-[165px] ${
             activeTab === 'fundamentalista' 
@@ -941,7 +919,7 @@ export function Investments() {
           }`}
         >
           <Award className="w-4 h-4 text-amber-500" />
-          <span>Fundamentalista B3</span>
+          <span>Ranking Ativos</span>
           <span className="px-1.5 py-0.5 text-[10px] rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 font-extrabold">
             Score
           </span>
@@ -1331,6 +1309,24 @@ export function Investments() {
             >
               <PieIcon className="w-3.5 h-3.5 text-indigo-500" />
               Alocação
+            </button>
+
+            <button
+              onClick={() => setCarteiraSubTab('diagnostico')}
+              className={`flex-1 min-w-[150px] px-3.5 py-2 text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                carteiraSubTab === 'diagnostico' 
+                  ? 'bg-card text-foreground shadow-xs border border-border/50' 
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />
+              Diagnóstico & Risco
+              {portfolioDiagnosis.alerts.length > 0 && (
+                <span className="px-1.5 py-0.5 text-[10px] rounded-full bg-rose-500/10 text-rose-500 font-extrabold flex items-center gap-0.5">
+                  <AlertTriangle className="w-2.5 h-2.5" />
+                  {portfolioDiagnosis.alerts.length}
+                </span>
+              )}
             </button>
           </div>
 
@@ -1765,11 +1761,25 @@ export function Investments() {
                           className="hover:bg-muted/30 transition-colors cursor-pointer group"
                         >
                           <td className="px-4 py-3">
-                            <div className="flex items-center gap-2">
-                              <span className="font-black text-foreground group-hover:text-primary transition-colors">{p.ticker}</span>
-                              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-secondary text-secondary-foreground uppercase">
-                                {p.type}
-                              </span>
+                            <div className="flex flex-col">
+                              <div className="flex items-center gap-2">
+                                <span className="font-black text-foreground group-hover:text-primary transition-colors">{p.ticker}</span>
+                                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-secondary text-secondary-foreground uppercase">
+                                  {p.type}
+                                </span>
+                              </div>
+                              {(() => {
+                                const meta = b3AssetsMetadata[cleanTicker];
+                                if (meta) {
+                                  const sector = p.type === 'Ação' || p.type === 'BDR' 
+                                    ? meta.sector || meta.subsector 
+                                    : meta.fiiSegment;
+                                  if (sector) {
+                                    return <span className="text-[10px] text-muted-foreground font-semibold mt-0.5 truncate max-w-[150px]" title={sector}>{sector}</span>;
+                                  }
+                                }
+                                return null;
+                              })()}
                             </div>
                           </td>
                           <td className="px-4 py-3 text-right font-bold">{p.totalQuantity}</td>
@@ -1827,6 +1837,13 @@ export function Investments() {
             </div>
           )}
             </div>
+          ) : carteiraSubTab === 'diagnostico' ? (
+            <PortfolioDiagnosisDashboard
+              diagnosis={portfolioDiagnosis}
+              hideValues={hideValues}
+              onSelectTicker={(tk) => handleSelectAssetForAnalytics(tk)}
+              onNavigateToRebalance={() => setActiveTab('rebalanceamento')}
+            />
           ) : (
             <InvestmentAnalytics
               investmentTransactions={investmentTransactions}
@@ -1836,7 +1853,7 @@ export function Investments() {
               settings={settings}
               hideValues={hideValues}
               activeSubTab={carteiraSubTab}
-              onSubTabChange={setCarteiraSubTab}
+              onSubTabChange={setCarteiraSubTab as any}
               initialTicker={analyticsTicker}
               hideTopCards={true}
               hideSubTabButtons={true}
@@ -1845,16 +1862,6 @@ export function Investments() {
             />
           )}
         </div>
-      )}
-
-      {/* TAB 2: DIAGNÓSTICO & GESTÃO DE RISCO B3 */}
-      {activeTab === 'diagnostico' && (
-        <PortfolioDiagnosisDashboard
-          diagnosis={portfolioDiagnosis}
-          hideValues={hideValues}
-          onSelectTicker={(tk) => handleSelectAssetForAnalytics(tk)}
-          onNavigateToRebalance={() => setActiveTab('rebalanceamento')}
-        />
       )}
 
       {/* TAB 3: ANÁLISE FUNDAMENTALISTA & SCORING B3 */}
@@ -2624,7 +2631,7 @@ export function Investments() {
           formatCurrency={formatCurrency}
           formatPercent={formatPercent}
           analysisMode={dividendAnalysisMode}
-          initialTab={raioXInitialTab}
+          initialTab={raioXInitialTab as any}
         />
       )}
 

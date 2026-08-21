@@ -67,7 +67,7 @@ interface AssetRaioXModalProps {
   formatCurrency: (val: number) => string;
   formatPercent: (val: number) => string;
   analysisMode?: 'received_only' | 'include_provisioned';
-  initialTab?: 'geral' | 'proventos' | 'valuation' | 'historico' | 'fundamentos';
+  initialTab?: 'geral' | 'proventos' | 'historico' | 'fundamentos';
 }
 
 export function AssetRaioXModal({
@@ -85,16 +85,15 @@ export function AssetRaioXModal({
   analysisMode = 'received_only',
   initialTab = 'geral'
 }: AssetRaioXModalProps) {
-  const { settings, valuationTargets } = useData();
+  const { settings } = useData();
   const { b3AssetsMetadata, loadAssetHistory } = useInvestments();
-  const [activeTab, setActiveTab] = useState<'geral' | 'proventos' | 'valuation' | 'historico' | 'fundamentos'>(initialTab);
+  const [activeTab, setActiveTab] = useState<'geral' | 'proventos' | 'historico' | 'fundamentos'>(initialTab);
   const [copiedCnpj, setCopiedCnpj] = useState(false);
   const [historyRecords, setHistoryRecords] = useState<any[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
 
   const cleanTicker = position.ticker.toUpperCase().trim();
   const cnpj = getAssetCnpj(cleanTicker, settings);
-  const savedValuation = valuationTargets[cleanTicker];
 
   // Dynamic fundamental and score calculation
   const fundamental = useMemo(() => {
@@ -159,10 +158,9 @@ export function AssetRaioXModal({
       position.averagePrice,
       position.currentPrice,
       dividends,
-      analysisMode,
-      savedValuation
+      analysisMode
     );
-  }, [position, dividends, analysisMode, savedValuation]);
+  }, [position, dividends, analysisMode]);
 
   const curVal = position.currentValue || (position.currentPrice ? position.currentPrice * position.totalQuantity : position.totalInvested);
   const capitalGainR$ = position.currentPrice ? (curVal - position.totalInvested) : 0;
@@ -326,18 +324,6 @@ export function AssetRaioXModal({
           >
             <DollarSign className="w-3.5 h-3.5 text-amber-500" />
             Proventos & Renda ({assetDivs.length})
-          </button>
-
-          <button
-            onClick={() => setActiveTab('valuation')}
-            className={`px-3.5 py-2 text-xs font-black rounded-t-xl transition-all border-b-2 flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
-              activeTab === 'valuation'
-                ? 'border-primary text-primary bg-card shadow-xs'
-                : 'border-transparent text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            <Scale className="w-3.5 h-3.5 text-indigo-500" />
-            Valuation & Preço Teto
           </button>
 
           <button
@@ -653,371 +639,6 @@ export function AssetRaioXModal({
                     </table>
                   </div>
                 )}
-              </div>
-            </div>
-          )}
-
-          {/* TAB 3: VALUATION & PREÇO TETO */}
-          {activeTab === 'valuation' && (
-            <div className="space-y-6">
-              
-              {/* TOP HEADER / STATUS OF VALUATION */}
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-2xl bg-muted/20 border border-border/50">
-                <div className="flex items-center gap-2.5">
-                  <div className="p-2 rounded-xl bg-primary/10 text-primary">
-                    <Scale className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <h4 className="text-sm font-black text-foreground">Modelos de Valuation & Preço Teto</h4>
-                      {projection.isCustomValuation ? (
-                        <span className="text-[10px] font-black px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 flex items-center gap-1">
-                          <CheckCircle2 className="w-3 h-3" />
-                          Salvo na Calculadora
-                        </span>
-                      ) : (
-                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-secondary text-secondary-foreground">
-                          Padrão Automático
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                      {projection.isCustomValuation 
-                        ? 'Utilizando os parâmetros e projeções customizados salvos na Calculadora de Preço Teto.'
-                        : 'Utilizando dados automáticos de proventos. Salve parâmetros na Calculadora para análises avançadas (Graham, Gordon, P/VP).'}
-                    </p>
-                  </div>
-                </div>
-
-                <button
-                  onClick={() => {
-                    onClose();
-                    onSelectAnalytics(position.ticker);
-                  }}
-                  className="px-3.5 py-2 text-xs font-bold rounded-xl bg-primary text-primary-foreground hover:bg-primary/90 transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-xs shrink-0"
-                >
-                  <Calculator className="w-4 h-4" />
-                  {projection.isCustomValuation ? 'Editar no Preço Teto' : 'Configurar Calculadora'}
-                </button>
-              </div>
-
-              {/* DÉCIO BAZIN CEILING PRICE CARD */}
-              <div className="p-5 rounded-2xl bg-gradient-to-br from-card via-card to-indigo-500/5 border border-border/70 shadow-xs space-y-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2.5">
-                    <div className="p-2.5 rounded-xl bg-indigo-500/10 text-indigo-600 dark:text-indigo-400">
-                      <Calculator className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <h4 className="text-base font-black text-foreground">
-                        Método Décio Bazin (DY Alvo: {projection.bazinTargetYield.toFixed(1)}%)
-                      </h4>
-                      <p className="text-xs text-muted-foreground">
-                        Fórmula: Preço Teto = DPA / ({projection.bazinTargetYield / 100})
-                      </p>
-                    </div>
-                  </div>
-
-                  {projection.bazinCeilingPrice > 0 && (
-                    <span className={`text-xs font-black px-2.5 py-1 rounded-xl flex items-center gap-1 ${
-                      projection.bazinMarginOfSafety >= 0 
-                        ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20' 
-                        : 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20'
-                    }`}>
-                      {projection.bazinMarginOfSafety >= 0 ? <ShieldCheck className="w-3.5 h-3.5" /> : <ShieldAlert className="w-3.5 h-3.5" />}
-                      Margem: {formatPercent(projection.bazinMarginOfSafety)}
-                    </span>
-                  )}
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <div className="p-3.5 rounded-xl bg-muted/20 border border-border/40">
-                    <p className="text-[10px] text-muted-foreground font-bold uppercase">DPA Base / 12M</p>
-                    <p className="text-lg font-black text-foreground">
-                      {formatCurrency(projection.bazinDPA > 0 ? projection.bazinDPA : projection.projectedAnnualDividendPerShare)}
-                    </p>
-                    <p className="text-[10px] text-muted-foreground">
-                      {projection.bazinDPA > 0 ? 'DPA salvo na calculadora' : 'Proventos / cota em 12M'}
-                    </p>
-                  </div>
-
-                  <div className="p-3.5 rounded-xl bg-indigo-500/10 border border-indigo-500/20">
-                    <p className="text-[10px] text-indigo-700 dark:text-indigo-300 font-bold uppercase">Preço Teto Bazin</p>
-                    <p className="text-lg font-black text-indigo-600 dark:text-indigo-400">
-                      {projection.bazinCeilingPrice > 0 ? formatCurrency(projection.bazinCeilingPrice) : 'Indisponível'}
-                    </p>
-                    <p className="text-[10px] text-muted-foreground">Preço máx. para {projection.bazinTargetYield.toFixed(1)}% DY</p>
-                  </div>
-
-                  <div className="p-3.5 rounded-xl bg-muted/20 border border-border/40">
-                    <p className="text-[10px] text-muted-foreground font-bold uppercase">Cotação Atual de Mercado</p>
-                    <p className="text-lg font-black text-primary">
-                      {position.currentPrice ? formatCurrency(position.currentPrice) : formatCurrency(position.averagePrice)}
-                    </p>
-                    <p className="text-[10px] text-muted-foreground">
-                      {projection.bazinDiscount >= 0 
-                        ? `Desconto de ${formatCurrency(projection.bazinDiscount)}/cota`
-                        : `Acima do teto em ${formatCurrency(Math.abs(projection.bazinDiscount))}/cota`}
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              {/* ADDITIONAL SAVED MODELS (GRAHAM, P/VP, GORDON, P/L) */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                
-                {/* GRAHAM MODEL CARD */}
-                <div className="p-4 rounded-2xl bg-card border border-border/60 shadow-xs space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <div className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-500">
-                        <Award className="w-4 h-4" />
-                      </div>
-                      <div>
-                        <h5 className="text-xs font-black text-foreground">Fórmula de Benjamin Graham</h5>
-                        <p className="text-[10px] text-muted-foreground">√(22,5 × LPA × VPA)</p>
-                      </div>
-                    </div>
-                    {projection.grahamCeilingPrice > 0 && (
-                      <span className={`text-[10px] font-black px-2 py-0.5 rounded-lg flex items-center gap-0.5 ${
-                        projection.grahamMarginOfSafety >= 0 
-                          ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' 
-                          : 'bg-rose-500/10 text-rose-600 dark:text-rose-400'
-                      }`}>
-                        {formatPercent(projection.grahamMarginOfSafety)}
-                      </span>
-                    )}
-                  </div>
-
-                  {projection.grahamCeilingPrice > 0 ? (
-                    <div className="grid grid-cols-2 gap-2 pt-1">
-                      <div className="p-2.5 rounded-xl bg-muted/20 border border-border/30">
-                        <p className="text-[9px] text-muted-foreground font-bold uppercase">Preço Justo Graham</p>
-                        <p className="text-base font-black text-emerald-600 dark:text-emerald-400">
-                          {formatCurrency(projection.grahamCeilingPrice)}
-                        </p>
-                        <p className="text-[9px] text-muted-foreground mt-0.5">
-                          LPA: {formatCurrency(projection.grahamLPA)} • VPA: {formatCurrency(projection.grahamVPA)}
-                        </p>
-                      </div>
-                      <div className="p-2.5 rounded-xl bg-muted/20 border border-border/30">
-                        <p className="text-[9px] text-muted-foreground font-bold uppercase">Margem vs Cotação</p>
-                        <p className={`text-base font-black ${projection.grahamDiscount >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
-                          {projection.grahamDiscount >= 0 ? '+' : ''}{formatCurrency(projection.grahamDiscount)}
-                        </p>
-                        <p className="text-[9px] text-muted-foreground mt-0.5">
-                          {projection.grahamDiscount >= 0 ? 'Desconto por cota' : 'Ágio sobre o justo'}
-                        </p>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="p-3 rounded-xl bg-muted/10 border border-dashed border-border/50 text-center">
-                      <p className="text-xs text-muted-foreground font-medium">Parâmetros LPA / VPA não salvos.</p>
-                      <button
-                        onClick={() => {
-                          onClose();
-                          onSelectAnalytics(position.ticker);
-                        }}
-                        className="text-[11px] font-bold text-primary hover:underline mt-1 cursor-pointer"
-                      >
-                        Informar LPA e VPA na Calculadora →
-                      </button>
-                    </div>
-                  )}
-                </div>
-
-                {/* P/VP TARGET MODEL CARD */}
-                <div className="p-4 rounded-2xl bg-card border border-border/60 shadow-xs space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <div className="p-1.5 rounded-lg bg-teal-500/10 text-teal-500">
-                        <TrendingUp className="w-4 h-4" />
-                      </div>
-                      <div>
-                        <h5 className="text-xs font-black text-foreground">Preço Teto por P/VP Alvo</h5>
-                        <p className="text-[10px] text-muted-foreground">VPA × P/VP Alvo</p>
-                      </div>
-                    </div>
-                    {projection.pvpCeilingPrice > 0 && (
-                      <span className={`text-[10px] font-black px-2 py-0.5 rounded-lg flex items-center gap-0.5 ${
-                        projection.pvpMarginOfSafety >= 0 
-                          ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' 
-                          : 'bg-rose-500/10 text-rose-600 dark:text-rose-400'
-                      }`}>
-                        {formatPercent(projection.pvpMarginOfSafety)}
-                      </span>
-                    )}
-                  </div>
-
-                  {projection.pvpCeilingPrice > 0 ? (
-                    <div className="grid grid-cols-2 gap-2 pt-1">
-                      <div className="p-2.5 rounded-xl bg-muted/20 border border-border/30">
-                        <p className="text-[9px] text-muted-foreground font-bold uppercase">Preço Teto (P/VP {projection.pvpTarget}x)</p>
-                        <p className="text-base font-black text-teal-600 dark:text-teal-400">
-                          {formatCurrency(projection.pvpCeilingPrice)}
-                        </p>
-                        <p className="text-[9px] text-muted-foreground mt-0.5">
-                          VPA base: {formatCurrency(projection.grahamVPA)}
-                        </p>
-                      </div>
-                      <div className="p-2.5 rounded-xl bg-muted/20 border border-border/30">
-                        <p className="text-[9px] text-muted-foreground font-bold uppercase">Diferença vs VP</p>
-                        <p className="text-base font-black text-foreground">
-                          {formatCurrency(projection.pvpDiff)}
-                        </p>
-                        <p className="text-[9px] text-muted-foreground mt-0.5">
-                          Cotação vs Patrimônio Líquido
-                        </p>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="p-3 rounded-xl bg-muted/10 border border-dashed border-border/50 text-center">
-                      <p className="text-xs text-muted-foreground font-medium">VPA ou P/VP Alvo não configurados.</p>
-                      <button
-                        onClick={() => {
-                          onClose();
-                          onSelectAnalytics(position.ticker);
-                        }}
-                        className="text-[11px] font-bold text-primary hover:underline mt-1 cursor-pointer"
-                      >
-                        Configurar P/VP Alvo →
-                      </button>
-                    </div>
-                  )}
-                </div>
-
-                {/* GORDON GROWTH MODEL CARD */}
-                <div className="p-4 rounded-2xl bg-card border border-border/60 shadow-xs space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <div className="p-1.5 rounded-lg bg-purple-500/10 text-purple-500">
-                        <Sparkles className="w-4 h-4" />
-                      </div>
-                      <div>
-                        <h5 className="text-xs font-black text-foreground">Modelo de Gordon (Crescimento)</h5>
-                        <p className="text-[10px] text-muted-foreground">D1 / (k - g)</p>
-                      </div>
-                    </div>
-                    {projection.gordonCeilingPrice > 0 && (
-                      <span className={`text-[10px] font-black px-2 py-0.5 rounded-lg flex items-center gap-0.5 ${
-                        projection.gordonMarginOfSafety >= 0 
-                          ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' 
-                          : 'bg-rose-500/10 text-rose-600 dark:text-rose-400'
-                      }`}>
-                        {formatPercent(projection.gordonMarginOfSafety)}
-                      </span>
-                    )}
-                  </div>
-
-                  {projection.gordonCeilingPrice > 0 ? (
-                    <div className="grid grid-cols-2 gap-2 pt-1">
-                      <div className="p-2.5 rounded-xl bg-muted/20 border border-border/30">
-                        <p className="text-[9px] text-muted-foreground font-bold uppercase">Preço Teto Gordon</p>
-                        <p className="text-base font-black text-purple-600 dark:text-purple-400">
-                          {formatCurrency(projection.gordonCeilingPrice)}
-                        </p>
-                        <p className="text-[9px] text-muted-foreground mt-0.5">
-                          D1: {formatCurrency(projection.gordonD1)}
-                        </p>
-                      </div>
-                      <div className="p-2.5 rounded-xl bg-muted/20 border border-border/30">
-                        <p className="text-[9px] text-muted-foreground font-bold uppercase">Taxas (k / g)</p>
-                        <p className="text-base font-black text-foreground">
-                          {projection.gordonK}% / {projection.gordonG}%
-                        </p>
-                        <p className="text-[9px] text-muted-foreground mt-0.5">
-                          Retorno / Crescimento
-                        </p>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="p-3 rounded-xl bg-muted/10 border border-dashed border-border/50 text-center">
-                      <p className="text-xs text-muted-foreground font-medium">Parâmetros D1, k ou g não definidos.</p>
-                      <button
-                        onClick={() => {
-                          onClose();
-                          onSelectAnalytics(position.ticker);
-                        }}
-                        className="text-[11px] font-bold text-primary hover:underline mt-1 cursor-pointer"
-                      >
-                        Simular Gordon na Calculadora →
-                      </button>
-                    </div>
-                  )}
-                </div>
-
-                {/* P/L TARGET MODEL CARD */}
-                <div className="p-4 rounded-2xl bg-card border border-border/60 shadow-xs space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <div className="p-1.5 rounded-lg bg-amber-500/10 text-amber-500">
-                        <DollarSign className="w-4 h-4" />
-                      </div>
-                      <div>
-                        <h5 className="text-xs font-black text-foreground">Preço Teto por P/L Alvo</h5>
-                        <p className="text-[10px] text-muted-foreground">LPA × P/L Alvo</p>
-                      </div>
-                    </div>
-                    {projection.plCeilingPrice > 0 && (
-                      <span className={`text-[10px] font-black px-2 py-0.5 rounded-lg flex items-center gap-0.5 ${
-                        projection.plMarginOfSafety >= 0 
-                          ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' 
-                          : 'bg-rose-500/10 text-rose-600 dark:text-rose-400'
-                      }`}>
-                        {formatPercent(projection.plMarginOfSafety)}
-                      </span>
-                    )}
-                  </div>
-
-                  {projection.plCeilingPrice > 0 ? (
-                    <div className="grid grid-cols-2 gap-2 pt-1">
-                      <div className="p-2.5 rounded-xl bg-muted/20 border border-border/30">
-                        <p className="text-[9px] text-muted-foreground font-bold uppercase">Preço Teto (P/L {projection.plTarget}x)</p>
-                        <p className="text-base font-black text-amber-600 dark:text-amber-400">
-                          {formatCurrency(projection.plCeilingPrice)}
-                        </p>
-                        <p className="text-[9px] text-muted-foreground mt-0.5">
-                          LPA base: {formatCurrency(projection.grahamLPA)}
-                        </p>
-                      </div>
-                      <div className="p-2.5 rounded-xl bg-muted/20 border border-border/30">
-                        <p className="text-[9px] text-muted-foreground font-bold uppercase">Margem de Segurança</p>
-                        <p className={`text-base font-black ${projection.plMarginOfSafety >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
-                          {formatPercent(projection.plMarginOfSafety)}
-                        </p>
-                        <p className="text-[9px] text-muted-foreground mt-0.5">
-                          vs Cotação Atual
-                        </p>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="p-3 rounded-xl bg-muted/10 border border-dashed border-border/50 text-center">
-                      <p className="text-xs text-muted-foreground font-medium">LPA ou P/L Alvo não configurados.</p>
-                      <button
-                        onClick={() => {
-                          onClose();
-                          onSelectAnalytics(position.ticker);
-                        }}
-                        className="text-[11px] font-bold text-primary hover:underline mt-1 cursor-pointer"
-                      >
-                        Configurar P/L Alvo →
-                      </button>
-                    </div>
-                  )}
-                </div>
-
-              </div>
-
-              {/* OFFICIAL CVM / FNET REPORT HUB */}
-              <div className="p-4 rounded-2xl bg-card border border-border/60 space-y-3">
-                <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                  <Building2 className="w-4 h-4 text-primary" />
-                  Documentos Oficiais CVM & FNET
-                </h4>
-                <p className="text-xs text-muted-foreground">
-                  Acesse relatórios gerenciais, fatos relevantes, comunicados ao mercado e demonstrações financeiras publicadas pela administradora/empresa na CVM.
-                </p>
-                <CvmDocumentButton ticker={position.ticker} variant="full" />
               </div>
             </div>
           )}
@@ -1526,7 +1147,7 @@ export function AssetRaioXModal({
                         {historyRecords.map((rec, idx) => (
                           <tr key={idx} className="hover:bg-muted/20 transition-colors">
                             <td className="px-3.5 py-2.5 text-foreground font-semibold">
-                              {rec.snapshot_date ? new Date(rec.snapshot_date + 'T12:00:00Z').toLocaleDateString('pt-BR', { timeZone: 'UTC' }) : (rec.created_at ? new Date(rec.created_at).toLocaleDateString('pt-BR') : '-')}
+                              {rec.recordedAt ? new Date(rec.recordedAt).toLocaleDateString('pt-BR') : '-'}
                             </td>
                             <td className="px-3.5 py-2.5">
                               <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-muted/60 text-muted-foreground">
@@ -1534,23 +1155,23 @@ export function AssetRaioXModal({
                               </span>
                             </td>
                             <td className="px-3.5 py-2.5 text-right font-black text-foreground">
-                              {rec.last_price ? formatCurrency(rec.last_price) : '-'}
+                              {rec.price ? formatCurrency(rec.price) : '-'}
                             </td>
                             <td className="px-3.5 py-2.5 text-right font-bold">
                               {rec.pvp ? rec.pvp.toFixed(2) : '-'}
                             </td>
                             <td className="px-3.5 py-2.5 text-right font-bold text-emerald-600">
-                              {rec.dividend_yield ? `${rec.dividend_yield.toFixed(1)}%` : '-'}
+                              {rec.dy ? `${rec.dy.toFixed(1)}%` : '-'}
                             </td>
                             <td className="px-3.5 py-2.5 text-right">
                               {fundamental.type === 'Ação' 
                                 ? (rec.pl ? `${rec.pl.toFixed(1)}x` : '-')
-                                : (rec.ffo_yield ? `${rec.ffo_yield.toFixed(1)}%` : '-')}
+                                : (rec.metricsJson?.ffoYield ? `${rec.metricsJson.ffoYield.toFixed(1)}%` : '-')}
                             </td>
                             <td className="px-3.5 py-2.5 text-right">
-                              {fundamental.type === 'Ação' 
+                              {fundamental.type === 'Ação'
                                 ? (rec.roe ? `${rec.roe.toFixed(1)}%` : '-')
-                                : (rec.physical_vacancy ? `${rec.physical_vacancy.toFixed(1)}%` : '-')}
+                                : (rec.vacancy ? `${rec.vacancy.toFixed(1)}%` : '-')}
                             </td>
                           </tr>
                         ))}

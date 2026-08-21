@@ -1,6 +1,7 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { InvestmentTransaction, Dividend, Reserve, UserSettings, ValuationTarget } from '../types';
 import { useData } from '../contexts/DataContext';
+import { useInvestments } from '../contexts/InvestmentsContext';
 import { supabase } from '../lib/supabase';
 import { fetchSingleQuote } from '../lib/quoteService';
 import { toast } from 'sonner';
@@ -369,6 +370,7 @@ export function InvestmentAnalytics({
   const [perfTypeFilter, setPerfTypeFilter] = useState<string>('all');
 
   const { valuationTargets, saveValuationTarget, deleteValuationTarget } = useData();
+  const { b3AssetsMetadata } = useInvestments();
   const savedValuations = valuationTargets;
 
   const formatCurrency = (val: number) => {
@@ -894,9 +896,22 @@ export function InvestmentAnalytics({
     const { activePositions, totalCurrentPortfolio } = analyticsData;
 
     const typeMap: Record<string, number> = {};
+    const sectorMap: Record<string, number> = {};
+
     activePositions.forEach(p => {
       const type = p.type || 'Ação';
       typeMap[type] = (typeMap[type] || 0) + p.currentValue;
+
+      const meta = b3AssetsMetadata[p.ticker.toUpperCase().trim()];
+      let sectorName = 'Não Classificado';
+      if (meta) {
+        if (type === 'Ação' || type === 'BDR') {
+          sectorName = meta.sector || meta.subsector || 'Outros Setores';
+        } else if (type === 'FII' || type === 'Fundo Imobiliário' || type === 'Fiagro') {
+          sectorName = meta.fiiSegment || 'Outros Segmentos';
+        }
+      }
+      sectorMap[sectorName] = (sectorMap[sectorName] || 0) + p.currentValue;
     });
 
     const categoryColors: Record<string, string> = {
@@ -916,7 +931,15 @@ export function InvestmentAnalytics({
       color: categoryColors[name] || '#6366f1'
     })).sort((a, b) => b.value - a.value);
 
-    const tickerColors = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16', '#f97316'];
+    const tickerColors = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16', '#f97316', '#a855f7', '#ef4444', '#14b8a6', '#f43f5e'];
+
+    const bySector = Object.entries(sectorMap).map(([name, value], idx) => ({
+      name,
+      value,
+      percent: totalCurrentPortfolio > 0 ? (value / totalCurrentPortfolio) * 100 : 0,
+      color: tickerColors[idx % tickerColors.length]
+    })).sort((a, b) => b.value - a.value);
+
     const sortedPositions = [...activePositions].sort((a, b) => b.currentValue - a.currentValue);
 
     const topTickers = sortedPositions.slice(0, 7).map((p, idx) => ({
@@ -936,8 +959,8 @@ export function InvestmentAnalytics({
       });
     }
 
-    return { byCategory, topTickers };
-  }, [analyticsData]);
+    return { byCategory, topTickers, bySector };
+  }, [analyticsData, b3AssetsMetadata]);
 
   // 4. MONTHLY DIVIDENDS EVOLUTION
   const monthlyDividendsData = useMemo(() => {
@@ -2110,7 +2133,7 @@ export function InvestmentAnalytics({
 
       {/* SUB TAB 2: ALOCAÇÃO */}
       {activeSubTab === 'alocacao' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <div className="p-5 rounded-3xl border border-border/50 bg-card shadow-xs space-y-4 flex flex-col justify-between">
             <div>
               <h3 className="text-sm font-bold tracking-tight flex items-center gap-2">
@@ -2161,6 +2184,60 @@ export function InvestmentAnalytics({
             ) : (
               <div className="py-12 text-center text-xs text-muted-foreground border border-dashed border-border/50 rounded-2xl">
                 Sem posições ativas para exibir alocação.
+              </div>
+            )}
+          </div>
+
+          <div className="p-5 rounded-3xl border border-border/50 bg-card shadow-xs space-y-4 flex flex-col justify-between">
+            <div>
+              <h3 className="text-sm font-bold tracking-tight flex items-center gap-2">
+                <PieIcon className="w-4 h-4 text-emerald-500" />
+                Alocação por Setor
+              </h3>
+              <p className="text-xs text-muted-foreground">Distribuição segmentada baseada nos dados do Ranking</p>
+            </div>
+
+            {allocationData.bySector.length > 0 ? (
+              <div className="space-y-4">
+                <div className="h-52 w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={allocationData.bySector}
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={55}
+                        outerRadius={80}
+                        paddingAngle={4}
+                        dataKey="value"
+                      >
+                        {allocationData.bySector.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={entry.color} />
+                        ))}
+                      </Pie>
+                      <Tooltip formatter={(val: any) => [formatCurrency(Number(val)), 'Valor']} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+
+                <div className="space-y-2">
+                  {allocationData.bySector.map(c => (
+                    <div key={c.name} className="flex items-center justify-between text-xs">
+                      <div className="flex items-center gap-2 truncate max-w-[120px]" title={c.name}>
+                        <span className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: c.color }}></span>
+                        <span className="font-semibold text-foreground truncate">{c.name}</span>
+                      </div>
+                      <div className="text-right flex items-center gap-3 shrink-0">
+                        <span className="text-muted-foreground font-medium">{formatCurrency(c.value)}</span>
+                        <span className="font-bold text-foreground w-12 text-right">{c.percent.toFixed(1)}%</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="py-12 text-center text-xs text-muted-foreground border border-dashed border-border/50 rounded-2xl">
+                Sem dados de setor para exibir.
               </div>
             )}
           </div>

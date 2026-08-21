@@ -123,8 +123,8 @@ export const FundamentalAnalysisView: React.FC<FundamentalAnalysisViewProps> = (
   const [editingAssetData, setEditingAssetData] = useState<any | null>(null);
 
   // Custom Score Weights state
-  const [stockWeights, setStockWeights] = useState<StockScoreWeights>(DEFAULT_STOCK_WEIGHTS);
-  const [fiiWeights, setFiiWeights] = useState<FiiScoreWeights>(DEFAULT_FII_WEIGHTS);
+  const [stockWeights, setStockWeights] = useState<StockScoreWeights>(savedFilters?.stockWeights || DEFAULT_STOCK_WEIGHTS);
+  const [fiiWeights, setFiiWeights] = useState<FiiScoreWeights>(savedFilters?.fiiWeights || DEFAULT_FII_WEIGHTS);
 
   // Expanded Filters State
   const [minRoe, setMinRoe] = useState<number>(savedFilters?.minRoe ?? 0);
@@ -160,6 +160,8 @@ export const FundamentalAnalysisView: React.FC<FundamentalAnalysisViewProps> = (
         minFfoYield,
         sortField,
         sortOrder,
+        stockWeights,
+        fiiWeights
       };
       localStorage.setItem('b3_fundamental_filters_v2', JSON.stringify(stateToSave));
     } catch (e) {
@@ -495,9 +497,7 @@ export const FundamentalAnalysisView: React.FC<FundamentalAnalysisViewProps> = (
       // Liquidity Filter (All)
       if (minLiquidity > 0) {
         const rawLiq = item.fund.dailyLiquidity || 0;
-        // Normalize if rawLiq is given in thousands (e.g. 1500 = R$ 1.5M) vs raw Reais
-        const liqInReais = (rawLiq > 0 && rawLiq < 50000) ? rawLiq * 1000 : rawLiq;
-        if (liqInReais < minLiquidity * 1_000_000) return false;
+        if (rawLiq < minLiquidity * 1_000_000) return false;
       }
 
       // Stock Filters
@@ -1704,6 +1704,10 @@ export const FundamentalAnalysisView: React.FC<FundamentalAnalysisViewProps> = (
                         </div>
                       </th>
 
+                      <th className="px-4 py-3.5 text-right cursor-default select-none text-muted-foreground/70">
+                        <span>Dívida / Cresc.</span>
+                      </th>
+
                       <th 
                         onClick={() => handleSortColumn('liquidity')}
                         className="px-4 py-3.5 text-right cursor-pointer hover:bg-muted/50 select-none transition-colors"
@@ -1876,6 +1880,28 @@ export const FundamentalAnalysisView: React.FC<FundamentalAnalysisViewProps> = (
                               <span className="text-foreground">{sf.netMargin !== undefined && sf.netMargin !== null ? `${sf.netMargin.toFixed(1)}%` : '-'}</span>
                             ) : (
                               <span className="text-foreground font-semibold">{ff.capRate !== undefined && ff.capRate !== null ? `${ff.capRate.toFixed(1)}%` : '-'}</span>
+                            )}
+                          </td>
+
+                          <td className="px-4 py-3 text-right font-medium">
+                            {isStock ? (
+                              <div className="flex flex-col items-end">
+                                <span className="text-[11px] text-rose-500 font-bold" title="Dívida Líquida / EBITDA">
+                                  {sf.netDebtOverEbitda !== undefined ? `${sf.netDebtOverEbitda.toFixed(2)}x` : '-'}
+                                </span>
+                                <span className="text-[9px] text-emerald-500 font-bold" title="CAGR Receita (5a)">
+                                  {sf.revenueCagr5y !== undefined ? `${sf.revenueCagr5y.toFixed(1)}%` : '-'}
+                                </span>
+                              </div>
+                            ) : (
+                              <div className="flex flex-col items-end">
+                                <span className="text-[11px] text-indigo-500 font-bold" title="Valor Patrimonial (VPA)">
+                                  {ff.netWorth ? `R$ ${(ff.netWorth / 1000).toFixed(1)}B` : '-'}
+                                </span>
+                                <span className="text-[9px] text-muted-foreground font-bold" title="Tipo">
+                                  {ff.fiiType}
+                                </span>
+                              </div>
                             )}
                           </td>
 
