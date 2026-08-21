@@ -127,13 +127,13 @@ VISC11\tShoppings\t118,20\t8,80%\t8,60%\t0,96\t3.800.000.000,00\t4.800.000,00\t2
             </div>
             <div>
               <h2 className="text-lg font-black text-foreground flex items-center gap-2">
-                Importador Inteligente Fundamentus
+                Importador Inteligente Fundamentus (CSV)
                 <span className="text-[10px] uppercase font-black tracking-wider px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 border border-emerald-500/20">
-                  B3 Direto
+                  Suporte .CSV / .TXT
                 </span>
               </h2>
               <p className="text-xs text-muted-foreground">
-                Copie a tabela inteira do Fundamentus (Ações ou FIIs) e cole aqui. Identificação 100% automática.
+                Arraste seu arquivo CSV exportado ou cole a tabela aqui. Processamento local e seguro.
               </p>
             </div>
           </div>
@@ -228,8 +228,11 @@ VISC11\tShoppings\t118,20\t8,80%\t8,60%\t0,96\t3.800.000.000,00\t4.800.000,00\t2
                     <FileUp className="w-8 h-8" />
                   </div>
                   <div className="mt-4 text-center">
-                    <p className="text-sm font-black text-foreground">Carregar Arquivo CSV</p>
-                    <p className="text-[11px] text-muted-foreground mt-1">Clique para selecionar ou arraste o arquivo do Fundamentus</p>
+                    <p className="text-sm font-black text-foreground uppercase tracking-tight">Enviar Arquivo .CSV</p>
+                    <p className="text-[10px] text-muted-foreground mt-1 px-4">
+                      Selecione o arquivo exportado do Fundamentus. 
+                      <span className="block mt-1 text-amber-500 font-bold uppercase text-[9px]">Atenção: Use separador ponto e vírgula (;)</span>
+                    </p>
                   </div>
                   <div className="mt-4 px-3 py-1 bg-background border border-border/60 rounded-lg text-[10px] font-bold text-muted-foreground group-hover:text-primary transition-colors">
                     Recomendado para maior precisão

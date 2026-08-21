@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import { InvestmentTransaction, Dividend } from '../../types';
 import { CvmDocumentButton } from '../CvmDocumentButton';
 import { calculateAssetDividendProjection } from '../../lib/investmentCalculations';
@@ -6,10 +7,9 @@ import { getAssetCnpj, formatCnpj } from '../../lib/cnpjUtils';
 import { useData } from '../../contexts/DataContext';
 import { useInvestments } from '../../contexts/InvestmentsContext';
 import { getB3AssetFundamental, B3StockFundamental, B3FiiFundamental } from '../../lib/b3Fundamentals';
-import { calculateUniversalAssetScore, getScoreColor, getGradeColor } from '../../lib/scoringEngine';
+import { calculateUniversalAssetScore, getScoreColor } from '../../lib/scoringEngine';
 import { toast } from 'sonner';
 import { 
-  Info, 
   X, 
   PlusCircle, 
   MinusCircle,
@@ -20,25 +20,21 @@ import {
   Award, 
   Edit3, 
   Trash2, 
-  Calendar, 
   Briefcase,
   CheckCircle2,
   AlertTriangle,
   Clock,
   Copy,
   Check,
-  ShieldCheck,
-  ShieldAlert,
   Percent,
   Layers,
   Sparkles,
-  PieChart as PieIcon,
   ArrowUpRight,
   ArrowDownRight,
-  Wallet,
-  Building2,
   History,
-  Scale
+  Scale,
+  Wallet,
+  Building2
 } from 'lucide-react';
 
 interface Position {
@@ -95,7 +91,6 @@ export function AssetRaioXModal({
   const cleanTicker = position.ticker.toUpperCase().trim();
   const cnpj = getAssetCnpj(cleanTicker, settings);
 
-  // Dynamic fundamental and score calculation
   const fundamental = useMemo(() => {
     return getB3AssetFundamental(
       cleanTicker,
@@ -109,7 +104,6 @@ export function AssetRaioXModal({
     return calculateUniversalAssetScore(fundamental);
   }, [fundamental]);
 
-  // Load history records from b3_assets_history
   React.useEffect(() => {
     let isMounted = true;
     const fetchHistory = async () => {
@@ -148,7 +142,6 @@ export function AssetRaioXModal({
       });
   }, [dividends, cleanTicker]);
 
-  // Comprehensive calculations from dedicated investment calculation engine
   const projection = useMemo(() => {
     return calculateAssetDividendProjection(
       position.ticker,
@@ -171,7 +164,6 @@ export function AssetRaioXModal({
   const totalReturnR$ = capitalGainR$ + realizedGainR$ + projection.totalDividendsConsidered;
   const totalReturnPct = position.totalInvested > 0 ? (totalReturnR$ / position.totalInvested) * 100 : 0;
 
-  // Comparison between current market price and average purchase price
   const priceVsAverageDiff = position.currentPrice && position.averagePrice > 0 
     ? ((position.currentPrice - position.averagePrice) / position.averagePrice) * 100 
     : 0;
@@ -185,1006 +177,577 @@ export function AssetRaioXModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-background/80 backdrop-blur-md overflow-hidden animate-in fade-in duration-200">
-      <div className="w-full max-w-4xl max-h-[92vh] flex flex-col rounded-3xl border border-border/70 bg-card shadow-2xl overflow-hidden">
-        
-        {/* HEADER SECTION */}
-        <div className="p-5 sm:p-6 border-b border-border/50 bg-gradient-to-r from-card via-card to-muted/20">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            
-            {/* Asset Identity */}
-            <div className="flex items-center gap-3.5">
-              <div className="w-13 h-13 rounded-2xl bg-gradient-to-br from-primary/20 via-primary/10 to-indigo-500/10 text-primary flex items-center justify-center font-black text-base tracking-wider border border-primary/20 shadow-xs shrink-0">
-                {position.ticker.slice(0, 4)}
-              </div>
-              
-              <div>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <h2 className="text-2xl sm:text-3xl font-black tracking-tight text-foreground">{position.ticker}</h2>
-                  <span className="text-xs font-black px-2.5 py-0.5 rounded-lg bg-secondary text-secondary-foreground uppercase tracking-wide border border-border/40">
-                    {position.type}
-                  </span>
-                  
-                  {projection.projectedDividendYield > 0 && (
-                    <span className="text-xs font-black px-2 py-0.5 rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 flex items-center gap-1">
-                      <Sparkles className="w-3 h-3" />
-                      DY Proj. {projection.projectedDividendYield.toFixed(2)}% a.a.
-                    </span>
-                  )}
+    <AnimatePresence>
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/80 backdrop-blur-md overflow-hidden">
+        <motion.div 
+          initial={{ opacity: 0, scale: 0.95, y: 20 }}
+          animate={{ opacity: 1, scale: 1, y: 0 }}
+          exit={{ opacity: 0, scale: 0.95, y: 20 }}
+          className="w-full max-w-4xl max-h-[92vh] flex flex-col rounded-[2.5rem] border border-slate-800 bg-slate-900 shadow-2xl overflow-hidden relative"
+        >
+          {/* HEADER SECTION */}
+          <div className="p-8 border-b border-slate-800 bg-slate-900/50">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-8">
+              <div className="flex items-center gap-6">
+                <div className="w-20 h-20 rounded-[1.5rem] bg-indigo-500/10 text-indigo-400 flex items-center justify-center font-black text-2xl tracking-wider border border-indigo-500/20 shadow-[0_0_30px_rgba(99,102,241,0.1)] shrink-0">
+                  {position.ticker.slice(0, 4)}
                 </div>
-
-                <div className="flex items-center gap-3 text-xs text-muted-foreground font-medium mt-1 flex-wrap">
-                  <span>{position.totalQuantity} cotas em custódia</span>
-                  {cnpj && (
-                    <button
-                      onClick={handleCopyCnpj}
-                      className="flex items-center gap-1 hover:text-foreground transition-colors font-mono text-[11px] px-1.5 py-0.5 rounded bg-muted/40"
-                      title="Copiar CNPJ"
-                    >
-                      <span>CNPJ: {formatCnpj(cnpj)}</span>
-                      {copiedCnpj ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
-                    </button>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {/* Price & Close Button */}
-            <div className="flex items-center gap-3 self-end sm:self-center">
-              <div className="text-right">
-                <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Cotação Atual</p>
-                <p className="text-xl font-black text-primary tracking-tight">
-                  {position.currentPrice ? formatCurrency(position.currentPrice) : formatCurrency(position.averagePrice)}
-                </p>
-                <div className={`text-[11px] font-bold flex items-center justify-end gap-0.5 ${priceVsAverageDiff >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
-                  {priceVsAverageDiff >= 0 ? <ArrowUpRight className="w-3 h-3" /> : <ArrowDownRight className="w-3 h-3" />}
-                  {priceVsAverageDiff >= 0 ? '+' : ''}{priceVsAverageDiff.toFixed(2)}% vs PM
-                </div>
-              </div>
-
-              <button 
-                onClick={onClose}
-                className="p-2 text-muted-foreground hover:text-foreground hover:bg-muted/60 rounded-xl transition-all ml-1 cursor-pointer"
-                title="Fechar Raio-X"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-          </div>
-
-          {/* QUICK ACTION BUTTONS */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-4 mt-4 border-t border-border/40">
-            <button
-              onClick={() => {
-                onClose();
-                onOpenAddModal(position.ticker, 'buy', position.type);
-              }}
-              className="py-2 px-3 text-xs font-bold rounded-xl bg-primary text-primary-foreground hover:bg-primary/90 transition-all flex items-center justify-center gap-1.5 shadow-xs cursor-pointer"
-            >
-              <PlusCircle className="w-3.5 h-3.5" />
-              Novo Aporte
-            </button>
-
-            <button
-              onClick={() => {
-                onClose();
-                onOpenAddModal(position.ticker, 'sell', position.type);
-              }}
-              className="py-2 px-3 text-xs font-bold rounded-xl bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20 hover:bg-rose-500/20 transition-all flex items-center justify-center gap-1.5 shadow-xs cursor-pointer"
-            >
-              <MinusCircle className="w-3.5 h-3.5" />
-              Lançar Venda
-            </button>
-
-            <button
-              onClick={() => {
-                onClose();
-                onOpenAddDivModal(position.ticker);
-              }}
-              className="py-2 px-3 text-xs font-bold rounded-xl bg-emerald-500 text-white hover:bg-emerald-600 transition-all flex items-center justify-center gap-1.5 shadow-xs cursor-pointer"
-            >
-              <DollarSign className="w-3.5 h-3.5" />
-              Lançar Provento
-            </button>
-
-            <button
-              onClick={() => {
-                onClose();
-                onSelectAnalytics(position.ticker);
-              }}
-              className="py-2 px-3 text-xs font-bold rounded-xl bg-secondary text-secondary-foreground hover:bg-secondary/80 transition-all flex items-center justify-center gap-1.5 border border-border/40 cursor-pointer"
-            >
-              <Calculator className="w-3.5 h-3.5 text-indigo-500" />
-              Preço Teto
-            </button>
-          </div>
-        </div>
-
-        {/* TAB NAVIGATION BAR */}
-        <div className="flex items-center gap-1 px-5 sm:px-6 pt-3 border-b border-border/50 bg-muted/20 overflow-x-auto">
-          <button
-            onClick={() => setActiveTab('geral')}
-            className={`px-3.5 py-2 text-xs font-black rounded-t-xl transition-all border-b-2 flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
-              activeTab === 'geral'
-                ? 'border-primary text-primary bg-card shadow-xs'
-                : 'border-transparent text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            <Briefcase className="w-3.5 h-3.5" />
-            Visão Geral & Posição
-          </button>
-
-          <button
-            onClick={() => setActiveTab('proventos')}
-            className={`px-3.5 py-2 text-xs font-black rounded-t-xl transition-all border-b-2 flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
-              activeTab === 'proventos'
-                ? 'border-primary text-primary bg-card shadow-xs'
-                : 'border-transparent text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            <DollarSign className="w-3.5 h-3.5 text-amber-500" />
-            Proventos & Renda ({assetDivs.length})
-          </button>
-
-          <button
-            onClick={() => setActiveTab('historico')}
-            className={`px-3.5 py-2 text-xs font-black rounded-t-xl transition-all border-b-2 flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
-              activeTab === 'historico'
-                ? 'border-primary text-primary bg-card shadow-xs'
-                : 'border-transparent text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            <History className="w-3.5 h-3.5 text-sky-500" />
-            Lançamentos ({assetTxs.length})
-          </button>
-
-          <button
-            onClick={() => setActiveTab('fundamentos')}
-            className={`px-3.5 py-2 text-xs font-black rounded-t-xl transition-all border-b-2 flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
-              activeTab === 'fundamentos'
-                ? 'border-primary text-primary bg-card shadow-xs'
-                : 'border-transparent text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            <Sparkles className="w-3.5 h-3.5 text-emerald-500" />
-            Fundamentos & Histórico B3
-          </button>
-        </div>
-
-        {/* MODAL BODY (SCROLLABLE) */}
-        <div className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-6 custom-scrollbar">
-
-          {/* TAB 1: VISÃO GERAL */}
-          {activeTab === 'geral' && (
-            <div className="space-y-6">
-              
-              {/* PRIMARY STATS 4-COLUMN CARDS */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <div className="p-3.5 rounded-2xl bg-muted/20 border border-border/50 space-y-1">
-                  <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Cotas Custodiadas</p>
-                  <p className="text-xl font-black text-foreground">{position.totalQuantity}</p>
-                  <p className="text-[10px] text-muted-foreground font-medium">Unidades em carteira</p>
-                </div>
-
-                <div className="p-3.5 rounded-2xl bg-muted/20 border border-border/50 space-y-1">
-                  <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Preço Médio (PM)</p>
-                  <p className="text-xl font-black text-foreground">{formatCurrency(position.averagePrice)}</p>
-                  <p className="text-[10px] text-muted-foreground font-medium">Custo unitário ponderado</p>
-                </div>
-
-                <div className="p-3.5 rounded-2xl bg-muted/20 border border-border/50 space-y-1">
-                  <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Total Investido</p>
-                  <p className="text-xl font-black text-foreground">{formatCurrency(position.totalInvested)}</p>
-                  <p className="text-[10px] text-muted-foreground font-medium">Capital alocado</p>
-                </div>
-
-                <div className="p-3.5 rounded-2xl bg-muted/20 border border-border/50 space-y-1">
-                  <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Patrimônio Atual</p>
-                  <p className="text-xl font-black text-primary">{formatCurrency(curVal)}</p>
-                  <p className="text-[10px] text-muted-foreground font-medium">Valor a mercado</p>
-                </div>
-              </div>
-
-              {/* RENTABILIDADE & RETORNO TOTAL COMBINADO */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
                 
-                {/* 1. Ganho Não Realizado */}
-                <div className="p-4 rounded-2xl bg-card border border-border/60 shadow-xs space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Ganho Não Realizado</span>
-                    {capitalGainR$ >= 0 ? <TrendingUp className="w-4 h-4 text-emerald-500" /> : <TrendingDown className="w-4 h-4 text-rose-500" />}
-                  </div>
-                  <p className={`text-2xl font-black ${capitalGainR$ >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
-                    {formatCurrency(capitalGainR$)}
-                  </p>
-                  <div className="text-xs font-bold text-muted-foreground flex items-center justify-between pt-1 border-t border-border/40">
-                    <span>Variação da Cota:</span>
-                    <span className={capitalGainPct >= 0 ? 'text-emerald-500' : 'text-rose-500'}>
-                      {formatPercent(capitalGainPct)}
+                <div>
+                  <div className="flex items-center gap-4 flex-wrap">
+                    <h2 className="text-4xl font-black tracking-tighter text-white">{position.ticker}</h2>
+                    <span className="text-[10px] font-black px-3 py-1.5 rounded-xl bg-slate-800 text-slate-400 uppercase tracking-widest border border-slate-700">
+                      {position.type}
                     </span>
+                    
+                    {projection.projectedDividendYield > 0 && (
+                      <div className="text-[10px] font-black px-4 py-1.5 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-2 uppercase tracking-widest animate-pulse">
+                        <Sparkles className="w-3.5 h-3.5" />
+                        DY Proj. {projection.projectedDividendYield.toFixed(2)}%
+                      </div>
+                    )}
                   </div>
-                </div>
 
-                {/* 2. Proventos & Renda */}
-                <div className="p-4 rounded-2xl bg-card border border-border/60 shadow-xs space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Proventos Considerados</span>
-                    <DollarSign className="w-4 h-4 text-amber-500" />
-                  </div>
-                  <p className="text-2xl font-black text-amber-500">
-                    {formatCurrency(projection.totalDividendsConsidered)}
-                  </p>
-                  <div className="text-xs font-bold text-muted-foreground flex items-center justify-between pt-1 border-t border-border/40">
-                    <span>Yield on Cost (YoC):</span>
-                    <span className="text-amber-500">{formatPercent(projection.historicalYieldOnCost)}</span>
-                  </div>
-                </div>
-
-                {/* 3. Retorno Total Combinado */}
-                <div className="p-4 rounded-2xl bg-card border border-border/60 shadow-xs space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Lucro / Retorno Total</span>
-                    <Award className="w-4 h-4 text-primary" />
-                  </div>
-                  <p className={`text-2xl font-black ${totalReturnR$ >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
-                    {formatCurrency(totalReturnR$)}
-                  </p>
-                  <div className="text-xs font-bold text-muted-foreground flex items-center justify-between pt-1 border-t border-border/40">
-                    <span>Rentabilidade Total:</span>
-                    <span className={totalReturnPct >= 0 ? 'text-emerald-500' : 'text-rose-500'}>
-                      {formatPercent(totalReturnPct)}
+                  <div className="flex items-center gap-6 text-[11px] text-slate-500 font-black mt-3 flex-wrap uppercase tracking-widest">
+                    <span className="flex items-center gap-2 bg-slate-800/50 px-3 py-1.5 rounded-xl">
+                      <Briefcase className="w-4 h-4 text-indigo-400" />
+                      {position.totalQuantity} cotas
                     </span>
+                    {cnpj && (
+                      <button
+                        onClick={handleCopyCnpj}
+                        className="flex items-center gap-2 hover:text-white transition-all font-mono px-3 py-1.5 rounded-xl bg-slate-800/50 group border border-transparent hover:border-slate-700"
+                      >
+                        <span className="text-slate-500 group-hover:text-slate-300">CNPJ: {formatCnpj(cnpj)}</span>
+                        {copiedCnpj ? <Check className="w-4 h-4 text-emerald-500" /> : <Copy className="w-4 h-4 opacity-50 group-hover:opacity-100" />}
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
 
-              {/* BARRA COMPARATIVA: PREÇO MÉDIO vs COTAÇÃO ATUAL */}
-              <div className="p-4 rounded-2xl bg-muted/20 border border-border/50 space-y-2">
-                <div className="flex items-center justify-between text-xs font-bold">
-                  <span className="text-muted-foreground flex items-center gap-1.5">
-                    <Scale className="w-3.5 h-3.5 text-primary" />
-                    Custo Médio vs. Valor de Mercado
-                  </span>
-                  <span className={priceVsAverageDiff >= 0 ? 'text-emerald-500' : 'text-rose-500'}>
-                    {priceVsAverageDiff >= 0 ? 'Valorizado (Ágio)' : 'Desvalorizado (Deságio)'}: {formatPercent(priceVsAverageDiff)}
-                  </span>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3 pt-1">
-                  <div className="p-2.5 rounded-xl bg-card border border-border/40">
-                    <p className="text-[10px] text-muted-foreground font-bold uppercase">Preço Médio de Compra</p>
-                    <p className="text-base font-black text-foreground">{formatCurrency(position.averagePrice)}</p>
-                  </div>
-                  <div className="p-2.5 rounded-xl bg-card border border-border/40">
-                    <p className="text-[10px] text-muted-foreground font-bold uppercase">Cotação Atual de Mercado</p>
-                    <p className="text-base font-black text-primary">
-                      {position.currentPrice ? formatCurrency(position.currentPrice) : formatCurrency(position.averagePrice)}
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              {/* HIGHLIGHT DA RENDA PROJETADA */}
-              {projection.projectedAnnualIncome > 0 && (
-                <div className="p-4 rounded-2xl bg-gradient-to-r from-amber-500/10 via-amber-500/5 to-transparent border border-amber-500/20 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2.5 rounded-xl bg-amber-500/20 text-amber-600 dark:text-amber-400">
-                      <Sparkles className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <p className="text-xs font-black text-foreground flex items-center gap-1.5">
-                        Renda Anual Projetada deste Ativo
-                        <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-700 dark:text-amber-300">
-                          {projection.projectedDividendYield.toFixed(2)}% a.a.
-                        </span>
-                      </p>
-                      <p className="text-xs text-muted-foreground mt-0.5">
-                        Estimativa de <strong className="text-foreground">{formatCurrency(projection.projectedAnnualIncome)}/ano</strong> (~{formatCurrency(projection.projectedMonthlyIncome)}/mês) para {position.totalQuantity} cotas.
-                      </p>
-                    </div>
-                  </div>
-
-                  <button
-                    onClick={() => setActiveTab('proventos')}
-                    className="px-3 py-1.5 text-xs font-bold rounded-xl bg-amber-500 text-white hover:bg-amber-600 transition-all flex items-center gap-1 shrink-0 cursor-pointer"
-                  >
-                    Ver Detalhes dos Proventos
-                    <ArrowUpRight className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              )}
-
-              {/* DOCUMENTOS CVM */}
-              <CvmDocumentButton ticker={position.ticker} variant="full" />
-            </div>
-          )}
-
-          {/* TAB 2: PROVENTOS & RENDA PROJETADA */}
-          {activeTab === 'proventos' && (
-            <div className="space-y-6">
-              
-              {/* SUMMARY METRICS OF PROJECTED YIELD & RUN-RATE */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/20 space-y-1">
-                  <p className="text-[10px] font-bold text-amber-700 dark:text-amber-300 uppercase tracking-wider">DY Projetado (12M)</p>
-                  <p className="text-xl font-black text-amber-600 dark:text-amber-400">
-                    {projection.projectedDividendYield > 0 ? `${projection.projectedDividendYield.toFixed(2)}% a.a.` : '0,00%'}
+              <div className="flex items-center gap-8">
+                <div className="text-right">
+                  <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2">Cotação Atual</p>
+                  <p className="text-4xl font-black text-white tracking-tighter leading-none">
+                    {position.currentPrice ? formatCurrency(position.currentPrice) : formatCurrency(position.averagePrice)}
                   </p>
-                  <p className="text-[10px] text-muted-foreground font-medium">Sobre cotação atual</p>
-                </div>
-
-                <div className="p-3.5 rounded-2xl bg-muted/20 border border-border/50 space-y-1">
-                  <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Renda Anual Estimada</p>
-                  <p className="text-xl font-black text-foreground">{formatCurrency(projection.projectedAnnualIncome)}</p>
-                  <p className="text-[10px] text-muted-foreground font-medium">~{formatCurrency(projection.projectedMonthlyIncome)}/mês</p>
-                </div>
-
-                <div className="p-3.5 rounded-2xl bg-muted/20 border border-border/50 space-y-1">
-                  <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Yield on Cost (YoC)</p>
-                  <p className="text-xl font-black text-foreground">{formatPercent(projection.historicalYieldOnCost)}</p>
-                  <p className="text-[10px] text-muted-foreground font-medium">Sobre seu custo médio</p>
-                </div>
-
-                <div className="p-3.5 rounded-2xl bg-muted/20 border border-border/50 space-y-1">
-                  <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">DPA Projetado (12M)</p>
-                  <p className="text-xl font-black text-foreground">{formatCurrency(projection.projectedAnnualDividendPerShare)}</p>
-                  <p className="text-[10px] text-muted-foreground font-medium">Por cota / ano</p>
-                </div>
-              </div>
-
-              {/* PAYBACK ESTIMATE & FREQUENCY */}
-              <div className="p-4 rounded-2xl bg-card border border-border/60 space-y-2">
-                <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                  <Clock className="w-3.5 h-3.5 text-primary" />
-                  Tempo de Retorno (Payback por Proventos) & Regularidade
-                </h4>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-                  <div className="p-3 rounded-xl bg-muted/20 border border-border/40">
-                    <p className="text-[10px] text-muted-foreground font-bold">Frequência de Pagamento Estimada</p>
-                    <p className="text-base font-black text-foreground">{projection.paymentFrequency}</p>
-                    <p className="text-[10px] text-muted-foreground mt-0.5">{projection.dividendCount} proventos registrados</p>
-                  </div>
-                  <div className="p-3 rounded-xl bg-muted/20 border border-border/40">
-                    <p className="text-[10px] text-muted-foreground font-bold">Payback do Investimento (Renda Passiva)</p>
-                    <p className="text-base font-black text-foreground">
-                      {projection.paybackYears ? `~${projection.paybackYears.toFixed(1)} anos` : 'Indisponível'}
-                    </p>
-                    <p className="text-[10px] text-muted-foreground mt-0.5">Tempo para recuperar o custo inicial</p>
+                  <div className={`text-xs font-black flex items-center justify-end gap-1.5 mt-2 ${priceVsAverageDiff >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                    {priceVsAverageDiff >= 0 ? <ArrowUpRight className="w-4 h-4" /> : <ArrowDownRight className="w-4 h-4" />}
+                    {priceVsAverageDiff >= 0 ? '+' : ''}{priceVsAverageDiff.toFixed(2)}% vs PM
                   </div>
                 </div>
-              </div>
 
-              {/* LIST OF RECORDED DIVIDENDS */}
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-xs font-bold uppercase text-muted-foreground tracking-wider flex items-center gap-1.5">
-                    <DollarSign className="w-4 h-4 text-emerald-500" />
-                    Histórico de Proventos de {position.ticker} ({assetDivs.length})
-                  </h3>
-                  
-                  <button
-                    onClick={() => {
-                      onClose();
-                      onOpenAddDivModal(position.ticker);
-                    }}
-                    className="text-xs font-bold text-primary hover:underline flex items-center gap-1 cursor-pointer"
-                  >
-                    <PlusCircle className="w-3.5 h-3.5" />
-                    + Adicionar Provento
-                  </button>
-                </div>
-
-                {assetDivs.length === 0 ? (
-                  <div className="p-8 text-center rounded-2xl border border-dashed border-border/60 bg-muted/10 space-y-2">
-                    <DollarSign className="w-8 h-8 text-muted-foreground/40 mx-auto" />
-                    <p className="text-xs font-bold text-muted-foreground">Nenhum provento cadastrado para {position.ticker}.</p>
-                    <button
-                      onClick={() => {
-                        onClose();
-                        onOpenAddDivModal(position.ticker);
-                      }}
-                      className="mt-1 px-3 py-1.5 text-xs font-bold rounded-xl bg-emerald-500 text-white hover:bg-emerald-600 transition-all inline-flex items-center gap-1 cursor-pointer"
-                    >
-                      <PlusCircle className="w-3.5 h-3.5" />
-                      Lançar Primeiro Provento
-                    </button>
-                  </div>
-                ) : (
-                  <div className="rounded-2xl border border-border/50 bg-card overflow-hidden shadow-xs">
-                    <table className="w-full text-left text-xs whitespace-nowrap">
-                      <thead className="bg-muted/40 text-[10px] font-bold text-muted-foreground uppercase border-b border-border/40">
-                        <tr>
-                          <th className="px-3.5 py-2.5">Data Pagamento</th>
-                          <th className="px-3.5 py-2.5">Data COM</th>
-                          <th className="px-3.5 py-2.5">Tipo</th>
-                          <th className="px-3.5 py-2.5">Status</th>
-                          <th className="px-3.5 py-2.5 text-right">Por Cota</th>
-                          <th className="px-3.5 py-2.5 text-right">Valor Total</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-border/30 font-medium">
-                        {assetDivs.map(div => {
-                          const unitVal = div.unit_amount || (position.totalQuantity > 0 ? (div.amount / position.totalQuantity) : 0);
-                          return (
-                            <tr key={div.id} className="hover:bg-muted/20 transition-colors">
-                              <td className="px-3.5 py-2.5 text-foreground font-semibold">
-                                {new Date(div.date + 'T12:00:00Z').toLocaleDateString('pt-BR', { timeZone: 'UTC' })}
-                              </td>
-                              <td className="px-3.5 py-2.5 text-muted-foreground">
-                                {div.data_com ? new Date(div.data_com + 'T12:00:00Z').toLocaleDateString('pt-BR', { timeZone: 'UTC' }) : '-'}
-                              </td>
-                              <td className="px-3.5 py-2.5">
-                                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-secondary text-secondary-foreground uppercase">
-                                  {div.type}
-                                </span>
-                              </td>
-                              <td className="px-3.5 py-2.5">
-                                <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded uppercase flex items-center gap-1 w-fit ${
-                                  div.status === 'received' ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' : 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
-                                }`}>
-                                  {div.status === 'received' ? <CheckCircle2 className="w-3 h-3" /> : <Clock className="w-3 h-3" />}
-                                  {div.status === 'received' ? 'Recebido' : 'Provisionado'}
-                                </span>
-                              </td>
-                              <td className="px-3.5 py-2.5 text-right text-muted-foreground font-mono">
-                                {formatCurrency(unitVal)}
-                              </td>
-                              <td className="px-3.5 py-2.5 text-right font-black text-emerald-600 dark:text-emerald-400">
-                                {formatCurrency(div.amount)}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* TAB 4: HISTÓRICO DE LANÇAMENTOS */}
-          {activeTab === 'historico' && (
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <h3 className="text-xs font-bold uppercase text-muted-foreground tracking-wider flex items-center gap-1.5">
-                  <Briefcase className="w-4 h-4 text-primary" />
-                  Histórico de Compras e Vendas ({assetTxs.length})
-                </h3>
-
-                <button
-                  onClick={() => {
-                    onClose();
-                    onOpenAddModal(position.ticker, 'buy');
-                  }}
-                  className="text-xs font-bold text-primary hover:underline flex items-center gap-1 cursor-pointer"
+                <button 
+                  onClick={onClose}
+                  className="p-4 text-slate-500 hover:text-white hover:bg-slate-800 rounded-[1.2rem] transition-all cursor-pointer border border-transparent hover:border-slate-700 active:scale-95"
                 >
-                  <PlusCircle className="w-3.5 h-3.5" />
-                  + Novo Lançamento
+                  <X className="w-8 h-8" />
                 </button>
               </div>
-
-              {assetTxs.length === 0 ? (
-                <div className="p-8 text-center rounded-2xl border border-dashed border-border/60 bg-muted/10 space-y-2">
-                  <Briefcase className="w-8 h-8 text-muted-foreground/40 mx-auto" />
-                  <p className="text-xs font-bold text-muted-foreground">Nenhuma transação individual encontrada.</p>
-                </div>
-              ) : (
-                <div className="rounded-2xl border border-border/50 bg-card overflow-hidden shadow-xs">
-                  <table className="w-full text-left text-xs whitespace-nowrap">
-                    <thead className="bg-muted/40 text-[10px] font-bold text-muted-foreground uppercase border-b border-border/40">
-                      <tr>
-                        <th className="px-3.5 py-2.5">Data</th>
-                        <th className="px-3.5 py-2.5">Operação</th>
-                        <th className="px-3.5 py-2.5 text-right">Qtd</th>
-                        <th className="px-3.5 py-2.5 text-right">Preço Unit.</th>
-                        <th className="px-3.5 py-2.5 text-right">Taxas/Custos</th>
-                        <th className="px-3.5 py-2.5 text-right">Total</th>
-                        <th className="px-3.5 py-2.5 text-center">Ações</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-border/30 font-medium">
-                      {assetTxs.map(tx => (
-                        <tr key={tx.id} className="hover:bg-muted/20 transition-colors">
-                          <td className="px-3.5 py-2.5 text-foreground font-semibold">
-                            {new Date(tx.date + 'T12:00:00Z').toLocaleDateString('pt-BR', { timeZone: 'UTC' })}
-                          </td>
-                          <td className="px-3.5 py-2.5">
-                            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded uppercase ${
-                              tx.operation === 'buy' 
-                                ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' 
-                                : 'bg-rose-500/10 text-rose-600 dark:text-rose-400'
-                            }`}>
-                              {tx.operation === 'buy' ? 'Compra' : 'Venda'}
-                            </span>
-                          </td>
-                          <td className="px-3.5 py-2.5 text-right font-bold">{tx.quantity}</td>
-                          <td className="px-3.5 py-2.5 text-right text-muted-foreground">{formatCurrency(tx.price)}</td>
-                          <td className="px-3.5 py-2.5 text-right text-muted-foreground">
-                            {tx.costs ? formatCurrency(tx.costs) : '-'}
-                          </td>
-                          <td className="px-3.5 py-2.5 text-right font-black text-foreground">{formatCurrency(tx.amount)}</td>
-                          <td className="px-3.5 py-2.5 text-center space-x-1">
-                            <button
-                              onClick={() => {
-                                onClose();
-                                onEditTx(tx);
-                              }}
-                              className="p-1.5 text-muted-foreground hover:text-primary hover:bg-muted rounded-lg transition-colors cursor-pointer"
-                              title="Editar Lançamento"
-                            >
-                              <Edit3 className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              onClick={() => {
-                                onClose();
-                                onDeleteTx(tx);
-                              }}
-                              className="p-1.5 text-muted-foreground hover:text-rose-500 hover:bg-rose-500/10 rounded-lg transition-colors cursor-pointer"
-                              title="Excluir Lançamento"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
             </div>
-          )}
 
-          {/* TAB 5: FUNDAMENTOS & HISTÓRICO B3 */}
-          {activeTab === 'fundamentos' && (
-            <div className="space-y-6">
-              {/* 1. Universal Score Card */}
-              <div className="p-5 rounded-3xl bg-gradient-to-br from-card via-card to-muted/20 border border-border/80 shadow-xs space-y-4">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  <div className="flex items-center gap-3">
-                    <div 
-                      className="w-13 h-13 rounded-2xl flex items-center justify-center font-black text-xl shadow-xs"
-                      style={{
-                        backgroundColor: `${getScoreColor(scoreResult.totalScore)}20`,
-                        color: getScoreColor(scoreResult.totalScore),
-                        border: `1px solid ${getScoreColor(scoreResult.totalScore)}40`
-                      }}
-                    >
-                      {scoreResult.totalScore}
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <h4 className="text-base font-black text-foreground">Score B3 & Diagnóstico de Qualidade</h4>
-                        <span 
-                          className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md"
-                          style={{
-                            backgroundColor: `${getScoreColor(scoreResult.totalScore)}15`,
-                            color: getScoreColor(scoreResult.totalScore)
-                          }}
-                        >
-                          {scoreResult.grade}
-                        </span>
-                      </div>
-                      <p className="text-xs text-muted-foreground mt-0.5">
-                        Algoritmo multicritério ponderado para {fundamental.type === 'FII' ? 'Fundos Imobiliários' : 'Ações B3'}
-                      </p>
-                    </div>
-                  </div>
+            {/* QUICK ACTIONS */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mt-10">
+              {[
+                { label: 'Novo Aporte', icon: PlusCircle, color: 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-500/20', action: () => { onClose(); onOpenAddModal(position.ticker, 'buy', position.type); } },
+                { label: 'Lançar Venda', icon: MinusCircle, color: 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700', action: () => { onClose(); onOpenAddModal(position.ticker, 'sell', position.type); } },
+                { label: 'Lançar Provento', icon: DollarSign, color: 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-500/20', action: () => { onClose(); onOpenAddDivModal(position.ticker); } },
+                { label: 'Preço Teto', icon: Calculator, color: 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700', action: () => { onClose(); onSelectAnalytics(position.ticker); } },
+              ].map((btn, i) => (
+                <button
+                  key={i}
+                  onClick={btn.action}
+                  className={`py-4 px-5 text-[10px] font-black rounded-2xl transition-all flex items-center justify-center gap-3 shadow-xl cursor-pointer uppercase tracking-[0.1em] ${btn.color}`}
+                >
+                  <btn.icon className="w-5 h-5" />
+                  {btn.label}
+                </button>
+              ))}
+            </div>
+          </div>
 
-                  <div className="text-right">
-                    <span className="text-[11px] font-bold text-muted-foreground">Última Cotação Registrada</span>
-                    <p className="text-base font-black text-foreground">
-                      {fundamental.lastPrice ? formatCurrency(fundamental.lastPrice) : 'R$ -'}
-                    </p>
-                  </div>
-                </div>
-
-                {/* Score Pillars Progress Bars */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-2">
-                  {scoreResult.pillars.map((pillar, i) => (
-                    <div key={i} className="p-3 rounded-2xl bg-muted/20 border border-border/50 space-y-1.5">
-                      <div className="flex justify-between text-xs font-bold">
-                        <span className="text-foreground text-[11px]">{pillar.name}</span>
-                        <span className="text-primary">{pillar.score.toFixed(0)}/100</span>
-                      </div>
-                      <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
-                        <div 
-                          className="h-full rounded-full transition-all duration-500"
-                          style={{
-                            width: `${pillar.score}%`,
-                            backgroundColor: getScoreColor(scoreResult.totalScore)
-                          }}
-                        />
-                      </div>
-                      <p className="text-[10px] text-muted-foreground truncate">{pillar.description}</p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* 2. Full Fundamentals Matrix */}
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <h4 className="text-xs font-black uppercase tracking-wider text-foreground flex items-center gap-2">
-                    <Layers className="w-4 h-4 text-primary" />
-                    Matriz de Indicadores Fundamentalistas ({fundamental.type})
-                  </h4>
-                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-muted text-muted-foreground">
-                    Origem: {fundamental.source || 'Base de Dados'}
+          {/* NAVIGATION */}
+          <div className="flex items-center gap-2 px-8 bg-slate-900 border-b border-slate-800 overflow-x-auto no-scrollbar scroll-smooth">
+            {[
+              { id: 'geral', label: 'Dashboard', icon: Briefcase, color: 'text-indigo-400' },
+              { id: 'proventos', label: 'Dividendos', icon: DollarSign, color: 'text-emerald-400', count: assetDivs.length },
+              { id: 'historico', label: 'Transações', icon: History, color: 'text-sky-400', count: assetTxs.length },
+              { id: 'fundamentos', label: 'Fundamentos', icon: Award, color: 'text-amber-400' },
+            ].map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id as any)}
+                className={`px-6 py-5 text-[10px] font-black transition-all border-b-2 flex items-center gap-3 whitespace-nowrap uppercase tracking-[0.15em] cursor-pointer group relative ${
+                  activeTab === tab.id
+                    ? 'border-indigo-500 text-white'
+                    : 'border-transparent text-slate-500 hover:text-slate-300'
+                }`}
+              >
+                <tab.icon className={`w-5 h-5 ${activeTab === tab.id ? tab.color : 'text-slate-700 group-hover:text-slate-500'}`} />
+                {tab.label}
+                {tab.count !== undefined && (
+                  <span className={`px-2 py-0.5 rounded-full text-[9px] font-black ${
+                    activeTab === tab.id ? 'bg-indigo-500 text-white' : 'bg-slate-800 text-slate-700'
+                  }`}>
+                    {tab.count}
                   </span>
-                </div>
+                )}
+                {activeTab === tab.id && (
+                  <motion.div 
+                    layoutId="activeTab"
+                    className="absolute inset-0 bg-indigo-500/[0.03] -z-10"
+                  />
+                )}
+              </button>
+            ))}
+          </div>
 
-                {fundamental.type === 'Ação' ? (
-                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-                    <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
-                      <span className="text-[10px] font-bold text-muted-foreground uppercase">P/L (Preço/Lucro)</span>
-                      <p className="text-lg font-black text-foreground">
-                        {(fundamental as B3StockFundamental).pl ? `${(fundamental as B3StockFundamental).pl.toFixed(1)}x` : '-'}
-                      </p>
-                      <p className="text-[10px] text-muted-foreground">Múltiplo de lucros</p>
+          {/* CONTENT */}
+          <div className="flex-1 overflow-y-auto p-8 bg-slate-900 custom-scrollbar">
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={activeTab}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                transition={{ duration: 0.3, ease: 'circOut' }}
+              >
+                {activeTab === 'geral' && (
+                  <div className="space-y-10">
+                    {/* STATS CARDS */}
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                      {[
+                        { label: 'Investimento', val: formatCurrency(position.totalInvested), sub: `${position.totalQuantity} cotas`, icon: Wallet },
+                        { label: 'Patrimônio', val: formatCurrency(curVal), sub: `Valor a mercado`, icon: Building2, highlight: true },
+                        { label: 'Preço Médio', val: formatCurrency(position.averagePrice), sub: 'Custo ponderado', icon: Scale },
+                        { label: 'Cotação', val: position.currentPrice ? formatCurrency(position.currentPrice) : '-', sub: 'Último registro', icon: TrendingUp },
+                      ].map((stat, i) => (
+                        <div key={i} className="p-6 rounded-[2rem] bg-slate-800/30 border border-slate-800/50 space-y-2 hover:border-slate-700 transition-colors">
+                          <div className="flex items-center justify-between">
+                            <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">{stat.label}</p>
+                            <stat.icon className={`w-4 h-4 ${stat.highlight ? 'text-indigo-400' : 'text-slate-600'}`} />
+                          </div>
+                          <p className={`text-xl font-black ${stat.highlight ? 'text-white' : 'text-slate-200'}`}>{stat.val}</p>
+                          <p className="text-[10px] text-slate-500 font-bold uppercase tracking-tighter">{stat.sub}</p>
+                        </div>
+                      ))}
                     </div>
 
-                    <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
-                      <span className="text-[10px] font-bold text-muted-foreground uppercase">P/VP</span>
-                      <p className="text-lg font-black text-foreground">
-                        {fundamental.pvp ? fundamental.pvp.toFixed(2) : '-'}
-                      </p>
-                      <p className="text-[10px] text-muted-foreground">Preço vs Patrimônio</p>
+                    {/* RETURN CARDS */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                      <div className="p-8 rounded-[2.5rem] bg-slate-800/20 border border-slate-800 space-y-4">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-black text-slate-500 uppercase tracking-widest">Ganho de Capital</span>
+                          <TrendingUp className={`w-5 h-5 ${capitalGainR$ >= 0 ? 'text-emerald-400' : 'text-rose-400'}`} />
+                        </div>
+                        <p className={`text-4xl font-black tracking-tighter ${capitalGainR$ >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                          {formatCurrency(capitalGainR$)}
+                        </p>
+                        <div className="flex items-center justify-between pt-4 border-t border-slate-800">
+                          <span className="text-[10px] font-black text-slate-500 uppercase">Rentabilidade</span>
+                          <span className={`text-sm font-black ${capitalGainPct >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                            {formatPercent(capitalGainPct)}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="p-8 rounded-[2.5rem] bg-slate-800/20 border border-slate-800 space-y-4">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-black text-slate-500 uppercase tracking-widest">Dividendos</span>
+                          <DollarSign className="w-5 h-5 text-amber-400" />
+                        </div>
+                        <p className="text-4xl font-black text-amber-400 tracking-tighter">
+                          {formatCurrency(projection.totalDividendsConsidered)}
+                        </p>
+                        <div className="flex items-center justify-between pt-4 border-t border-slate-800">
+                          <span className="text-[10px] font-black text-slate-500 uppercase">Yield on Cost</span>
+                          <span className="text-sm font-black text-amber-400">{formatPercent(projection.historicalYieldOnCost)}</span>
+                        </div>
+                      </div>
+
+                      <div className="p-8 rounded-[2.5rem] bg-indigo-500/[0.03] border border-indigo-500/20 space-y-4 shadow-[inset_0_0_40px_rgba(99,102,241,0.05)]">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-black text-indigo-400 uppercase tracking-widest">Retorno Total</span>
+                          <Award className="w-5 h-5 text-indigo-400" />
+                        </div>
+                        <p className={`text-4xl font-black tracking-tighter ${totalReturnR$ >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                          {formatCurrency(totalReturnR$)}
+                        </p>
+                        <div className="flex items-center justify-between pt-4 border-t border-slate-800">
+                          <span className="text-[10px] font-black text-slate-500 uppercase">Total Acumulado</span>
+                          <span className={`text-sm font-black ${totalReturnPct >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                            {formatPercent(totalReturnPct)}
+                          </span>
+                        </div>
+                      </div>
                     </div>
 
-                    <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
-                      <span className="text-[10px] font-bold text-muted-foreground uppercase">PSR (Preço/Receita)</span>
-                      <p className="text-lg font-black text-foreground">
-                        {(fundamental as B3StockFundamental).psr !== undefined && (fundamental as B3StockFundamental).psr !== null ? `${(fundamental as B3StockFundamental).psr.toFixed(2)}` : '-'}
-                      </p>
-                      <p className="text-[10px] text-muted-foreground">Preço sobre Vendas</p>
-                    </div>
+                    {/* PROJECTION BANNER */}
+                    {projection.projectedAnnualIncome > 0 && (
+                      <div className="p-10 rounded-[3rem] bg-gradient-to-br from-indigo-600 to-indigo-900 shadow-2xl shadow-indigo-500/20 relative overflow-hidden group">
+                        <div className="absolute top-0 right-0 p-12 opacity-10 group-hover:scale-110 transition-transform duration-700">
+                          <Sparkles className="w-48 h-48 text-white" />
+                        </div>
+                        
+                        <div className="relative z-10 space-y-8">
+                          <div className="space-y-2">
+                            <h4 className="text-3xl font-black text-white tracking-tight">Renda Passiva Projetada</h4>
+                            <p className="text-indigo-100/70 font-medium max-w-lg">
+                              Baseado no histórico de 12 meses e sua custódia atual, este ativo deve gerar um fluxo constante de dividendos.
+                            </p>
+                          </div>
 
-                    <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
-                      <span className="text-[10px] font-bold text-muted-foreground uppercase">Dividend Yield 12M</span>
-                      <p className="text-lg font-black text-emerald-600">
-                        {fundamental.dividendYield ? `${fundamental.dividendYield.toFixed(1)}%` : '-'}
-                      </p>
-                      <p className="text-[10px] text-muted-foreground">Proventos distribuídos</p>
-                    </div>
+                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-8">
+                            <div className="space-y-1">
+                              <p className="text-[10px] font-black text-indigo-200 uppercase tracking-[0.2em]">Estimativa Anual</p>
+                              <p className="text-3xl font-black text-white">{formatCurrency(projection.projectedAnnualIncome)}</p>
+                            </div>
+                            <div className="space-y-1 border-l border-white/10 pl-8">
+                              <p className="text-[10px] font-black text-indigo-200 uppercase tracking-[0.2em]">Estimativa Mensal</p>
+                              <p className="text-3xl font-black text-white">{formatCurrency(projection.projectedMonthlyIncome)}</p>
+                            </div>
+                            <div className="hidden sm:block space-y-1 border-l border-white/10 pl-8">
+                              <p className="text-[10px] font-black text-indigo-200 uppercase tracking-[0.2em]">Yield Projetado</p>
+                              <p className="text-3xl font-black text-emerald-400">{projection.projectedDividendYield.toFixed(2)}%</p>
+                            </div>
+                          </div>
 
-                    <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
-                      <span className="text-[10px] font-bold text-muted-foreground uppercase">P/Ativo</span>
-                      <p className="text-lg font-black text-foreground">
-                        {(fundamental as B3StockFundamental).pAtivo !== undefined && (fundamental as B3StockFundamental).pAtivo !== null ? `${(fundamental as B3StockFundamental).pAtivo.toFixed(2)}` : '-'}
-                      </p>
-                      <p className="text-[10px] text-muted-foreground">Preço sobre Ativos</p>
-                    </div>
+                          <button 
+                            onClick={() => setActiveTab('proventos')}
+                            className="px-8 py-3 bg-white text-indigo-600 text-xs font-black uppercase tracking-widest rounded-2xl hover:bg-indigo-50 transition-all flex items-center gap-3"
+                          >
+                            Análise de Proventos
+                            <ArrowUpRight className="w-5 h-5" />
+                          </button>
+                        </div>
+                      </div>
+                    )}
 
-                    <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
-                      <span className="text-[10px] font-bold text-muted-foreground uppercase">P/Cap. Giro</span>
-                      <p className="text-lg font-black text-foreground">
-                        {(fundamental as B3StockFundamental).pCapGiro !== undefined && (fundamental as B3StockFundamental).pCapGiro !== null ? `${(fundamental as B3StockFundamental).pCapGiro.toFixed(2)}` : '-'}
-                      </p>
-                      <p className="text-[10px] text-muted-foreground">Preço sobre Cap. Giro</p>
-                    </div>
-
-                    <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
-                      <span className="text-[10px] font-bold text-muted-foreground uppercase">P/EBIT</span>
-                      <p className="text-lg font-black text-foreground">
-                        {(fundamental as B3StockFundamental).pEbit !== undefined && (fundamental as B3StockFundamental).pEbit !== null ? `${(fundamental as B3StockFundamental).pEbit.toFixed(2)}` : '-'}
-                      </p>
-                      <p className="text-[10px] text-muted-foreground">Preço sobre Lucro Op.</p>
-                    </div>
-
-                    <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
-                      <span className="text-[10px] font-bold text-muted-foreground uppercase">P/Ativ Circ. Liq</span>
-                      <p className="text-lg font-black text-foreground">
-                        {(fundamental as B3StockFundamental).pAtivCircLiq !== undefined && (fundamental as B3StockFundamental).pAtivCircLiq !== null ? `${(fundamental as B3StockFundamental).pAtivCircLiq.toFixed(2)}` : '-'}
-                      </p>
-                      <p className="text-[10px] text-muted-foreground">Preço / Ativ. Circ. Liq.</p>
-                    </div>
-
-                    <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
-                      <span className="text-[10px] font-bold text-muted-foreground uppercase">EV/EBIT</span>
-                      <p className="text-lg font-black text-foreground">
-                        {(fundamental as B3StockFundamental).evEbit !== undefined && (fundamental as B3StockFundamental).evEbit !== null ? `${(fundamental as B3StockFundamental).evEbit.toFixed(2)}` : '-'}
-                      </p>
-                      <p className="text-[10px] text-muted-foreground">Valuation / Operacional</p>
-                    </div>
-
-                    <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
-                      <span className="text-[10px] font-bold text-muted-foreground uppercase">EV/EBITDA</span>
-                      <p className="text-lg font-black text-foreground">
-                        {(fundamental as B3StockFundamental).evEbitda !== undefined && (fundamental as B3StockFundamental).evEbitda !== null ? `${(fundamental as B3StockFundamental).evEbitda.toFixed(2)}` : '-'}
-                      </p>
-                      <p className="text-[10px] text-muted-foreground">Valuation / Caixa</p>
-                    </div>
-
-                    <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
-                      <span className="text-[10px] font-bold text-muted-foreground uppercase">Margem Bruta</span>
-                      <p className="text-lg font-black text-foreground">
-                        {(fundamental as B3StockFundamental).grossMargin !== undefined && (fundamental as B3StockFundamental).grossMargin !== null ? `${(fundamental as B3StockFundamental).grossMargin.toFixed(1)}%` : '-'}
-                      </p>
-                      <p className="text-[10px] text-muted-foreground">Lucro Bruto / Receita</p>
-                    </div>
-
-                    <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
-                      <span className="text-[10px] font-bold text-muted-foreground uppercase">Margem EBIT</span>
-                      <p className="text-lg font-black text-foreground">
-                        {(fundamental as B3StockFundamental).ebitMargin !== undefined && (fundamental as B3StockFundamental).ebitMargin !== null ? `${(fundamental as B3StockFundamental).ebitMargin.toFixed(1)}%` : '-'}
-                      </p>
-                      <p className="text-[10px] text-muted-foreground">EBIT / Receita Líq.</p>
-                    </div>
-
-                    <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
-                      <span className="text-[10px] font-bold text-muted-foreground uppercase">Margem Líquida</span>
-                      <p className="text-lg font-black text-foreground">
-                        {(fundamental as B3StockFundamental).netMargin ? `${(fundamental as B3StockFundamental).netMargin.toFixed(1)}%` : '-'}
-                      </p>
-                      <p className="text-[10px] text-muted-foreground">Lucro / Receita Líq.</p>
-                    </div>
-
-                    <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
-                      <span className="text-[10px] font-bold text-muted-foreground uppercase">Liq. Corrente</span>
-                      <p className="text-lg font-black text-foreground">
-                        {(fundamental as B3StockFundamental).currentLiquidity !== undefined && (fundamental as B3StockFundamental).currentLiquidity !== null ? `${(fundamental as B3StockFundamental).currentLiquidity.toFixed(2)}` : '-'}
-                      </p>
-                      <p className="text-[10px] text-muted-foreground">Ativo Circ / Passivo Circ</p>
-                    </div>
-
-                    <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
-                      <span className="text-[10px] font-bold text-muted-foreground uppercase">ROIC</span>
-                      <p className="text-lg font-black text-foreground">
-                        {(fundamental as B3StockFundamental).roic ? `${(fundamental as B3StockFundamental).roic.toFixed(1)}%` : '-'}
-                      </p>
-                      <p className="text-[10px] text-muted-foreground">Retorno s/ Capital Inv.</p>
-                    </div>
-
-                    <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
-                      <span className="text-[10px] font-bold text-muted-foreground uppercase">ROE</span>
-                      <p className="text-lg font-black text-foreground">
-                        {(fundamental as B3StockFundamental).roe ? `${(fundamental as B3StockFundamental).roe.toFixed(1)}%` : '-'}
-                      </p>
-                      <p className="text-[10px] text-muted-foreground">Retorno s/ Patrimônio</p>
-                    </div>
-
-                    <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
-                      <span className="text-[10px] font-bold text-muted-foreground uppercase">Liquidez (2 meses)</span>
-                      <p className="text-sm font-black text-foreground truncate">
-                        {fundamental.dailyLiquidity ? formatCurrency(fundamental.dailyLiquidity) : '-'}
-                      </p>
-                      <p className="text-[10px] text-muted-foreground">Volume diário médio</p>
-                    </div>
-
-                    <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
-                      <span className="text-[10px] font-bold text-muted-foreground uppercase">Patrimônio Líquido</span>
-                      <p className="text-sm font-black text-foreground truncate">
-                        {(fundamental as B3StockFundamental).netWorth ? formatCurrency((fundamental as B3StockFundamental).netWorth) : '-'}
-                      </p>
-                      <p className="text-[10px] text-muted-foreground">Valor patrimonial</p>
-                    </div>
-
-                    <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
-                      <span className="text-[10px] font-bold text-muted-foreground uppercase">Dív. Líq. / Patrimônio</span>
-                      <p className="text-lg font-black text-foreground">
-                        {(fundamental as B3StockFundamental).netDebtOverEquity !== undefined && (fundamental as B3StockFundamental).netDebtOverEquity !== null ? `${(fundamental as B3StockFundamental).netDebtOverEquity.toFixed(2)}` : (
-                          (fundamental as B3StockFundamental).netDebtOverEbitda !== undefined ? `${(fundamental as B3StockFundamental).netDebtOverEbitda.toFixed(1)}x` : '-'
-                        )}
-                      </p>
-                      <p className="text-[10px] text-muted-foreground">Alavancagem s/ Patrimônio</p>
-                    </div>
-
-                    <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
-                      <span className="text-[10px] font-bold text-muted-foreground uppercase">Cresc. Receita 5a</span>
-                      <p className="text-lg font-black text-foreground">
-                        {(fundamental as B3StockFundamental).revenueCagr5y ? `${(fundamental as B3StockFundamental).revenueCagr5y.toFixed(1)}%` : '-'}
-                      </p>
-                      <p className="text-[10px] text-muted-foreground">CAGR histórico</p>
-                    </div>
+                    <CvmDocumentButton ticker={position.ticker} variant="full" />
                   </div>
-                ) : (
-                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-                    <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
-                      <span className="text-[10px] font-bold text-muted-foreground uppercase">Segmento</span>
-                      <p className="text-sm font-black text-foreground truncate">
-                        {(fundamental as B3FiiFundamental).fiiSegment || '-'}
-                      </p>
-                      <p className="text-[10px] text-muted-foreground">Tipo: {(fundamental as B3FiiFundamental).fiiType || 'Tijolo'}</p>
+                )}
+
+                {activeTab === 'proventos' && (
+                  <div className="space-y-10">
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                      <div className="p-6 rounded-[2rem] bg-emerald-500/5 border border-emerald-500/10 space-y-2">
+                        <p className="text-[10px] font-black text-emerald-400 uppercase tracking-widest">Yield Projetado</p>
+                        <p className="text-3xl font-black text-emerald-400 tracking-tighter">
+                          {projection.projectedDividendYield.toFixed(2)}%
+                        </p>
+                        <p className="text-[10px] text-slate-600 font-bold uppercase tracking-tighter">Nos últimos 12M</p>
+                      </div>
+
+                      <div className="p-6 rounded-[2rem] bg-slate-800/30 border border-slate-800/50 space-y-2">
+                        <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Renda Estimada</p>
+                        <p className="text-3xl font-black text-white tracking-tighter">{formatCurrency(projection.projectedAnnualIncome)}</p>
+                        <p className="text-[10px] text-slate-600 font-bold uppercase tracking-tighter">Próximos 12 meses</p>
+                      </div>
+
+                      <div className="p-6 rounded-[2rem] bg-slate-800/30 border border-slate-800/50 space-y-2">
+                        <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Frequência</p>
+                        <p className="text-3xl font-black text-white tracking-tighter">{projection.paymentFrequency}</p>
+                        <p className="text-[10px] text-slate-600 font-bold uppercase tracking-tighter">Histórico regular</p>
+                      </div>
+
+                      <div className="p-6 rounded-[2rem] bg-slate-800/30 border border-slate-800/50 space-y-2">
+                        <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Recebidos</p>
+                        <p className="text-3xl font-black text-white tracking-tighter">{projection.dividendCount}</p>
+                        <p className="text-[10px] text-slate-600 font-bold uppercase tracking-tighter">Total de pagamentos</p>
+                      </div>
                     </div>
 
-                    <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
-                      <span className="text-[10px] font-bold text-muted-foreground uppercase">P/VP</span>
-                      <p className="text-lg font-black text-foreground">
-                        {fundamental.pvp ? fundamental.pvp.toFixed(2) : '-'}
-                      </p>
-                      <p className="text-[10px] text-muted-foreground">Preço vs Patrimônio</p>
-                    </div>
+                    <div className="space-y-6">
+                      <div className="flex items-center justify-between">
+                        <h3 className="text-xs font-black uppercase text-slate-400 tracking-widest flex items-center gap-3">
+                          <DollarSign className="w-5 h-5 text-emerald-400" />
+                          Histórico de Proventos
+                        </h3>
+                        
+                        <button
+                          onClick={() => { onClose(); onOpenAddDivModal(position.ticker); }}
+                          className="px-5 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-black uppercase tracking-widest rounded-xl border border-slate-700 transition-all flex items-center gap-2"
+                        >
+                          <PlusCircle className="w-4 h-4" />
+                          Adicionar Provento
+                        </button>
+                      </div>
 
-                    <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
-                      <span className="text-[10px] font-bold text-muted-foreground uppercase">Dividend Yield 12M</span>
-                      <p className="text-lg font-black text-emerald-600">
-                        {fundamental.dividendYield ? `${fundamental.dividendYield.toFixed(1)}%` : '-'}
-                      </p>
-                      <p className="text-[10px] text-muted-foreground">Rendimentos anuais</p>
-                    </div>
-
-                    <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
-                      <span className="text-[10px] font-bold text-muted-foreground uppercase">FFO Yield</span>
-                      <p className="text-lg font-black text-foreground">
-                        {(fundamental as B3FiiFundamental).ffoYield ? `${(fundamental as B3FiiFundamental).ffoYield.toFixed(1)}%` : '-'}
-                      </p>
-                      <p className="text-[10px] text-muted-foreground">Geração de caixa operacional</p>
-                    </div>
-
-                    <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
-                      <span className="text-[10px] font-bold text-muted-foreground uppercase">Valor de Mercado</span>
-                      <p className="text-sm font-black text-foreground truncate">
-                        {(fundamental as B3FiiFundamental).marketCap ? formatCurrency((fundamental as B3FiiFundamental).marketCap) : '-'}
-                      </p>
-                      <p className="text-[10px] text-muted-foreground">Cap. Bolsa</p>
-                    </div>
-
-                    <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
-                      <span className="text-[10px] font-bold text-muted-foreground uppercase">Liquidez Diária</span>
-                      <p className="text-sm font-black text-foreground truncate">
-                        {fundamental.dailyLiquidity ? formatCurrency(fundamental.dailyLiquidity) : '-'}
-                      </p>
-                      <p className="text-[10px] text-muted-foreground">Volume de negociação</p>
-                    </div>
-
-                    <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
-                      <span className="text-[10px] font-bold text-muted-foreground uppercase">Qtd de Imóveis</span>
-                      <p className="text-lg font-black text-foreground">
-                        {(fundamental as B3FiiFundamental).propertiesCount !== undefined ? `${(fundamental as B3FiiFundamental).propertiesCount}` : '-'}
-                      </p>
-                      <p className="text-[10px] text-muted-foreground">Diversificação física</p>
-                    </div>
-
-                    <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
-                      <span className="text-[10px] font-bold text-muted-foreground uppercase">Preço do m²</span>
-                      <p className="text-sm font-black text-foreground truncate">
-                        {(fundamental as B3FiiFundamental).pricePerSqm ? `R$ ${(fundamental as B3FiiFundamental).pricePerSqm.toLocaleString('pt-BR')}` : '-'}
-                      </p>
-                      <p className="text-[10px] text-muted-foreground">Valor por m² construído</p>
-                    </div>
-
-                    <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
-                      <span className="text-[10px] font-bold text-muted-foreground uppercase">Aluguel por m²</span>
-                      <p className="text-sm font-black text-foreground truncate">
-                        {(fundamental as B3FiiFundamental).rentPerSqm ? `R$ ${(fundamental as B3FiiFundamental).rentPerSqm.toLocaleString('pt-BR')}` : '-'}
-                      </p>
-                      <p className="text-[10px] text-muted-foreground">Renda mensal por m²</p>
-                    </div>
-
-                    <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
-                      <span className="text-[10px] font-bold text-muted-foreground uppercase">Cap Rate Médio</span>
-                      <p className="text-lg font-black text-foreground">
-                        {(fundamental as B3FiiFundamental).capRate ? `${(fundamental as B3FiiFundamental).capRate.toFixed(1)}%` : '-'}
-                      </p>
-                      <p className="text-[10px] text-muted-foreground">Renda imobiliária bruta</p>
-                    </div>
-
-                    <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
-                      <span className="text-[10px] font-bold text-muted-foreground uppercase">Vacância Média</span>
-                      <p className="text-lg font-black text-foreground">
-                        {(fundamental as B3FiiFundamental).physicalVacancy !== undefined ? `${(fundamental as B3FiiFundamental).physicalVacancy.toFixed(1)}%` : '-'}
-                      </p>
-                      <p className="text-[10px] text-muted-foreground">Área desocupada</p>
+                      {assetDivs.length === 0 ? (
+                        <div className="p-16 text-center rounded-[3rem] border-2 border-dashed border-slate-800 bg-slate-800/10 space-y-4">
+                          <DollarSign className="w-16 h-16 text-slate-700 mx-auto" />
+                          <p className="text-sm font-black text-slate-500 uppercase tracking-widest">Nenhum provento cadastrado.</p>
+                        </div>
+                      ) : (
+                        <div className="rounded-[2.5rem] border border-slate-800 bg-slate-900/50 overflow-hidden">
+                          <table className="w-full text-left text-xs whitespace-nowrap">
+                            <thead className="bg-slate-800/50 text-[10px] font-black text-slate-500 uppercase border-b border-slate-800">
+                              <tr>
+                                <th className="px-8 py-5">Data Pagamento</th>
+                                <th className="px-8 py-5 text-center">Tipo</th>
+                                <th className="px-8 py-5">Status</th>
+                                <th className="px-8 py-5 text-right">Por Cota</th>
+                                <th className="px-8 py-5 text-right">Total Bruto</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-800 font-bold">
+                              {assetDivs.map(div => {
+                                const unitVal = div.unit_amount || (position.totalQuantity > 0 ? (div.amount / position.totalQuantity) : 0);
+                                return (
+                                  <tr key={div.id} className="hover:bg-slate-800/30 transition-colors group">
+                                    <td className="px-8 py-5 text-white font-black">
+                                      {new Date(div.date + 'T12:00:00Z').toLocaleDateString('pt-BR', { timeZone: 'UTC' })}
+                                    </td>
+                                    <td className="px-8 py-5 text-center">
+                                      <span className="text-[9px] font-black px-3 py-1 rounded-lg bg-slate-800 text-slate-400 uppercase border border-slate-700">
+                                        {div.type}
+                                      </span>
+                                    </td>
+                                    <td className="px-8 py-5">
+                                      <span className={`text-[9px] font-black px-3 py-1 rounded-lg uppercase flex items-center gap-2 w-fit ${
+                                        div.status === 'received' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                                      }`}>
+                                        {div.status === 'received' ? <CheckCircle2 className="w-4 h-4" /> : <Clock className="w-4 h-4" />}
+                                        {div.status === 'received' ? 'Recebido' : 'Provisionado'}
+                                      </span>
+                                    </td>
+                                    <td className="px-8 py-5 text-right text-slate-500 font-mono">
+                                      {formatCurrency(unitVal)}
+                                    </td>
+                                    <td className="px-8 py-5 text-right font-black text-emerald-400">
+                                      {formatCurrency(div.amount)}
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
-              </div>
 
-              {/* 3. Strengths & Warnings */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="p-4 rounded-3xl bg-emerald-500/10 border border-emerald-500/20 space-y-2">
-                  <h5 className="text-xs font-black text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5">
-                    <CheckCircle2 className="w-4 h-4" />
-                    Pontos Fortes ({scoreResult.strengths.length})
-                  </h5>
-                  <ul className="space-y-1 text-xs text-foreground font-medium">
-                    {scoreResult.strengths.map((s, i) => (
-                      <li key={i} className="flex items-start gap-1.5">
-                        <span className="text-emerald-500 font-bold">•</span>
-                        <span>{s}</span>
-                      </li>
-                    ))}
-                    {scoreResult.strengths.length === 0 && (
-                      <li className="text-xs text-muted-foreground">Nenhum destaque registrado.</li>
-                    )}
-                  </ul>
-                </div>
+                {activeTab === 'historico' && (
+                  <div className="space-y-8">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-xs font-black uppercase text-slate-400 tracking-widest flex items-center gap-3">
+                        <History className="w-6 h-6 text-sky-400" />
+                        Histórico de Lançamentos
+                      </h3>
 
-                <div className="p-4 rounded-3xl bg-amber-500/10 border border-amber-500/20 space-y-2">
-                  <h5 className="text-xs font-black text-amber-600 dark:text-amber-400 flex items-center gap-1.5">
-                    <AlertTriangle className="w-4 h-4" />
-                    Pontos de Atenção ({scoreResult.warnings.length})
-                  </h5>
-                  <ul className="space-y-1 text-xs text-foreground font-medium">
-                    {scoreResult.warnings.map((w, i) => (
-                      <li key={i} className="flex items-start gap-1.5">
-                        <span className="text-amber-500 font-bold">•</span>
-                        <span>{w}</span>
-                      </li>
-                    ))}
-                    {scoreResult.warnings.length === 0 && (
-                      <li className="text-xs text-muted-foreground">Nenhum alerta crítico encontrado.</li>
-                    )}
-                  </ul>
-                </div>
-              </div>
+                      <button
+                        onClick={() => { onClose(); onOpenAddModal(position.ticker, 'buy'); }}
+                        className="px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-black uppercase tracking-widest rounded-2xl shadow-xl shadow-indigo-500/20 transition-all flex items-center gap-3"
+                      >
+                        <PlusCircle className="w-5 h-5" />
+                        Novo Lançamento
+                      </button>
+                    </div>
 
-              {/* 4. Historical Snapshots in Supabase */}
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <h4 className="text-xs font-black uppercase tracking-wider text-foreground flex items-center gap-2">
-                    <History className="w-4 h-4 text-primary" />
-                    Evolução Histórica dos Fundamentos ({historyRecords.length} snapshots)
-                  </h4>
-                  {isLoadingHistory && (
-                    <span className="text-[10px] text-muted-foreground">Carregando histórico...</span>
-                  )}
-                </div>
-
-                {historyRecords.length === 0 ? (
-                  <div className="p-6 text-center rounded-2xl border border-dashed border-border/60 bg-muted/10 space-y-1">
-                    <p className="text-xs font-bold text-muted-foreground">Nenhum snapshot histórico salvo para este ativo ainda.</p>
-                    <p className="text-[10px] text-muted-foreground">
-                      A cada importação do Fundamentus ou salvamento manual, um registro de data e indicadores é arquivado automaticamente.
-                    </p>
-                  </div>
-                ) : (
-                  <div className="rounded-2xl border border-border/60 bg-card overflow-hidden shadow-xs">
-                    <table className="w-full text-left text-xs whitespace-nowrap">
-                      <thead className="bg-muted/30 text-[10px] font-bold text-muted-foreground uppercase border-b border-border/40">
-                        <tr>
-                          <th className="px-3.5 py-2.5">Data Snapshot</th>
-                          <th className="px-3.5 py-2.5">Origem</th>
-                          <th className="px-3.5 py-2.5 text-right">Cotação</th>
-                          <th className="px-3.5 py-2.5 text-right">P/VP</th>
-                          <th className="px-3.5 py-2.5 text-right">DY 12M</th>
-                          <th className="px-3.5 py-2.5 text-right">{fundamental.type === 'Ação' ? 'P/L' : 'FFO Yield'}</th>
-                          <th className="px-3.5 py-2.5 text-right">{fundamental.type === 'Ação' ? 'ROE' : 'Vacância'}</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-border/30 font-medium">
-                        {historyRecords.map((rec, idx) => (
-                          <tr key={idx} className="hover:bg-muted/20 transition-colors">
-                            <td className="px-3.5 py-2.5 text-foreground font-semibold">
-                              {rec.recordedAt ? new Date(rec.recordedAt).toLocaleDateString('pt-BR') : '-'}
-                            </td>
-                            <td className="px-3.5 py-2.5">
-                              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-muted/60 text-muted-foreground">
-                                {rec.source || 'Importação'}
-                              </span>
-                            </td>
-                            <td className="px-3.5 py-2.5 text-right font-black text-foreground">
-                              {rec.price ? formatCurrency(rec.price) : '-'}
-                            </td>
-                            <td className="px-3.5 py-2.5 text-right font-bold">
-                              {rec.pvp ? rec.pvp.toFixed(2) : '-'}
-                            </td>
-                            <td className="px-3.5 py-2.5 text-right font-bold text-emerald-600">
-                              {rec.dy ? `${rec.dy.toFixed(1)}%` : '-'}
-                            </td>
-                            <td className="px-3.5 py-2.5 text-right">
-                              {fundamental.type === 'Ação' 
-                                ? (rec.pl ? `${rec.pl.toFixed(1)}x` : '-')
-                                : (rec.metricsJson?.ffoYield ? `${rec.metricsJson.ffoYield.toFixed(1)}%` : '-')}
-                            </td>
-                            <td className="px-3.5 py-2.5 text-right">
-                              {fundamental.type === 'Ação'
-                                ? (rec.roe ? `${rec.roe.toFixed(1)}%` : '-')
-                                : (rec.vacancy ? `${rec.vacancy.toFixed(1)}%` : '-')}
-                            </td>
+                    <div className="rounded-[2.5rem] border border-slate-800 bg-slate-900/50 overflow-hidden">
+                      <table className="w-full text-left text-xs whitespace-nowrap">
+                        <thead className="bg-slate-800/50 text-[10px] font-black text-slate-500 uppercase border-b border-slate-800">
+                          <tr>
+                            <th className="px-8 py-5">Data</th>
+                            <th className="px-8 py-5 text-center">Operação</th>
+                            <th className="px-8 py-5 text-right">Qtd</th>
+                            <th className="px-8 py-5 text-right">Preço Unit.</th>
+                            <th className="px-8 py-5 text-right">Total</th>
+                            <th className="px-8 py-5 text-center">Ações</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody className="divide-y divide-slate-800 font-bold">
+                          {assetTxs.map(tx => (
+                            <tr key={tx.id} className="hover:bg-slate-800/30 transition-colors group">
+                              <td className="px-8 py-5 text-white font-black">
+                                {new Date(tx.date + 'T12:00:00Z').toLocaleDateString('pt-BR', { timeZone: 'UTC' })}
+                              </td>
+                              <td className="px-8 py-5 text-center">
+                                <span className={`text-[9px] font-black px-3 py-1 rounded-lg uppercase border ${
+                                  tx.operation === 'buy' 
+                                    ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' 
+                                    : 'bg-rose-500/10 text-rose-400 border-rose-500/20'
+                                }`}>
+                                  {tx.operation === 'buy' ? 'Compra' : 'Venda'}
+                                </span>
+                              </td>
+                              <td className="px-8 py-5 text-right text-white font-black">{tx.quantity}</td>
+                              <td className="px-8 py-5 text-right text-slate-500">{formatCurrency(tx.price)}</td>
+                              <td className="px-8 py-5 text-right font-black text-white">{formatCurrency(tx.amount)}</td>
+                              <td className="px-8 py-5 text-center">
+                                <div className="flex items-center justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                  <button
+                                    onClick={() => { onClose(); onEditTx(tx); }}
+                                    className="p-2.5 text-slate-500 hover:text-indigo-400 hover:bg-slate-800 rounded-xl transition-all"
+                                  >
+                                    <Edit3 className="w-5 h-5" />
+                                  </button>
+                                  <button
+                                    onClick={() => { onClose(); onDeleteTx(tx); }}
+                                    className="p-2.5 text-slate-500 hover:text-rose-400 hover:bg-slate-800 rounded-xl transition-all"
+                                  >
+                                    <Trash2 className="w-5 h-5" />
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
                 )}
-              </div>
-            </div>
-          )}
 
-        </div>
+                {activeTab === 'fundamentos' && (
+                  <div className="space-y-10">
+                    {/* SCORE CARD */}
+                    <div className="p-10 rounded-[3rem] bg-gradient-to-br from-slate-800/80 to-slate-900 border border-slate-700/50 shadow-2xl relative overflow-hidden group">
+                      <div className="absolute top-0 right-0 p-16 opacity-[0.03] group-hover:opacity-[0.06] transition-opacity">
+                        <Award className="w-72 h-72 text-white" />
+                      </div>
+
+                      <div className="relative z-10 flex flex-col lg:flex-row items-center gap-12">
+                        <div className="relative">
+                          <div 
+                            className="w-40 h-40 rounded-[2.5rem] flex flex-col items-center justify-center shadow-2xl border-4"
+                            style={{
+                              backgroundColor: `${getScoreColor(scoreResult.totalScore)}15`,
+                              borderColor: `${getScoreColor(scoreResult.totalScore)}40`,
+                              color: getScoreColor(scoreResult.totalScore)
+                            }}
+                          >
+                            <span className="text-6xl font-black tracking-tighter">{scoreResult.totalScore}</span>
+                            <span className="text-[11px] font-black uppercase tracking-[0.2em] opacity-70">PONTOS</span>
+                          </div>
+                          <div 
+                            className="absolute -bottom-5 left-1/2 -translate-x-1/2 px-6 py-2 rounded-2xl text-[11px] font-black uppercase tracking-[0.2em] shadow-2xl border border-white/10"
+                            style={{
+                              backgroundColor: getScoreColor(scoreResult.totalScore),
+                              color: '#fff'
+                            }}
+                          >
+                            {scoreResult.grade}
+                          </div>
+                        </div>
+
+                        <div className="flex-1 space-y-8">
+                          <div>
+                            <h4 className="text-3xl font-black text-white tracking-tighter">Score B3 & Qualidade</h4>
+                            <p className="text-sm text-slate-400 font-medium mt-2 max-w-xl">
+                              Nosso algoritmo avalia métricas de rentabilidade, governança e saúde financeira para determinar a qualidade deste ativo.
+                            </p>
+                          </div>
+
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+                            {scoreResult.pillars.map((pillar, i) => (
+                              <div key={i} className="space-y-3">
+                                <div className="flex justify-between text-[10px] font-black uppercase tracking-widest text-slate-500">
+                                  <span>{pillar.name}</span>
+                                  <span className="text-white">{pillar.score.toFixed(0)}</span>
+                                </div>
+                                <div className="h-2 w-full bg-slate-800 rounded-full overflow-hidden">
+                                  <motion.div 
+                                    initial={{ width: 0 }}
+                                    animate={{ width: `${pillar.score}%` }}
+                                    transition={{ duration: 1, delay: i * 0.1 }}
+                                    className="h-full rounded-full"
+                                    style={{ backgroundColor: getScoreColor(scoreResult.totalScore) }}
+                                  />
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* INDICATORS GRID */}
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                      {fundamental.type === 'Ação' ? (
+                        <>
+                          <div className="p-6 rounded-[2rem] bg-slate-800/30 border border-slate-800 space-y-2">
+                            <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">P/L</p>
+                            <p className="text-2xl font-black text-white tracking-tighter">
+                              {(fundamental as B3StockFundamental).pl ? `${(fundamental as B3StockFundamental).pl.toFixed(1)}x` : '-'}
+                            </p>
+                          </div>
+                          <div className="p-6 rounded-[2rem] bg-slate-800/30 border border-slate-800 space-y-2">
+                            <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">P/VP</p>
+                            <p className="text-2xl font-black text-white tracking-tighter">{fundamental.pvp ? fundamental.pvp.toFixed(2) : '-'}</p>
+                          </div>
+                          <div className="p-6 rounded-[2rem] bg-slate-800/30 border border-slate-800 space-y-2">
+                            <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Margem Líq.</p>
+                            <p className="text-2xl font-black text-white tracking-tighter">{(fundamental as B3StockFundamental).netMargin?.toFixed(1)}%</p>
+                          </div>
+                          <div className="p-6 rounded-[2rem] bg-slate-800/30 border border-slate-800 space-y-2">
+                            <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">ROE</p>
+                            <p className="text-2xl font-black text-emerald-400 tracking-tighter">{(fundamental as B3StockFundamental).roe?.toFixed(1)}%</p>
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="p-6 rounded-[2rem] bg-slate-800/30 border border-slate-800 space-y-2">
+                            <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">P/VP</p>
+                            <p className="text-2xl font-black text-white tracking-tighter">{fundamental.pvp ? fundamental.pvp.toFixed(2) : '-'}</p>
+                          </div>
+                          <div className="p-6 rounded-[2rem] bg-slate-800/30 border border-slate-800 space-y-2">
+                            <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">DY 12M</p>
+                            <p className="text-2xl font-black text-emerald-400 tracking-tighter">{fundamental.dividendYield ? `${fundamental.dividendYield.toFixed(1)}%` : '-'}</p>
+                          </div>
+                          <div className="p-6 rounded-[2rem] bg-slate-800/30 border border-slate-800 space-y-2">
+                            <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Vacância</p>
+                            <p className="text-2xl font-black text-rose-400 tracking-tighter">{(fundamental as B3FiiFundamental).physicalVacancy?.toFixed(1)}%</p>
+                          </div>
+                          <div className="p-6 rounded-[2rem] bg-slate-800/30 border border-slate-800 space-y-2">
+                            <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Ativos</p>
+                            <p className="text-2xl font-black text-white tracking-tighter">{(fundamental as B3FiiFundamental).propertiesCount || '-'}</p>
+                          </div>
+                        </>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                      <div className="p-8 rounded-[2.5rem] bg-emerald-500/5 border border-emerald-500/10 space-y-6">
+                        <h5 className="text-[11px] font-black text-emerald-400 uppercase tracking-widest flex items-center gap-3">
+                          <CheckCircle2 className="w-6 h-6" />
+                          Fortalezas
+                        </h5>
+                        <div className="space-y-4">
+                          {scoreResult.strengths.map((s, i) => (
+                            <div key={i} className="flex items-start gap-4 text-xs font-bold text-slate-300">
+                              <div className="w-2 h-2 rounded-full bg-emerald-500 mt-1.5 shrink-0" />
+                              <p className="leading-relaxed">{s}</p>
+                            </div>
+                          ))}
+                          {scoreResult.strengths.length === 0 && <p className="text-slate-600 italic">Nenhum ponto forte identificado.</p>}
+                        </div>
+                      </div>
+
+                      <div className="p-8 rounded-[2.5rem] bg-amber-500/5 border border-amber-500/10 space-y-6">
+                        <h5 className="text-[11px] font-black text-amber-400 uppercase tracking-widest flex items-center gap-3">
+                          <AlertTriangle className="w-6 h-6" />
+                          Pontos de Atenção
+                        </h5>
+                        <div className="space-y-4">
+                          {scoreResult.warnings.map((w, i) => (
+                            <div key={i} className="flex items-start gap-4 text-xs font-bold text-slate-300">
+                              <div className="w-2 h-2 rounded-full bg-amber-500 mt-1.5 shrink-0" />
+                              <p className="leading-relaxed">{w}</p>
+                            </div>
+                          ))}
+                          {scoreResult.warnings.length === 0 && <p className="text-slate-600 italic">Nenhum risco relevante identificado.</p>}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </motion.div>
+            </AnimatePresence>
+          </div>
+        </motion.div>
       </div>
-    </div>
+    </AnimatePresence>
   );
 }

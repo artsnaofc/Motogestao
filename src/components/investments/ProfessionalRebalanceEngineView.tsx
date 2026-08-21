@@ -18,7 +18,8 @@ import {
   DollarSign,
   HelpCircle,
   Target,
-  AlertCircle
+  AlertCircle,
+  PlusCircle
 } from 'lucide-react';
 import { 
   simulatePortfolioContribution, 
@@ -33,6 +34,7 @@ import {
 import { useInvestments } from '../../contexts/InvestmentsContext';
 import { useData } from '../../contexts/DataContext';
 import { toast } from 'sonner';
+import { AddRebalanceAssetModal, CustomRebalanceAsset } from './AddRebalanceAssetModal';
 
 interface ProfessionalRebalanceEngineViewProps {
   positions: any[];
@@ -101,6 +103,7 @@ export const ProfessionalRebalanceEngineView: React.FC<ProfessionalRebalanceEngi
   const invReserveBalance = useMemo(() => {
     return invReserve ? (invReserve.saldo_atual || 0) : 0;
   }, [invReserve]);
+
   const [activeStrategy, setActiveStrategy] = useState<RebalanceStrategyType>(initialRulesConfig?.activeStrategy || 'rebalance');
   const [rulesConfig, setRulesConfig] = useState<RebalanceRulesConfig>(initialRulesConfig || DEFAULT_REBALANCE_RULES);
   const [stockWeights, setStockWeights] = useState<any>(undefined);
@@ -109,6 +112,7 @@ export const ProfessionalRebalanceEngineView: React.FC<ProfessionalRebalanceEngi
   const [isEditingTargets, setIsEditingTargets] = useState(false);
   const [isExecuting, setIsExecuting] = useState(false);
   const [isEditingRules, setIsEditingRules] = useState(false);
+  const [isAddAssetModalOpen, setIsAddAssetModalOpen] = useState(false);
   
   // Load initial rules from ranking cache if available
   React.useEffect(() => {
@@ -130,7 +134,6 @@ export const ProfessionalRebalanceEngineView: React.FC<ProfessionalRebalanceEngi
       console.warn('Failed to load ranking filters for rebalance engine:', e);
     }
   }, []);
-
 
   // Sync targets when incoming targets change
   React.useEffect(() => {
@@ -282,125 +285,51 @@ export const ProfessionalRebalanceEngineView: React.FC<ProfessionalRebalanceEngi
 
           <div className="flex items-center gap-2">
             <button
-              onClick={() => setIsEditingTargets(!isEditingTargets)}
-              className={`px-4 py-2 rounded-xl text-xs font-black border transition-all uppercase tracking-wider flex items-center gap-2 ${
-                isEditingTargets 
-                  ? 'bg-indigo-600 border-indigo-500 text-white shadow-lg shadow-indigo-500/20' 
-                  : 'bg-slate-800 border-slate-700 text-slate-300 hover:text-white hover:bg-slate-700'
-              }`}
+              onClick={() => setIsEditingTargets(true)}
+              className="px-4 py-2 rounded-xl text-xs font-black bg-slate-800 border border-slate-700 text-slate-300 hover:text-white hover:bg-slate-700 transition-all uppercase tracking-wider flex items-center gap-2"
             >
               <Target className="w-3.5 h-3.5" />
-              {isEditingTargets ? 'Concluir Metas' : 'Ajustar Metas'}
+              Ajustar Metas
             </button>
             <button
-              onClick={() => setIsEditingRules(!isEditingRules)}
-              className={`px-4 py-2 rounded-xl text-xs font-black border transition-all uppercase tracking-wider flex items-center gap-2 ${
-                isEditingRules 
-                  ? 'bg-emerald-600 border-emerald-500 text-white shadow-lg shadow-emerald-500/20' 
-                  : 'bg-slate-800 border-slate-700 text-slate-300 hover:text-white hover:bg-slate-700'
-              }`}
+              onClick={() => setIsEditingRules(true)}
+              className="px-4 py-2 rounded-xl text-xs font-black bg-slate-800 border border-slate-700 text-slate-300 hover:text-white hover:bg-slate-700 transition-all uppercase tracking-wider flex items-center gap-2"
             >
               <ShieldCheck className="w-3.5 h-3.5" />
-              Critérios
+              Configurar Filtros
             </button>
           </div>
         </div>
 
-        {/* 6 Strategy Selector Buttons */}
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 pt-2 border-t border-slate-800/80">
-          <button
-            onClick={() => setActiveStrategy('rebalance')}
-            className={`p-3 rounded-xl text-left border transition-all ${
-              activeStrategy === 'rebalance' 
-                ? 'bg-indigo-600/20 border-indigo-500 text-indigo-200 ring-1 ring-indigo-500/50' 
-                : 'bg-slate-950/60 border-slate-800/80 text-slate-400 hover:border-slate-700'
-            }`}
-          >
-            <div className="text-xs font-bold text-white flex items-center gap-1.5">
-              <Scale className="w-3.5 h-3.5 text-indigo-400" />
-              Rebalanceamento
-            </div>
-            <div className="text-[10px] text-slate-400 mt-0.5">Correção pura de gaps</div>
-          </button>
-
-          <button
-            onClick={() => setActiveStrategy('quality')}
-            className={`p-3 rounded-xl text-left border transition-all ${
-              activeStrategy === 'quality' 
-                ? 'bg-indigo-600/20 border-indigo-500 text-indigo-200 ring-1 ring-indigo-500/50' 
-                : 'bg-slate-950/60 border-slate-800/80 text-slate-400 hover:border-slate-700'
-            }`}
-          >
-            <div className="text-xs font-bold text-white flex items-center gap-1.5">
-              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-              Foco em Qualidade
-            </div>
-            <div className="text-[10px] text-slate-400 mt-0.5">Prioriza maior Score</div>
-          </button>
-
-          <button
-            onClick={() => setActiveStrategy('valuation')}
-            className={`p-3 rounded-xl text-left border transition-all ${
-              activeStrategy === 'valuation' 
-                ? 'bg-indigo-600/20 border-indigo-500 text-indigo-200 ring-1 ring-indigo-500/50' 
-                : 'bg-slate-950/60 border-slate-800/80 text-slate-400 hover:border-slate-700'
-            }`}
-          >
-            <div className="text-xs font-bold text-white flex items-center gap-1.5">
-              <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-              Valuation & Desconto
-            </div>
-            <div className="text-[10px] text-slate-400 mt-0.5">Preço teto e P/VP</div>
-          </button>
-
-          <button
-            onClick={() => setActiveStrategy('dividends')}
-            className={`p-3 rounded-xl text-left border transition-all ${
-              activeStrategy === 'dividends' 
-                ? 'bg-indigo-600/20 border-indigo-500 text-indigo-200 ring-1 ring-indigo-500/50' 
-                : 'bg-slate-950/60 border-slate-800/80 text-slate-400 hover:border-slate-700'
-            }`}
-          >
-            <div className="text-xs font-bold text-white flex items-center gap-1.5">
-              <Coins className="w-3.5 h-3.5 text-sky-400" />
-              Renda Passiva
-            </div>
-            <div className="text-[10px] text-slate-400 mt-0.5">Maior Dividend Yield</div>
-          </button>
-
-          <button
-            onClick={() => setActiveStrategy('diversification')}
-            className={`p-3 rounded-xl text-left border transition-all ${
-              activeStrategy === 'diversification' 
-                ? 'bg-indigo-600/20 border-indigo-500 text-indigo-200 ring-1 ring-indigo-500/50' 
-                : 'bg-slate-950/60 border-slate-800/80 text-slate-400 hover:border-slate-700'
-            }`}
-          >
-            <div className="text-xs font-bold text-white flex items-center gap-1.5">
-              <TrendingUp className="w-3.5 h-3.5 text-pink-400" />
-              Anti-Concentração
-            </div>
-            <div className="text-[10px] text-slate-400 mt-0.5">Diluição de risco</div>
-          </button>
-
-          <button
-            onClick={() => setActiveStrategy('custom')}
-            className={`p-3 rounded-xl text-left border transition-all ${
-              activeStrategy === 'custom' 
-                ? 'bg-indigo-600/20 border-indigo-500 text-indigo-200 ring-1 ring-indigo-500/50' 
-                : 'bg-slate-950/60 border-slate-800/80 text-slate-400 hover:border-slate-700'
-            }`}
-          >
-            <div className="text-xs font-bold text-white flex items-center gap-1.5">
-              <SlidersHorizontal className="w-3.5 h-3.5 text-purple-400" />
-              Personalizado
-            </div>
-            <div className="text-[10px] text-slate-400 mt-0.5">Pesos customizáveis</div>
-          </button>
+          {[
+            { id: 'rebalance', label: 'Rebalanceamento', icon: Scale, desc: 'Foco em equilibrar pesos', color: 'text-indigo-400' },
+            { id: 'quality', label: 'Qualidade Máxima', icon: ShieldCheck, desc: 'Foco no Ranking de Ativos', color: 'text-emerald-400' },
+            { id: 'valuation', label: 'Valuation & Desconto', icon: Sparkles, desc: 'P/VP e Preço Teto', color: 'text-amber-400' },
+            { id: 'dividends', label: 'Renda Passiva', icon: Coins, desc: 'Foco em Dividend Yield', color: 'text-sky-400' },
+            { id: 'diversification', label: 'Diversificação', icon: TrendingUp, desc: 'Diluição de riscos', color: 'text-pink-400' },
+            { id: 'custom', label: 'Personalizado', icon: SlidersHorizontal, desc: 'Pesos customizados', color: 'text-purple-400' }
+          ].map((strat) => (
+            <button
+              key={strat.id}
+              onClick={() => setActiveStrategy(strat.id as RebalanceStrategyType)}
+              className={`p-3 rounded-xl text-left border transition-all ${
+                activeStrategy === strat.id 
+                  ? 'bg-indigo-600/20 border-indigo-500 text-indigo-200 ring-1 ring-indigo-500/50' 
+                  : 'bg-slate-950/60 border-slate-800/80 text-slate-400 hover:border-slate-700'
+              }`}
+            >
+              <div className="text-xs font-bold text-white flex items-center gap-1.5">
+                <strat.icon className={`w-3.5 h-3.5 ${strat.color}`} />
+                {strat.label}
+              </div>
+              <div className="text-[10px] text-slate-400 mt-0.5 leading-tight">{strat.desc}</div>
+            </button>
+          ))}
         </div>
       </div>
 
-      {/* 2. Strategy Detail / Custom Weights Editor */}
+      {/* 2. Custom Weights Editor */}
       {activeStrategy === 'custom' && (
         <div className="bg-slate-900 border border-purple-500/30 p-5 rounded-2xl shadow-xl space-y-4 animate-in slide-in-from-top-2">
           <div className="flex items-center justify-between">
@@ -409,17 +338,17 @@ export const ProfessionalRebalanceEngineView: React.FC<ProfessionalRebalanceEngi
               <h4 className="text-sm font-black text-white uppercase tracking-tight">Pesos da Estratégia Personalizada</h4>
             </div>
             <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest bg-slate-950 px-2 py-1 rounded-lg border border-slate-800">
-              Total: {rulesConfig.customWeights.gapWeight + rulesConfig.customWeights.qualityWeight + rulesConfig.customWeights.valuationWeight + rulesConfig.customWeights.dividendWeight + rulesConfig.customWeights.liquidityWeight}%
+              Total: {Object.values(rulesConfig.customWeights).reduce((a, b) => a + b, 0)}%
             </span>
           </div>
           
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-6">
             {[
-              { label: 'Gap de Alocação', key: 'gapWeight', color: 'bg-indigo-500', desc: 'Foco no equilíbrio' },
-              { label: 'Qualidade (Score)', key: 'qualityWeight', color: 'bg-emerald-500', desc: 'Foco em fundamentos' },
-              { label: 'Valuation', key: 'valuationWeight', color: 'bg-amber-500', desc: 'Foco em preço baixo' },
-              { label: 'Dividendos', key: 'dividendWeight', color: 'bg-sky-500', desc: 'Foco em renda' },
-              { label: 'Liquidez', key: 'liquidityWeight', color: 'bg-slate-500', desc: 'Foco em saída fácil' },
+              { label: 'Gap de Alocação', key: 'gapWeight', color: 'bg-indigo-500' },
+              { label: 'Qualidade (Score)', key: 'qualityWeight', color: 'bg-emerald-500' },
+              { label: 'Valuation', key: 'valuationWeight', color: 'bg-amber-500' },
+              { label: 'Dividendos', key: 'dividendWeight', color: 'bg-sky-500' },
+              { label: 'Liquidez', key: 'liquidityWeight', color: 'bg-slate-500' },
             ].map((weight) => (
               <div key={weight.key} className="space-y-2">
                 <div className="flex items-center justify-between">
@@ -436,34 +365,23 @@ export const ProfessionalRebalanceEngineView: React.FC<ProfessionalRebalanceEngi
                     const newVal = Number(e.target.value);
                     setRulesConfig(prev => ({
                       ...prev,
-                      customWeights: {
-                        ...prev.customWeights,
-                        [weight.key]: newVal
-                      }
+                      customWeights: { ...prev.customWeights, [weight.key]: newVal }
                     }));
                   }}
                   className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-purple-500"
                 />
-                <p className="text-[9px] text-slate-600 font-bold italic">{weight.desc}</p>
               </div>
             ))}
           </div>
-          
-          {(rulesConfig.customWeights.gapWeight + rulesConfig.customWeights.qualityWeight + rulesConfig.customWeights.valuationWeight + rulesConfig.customWeights.dividendWeight + rulesConfig.customWeights.liquidityWeight) !== 100 && (
-            <div className="p-2 bg-amber-500/10 border border-amber-500/20 rounded-xl flex items-center gap-2">
-              <AlertCircle className="w-3.5 h-3.5 text-amber-500" />
-              <p className="text-[10px] font-black text-amber-500 uppercase tracking-tight">Nota: Recomenda-se que a soma dos pesos seja exatamente 100%.</p>
-            </div>
-          )}
         </div>
       )}
 
-      {/* 2. Interactive Contribution Budget Selector */}
+      {/* 3. Contribution Budget Selector */}
       <div className="bg-slate-900/80 border border-slate-800 p-5 rounded-2xl shadow-sm space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div>
-            <label className="text-xs font-bold text-slate-300 uppercase tracking-wider block mb-1">
-              Quanto deseja aportar neste momento?
+          <div className="space-y-1">
+            <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block">
+              Valor do Aporte Planejado
             </label>
             <div className="relative max-w-xs">
               <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-sm">R$</span>
@@ -473,697 +391,385 @@ export const ProfessionalRebalanceEngineView: React.FC<ProfessionalRebalanceEngi
                 step={100}
                 value={contributionAmount}
                 onChange={(e) => setContributionAmount(Math.max(0, Number(e.target.value)))}
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-10 pr-4 py-2 text-base font-bold text-white focus:outline-none focus:border-indigo-500"
+                className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-10 pr-4 py-2 text-base font-black text-white focus:outline-none focus:border-indigo-500 transition-all"
               />
             </div>
           </div>
 
-          {/* Quick Amount Buttons */}
-            <div className="flex flex-wrap items-center gap-2">
-              {invReserveBalance > 0 && (
-                <button
-                  onClick={() => setContributionAmount(invReserveBalance)}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all flex items-center gap-1.5 ${
-                    contributionAmount === invReserveBalance 
-                      ? 'bg-emerald-600 text-white border-emerald-500 shadow-md' 
-                      : 'bg-emerald-950/20 border-emerald-800/50 text-emerald-400 hover:bg-emerald-950/40'
-                  }`}
-                >
-                  <Coins className="w-3.5 h-3.5" />
-                  Usar Reserva (R$ {invReserveBalance.toLocaleString('pt-BR')})
-                </button>
-              )}
-              {[500, 1000, 2500, 5000, 10000, 25000].map(val => (
-                <button
-                  key={val}
-                  onClick={() => setContributionAmount(val)}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all ${
-                    contributionAmount === val 
-                      ? 'bg-indigo-600 text-white border-indigo-500 shadow-md' 
-                      : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white hover:border-slate-700'
-                  }`}
-                >
-                  + R$ {val >= 1000 ? `${val/1000}k` : val}
-                </button>
-              ))}
-            </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {invReserveBalance > 0 && (
+              <button
+                onClick={() => setContributionAmount(invReserveBalance)}
+                className={`px-3 py-2 rounded-xl text-[10px] font-black border transition-all flex items-center gap-1.5 uppercase tracking-tighter ${
+                  contributionAmount === invReserveBalance 
+                    ? 'bg-emerald-600 text-white border-emerald-500 shadow-lg shadow-emerald-600/20' 
+                    : 'bg-emerald-950/20 border-emerald-800/50 text-emerald-400 hover:bg-emerald-950/40'
+                }`}
+              >
+                <Coins className="w-3.5 h-3.5" />
+                Usar Reserva (R$ {invReserveBalance.toLocaleString('pt-BR')})
+              </button>
+            )}
+            {[500, 1000, 2500, 5000].map(val => (
+              <button
+                key={val}
+                onClick={() => setContributionAmount(val)}
+                className={`px-3 py-2 rounded-xl text-[10px] font-black border transition-all uppercase tracking-tighter ${
+                  contributionAmount === val 
+                    ? 'bg-indigo-600 text-white border-indigo-500 shadow-lg shadow-indigo-600/20' 
+                    : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white hover:border-slate-700'
+                }`}
+              >
+                + R$ {val >= 1000 ? `${val/1000}k` : val}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
-      {/* 3. Executive KPI & Simulation Outcome Banner */}
-      <div className="bg-gradient-to-r from-slate-900 via-indigo-950/40 to-slate-900 border border-indigo-500/20 rounded-2xl p-5 shadow-sm space-y-4">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <div>
-            <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block">Total Alocado</span>
-            <span className="text-xl font-bold text-white">
+      {/* 4. Strategic Dashboard & Execution Banner */}
+      <div className="bg-gradient-to-br from-slate-900 to-indigo-950/20 border border-indigo-500/20 rounded-3xl p-6 shadow-2xl space-y-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+          <div className="space-y-1">
+            <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest block">Aporte Sugerido</span>
+            <div className="text-2xl font-black text-white">
               R$ {simulation.totalAllocated.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-            </span>
+            </div>
             {simulation.unallocatedRemainder > 0 && (
-              <span className="text-[10px] text-amber-400 block mt-0.5">
-                Sobra de caixa: R$ {simulation.unallocatedRemainder.toFixed(2)}
-              </span>
+              <div className="text-[10px] font-bold text-amber-500 flex items-center gap-1">
+                <Info className="w-3 h-3" /> Sobra: R$ {simulation.unallocatedRemainder.toFixed(2)}
+              </div>
             )}
           </div>
 
-          <div>
-            <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block">Redução do Desvio</span>
-            <span className="text-xl font-bold text-emerald-400 flex items-center gap-1">
-              <TrendingUp className="w-4 h-4" />
+          <div className="space-y-1">
+            <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest block">Eficácia do Rebalanceio</span>
+            <div className="text-2xl font-black text-emerald-400 flex items-center gap-2">
+              <TrendingUp className="w-5 h-5" />
               {simulation.overallDeviationReductionPct}%
-            </span>
-            <span className="text-[10px] text-slate-400 block mt-0.5">
-              Desvio: {simulation.totalDeviationBefore}% → {simulation.totalDeviationAfter}%
-            </span>
+            </div>
+            <div className="text-[10px] font-bold text-slate-500">REDUÇÃO DO DESVIO GERAL</div>
           </div>
 
-          <div>
-            <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block">Ativos Contemplados</span>
-            <span className="text-xl font-bold text-white">
-              {activeOrders.length} <span className="text-xs font-normal text-slate-400">de {positions.length} posições</span>
-            </span>
-            <span className="text-[10px] text-slate-400 block mt-0.5">
-              {simulation.restrictedAssetsCount} travados/bloqueados
-            </span>
+          <div className="space-y-1">
+            <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest block">Ativos Selecionados</span>
+            <div className="text-2xl font-black text-white">
+              {activeOrders.length} <span className="text-xs font-medium text-slate-500">de {positions.length}</span>
+            </div>
+            <div className="text-[10px] font-bold text-slate-500 flex items-center gap-1">
+              <AlertCircle className="w-3 h-3" /> {simulation.restrictedAssetsCount} restrições de risco
+            </div>
           </div>
 
           <div className="flex items-center">
-            {onExecuteOrders && (
-              <button
-                disabled={activeOrders.length === 0 || isExecuting}
-                onClick={handleExecuteContributionOrders}
-                className="w-full py-2.5 px-4 bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-800 disabled:text-slate-600 text-white rounded-xl text-xs font-bold transition-all shadow-lg shadow-emerald-600/20 flex items-center justify-center gap-2"
-              >
-                <Check className="w-4 h-4" />
-                {isExecuting ? 'Registrando Aportes...' : `Executar ${activeOrders.length} Ordem(ns)`}
-              </button>
-            )}
+            <button
+              disabled={activeOrders.length === 0 || isExecuting}
+              onClick={handleExecuteContributionOrders}
+              className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-800 disabled:text-slate-600 text-white rounded-2xl text-xs font-black transition-all shadow-xl shadow-emerald-600/20 flex items-center justify-center gap-2 uppercase tracking-widest"
+            >
+              <CheckCircle2 className="w-4 h-4" />
+              {isExecuting ? 'PROCESSANDO...' : 'EXECUTAR APORTES'}
+            </button>
           </div>
         </div>
 
-        <div className="pt-3 border-t border-slate-800/80 text-xs text-slate-300 flex items-start gap-2">
-          <Info className="w-4 h-4 text-indigo-400 shrink-0 mt-0.5" />
-          <span>{simulation.executiveSummary}</span>
+        <div className="p-4 bg-slate-950/60 rounded-2xl border border-slate-800/60 text-xs text-slate-300 flex items-start gap-3">
+          <Sparkles className="w-5 h-5 text-indigo-400 shrink-0 mt-0.5" />
+          <p className="leading-relaxed italic font-medium">{simulation.executiveSummary}</p>
         </div>
       </div>
 
-      {/* 4. "Onde Aportar?" Ranking Cards */}
+      {/* 5. Priority Cards Grid */}
       <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <h4 className="text-base font-black text-white flex items-center gap-2">
-            <Sparkles className="w-5 h-5 text-amber-400" />
-            Ranking de Prioridade de Aporte ("Onde Aportar?")
+        <div className="flex items-center justify-between px-1">
+          <h4 className="text-sm font-black text-white uppercase tracking-widest flex items-center gap-2">
+            <Zap className="w-4 h-4 text-amber-400" />
+            Sugestões do Motor Inteligente
           </h4>
-          <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest bg-slate-800/50 px-2 py-1 rounded-lg border border-slate-700/50">
-            Baseado em Score {activeStrategy === 'rebalance' ? '+ Gaps' : `+ ${activeStrategy}`}
-          </span>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {simulation.suggestions.map((item) => {
-            const hasSafetyMargin = item.reasons.some(r => r.includes('margem de segurança'));
-            const hasRisk = item.risks && item.risks.length > 0;
-            
-            return (
-              <div 
-                key={item.ticker}
-                className={`p-5 rounded-2xl border transition-all relative overflow-hidden group ${
-                  item.suggestedQuantity > 0 
-                    ? 'bg-slate-900 border-indigo-500/40 ring-1 ring-indigo-500/20 shadow-xl shadow-indigo-500/5' 
-                    : item.status === 'restricted' || item.status === 'locked'
-                    ? 'bg-slate-950/40 border-slate-800/50 opacity-60'
-                    : 'bg-slate-900/60 border-slate-800'
-                }`}
-              >
-                {/* Visual Accent for top items */}
-                {item.rank <= 3 && item.suggestedQuantity > 0 && (
-                  <div className="absolute top-0 right-0 w-24 h-24 -mr-8 -mt-8 bg-indigo-500/10 blur-2xl rounded-full" />
-                )}
-
-                {/* Header: Rank, Ticker, Lock Button */}
-                <div className="flex items-start justify-between gap-2 mb-4 relative z-10">
-                  <div className="flex items-center gap-3">
-                    <div className={`w-8 h-8 rounded-xl flex items-center justify-center text-sm font-black shadow-lg ${
-                      item.rank === 1 ? 'bg-gradient-to-br from-amber-300 to-amber-500 text-black' :
-                      item.rank === 2 ? 'bg-gradient-to-br from-slate-200 to-slate-400 text-black' :
-                      item.rank === 3 ? 'bg-gradient-to-br from-amber-600 to-amber-800 text-white' :
-                      'bg-slate-800 text-slate-300 border border-slate-700'
-                    }`}>
-                      {item.rank}
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-black text-white text-base tracking-tight">{item.ticker}</span>
-                        <span className={`text-[9px] px-1.5 py-0.5 rounded-md font-black uppercase tracking-tighter ${
-                          item.type === 'Ação' ? 'bg-sky-500/10 text-sky-400 border border-sky-500/20' : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                        }`}>
-                          {item.type}
-                        </span>
-                        {hasSafetyMargin && (
-                          <Zap className="w-3.5 h-3.5 text-amber-400 fill-amber-400/20" />
-                        )}
-                      </div>
-                      <span className="text-[11px] text-slate-500 font-medium truncate block max-w-[140px]">{item.name}</span>
-                    </div>
+          {simulation.suggestions.map((item) => (
+            <div 
+              key={item.ticker}
+              className={`p-5 rounded-3xl border transition-all duration-300 relative group ${
+                item.suggestedQuantity > 0 
+                  ? 'bg-slate-900 border-indigo-500/40 ring-1 ring-indigo-500/20 shadow-2xl shadow-indigo-500/5' 
+                  : item.status === 'restricted' || item.status === 'locked'
+                  ? 'bg-slate-950/40 border-slate-800/50 grayscale-[0.3]'
+                  : 'bg-slate-900/60 border-slate-800 hover:border-slate-700'
+              }`}
+            >
+              <div className="flex items-start justify-between mb-4">
+                <div className="flex items-center gap-3">
+                  <div className={`w-9 h-9 rounded-xl flex items-center justify-center text-sm font-black ${
+                    item.rank === 1 ? 'bg-amber-500 text-black' :
+                    item.rank === 2 ? 'bg-slate-400 text-black' :
+                    item.rank === 3 ? 'bg-amber-700 text-white' :
+                    'bg-slate-800 text-slate-400'
+                  }`}>
+                    {item.rank}
                   </div>
-
-                  <div className="flex flex-col items-end gap-1.5">
-                    <div className="flex items-center gap-1.5">
-                      <button
-                        onClick={() => handleToggleLock(item.ticker)}
-                        title={item.status === 'locked' ? 'Ativo travado (clique para destravar)' : 'Travar ativo contra novos aportes'}
-                        className={`p-2 rounded-xl border transition-all ${
-                          item.status === 'locked' 
-                            ? 'bg-rose-500/20 border-rose-500/30 text-rose-400' 
-                            : 'bg-slate-800 border-slate-700 text-slate-500 hover:text-white hover:border-slate-600'
-                        }`}
-                      >
-                        {item.status === 'locked' ? <Lock className="w-3.5 h-3.5" /> : <Unlock className="w-3.5 h-3.5" />}
-                      </button>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-black text-white text-base">{item.ticker}</span>
+                      {item.status === 'locked' && <Lock className="w-3 h-3 text-rose-500" />}
                     </div>
-                    <div className="text-right">
-                      <span className={`text-xs font-black block ${item.priorityScore >= 80 ? 'text-indigo-400' : 'text-slate-400'}`}>
-                        {item.priorityScore} <span className="text-[9px] font-bold text-slate-600">PTS</span>
-                      </span>
-                    </div>
+                    <span className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">{item.type}</span>
                   </div>
                 </div>
-
-                {/* Suggested Contribution Callout */}
-                {item.suggestedQuantity > 0 ? (
-                  <div className="p-4 bg-indigo-500/5 border border-indigo-500/20 rounded-2xl mb-4 relative z-10 group-hover:border-indigo-500/40 transition-colors">
-                    <div className="flex items-center justify-between mb-1.5">
-                      <span className="text-xs font-bold text-indigo-300">Aporte Sugerido</span>
-                      <span className="text-lg font-black text-white">
-                        R$ {item.suggestedAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-[11px] text-slate-400">
-                        Comprar <span className="text-indigo-400 font-bold">{item.suggestedQuantity} {item.type === 'Ação' ? 'ações' : 'cotas'}</span>
-                      </span>
-                      <span className="text-[10px] text-slate-500">
-                        Cotação: R$ {(item.currentPrice ?? 0).toFixed(2)}
-                      </span>
-                    </div>
-                    
-                    {/* Progress Bar for Allocation */}
-                    <div className="mt-3 space-y-1">
-                      <div className="flex justify-between text-[9px] font-bold uppercase tracking-wider">
-                        <span className="text-slate-500">Peso Atual: {(item.currentPct ?? 0).toFixed(1)}%</span>
-                        <span className="text-indigo-400">Alvo: {(item.projectedPct ?? 0).toFixed(1)}%</span>
-                      </div>
-                      <div className="w-full bg-slate-800/50 rounded-full h-1.5 overflow-hidden border border-slate-700/30">
-                        <div 
-                          className="bg-indigo-500 h-full rounded-full shadow-[0_0_8px_rgba(99,102,241,0.5)] transition-all duration-700"
-                          style={{ width: `${Math.min(100, ((item.projectedPct ?? 0) / (item.targetPct || 1)) * 100)}%` }}
-                        />
-                      </div>
-                    </div>
-                  </div>
-                ) : item.status === 'restricted' ? (
-                  <div className="p-4 bg-amber-500/5 border border-amber-500/20 rounded-2xl mb-4 text-[11px] text-amber-300/80 leading-relaxed">
-                    <div className="flex items-center gap-1.5 font-black uppercase tracking-widest text-[9px] text-amber-500 mb-1.5">
-                      <AlertTriangle className="w-3 h-3" />
-                      Restrição de Risco
-                    </div>
-                    {item.restrictionReason}
-                  </div>
-                ) : item.status === 'locked' ? (
-                  <div className="p-4 bg-rose-500/5 border border-rose-500/20 rounded-2xl mb-4 text-[11px] text-rose-400 font-bold flex items-center gap-2">
-                    <Lock className="w-4 h-4 opacity-50" />
-                    Ativo bloqueado pelo usuário.
-                  </div>
-                ) : (
-                  <div className="p-4 bg-slate-950/40 border border-slate-800/60 rounded-2xl mb-4 text-[11px] text-slate-500 font-medium">
-                    Posição alinhada à estratégia: {(item.currentPct ?? 0).toFixed(1)}% (Meta {(item.targetPct ?? 0).toFixed(1)}%)
-                  </div>
-                )}
-
-                {/* Why this asset was chosen (Reasons) */}
-                <div className="space-y-2 relative z-10">
-                  <div className="flex items-center gap-2">
-                    <div className="h-px bg-slate-800 flex-1" />
-                    <span className="text-[9px] font-black text-slate-600 uppercase tracking-widest">Inteligência do Motor</span>
-                    <div className="h-px bg-slate-800 flex-1" />
-                  </div>
-                  
-                  <ul className="space-y-1.5">
-                    {item.reasons.map((r, idx) => (
-                      <li key={idx} className="flex items-start gap-2 text-[11px] text-slate-400">
-                        <CheckCircle2 className="w-3 h-3 text-indigo-500/60 mt-0.5 shrink-0" />
-                        <span className="leading-tight">{r}</span>
-                      </li>
-                    ))}
-                    {item.risks?.map((risk, idx) => (
-                      <li key={`risk-${idx}`} className="flex items-start gap-2 text-[11px] text-amber-500/70 italic">
-                        <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" />
-                        <span className="leading-tight">{risk}</span>
-                      </li>
-                    ))}
-                  </ul>
+                <div className="text-right">
+                  <div className="text-lg font-black text-white leading-none">{item.priorityScore}</div>
+                  <div className="text-[9px] font-black text-slate-600 uppercase">Score Motor</div>
                 </div>
               </div>
-            );
-          })}
+
+              {item.suggestedQuantity > 0 ? (
+                <div className="bg-indigo-500/5 border border-indigo-500/20 rounded-2xl p-4 mb-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">Sugerido</span>
+                    <span className="text-lg font-black text-white">R$ {item.suggestedAmount.toLocaleString('pt-BR')}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-xs font-bold">
+                    <span className="text-slate-400">Comprar {item.suggestedQuantity} un</span>
+                    <span className="text-slate-500 text-[10px]">@ R$ {item.currentPrice.toFixed(2)}</span>
+                  </div>
+                </div>
+              ) : (
+                <div className="bg-slate-950/60 border border-slate-800/60 rounded-2xl p-4 mb-4 flex items-center justify-center min-h-[80px] text-center">
+                   <p className="text-[10px] text-slate-500 font-bold uppercase leading-relaxed">
+                     {item.status === 'restricted' ? item.restrictionReason : 'Aguardando momento ideal para aporte'}
+                   </p>
+                </div>
+              )}
+
+              <div className="space-y-1.5">
+                {item.reasons.slice(0, 2).map((r, i) => (
+                  <div key={i} className="flex items-start gap-2 text-[11px] text-slate-400 font-medium">
+                    <CheckCircle2 className="w-3 h-3 text-emerald-500 mt-0.5 shrink-0" />
+                    <span>{r}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
         </div>
       </div>
 
-      {/* 5. "Antes x Depois" Detailed Matrix Table */}
-      <div className="bg-slate-900/90 border border-slate-800 rounded-2xl overflow-hidden shadow-2xl space-y-0">
-        <div className="p-6 border-b border-slate-800/80 bg-slate-900/50 flex items-center justify-between">
-          <div>
-            <h4 className="text-sm font-black text-white uppercase tracking-wider flex items-center gap-2">
-              <Scale className="w-4 h-4 text-indigo-400" />
-              Matriz Analítica de Rebalanceamento
-            </h4>
-            <p className="text-[10px] text-slate-500 font-bold uppercase tracking-tight mt-1">Simulação de convergência de pesos e mitigação de desvios</p>
-          </div>
-        </div>
+      {/* MODALS */}
+      <AddRebalanceAssetModal
+        isOpen={isAddAssetModalOpen}
+        onClose={() => setIsAddAssetModalOpen(false)}
+        onAddAsset={(newAsset) => {
+          setEditableTargets(prev => ({
+            ...prev,
+            [newAsset.ticker]: {
+              ticker: newAsset.ticker,
+              type: newAsset.type as any,
+              targetPct: newAsset.targetPct,
+              minPct: Math.max(0, newAsset.targetPct - 2),
+              maxPct: newAsset.targetPct + 5,
+              locked: false
+            }
+          }));
+          if (!quotes[newAsset.ticker] && onFetchQuote) onFetchQuote(newAsset.ticker);
+        }}
+        existingTickers={Object.keys(editableTargets)}
+        leftoverTargetPct={Math.max(0, 100 - Object.values(editableTargets).reduce((acc, t) => acc + (t.targetPct || 0), 0))}
+        formatCurrency={(val) => val.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+      />
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs border-collapse">
-            <thead className="bg-slate-950/80 text-slate-500 uppercase tracking-widest text-[9px] font-black border-b border-slate-800">
-              <tr>
-                <th className="py-4 px-6">Ativo</th>
-                <th className="py-4 px-3">Posição Atual</th>
-                <th className="py-4 px-3">Meta Alvo</th>
-                <th className="py-4 px-3">Sugestão</th>
-                <th className="py-4 px-3">Projeção Final</th>
-                <th className="py-4 px-3">Desvio Pós</th>
-                <th className="py-4 px-6 text-right">Status</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-800/40">
-              {simulation.suggestions.map((item) => (
-                <tr key={item.ticker} className="hover:bg-indigo-500/[0.03] transition-colors group">
-                  <td className="py-4 px-6">
-                    <div className="flex items-center gap-3">
-                      <span className="w-5 text-[10px] font-bold text-slate-600 group-hover:text-indigo-400 transition-colors">#{item.rank}</span>
-                      <div>
-                        <span className="font-black text-white text-sm block leading-none">{item.ticker}</span>
-                        <span className="text-[10px] text-slate-500 font-medium">{item.type}</span>
-                      </div>
-                      {item.status === 'locked' && <Lock className="w-3 h-3 text-rose-500/70" />}
-                    </div>
-                  </td>
-
-                  <td className="py-4 px-3">
-                    <span className="font-bold text-slate-300 block">
-                      R$ {item.currentValue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                    </span>
-                    <span className="text-[10px] text-slate-600 font-bold">{(item.currentPct ?? 0).toFixed(1)}%</span>
-                  </td>
-
-                  <td className="py-4 px-3">
-                    <div className="flex items-center gap-2">
-                      <span className="font-black text-indigo-400">{(item.targetPct ?? 0).toFixed(1)}%</span>
-                      <span className="text-[9px] text-slate-600 bg-slate-950 px-1.5 py-0.5 rounded border border-slate-800">
-                        {item.minPct}%-{item.maxPct}%
-                      </span>
-                    </div>
-                  </td>
-
-                  <td className="py-4 px-3">
-                    {item.suggestedQuantity > 0 ? (
-                      <div className="flex flex-col">
-                        <span className="font-black text-emerald-400 text-sm">
-                          +{item.suggestedQuantity} un
-                        </span>
-                        <span className="text-[10px] text-emerald-500/80 font-bold">
-                          R$ {item.suggestedAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                        </span>
-                      </div>
-                    ) : (
-                      <span className="text-slate-700 font-bold">—</span>
-                    )}
-                  </td>
-
-                  <td className="py-4 px-3">
-                    <span className="font-black text-white block">
-                      R$ {item.projectedValue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                    </span>
-                    <span className="text-[10px] text-indigo-400/70 font-bold">{(item.projectedPct ?? 0).toFixed(1)}%</span>
-                  </td>
-
-                  <td className="py-4 px-3">
-                    <div className="space-y-1.5">
-                      <div className="flex items-center gap-2">
-                        <span className={`text-[11px] font-black ${(item.distanceAfter ?? 0) <= 0.5 ? 'text-emerald-400' : 'text-amber-400'}`}>
-                          {(item.distanceAfter ?? 0).toFixed(1)}%
-                        </span>
-                        <ArrowRight className="w-3 h-3 text-slate-700" />
-                        <span className="text-[10px] text-slate-600 font-bold">era {(item.distanceBefore ?? 0).toFixed(1)}%</span>
-                      </div>
-                      <div className="w-20 bg-slate-800 rounded-full h-1 overflow-hidden">
-                        <div 
-                          className="bg-indigo-500 h-full rounded-full"
-                          style={{ width: `${item.deviationCorrectedPct}%` }}
-                        />
-                      </div>
-                    </div>
-                  </td>
-
-                  <td className="py-4 px-6 text-right">
-                    <span className={`text-[9px] px-2.5 py-1 rounded-lg font-black uppercase tracking-wider border ${
-                      item.suggestedQuantity > 0 
-                        ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20 shadow-[0_0_10px_rgba(16,185,129,0.1)]' :
-                      item.status === 'locked' ? 'bg-rose-500/10 text-rose-400 border-rose-500/20' :
-                      item.status === 'restricted' ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' :
-                      'bg-slate-800/50 text-slate-500 border-slate-800'
-                    }`}>
-                      {item.suggestedQuantity > 0 ? 'Aporte' : item.status === 'locked' ? 'Travado' : item.status === 'restricted' ? 'Restrito' : 'Em Meta'}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* Modals for Editing Targets and Rules */}
-      {(isEditingTargets || isEditingRules) && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-slate-950/80 backdrop-blur-md animate-in fade-in duration-300">
-          <div className="bg-slate-900 border border-slate-800 w-full max-w-4xl max-h-[90vh] rounded-3xl shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-300">
-            {/* Modal Header */}
-            <div className="p-6 border-b border-slate-800 flex items-center justify-between bg-slate-900/50">
-              <div className="flex items-center gap-3">
-                <div className={`p-2.5 rounded-2xl border ${isEditingTargets ? 'bg-indigo-500/10 border-indigo-500/20 text-indigo-400' : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'}`}>
-                  {isEditingTargets ? <Target className="w-6 h-6" /> : <ShieldCheck className="w-6 h-6" />}
+      {/* METAS MODAL */}
+      {isEditingTargets && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/90 backdrop-blur-xl animate-in fade-in duration-300">
+          <div className="bg-slate-900 border border-slate-800 w-full max-w-5xl max-h-[90vh] rounded-[2.5rem] shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-300">
+            <div className="p-8 border-b border-slate-800 flex items-center justify-between bg-slate-900/50">
+              <div className="flex items-center gap-4">
+                <div className="p-3 rounded-2xl bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+                  <Target className="w-6 h-6" />
                 </div>
                 <div>
-                  <h3 className="text-lg font-black text-white tracking-tight">
-                    {isEditingTargets ? 'Metas de Alocação' : 'Critérios de Segurança'}
-                  </h3>
-                  <p className="text-xs text-slate-500 font-medium">
-                    {isEditingTargets 
-                      ? 'Defina os pesos ideais para cada ativo da sua carteira.' 
-                      : 'Ajuste os filtros automáticos para evitar aportes em ativos problemáticos.'}
-                  </p>
+                  <h3 className="text-xl font-black text-white tracking-tight">Metas Estratégicas de Alocação</h3>
+                  <p className="text-xs text-slate-500 font-bold uppercase tracking-widest mt-1">Defina o peso ideal de cada ativo para o rebalanceamento</p>
                 </div>
               </div>
-              <button 
-                onClick={() => { setIsEditingTargets(false); setIsEditingRules(false); }}
-                className="p-2 hover:bg-slate-800 rounded-xl text-slate-400 transition-colors"
-              >
-                <Plus className="w-6 h-6 rotate-45" />
-              </button>
+              <div className="flex items-center gap-4">
+                <div className={`px-5 py-2 rounded-2xl border flex items-center gap-3 transition-all ${
+                  Math.abs(Object.values(editableTargets).reduce((acc, t) => acc + (t.targetPct || 0), 0) - 100) < 0.1
+                    ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                    : 'bg-amber-500/10 border-amber-500/30 text-amber-400'
+                }`}>
+                  <span className="text-[10px] font-black uppercase tracking-widest">Total Alocado:</span>
+                  <span className="text-xl font-black tracking-tighter">{Object.values(editableTargets).reduce((acc, t) => acc + (t.targetPct || 0), 0).toFixed(1)}%</span>
+                </div>
+                <button onClick={() => setIsEditingTargets(false)} className="p-3 bg-slate-800 hover:bg-slate-700 rounded-2xl text-slate-400 transition-colors">
+                  <Plus className="w-6 h-6 rotate-45" />
+                </button>
+              </div>
             </div>
 
-            {/* Modal Content */}
-            <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
-              {isEditingTargets && (
-                <div className="space-y-6">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-slate-950/50 p-5 rounded-2xl border border-slate-800/60 shadow-inner">
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <Info className="w-4 h-4 text-indigo-400" />
-                        <h4 className="text-[11px] font-black text-white uppercase tracking-widest">Resumo da Estratégia</h4>
-                      </div>
-                      <p className="text-[10px] text-slate-500 font-medium max-w-md">
-                        O somatório das metas deve idealmente ser 100%. Ativos com meta 0% serão automaticamente travados para novos aportes.
-                      </p>
-                    </div>
-                    <div className="flex flex-col items-end gap-2">
-                      <div className={`px-4 py-2 rounded-xl border flex items-center gap-3 transition-all ${
-                        Math.abs(Object.values(editableTargets).reduce((acc, t) => acc + (t.targetPct || 0), 0) - 100) < 0.1
-                          ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
-                          : 'bg-amber-500/10 border-amber-500/30 text-amber-400'
-                      }`}>
-                        <span className="text-[10px] font-black uppercase tracking-tighter">Total Alocado:</span>
-                        <span className="text-lg font-black">{Object.values(editableTargets).reduce((acc, t) => acc + (t.targetPct || 0), 0).toFixed(1)}%</span>
-                      </div>
-                      <button
-                        onClick={() => {
-                          const count = positions.length;
-                          if (count > 0) {
-                            const equalPct = Number((100 / count).toFixed(1));
-                            const next: Record<string, AssetAllocationTarget> = {};
-                            positions.forEach(p => {
-                              next[p.ticker] = {
-                                ticker: p.ticker,
-                                type: p.type as any,
-                                minPct: Math.max(1, Math.floor(equalPct * 0.5)),
-                                targetPct: equalPct,
-                                maxPct: Math.min(30, Math.ceil(equalPct * 2)),
-                                locked: false
-                              };
-                            });
-                            setEditableTargets(next);
-                            toast.info(`Metas equidistribuídas em ${equalPct}% por ativo.`);
-                          }
-                        }}
-                        className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-[9px] font-black uppercase tracking-widest text-slate-400 rounded-lg border border-slate-700 transition-all"
-                      >
-                        Equidistribuir Pesos
-                      </button>
-                    </div>
-                  </div>
+            <div className="flex-1 overflow-y-auto p-8 space-y-6 custom-scrollbar">
+              <div className="flex items-center justify-between gap-4">
+                <button
+                  onClick={() => setIsAddAssetModalOpen(true)}
+                  className="px-6 py-3 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-black uppercase tracking-widest rounded-2xl shadow-xl shadow-indigo-600/20 transition-all flex items-center gap-2"
+                >
+                  <PlusCircle className="w-4 h-4" /> Adicionar Novo Ativo
+                </button>
+                <button
+                  onClick={() => {
+                    const count = Object.keys(editableTargets).length;
+                    if (count > 0) {
+                      const equal = Number((100 / count).toFixed(1));
+                      const next = { ...editableTargets };
+                      Object.keys(next).forEach(k => {
+                        next[k] = { ...next[k], targetPct: equal, minPct: Math.max(0, equal - 2), maxPct: equal + 5 };
+                      });
+                      setEditableTargets(next);
+                      toast.info('Pesos distribuídos igualmente.');
+                    }
+                  }}
+                  className="px-6 py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-black uppercase tracking-widest rounded-2xl transition-all"
+                >
+                  Equidistribuir Pesos
+                </button>
+              </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    {positions.map((p) => {
-                      const currentT = editableTargets[p.ticker] || {
-                        ticker: p.ticker,
-                        type: p.type as any,
-                        minPct: 2,
-                        targetPct: 5,
-                        maxPct: 15,
-                        locked: false
-                      };
-                      const posCurrent = normalizedPositions.find(np => np.ticker === p.ticker);
-                      const displayCurrentPct = posCurrent ? posCurrent.currentPct : (p.currentPct ?? 0);
-                      const isLocked = currentT.targetPct === 0 || currentT.locked;
-
-                      return (
-                        <div 
-                          key={p.ticker} 
-                          className={`p-5 rounded-2xl border transition-all duration-300 group ${
-                            isLocked 
-                              ? 'bg-slate-950/40 border-rose-500/20 opacity-75' 
-                              : 'bg-slate-900/40 border-slate-800/60 hover:border-indigo-500/40 hover:bg-slate-900/60'
-                          }`}
-                        >
-                          <div className="flex items-center justify-between mb-4">
-                            <div className="flex items-center gap-3">
-                              <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-black text-sm transition-colors ${
-                                isLocked ? 'bg-rose-500/10 text-rose-500' : 'bg-indigo-500/10 text-indigo-400'
-                              }`}>
-                                {p.ticker.substring(0, 2)}
-                              </div>
-                              <div>
-                                <div className="flex items-center gap-2">
-                                  <span className="font-black text-white text-base tracking-tight">{p.ticker}</span>
-                                  {isLocked && <Lock className="w-3 h-3 text-rose-500" />}
-                                </div>
-                                <span className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Atual: {displayCurrentPct.toFixed(1)}%</span>
-                              </div>
-                            </div>
-                            <div className="text-right">
-                              <span className={`text-xl font-black block leading-none ${isLocked ? 'text-rose-500' : 'text-white'}`}>
-                                {currentT.targetPct.toFixed(1)}%
-                              </span>
-                              <span className="text-[9px] font-bold text-slate-600 uppercase tracking-tighter">Meta Alvo</span>
-                            </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {Object.keys(editableTargets).map(ticker => {
+                  const t = editableTargets[ticker];
+                  const isZero = t.targetPct === 0;
+                  return (
+                    <div key={ticker} className={`p-6 rounded-[2rem] border transition-all ${isZero ? 'bg-slate-950/40 border-rose-500/20 opacity-80' : 'bg-slate-800/40 border-slate-700/50 hover:border-indigo-500/30 hover:bg-slate-800/60'}`}>
+                      <div className="flex items-center justify-between mb-6">
+                        <div className="flex items-center gap-3">
+                          <div className={`w-10 h-10 rounded-2xl flex items-center justify-center font-black text-sm ${isZero ? 'bg-rose-500/10 text-rose-500' : 'bg-indigo-500/10 text-indigo-400'}`}>
+                            {ticker.slice(0, 2)}
                           </div>
-
-                          {/* Slider Control */}
-                          <div className="space-y-4">
-                            <div className="relative h-6 flex items-center">
-                              <input
-                                type="range"
-                                min="0"
-                                max="50"
-                                step="0.5"
-                                value={currentT.targetPct}
-                                onChange={(e) => {
-                                  const val = Number(e.target.value);
-                                  setEditableTargets(prev => ({
-                                    ...prev,
-                                    [p.ticker]: { 
-                                      ...currentT, 
-                                      targetPct: val,
-                                      locked: val === 0 ? true : currentT.locked,
-                                      // Auto-adjust min/max based on target
-                                      minPct: Math.max(0, val - 2),
-                                      maxPct: val + 5
-                                    }
-                                  }));
-                                }}
-                                className={`w-full h-1.5 rounded-lg appearance-none cursor-pointer accent-indigo-500 bg-slate-800 transition-all ${
-                                  isLocked ? 'accent-rose-500' : 'accent-indigo-500'
-                                }`}
-                              />
-                            </div>
-
-                            <div className="flex items-center justify-between gap-4">
-                              <div className="flex-1 grid grid-cols-2 gap-2">
-                                <div className="space-y-1">
-                                  <label className="text-[9px] text-slate-600 font-black uppercase tracking-widest block">Mín %</label>
-                                  <input
-                                    type="number"
-                                    min={0}
-                                    max={100}
-                                    step={0.5}
-                                    value={currentT.minPct}
-                                    onChange={(e) => {
-                                      const val = Number(e.target.value);
-                                      setEditableTargets(prev => ({
-                                        ...prev,
-                                        [p.ticker]: { ...currentT, minPct: val }
-                                      }));
-                                    }}
-                                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-2 py-1.5 text-[11px] font-bold text-slate-400 text-center focus:border-indigo-500 transition-colors"
-                                  />
-                                </div>
-                                <div className="space-y-1">
-                                  <label className="text-[9px] text-slate-600 font-black uppercase tracking-widest block">Máx %</label>
-                                  <input
-                                    type="number"
-                                    min={0}
-                                    max={100}
-                                    step={0.5}
-                                    value={currentT.maxPct}
-                                    onChange={(e) => {
-                                      const val = Number(e.target.value);
-                                      setEditableTargets(prev => ({
-                                        ...prev,
-                                        [p.ticker]: { ...currentT, maxPct: val }
-                                      }));
-                                    }}
-                                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-2 py-1.5 text-[11px] font-bold text-slate-400 text-center focus:border-indigo-500 transition-colors"
-                                  />
-                                </div>
-                              </div>
-                              
-                              <button
-                                onClick={() => {
-                                  const isCurrentlyLocked = currentT.locked;
-                                  setEditableTargets(prev => ({
-                                    ...prev,
-                                    [p.ticker]: { 
-                                      ...currentT, 
-                                      locked: !isCurrentlyLocked,
-                                      // If unlocking and was 0, give a small default
-                                      targetPct: (!isCurrentlyLocked === false && currentT.targetPct === 0) ? 0 : (isCurrentlyLocked && currentT.targetPct === 0 ? 1 : currentT.targetPct)
-                                    }
-                                  }));
-                                }}
-                                className={`p-2.5 rounded-xl border transition-all ${
-                                  currentT.locked 
-                                    ? 'bg-rose-500/20 border-rose-500/30 text-rose-400' 
-                                    : 'bg-slate-800 border-slate-700 text-slate-500 hover:text-white'
-                                }`}
-                                title={currentT.locked ? "Ativo Travado" : "Travar Ativo"}
-                              >
-                                {currentT.locked ? <Lock className="w-4 h-4" /> : <Unlock className="w-4 h-4" />}
-                              </button>
-                            </div>
+                          <div>
+                            <span className="font-black text-white text-base block leading-none">{ticker}</span>
+                            <span className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">{t.type}</span>
                           </div>
                         </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {isEditingRules && (
-                <div className="space-y-6">
-                  <div className="bg-slate-950/50 p-4 rounded-2xl border border-slate-800/60 text-[11px] text-slate-400 font-medium">
-                    Estes critérios funcionam como "travas de segurança". Se um ativo não cumprir algum destes requisitos, o motor irá sugerir ignorar o aporte para este ativo.
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-                    <div className="space-y-4">
-                      <h5 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Geral & Ações</h5>
-                      <div className="bg-slate-950/60 p-4 rounded-2xl border border-slate-800/60 space-y-3">
-                        <div className="flex items-center justify-between">
-                          <label className="text-[10px] text-slate-400 font-black uppercase tracking-widest">Liquidez Diária (Mín)</label>
-                          <HelpCircle className="w-3 h-3 text-slate-600" />
-                        </div>
-                        <div className="relative">
-                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[10px] font-black text-slate-600">R$</span>
-                          <input
-                            type="number"
-                            value={rulesConfig.minDailyLiquidity}
-                            onChange={(e) => setRulesConfig(prev => ({ ...prev, minDailyLiquidity: Number(e.target.value) }))}
-                            className="w-full bg-slate-900 border border-slate-700 rounded-xl pl-8 pr-3 py-2 text-xs font-bold text-white focus:border-indigo-500 transition-colors"
-                          />
+                        <div className="text-right">
+                          <span className={`text-2xl font-black block leading-none ${isZero ? 'text-rose-500' : 'text-white'}`}>{t.targetPct}%</span>
+                          <span className="text-[10px] font-black text-slate-600 uppercase">Meta Alvo</span>
                         </div>
                       </div>
 
-                      <div className="bg-slate-950/60 p-4 rounded-2xl border border-slate-800/60 space-y-3">
-                        <div className="flex items-center justify-between">
-                          <label className="text-[10px] text-slate-400 font-black uppercase tracking-widest">Dívida / EBITDA (Máx)</label>
-                          <HelpCircle className="w-3 h-3 text-slate-600" />
-                        </div>
+                      <div className="space-y-6">
                         <input
-                          type="number"
-                          step={0.5}
-                          value={rulesConfig.maxDebtEbitdaAllowed}
-                          onChange={(e) => setRulesConfig(prev => ({ ...prev, maxDebtEbitdaAllowed: Number(e.target.value) }))}
-                          className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs font-bold text-white focus:border-indigo-500 transition-colors"
+                          type="range"
+                          min="0"
+                          max="40"
+                          step="0.5"
+                          value={t.targetPct}
+                          onChange={(e) => {
+                            const val = Number(e.target.value);
+                            setEditableTargets(prev => ({
+                              ...prev,
+                              [ticker]: { 
+                                ...prev[ticker], 
+                                targetPct: val, 
+                                locked: val === 0 ? true : prev[ticker].locked,
+                                minPct: Math.max(0, val - 2),
+                                maxPct: val + 5
+                              }
+                            }));
+                          }}
+                          className={`w-full h-2 rounded-full appearance-none cursor-pointer transition-all ${isZero ? 'accent-rose-500 bg-rose-500/10' : 'accent-indigo-500 bg-slate-700'}`}
                         />
+                        
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="flex-1 grid grid-cols-2 gap-2">
+                             <div className="space-y-1">
+                               <label className="text-[9px] font-black text-slate-600 uppercase tracking-widest block px-1">Mínimo</label>
+                               <input type="number" value={t.minPct} onChange={e => setEditableTargets(prev => ({ ...prev, [ticker]: { ...t, minPct: Number(e.target.value) } }))} className="w-full bg-slate-950 border border-slate-800 rounded-xl px-2 py-1.5 text-xs font-bold text-slate-400 text-center" />
+                             </div>
+                             <div className="space-y-1">
+                               <label className="text-[9px] font-black text-slate-600 uppercase tracking-widest block px-1">Máximo</label>
+                               <input type="number" value={t.maxPct} onChange={e => setEditableTargets(prev => ({ ...prev, [ticker]: { ...t, maxPct: Number(e.target.value) } }))} className="w-full bg-slate-950 border border-slate-800 rounded-xl px-2 py-1.5 text-xs font-bold text-slate-400 text-center" />
+                             </div>
+                          </div>
+                          <button
+                            onClick={() => setEditableTargets(prev => ({ ...prev, [ticker]: { ...t, locked: !t.locked } }))}
+                            className={`p-3 rounded-2xl border transition-all ${t.locked ? 'bg-rose-500/20 border-rose-500/30 text-rose-500' : 'bg-slate-700 border-slate-600 text-slate-400 hover:text-white'}`}
+                          >
+                            {t.locked ? <Lock className="w-4 h-4" /> : <Unlock className="w-4 h-4" />}
+                          </button>
+                        </div>
                       </div>
                     </div>
+                  );
+                })}
+              </div>
+            </div>
 
-                    <div className="space-y-4">
-                      <h5 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">FIIs & Qualidade</h5>
-                      <div className="bg-slate-950/60 p-4 rounded-2xl border border-slate-800/60 space-y-3">
-                        <div className="flex items-center justify-between">
-                          <label className="text-[10px] text-slate-400 font-black uppercase tracking-widest">P/VP Máximo (FIIs)</label>
-                          <HelpCircle className="w-3 h-3 text-slate-600" />
-                        </div>
-                        <input
-                          type="number"
-                          step={0.05}
-                          value={rulesConfig.maxFiiPvpAllowed}
-                          onChange={(e) => setRulesConfig(prev => ({ ...prev, maxFiiPvpAllowed: Number(e.target.value) }))}
-                          className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs font-bold text-white focus:border-indigo-500 transition-colors"
-                        />
-                      </div>
+            <div className="p-8 border-t border-slate-800 bg-slate-900/50 flex items-center justify-end gap-4">
+              <button onClick={() => setIsEditingTargets(false)} className="px-8 py-3 text-xs font-black text-slate-500 hover:text-white uppercase tracking-widest transition-all">Cancelar</button>
+              <button onClick={handleSaveTargetAllocations} className="px-10 py-4 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-black uppercase tracking-widest rounded-2xl shadow-xl shadow-indigo-600/20 transition-all">Salvar Estratégia</button>
+            </div>
+          </div>
+        </div>
+      )}
 
-                      <div className="bg-slate-950/60 p-4 rounded-2xl border border-slate-800/60 space-y-3">
-                        <div className="flex items-center justify-between">
-                          <label className="text-[10px] text-slate-400 font-black uppercase tracking-widest">Score Mínimo</label>
-                          <HelpCircle className="w-3 h-3 text-slate-600" />
-                        </div>
-                        <input
-                          type="number"
-                          step={5}
-                          value={rulesConfig.minScoreAllowed}
-                          onChange={(e) => setRulesConfig(prev => ({ ...prev, minScoreAllowed: Number(e.target.value) }))}
-                          className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs font-bold text-white focus:border-indigo-500 transition-colors"
-                        />
+      {/* REGRAS MODAL */}
+      {isEditingRules && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/90 backdrop-blur-xl animate-in fade-in duration-300">
+          <div className="bg-slate-900 border border-slate-800 w-full max-w-3xl rounded-[2.5rem] shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-300">
+            <div className="p-8 border-b border-slate-800 flex items-center justify-between bg-slate-900/50">
+               <div className="flex items-center gap-4">
+                 <div className="p-3 rounded-2xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                   <ShieldCheck className="w-6 h-6" />
+                 </div>
+                 <div>
+                   <h3 className="text-xl font-black text-white tracking-tight">Filtros & Critérios de Risco</h3>
+                   <p className="text-xs text-slate-500 font-bold uppercase tracking-widest mt-1">O motor ignorará ativos que não passarem nestas travas</p>
+                 </div>
+               </div>
+               <button onClick={() => setIsEditingRules(false)} className="p-3 bg-slate-800 hover:bg-slate-700 rounded-2xl text-slate-400 transition-colors">
+                  <Plus className="w-6 h-6 rotate-45" />
+               </button>
+            </div>
+
+            <div className="p-8 space-y-8">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
+                <div className="space-y-6">
+                  <h5 className="text-[10px] font-black text-slate-500 uppercase tracking-widest px-1">Filtros de Ações</h5>
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <label className="text-[11px] font-bold text-slate-400 uppercase tracking-tight">Liquidez Diária Mínima</label>
+                      <div className="relative">
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 font-bold text-xs">R$</span>
+                        <input type="number" step={100000} value={rulesConfig.minDailyLiquidity} onChange={e => setRulesConfig(prev => ({ ...prev, minDailyLiquidity: Number(e.target.value) }))} className="w-full bg-slate-950 border border-slate-800 rounded-2xl pl-10 pr-4 py-2.5 text-sm font-bold text-white focus:border-emerald-500" />
                       </div>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-[11px] font-bold text-slate-400 uppercase tracking-tight">Dívida / EBITDA Máximo</label>
+                      <input type="number" step={0.5} value={rulesConfig.maxDebtEbitdaAllowed} onChange={e => setRulesConfig(prev => ({ ...prev, maxDebtEbitdaAllowed: Number(e.target.value) }))} className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-4 py-2.5 text-sm font-bold text-white focus:border-emerald-500" />
                     </div>
                   </div>
                 </div>
-              )}
+
+                <div className="space-y-6">
+                  <h5 className="text-[10px] font-black text-slate-500 uppercase tracking-widest px-1">Filtros de FIIs</h5>
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <label className="text-[11px] font-bold text-slate-400 uppercase tracking-tight">P/VP Máximo Sugerido</label>
+                      <input type="number" step={0.05} value={rulesConfig.maxFiiPvpAllowed} onChange={e => setRulesConfig(prev => ({ ...prev, maxFiiPvpAllowed: Number(e.target.value) }))} className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-4 py-2.5 text-sm font-bold text-white focus:border-emerald-500" />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-[11px] font-bold text-slate-400 uppercase tracking-tight">Score Mínimo (Qualidade)</label>
+                      <input type="number" step={5} value={rulesConfig.minScoreAllowed} onChange={e => setRulesConfig(prev => ({ ...prev, minScoreAllowed: Number(e.target.value) }))} className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-4 py-2.5 text-sm font-bold text-white focus:border-emerald-500" />
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
 
-            {/* Modal Footer */}
-            <div className="p-6 border-t border-slate-800 flex items-center justify-end gap-3 bg-slate-900/50">
-              <button
-                onClick={() => { setIsEditingTargets(false); setIsEditingRules(false); }}
-                className="px-6 py-2.5 rounded-xl text-xs font-black text-slate-400 hover:text-white hover:bg-slate-800 transition-all uppercase tracking-widest"
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={() => {
-                  if (isEditingTargets) handleSaveTargetAllocations();
-                  if (isEditingRules) {
-                    if (onSaveRulesConfig) onSaveRulesConfig(rulesConfig);
-                    setIsEditingRules(false);
-                    toast.success('Critérios salvos!');
-                  }
-                }}
-                className={`px-8 py-2.5 rounded-xl text-xs font-black text-white shadow-lg transition-all uppercase tracking-widest ${
-                  isEditingTargets ? 'bg-indigo-600 hover:bg-indigo-500 shadow-indigo-600/20' : 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-600/20'
-                }`}
-              >
-                Salvar Alterações
-              </button>
+            <div className="p-8 border-t border-slate-800 bg-slate-900/50 flex items-center justify-end gap-4">
+              <button onClick={() => setIsEditingRules(false)} className="px-8 py-3 text-xs font-black text-slate-500 hover:text-white uppercase tracking-widest transition-all">Cancelar</button>
+              <button onClick={() => { if(onSaveRulesConfig) onSaveRulesConfig(rulesConfig); setIsEditingRules(false); toast.success('Regras aplicadas!'); }} className="px-10 py-4 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black uppercase tracking-widest rounded-2xl shadow-xl shadow-emerald-600/20 transition-all">Aplicar Travas</button>
             </div>
           </div>
         </div>
