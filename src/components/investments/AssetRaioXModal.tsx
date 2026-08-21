@@ -248,19 +248,18 @@ export function AssetRaioXModal({
             </div>
 
             {/* QUICK ACTIONS */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mt-10">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-6">
               {[
                 { label: 'Novo Aporte', icon: PlusCircle, color: 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-500/20', action: () => { onClose(); onOpenAddModal(position.ticker, 'buy', position.type); } },
                 { label: 'Lançar Venda', icon: MinusCircle, color: 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700', action: () => { onClose(); onOpenAddModal(position.ticker, 'sell', position.type); } },
                 { label: 'Lançar Provento', icon: DollarSign, color: 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-500/20', action: () => { onClose(); onOpenAddDivModal(position.ticker); } },
-                { label: 'Preço Teto', icon: Calculator, color: 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700', action: () => { onClose(); onSelectAnalytics(position.ticker); } },
               ].map((btn, i) => (
                 <button
                   key={i}
                   onClick={btn.action}
-                  className={`py-4 px-5 text-[10px] font-black rounded-2xl transition-all flex items-center justify-center gap-3 shadow-xl cursor-pointer uppercase tracking-[0.1em] ${btn.color}`}
+                  className={`py-3 px-4 text-[10px] font-black rounded-xl transition-all flex items-center justify-center gap-2.5 shadow-lg cursor-pointer uppercase tracking-[0.1em] ${btn.color}`}
                 >
-                  <btn.icon className="w-5 h-5" />
+                  <btn.icon className="w-4 h-4" />
                   {btn.label}
                 </button>
               ))}
@@ -268,7 +267,7 @@ export function AssetRaioXModal({
           </div>
 
           {/* NAVIGATION */}
-          <div className="flex items-center gap-2 px-8 bg-slate-900 border-b border-slate-800 overflow-x-auto no-scrollbar scroll-smooth">
+          <div className="flex items-center gap-2 px-4 sm:px-6 bg-slate-900 border-b border-slate-800 overflow-x-auto no-scrollbar scroll-smooth">
             {[
               { id: 'geral', label: 'Dashboard', icon: Briefcase, color: 'text-indigo-400' },
               { id: 'proventos', label: 'Dividendos', icon: DollarSign, color: 'text-emerald-400', count: assetDivs.length },
@@ -278,17 +277,17 @@ export function AssetRaioXModal({
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id as any)}
-                className={`px-6 py-5 text-[10px] font-black transition-all border-b-2 flex items-center gap-3 whitespace-nowrap uppercase tracking-[0.15em] cursor-pointer group relative ${
+                className={`px-4 sm:px-5 py-3 text-[10px] sm:text-xs font-black transition-all border-b-2 flex items-center gap-2.5 whitespace-nowrap uppercase tracking-[0.12em] cursor-pointer group relative ${
                   activeTab === tab.id
                     ? 'border-indigo-500 text-white'
                     : 'border-transparent text-slate-500 hover:text-slate-300'
                 }`}
               >
-                <tab.icon className={`w-5 h-5 ${activeTab === tab.id ? tab.color : 'text-slate-700 group-hover:text-slate-500'}`} />
+                <tab.icon className={`w-4 h-4 ${activeTab === tab.id ? tab.color : 'text-slate-600 group-hover:text-slate-500'}`} />
                 {tab.label}
                 {tab.count !== undefined && (
                   <span className={`px-2 py-0.5 rounded-full text-[9px] font-black ${
-                    activeTab === tab.id ? 'bg-indigo-500 text-white' : 'bg-slate-800 text-slate-700'
+                    activeTab === tab.id ? 'bg-indigo-500 text-white' : 'bg-slate-800 text-slate-600'
                   }`}>
                     {tab.count}
                   </span>
@@ -304,7 +303,7 @@ export function AssetRaioXModal({
           </div>
 
           {/* CONTENT */}
-          <div className="flex-1 overflow-y-auto p-8 bg-slate-900 custom-scrollbar">
+          <div className="flex-1 overflow-y-auto p-5 sm:p-6 bg-slate-900 custom-scrollbar">
             <AnimatePresence mode="wait">
               <motion.div
                 key={activeTab}

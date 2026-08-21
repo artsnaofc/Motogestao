@@ -262,15 +262,15 @@ export const ProfessionalRebalanceEngineView: React.FC<ProfessionalRebalanceEngi
   return (
     <div className="space-y-6">
       {/* 1. Header & Strategy Switcher */}
-      <div className="bg-slate-900/90 border border-slate-800 p-6 rounded-2xl shadow-xl space-y-4">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div className="bg-slate-900/90 border border-slate-800 p-4 sm:p-6 rounded-2xl shadow-xl space-y-4">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           <div className="flex items-start gap-3">
-            <div className="p-3 bg-indigo-500/10 rounded-2xl border border-indigo-500/20 text-indigo-400">
+            <div className="p-3 bg-indigo-500/10 rounded-2xl border border-indigo-500/20 text-indigo-400 shrink-0">
               <Scale className="w-6 h-6 stroke-[2.5]" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
-                <h3 className="text-lg font-black text-white tracking-tight">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="text-base sm:text-lg font-black text-white tracking-tight">
                   Motor Inteligente de Aportes
                 </h3>
                 <span className="px-2 py-0.5 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-[10px] font-black text-indigo-400 uppercase tracking-widest">
@@ -283,17 +283,17 @@ export const ProfessionalRebalanceEngineView: React.FC<ProfessionalRebalanceEngi
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
             <button
               onClick={() => setIsEditingTargets(true)}
-              className="px-4 py-2 rounded-xl text-xs font-black bg-slate-800 border border-slate-700 text-slate-300 hover:text-white hover:bg-slate-700 transition-all uppercase tracking-wider flex items-center gap-2"
+              className="px-4 py-2.5 sm:py-2 rounded-xl text-xs font-black bg-slate-800 border border-slate-700 text-slate-300 hover:text-white hover:bg-slate-700 transition-all uppercase tracking-wider flex items-center justify-center gap-2"
             >
               <Target className="w-3.5 h-3.5" />
               Ajustar Metas
             </button>
             <button
               onClick={() => setIsEditingRules(true)}
-              className="px-4 py-2 rounded-xl text-xs font-black bg-slate-800 border border-slate-700 text-slate-300 hover:text-white hover:bg-slate-700 transition-all uppercase tracking-wider flex items-center gap-2"
+              className="px-4 py-2.5 sm:py-2 rounded-xl text-xs font-black bg-slate-800 border border-slate-700 text-slate-300 hover:text-white hover:bg-slate-700 transition-all uppercase tracking-wider flex items-center justify-center gap-2"
             >
               <ShieldCheck className="w-3.5 h-3.5" />
               Configurar Filtros
@@ -301,7 +301,7 @@ export const ProfessionalRebalanceEngineView: React.FC<ProfessionalRebalanceEngi
           </div>
         </div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 pt-2 border-t border-slate-800/80">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2 pt-2 border-t border-slate-800/80">
           {[
             { id: 'rebalance', label: 'Rebalanceamento', icon: Scale, desc: 'Foco em equilibrar pesos', color: 'text-indigo-400' },
             { id: 'quality', label: 'Qualidade Máxima', icon: ShieldCheck, desc: 'Foco no Ranking de Ativos', color: 'text-emerald-400' },
