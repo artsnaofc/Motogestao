@@ -874,11 +874,25 @@ export const ProfessionalRebalanceEngineView: React.FC<ProfessionalRebalanceEngi
             <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
               {isEditingTargets && (
                 <div className="space-y-6">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-slate-950/50 p-4 rounded-2xl border border-slate-800/60">
-                    <div className="text-[11px] text-slate-400 font-medium max-w-md">
-                      O motor de rebalanceamento usará estas metas para calcular quanto comprar de cada ativo até atingir o equilíbrio desejado.
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-slate-950/50 p-5 rounded-2xl border border-slate-800/60 shadow-inner">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <Info className="w-4 h-4 text-indigo-400" />
+                        <h4 className="text-[11px] font-black text-white uppercase tracking-widest">Resumo da Estratégia</h4>
+                      </div>
+                      <p className="text-[10px] text-slate-500 font-medium max-w-md">
+                        O somatório das metas deve idealmente ser 100%. Ativos com meta 0% serão automaticamente travados para novos aportes.
+                      </p>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-col items-end gap-2">
+                      <div className={`px-4 py-2 rounded-xl border flex items-center gap-3 transition-all ${
+                        Math.abs(Object.values(editableTargets).reduce((acc, t) => acc + (t.targetPct || 0), 0) - 100) < 0.1
+                          ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                          : 'bg-amber-500/10 border-amber-500/30 text-amber-400'
+                      }`}>
+                        <span className="text-[10px] font-black uppercase tracking-tighter">Total Alocado:</span>
+                        <span className="text-lg font-black">{Object.values(editableTargets).reduce((acc, t) => acc + (t.targetPct || 0), 0).toFixed(1)}%</span>
+                      </div>
                       <button
                         onClick={() => {
                           const count = positions.length;
@@ -899,14 +913,14 @@ export const ProfessionalRebalanceEngineView: React.FC<ProfessionalRebalanceEngi
                             toast.info(`Metas equidistribuídas em ${equalPct}% por ativo.`);
                           }
                         }}
-                        className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-[10px] font-black uppercase tracking-widest text-slate-400 rounded-xl border border-slate-700"
+                        className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-[9px] font-black uppercase tracking-widest text-slate-400 rounded-lg border border-slate-700 transition-all"
                       >
-                        Equidistribuir
+                        Equidistribuir Pesos
                       </button>
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     {positions.map((p) => {
                       const currentT = editableTargets[p.ticker] || {
                         ticker: p.ticker,
@@ -918,71 +932,131 @@ export const ProfessionalRebalanceEngineView: React.FC<ProfessionalRebalanceEngi
                       };
                       const posCurrent = normalizedPositions.find(np => np.ticker === p.ticker);
                       const displayCurrentPct = posCurrent ? posCurrent.currentPct : (p.currentPct ?? 0);
+                      const isLocked = currentT.targetPct === 0 || currentT.locked;
 
                       return (
-                        <div key={p.ticker} className="p-4 bg-slate-950/60 rounded-2xl border border-slate-800/60 space-y-4 hover:border-indigo-500/30 transition-colors">
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2">
-                              <span className="font-black text-white text-sm">{p.ticker}</span>
-                              <span className="text-[9px] font-black text-slate-600 uppercase">{(p.type || 'Ação').substring(0, 3)}</span>
+                        <div 
+                          key={p.ticker} 
+                          className={`p-5 rounded-2xl border transition-all duration-300 group ${
+                            isLocked 
+                              ? 'bg-slate-950/40 border-rose-500/20 opacity-75' 
+                              : 'bg-slate-900/40 border-slate-800/60 hover:border-indigo-500/40 hover:bg-slate-900/60'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between mb-4">
+                            <div className="flex items-center gap-3">
+                              <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-black text-sm transition-colors ${
+                                isLocked ? 'bg-rose-500/10 text-rose-500' : 'bg-indigo-500/10 text-indigo-400'
+                              }`}>
+                                {p.ticker.substring(0, 2)}
+                              </div>
+                              <div>
+                                <div className="flex items-center gap-2">
+                                  <span className="font-black text-white text-base tracking-tight">{p.ticker}</span>
+                                  {isLocked && <Lock className="w-3 h-3 text-rose-500" />}
+                                </div>
+                                <span className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Atual: {displayCurrentPct.toFixed(1)}%</span>
+                              </div>
                             </div>
-                            <span className="text-[10px] font-black text-slate-500 uppercase tracking-tighter">Atual: {(displayCurrentPct ?? 0).toFixed(1)}%</span>
+                            <div className="text-right">
+                              <span className={`text-xl font-black block leading-none ${isLocked ? 'text-rose-500' : 'text-white'}`}>
+                                {currentT.targetPct.toFixed(1)}%
+                              </span>
+                              <span className="text-[9px] font-bold text-slate-600 uppercase tracking-tighter">Meta Alvo</span>
+                            </div>
                           </div>
 
-                          <div className="grid grid-cols-3 gap-3">
-                            <div className="space-y-1">
-                              <label className="text-[9px] text-slate-600 font-black uppercase tracking-widest block text-center">Mín</label>
+                          {/* Slider Control */}
+                          <div className="space-y-4">
+                            <div className="relative h-6 flex items-center">
                               <input
-                                type="number"
-                                min={0}
-                                max={50}
-                                step={0.5}
-                                value={currentT.minPct}
-                                onChange={(e) => {
-                                  const val = Number(e.target.value);
-                                  setEditableTargets(prev => ({
-                                    ...prev,
-                                    [p.ticker]: { ...currentT, minPct: val }
-                                  }));
-                                }}
-                                className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2 py-1.5 text-xs font-bold text-slate-400 text-center"
-                              />
-                            </div>
-                            <div className="space-y-1">
-                              <label className="text-[9px] text-indigo-500 font-black uppercase tracking-widest block text-center">Alvo</label>
-                              <input
-                                type="number"
-                                min={0}
-                                max={100}
-                                step={0.5}
+                                type="range"
+                                min="0"
+                                max="50"
+                                step="0.5"
                                 value={currentT.targetPct}
                                 onChange={(e) => {
                                   const val = Number(e.target.value);
                                   setEditableTargets(prev => ({
                                     ...prev,
-                                    [p.ticker]: { ...currentT, targetPct: val }
+                                    [p.ticker]: { 
+                                      ...currentT, 
+                                      targetPct: val,
+                                      locked: val === 0 ? true : currentT.locked,
+                                      // Auto-adjust min/max based on target
+                                      minPct: Math.max(0, val - 2),
+                                      maxPct: val + 5
+                                    }
                                   }));
                                 }}
-                                className="w-full bg-slate-900 border border-indigo-500/40 rounded-xl px-2 py-1.5 text-xs font-black text-indigo-400 text-center shadow-[0_0_10px_rgba(99,102,241,0.05)]"
+                                className={`w-full h-1.5 rounded-lg appearance-none cursor-pointer accent-indigo-500 bg-slate-800 transition-all ${
+                                  isLocked ? 'accent-rose-500' : 'accent-indigo-500'
+                                }`}
                               />
                             </div>
-                            <div className="space-y-1">
-                              <label className="text-[9px] text-slate-600 font-black uppercase tracking-widest block text-center">Máx</label>
-                              <input
-                                type="number"
-                                min={0}
-                                max={100}
-                                step={0.5}
-                                value={currentT.maxPct}
-                                onChange={(e) => {
-                                  const val = Number(e.target.value);
+
+                            <div className="flex items-center justify-between gap-4">
+                              <div className="flex-1 grid grid-cols-2 gap-2">
+                                <div className="space-y-1">
+                                  <label className="text-[9px] text-slate-600 font-black uppercase tracking-widest block">Mín %</label>
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    max={100}
+                                    step={0.5}
+                                    value={currentT.minPct}
+                                    onChange={(e) => {
+                                      const val = Number(e.target.value);
+                                      setEditableTargets(prev => ({
+                                        ...prev,
+                                        [p.ticker]: { ...currentT, minPct: val }
+                                      }));
+                                    }}
+                                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-2 py-1.5 text-[11px] font-bold text-slate-400 text-center focus:border-indigo-500 transition-colors"
+                                  />
+                                </div>
+                                <div className="space-y-1">
+                                  <label className="text-[9px] text-slate-600 font-black uppercase tracking-widest block">Máx %</label>
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    max={100}
+                                    step={0.5}
+                                    value={currentT.maxPct}
+                                    onChange={(e) => {
+                                      const val = Number(e.target.value);
+                                      setEditableTargets(prev => ({
+                                        ...prev,
+                                        [p.ticker]: { ...currentT, maxPct: val }
+                                      }));
+                                    }}
+                                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-2 py-1.5 text-[11px] font-bold text-slate-400 text-center focus:border-indigo-500 transition-colors"
+                                  />
+                                </div>
+                              </div>
+                              
+                              <button
+                                onClick={() => {
+                                  const isCurrentlyLocked = currentT.locked;
                                   setEditableTargets(prev => ({
                                     ...prev,
-                                    [p.ticker]: { ...currentT, maxPct: val }
+                                    [p.ticker]: { 
+                                      ...currentT, 
+                                      locked: !isCurrentlyLocked,
+                                      // If unlocking and was 0, give a small default
+                                      targetPct: (!isCurrentlyLocked === false && currentT.targetPct === 0) ? 0 : (isCurrentlyLocked && currentT.targetPct === 0 ? 1 : currentT.targetPct)
+                                    }
                                   }));
                                 }}
-                                className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2 py-1.5 text-xs font-bold text-slate-400 text-center"
-                              />
+                                className={`p-2.5 rounded-xl border transition-all ${
+                                  currentT.locked 
+                                    ? 'bg-rose-500/20 border-rose-500/30 text-rose-400' 
+                                    : 'bg-slate-800 border-slate-700 text-slate-500 hover:text-white'
+                                }`}
+                                title={currentT.locked ? "Ativo Travado" : "Travar Ativo"}
+                              >
+                                {currentT.locked ? <Lock className="w-4 h-4" /> : <Unlock className="w-4 h-4" />}
+                              </button>
                             </div>
                           </div>
                         </div>
