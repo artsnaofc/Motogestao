@@ -112,7 +112,7 @@ export function Investments() {
 
   // Navigation & Tabs
   const [activeTab, setActiveTab] = useState<'carteira' | 'fundamentalista' | 'rebalanceamento' | 'proventos' | 'historico' | 'analise'>('carteira');
-  const [carteiraSubTab, setCarteiraSubTab] = useState<'carteira' | 'geral' | 'alocacao' | 'diagnostico'>('carteira');
+  const [carteiraSubTab, setCarteiraSubTab] = useState<'carteira' | 'geral' | 'alocacao'>('carteira');
   const [analyticsTicker, setAnalyticsTicker] = useState<string>('PETR4');
   const [tirMode, setTirMode] = useState<'dynamic' | 'period' | 'annual'>('dynamic');
   const [showTooltipInfo, setShowTooltipInfo] = useState<string | null>(null);
@@ -1310,24 +1310,6 @@ export function Investments() {
               <PieIcon className="w-3.5 h-3.5 text-indigo-500" />
               Alocação
             </button>
-
-            <button
-              onClick={() => setCarteiraSubTab('diagnostico')}
-              className={`flex-1 min-w-[150px] px-3.5 py-2 text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-                carteiraSubTab === 'diagnostico' 
-                  ? 'bg-card text-foreground shadow-xs border border-border/50' 
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />
-              Diagnóstico & Risco
-              {portfolioDiagnosis.alerts.length > 0 && (
-                <span className="px-1.5 py-0.5 text-[10px] rounded-full bg-rose-500/10 text-rose-500 font-extrabold flex items-center gap-0.5">
-                  <AlertTriangle className="w-2.5 h-2.5" />
-                  {portfolioDiagnosis.alerts.length}
-                </span>
-              )}
-            </button>
           </div>
 
           {/* DYNAMIC MODULE CONTENTS */}
@@ -1837,13 +1819,6 @@ export function Investments() {
             </div>
           )}
             </div>
-          ) : carteiraSubTab === 'diagnostico' ? (
-            <PortfolioDiagnosisDashboard
-              diagnosis={portfolioDiagnosis}
-              hideValues={hideValues}
-              onSelectTicker={(tk) => handleSelectAssetForAnalytics(tk)}
-              onNavigateToRebalance={() => setActiveTab('rebalanceamento')}
-            />
           ) : (
             <InvestmentAnalytics
               investmentTransactions={investmentTransactions}

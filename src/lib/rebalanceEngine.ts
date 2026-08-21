@@ -171,7 +171,9 @@ export function simulatePortfolioContribution(
   contributionAmount: number,
   rules: RebalanceRulesConfig = DEFAULT_REBALANCE_RULES,
   quotes: Record<string, number> = {},
-  customMetadata?: Record<string, any>
+  customMetadata?: Record<string, any>,
+  customStockWeights?: any,
+  customFiiWeights?: any
 ): RebalanceSimulationResult {
   const currentTotal = positions.reduce((acc, p) => acc + p.currentValue, 0);
   const newTotal = currentTotal + contributionAmount;
@@ -195,7 +197,7 @@ export function simulatePortfolioContribution(
     const isLocked = !!targetSpec.locked;
 
     const fundamental = getB3AssetFundamental(pos.ticker, pos.type, price, customMetadata);
-    const scoreResult = calculateUniversalAssetScore(fundamental);
+    const scoreResult = calculateUniversalAssetScore(fundamental, customStockWeights, customFiiWeights);
 
     const targetValue = (newTotal * targetPct) / 100;
     const gapAmount = Math.max(0, targetValue - pos.currentValue);
@@ -283,7 +285,7 @@ export function simulatePortfolioContribution(
     const liqScoreFactor = Math.max(0, Math.min(100, (fundamental.dailyLiquidity / 50000000) * 100));
 
     const totalStrategyWeight = weights.gapWeight + weights.qualityWeight + weights.valuationWeight + weights.dividendWeight + weights.liquidityWeight;
-    const rawPriority = (
+    let rawPriority = (
       (gapScoreFactor * weights.gapWeight) +
       (qualityScoreFactor * weights.qualityWeight) +
       (valScoreFactor * weights.valuationWeight) +
@@ -291,7 +293,61 @@ export function simulatePortfolioContribution(
       (liqScoreFactor * weights.liquidityWeight)
     ) / (totalStrategyWeight || 100);
 
-    const priorityScore = isRestricted ? 0 : Math.round(rawPriority);
+    // Dynamic Multipliers for "Smart Engine"
+    // - Quality Multiplier: High quality assets (Score > 85) get a 10% boost
+    if (qualityScoreFactor >= 85) rawPriority *= 1.1;
+
+    // - Sector Concentration Defense: If this sector is already > rules.maxSectorAllocationPct, reduce priority significantly
+    const sector = fundamental.type === 'Ação' ? fundamental.sector : fundamental.fiiSegment;
+    if (sector && rules.maxSectorAllocationPct > 0) {
+      const sectorValue = positions
+        .filter(p => {
+          const f = getB3AssetFundamental(p.ticker, p.type, quotes[p.ticker], customMetadata);
+          const s = f.type === 'Ação' ? f.sector : f.fiiSegment;
+          return s === sector;
+        })
+        .reduce((acc, p) => acc + p.currentValue, 0);
+      
+      const sectorPct = newTotal > 0 ? (sectorValue / newTotal) * 100 : 0;
+      if (sectorPct >= rules.maxSectorAllocationPct) {
+        rawPriority *= 0.5; // Heavy penalty if sector is full
+        risks.push(`Setor ${sector} já atingiu o limite de ${rules.maxSectorAllocationPct}% da carteira.`);
+      }
+    }
+
+    // - Valuation Safety Margin Multiplier (Integration with Raio-X / Valuation Targets)
+    const tickerUpper = pos.ticker.toUpperCase();
+    const valTarget = customMetadata?.[tickerUpper]?.valuation_target || customMetadata?.[tickerUpper]?.valuationTarget || customMetadata?.[tickerUpper]?.targetPrice;
+    if (valTarget && valTarget > 0) {
+      const margin = (valTarget - price) / price;
+      if (margin > 0.25) {
+        // Very high safety margin (>25%): 20% boost
+        rawPriority *= 1.20;
+        reasons.push(`Oportunidade Premium: ${(margin * 100).toFixed(0)}% de desconto sobre o Preço Teto.`);
+      } else if (margin > 0.10) {
+        // High safety margin (>10%): 10% boost
+        rawPriority *= 1.10;
+        reasons.push(`Margem de segurança de ${(margin * 100).toFixed(0)}% baseada no Valuation.`);
+      } else if (margin < -0.05) {
+        // Above fair price: 40% penalty
+        rawPriority *= 0.6;
+        risks.push(`Ativo acima do Preço Teto estipulado (${(Math.abs(margin) * 100).toFixed(0)}% de ágio).`);
+      }
+    }
+
+    // - Valuation Safety: If asset has P/VP > 1.2 (FII) or P/L > 25 (Stock), penalize it 20%
+    if ((fundamental.type === 'FII' && fundamental.pvp > 1.2) || (fundamental.type === 'Ação' && fundamental.pl > 25)) {
+      rawPriority *= 0.8;
+      risks.push(`Múltiplos de mercado elevados (P/VP ou P/L acima da média histórica)`);
+    }
+    
+    // - Concentration Defense: If already > 10%, reduce priority by 15% to favor diversification
+    if (pos.currentPct > 10.0) {
+      rawPriority *= 0.85;
+      risks.push(`Alta concentração na carteira (${pos.currentPct.toFixed(1)}%)`);
+    }
+
+    const priorityScore = isRestricted ? 0 : Math.round(Math.min(100, rawPriority));
 
     return {
       ticker: pos.ticker,

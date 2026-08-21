@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import { 
   FileSpreadsheet, 
   UploadCloud, 
@@ -11,7 +11,10 @@ import {
   X, 
   Sparkles, 
   Table as TableIcon,
-  RefreshCw
+  RefreshCw,
+  FileUp,
+  FileType,
+  PlusCircle
 } from 'lucide-react';
 import { parseFundamentusTable, FundamentusParseResult } from '../../lib/fundamentusParser';
 import { toast } from 'sonner';
@@ -31,6 +34,7 @@ export const FundamentusImportModal: React.FC<FundamentusImportModalProps> = ({
   const [selectedTypeOverride, setSelectedTypeOverride] = useState<'auto' | 'Ação' | 'FII'>('auto');
   const [isProcessing, setIsProcessing] = useState(false);
   const [importReport, setImportReport] = useState<{ created: number; updated: number; errors: number; supabaseError?: string | null } | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Real-time parsing of pasted text
   const parseResult: FundamentusParseResult = useMemo(() => {
@@ -55,6 +59,22 @@ export const FundamentusImportModal: React.FC<FundamentusImportModalProps> = ({
   }, [parseResult]);
 
   if (!isOpen) return null;
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const text = event.target?.result as string;
+      if (text) {
+        setPastedText(text);
+        toast.info(`Arquivo "${file.name}" carregado. Analisando...`);
+      }
+    };
+    reader.onerror = () => toast.error('Erro ao ler o arquivo.');
+    reader.readAsText(file);
+  };
 
   const handlePasteSample = (type: 'Ação' | 'FII') => {
     if (type === 'Ação') {
@@ -190,46 +210,88 @@ VISC11\tShoppings\t118,20\t8,80%\t8,60%\t0,96\t3.800.000.000,00\t4.800.000,00\t2
             </div>
           ) : (
             <>
-              {/* TEXTAREA & HELPER CONTROLS */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-black text-foreground flex items-center gap-1.5 uppercase tracking-wide">
-                    <TableIcon className="w-3.5 h-3.5 text-primary" />
-                    Área de Colagem (Ctrl+V da tabela)
-                  </label>
-                  <div className="flex items-center gap-2">
-                    <span className="text-[11px] text-muted-foreground">Exemplos rápidos:</span>
+              {/* UPLOAD & PASTE ZONE */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {/* File Upload Area */}
+                <div 
+                  onClick={() => fileInputRef.current?.click()}
+                  className="group relative flex flex-col items-center justify-center p-8 border-2 border-dashed border-border/60 hover:border-primary/50 bg-muted/10 hover:bg-primary/5 rounded-3xl transition-all cursor-pointer"
+                >
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    onChange={handleFileUpload}
+                    accept=".csv,.txt"
+                    className="hidden"
+                  />
+                  <div className="p-4 rounded-2xl bg-primary/10 text-primary group-hover:scale-110 transition-transform">
+                    <FileUp className="w-8 h-8" />
+                  </div>
+                  <div className="mt-4 text-center">
+                    <p className="text-sm font-black text-foreground">Carregar Arquivo CSV</p>
+                    <p className="text-[11px] text-muted-foreground mt-1">Clique para selecionar ou arraste o arquivo do Fundamentus</p>
+                  </div>
+                  <div className="mt-4 px-3 py-1 bg-background border border-border/60 rounded-lg text-[10px] font-bold text-muted-foreground group-hover:text-primary transition-colors">
+                    Recomendado para maior precisão
+                  </div>
+                </div>
+
+                {/* Paste Area Helper */}
+                <div className="flex flex-col justify-center p-6 bg-card border border-border/60 rounded-3xl space-y-4">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2.5 rounded-2xl bg-amber-500/10 text-amber-600">
+                      <HelpCircle className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <p className="text-xs font-black text-foreground">Como importar?</p>
+                      <p className="text-[10px] text-muted-foreground">Copie a tabela completa do site Fundamentus e cole ao lado ou carregue o arquivo.</p>
+                    </div>
+                  </div>
+                  
+                  <div className="grid grid-cols-2 gap-2">
                     <button
                       type="button"
                       onClick={() => handlePasteSample('Ação')}
-                      className="text-[10px] font-black px-2.5 py-1 rounded-lg bg-secondary text-secondary-foreground hover:bg-secondary/80 transition-colors"
+                      className="flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl bg-secondary/50 hover:bg-secondary text-[11px] font-black transition-all"
                     >
-                      + Ações
+                      <PlusCircle className="w-3.5 h-3.5" />
+                      Exemplo Ações
                     </button>
                     <button
                       type="button"
                       onClick={() => handlePasteSample('FII')}
-                      className="text-[10px] font-black px-2.5 py-1 rounded-lg bg-secondary text-secondary-foreground hover:bg-secondary/80 transition-colors"
+                      className="flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl bg-secondary/50 hover:bg-secondary text-[11px] font-black transition-all"
                     >
-                      + FIIs
+                      <PlusCircle className="w-3.5 h-3.5" />
+                      Exemplo FIIs
                     </button>
-                    {pastedText && (
-                      <button
-                        type="button"
-                        onClick={handleReset}
-                        className="text-[10px] font-bold text-rose-500 hover:underline ml-2"
-                      >
-                        Limpar
-                      </button>
-                    )}
                   </div>
+                </div>
+              </div>
+
+              {/* TEXTAREA FOR PASTE */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between px-1">
+                  <label className="text-[10px] font-black text-muted-foreground uppercase tracking-widest flex items-center gap-1.5">
+                    <FileType className="w-3 h-3" />
+                    Conteúdo do Arquivo / Área de Transferência
+                  </label>
+                  {pastedText && (
+                    <button
+                      type="button"
+                      onClick={handleReset}
+                      className="text-[10px] font-bold text-rose-500 hover:underline"
+                    >
+                      Limpar Conteúdo
+                    </button>
+                  )}
                 </div>
 
                 <textarea
                   value={pastedText}
                   onChange={(e) => setPastedText(e.target.value)}
-                  placeholder="Cole aqui o conteúdo copiado da tabela de busca avançada do Fundamentus (com cabeçalhos ou colunas tabuladas)..."
-                  className="w-full h-44 bg-muted/20 border border-border/70 rounded-2xl p-4 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all resize-y"
+                  placeholder="Se preferir, cole o conteúdo aqui manualmente..."
+                  className="w-full h-32 bg-muted/20 border border-border/70 rounded-2xl p-4 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all resize-y"
                 />
               </div>
 

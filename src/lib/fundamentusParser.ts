@@ -79,21 +79,49 @@ export function parseBrazilianNumber(raw: any): number | null {
   }
 
   let str = String(raw).trim();
-  if (!str || str === '-' || str === '--' || str.toUpperCase() === 'N/A' || str.toUpperCase() === 'N/D' || str.toUpperCase() === 'NULL') {
+  if (!str || str === '-' || str === '--' || str.toUpperCase() === 'N/A' || str.toUpperCase() === 'N/D' || str.toUpperCase() === 'NULL' || str === '.') {
     return null;
   }
 
   // Remove currency symbol, spaces, invisible characters
   str = str.replace(/R\$\s*/gi, '').replace(/\s+/g, '').replace(/%/g, '');
 
-  // Handle scientific or clean representations
-  // Check if standard Brazilian format with dots as thousands and comma as decimal
-  if (str.includes(',') && str.includes('.')) {
-    // 1.234.567,89 -> remove dot, replace comma with dot
-    str = str.replace(/\./g, '').replace(',', '.');
-  } else if (str.includes(',')) {
-    // 160,00 -> 160.00
+  // Brazilian format: dots for thousands, comma for decimal (1.234,56)
+  // But sometimes CSV exports use standard format (1,234.56) or just comma (1234,56)
+  
+  const hasComma = str.includes(',');
+  const hasDot = str.includes('.');
+
+  // If there's only a comma, it's definitely the decimal separator in Brazilian format
+  if (hasComma && !hasDot) {
     str = str.replace(',', '.');
+  } 
+  // If there are multiple dots, they are thousand separators
+  else if (hasDot && (str.match(/\./g) || []).length > 1) {
+    str = str.replace(/\./g, '');
+    if (hasComma) str = str.replace(',', '.');
+  }
+  // If there's one dot and one comma
+  else if (hasComma && hasDot) {
+    const commaIndex = str.lastIndexOf(',');
+    const dotIndex = str.lastIndexOf('.');
+    if (dotIndex > commaIndex) {
+      // 1,234.56 format (Standard)
+      str = str.replace(/,/g, '');
+    } else {
+      // 1.234,56 format (Brazilian)
+      str = str.replace(/\./g, '').replace(',', '.');
+    }
+  }
+  // Case: Only one or more dots, no commas (e.g. 1.250 or 1.250.000)
+  else if (hasDot) {
+    const parts = str.split('.');
+    // If the last part has 3 digits, it's very likely a thousand separator in BR format
+    // OR if there are multiple dots, it's definitely thousand separators
+    if (parts.length > 2 || (parts.length === 2 && parts[1].length === 3)) {
+      str = str.replace(/\./g, '');
+    }
+    // Otherwise it might be a decimal dot (like 12.34) - we keep it
   }
 
   const num = parseFloat(str);
@@ -301,26 +329,52 @@ function tokenizePaste(rawText: string): string[][] {
   let tabCount = 0;
   let semiCount = 0;
   let commaCount = 0;
+  let pipeCount = 0;
 
   sample.forEach(line => {
     tabCount += (line.match(/\t/g) || []).length;
     semiCount += (line.match(/;/g) || []).length;
     commaCount += (line.match(/,/g) || []).length;
+    pipeCount += (line.match(/\|/g) || []).length;
   });
 
-  let separator = '\t';
-  if (tabCount >= 2) {
+  let separator: string | RegExp = '\t';
+  if (tabCount >= 2 && tabCount > semiCount && tabCount > commaCount) {
     separator = '\t';
-  } else if (semiCount >= 3) {
+  } else if (pipeCount >= 2) {
+    separator = '|';
+  } else if (semiCount >= 2 && semiCount >= commaCount) {
     separator = ';';
-  } else if (commaCount >= 6) {
+  } else if (commaCount >= 4) {
     separator = ',';
   } else {
-    // If spaces separate columns (e.g. 2 or more spaces)
-    return lines.map(line => line.split(/\s{2,}|\t/));
+    separator = /\s{2,}|\t/;
   }
 
-  return lines.map(line => line.split(separator).map(cell => cell.trim()));
+  return lines.map(line => {
+    if (separator instanceof RegExp) {
+      return line.split(separator).map(cell => cell.trim().replace(/^["']|["']$/g, ''));
+    }
+    // Handle quoted CSV cells
+    if (separator === ',') {
+      const cells = [];
+      let current = '';
+      let inQuotes = false;
+      for (let i = 0; i < line.length; i++) {
+        const char = line[i];
+        if (char === '"') inQuotes = !inQuotes;
+        else if (char === ',' && !inQuotes) {
+          cells.push(current.trim());
+          current = '';
+        } else {
+          current += char;
+        }
+      }
+      cells.push(current.trim());
+      return cells.map(c => c.replace(/^["']|["']$/g, ''));
+    }
+    return line.split(separator).map(cell => cell.trim().replace(/^["']|["']$/g, ''));
+  });
 }
 
 /**
@@ -406,13 +460,13 @@ export function parseFundamentusTable(rawText: string): FundamentusParseResult {
       canonicalKey = STOCK_HEADER_SYNONYMS[norm] || STOCK_HEADER_SYNONYMS[rawUpper];
     }
 
-    // Fallback search
+    // Fallback search with more loose criteria
     if (!canonicalKey) {
-      if (norm.includes('PAPEL') || norm.includes('TICKER') || norm.includes('CODIGO') || norm.includes('FUNDO')) canonicalKey = 'ticker';
-      else if (norm.includes('COTACAO') || norm.includes('PRECO') || norm.includes('ULTIMO')) canonicalKey = 'lastPrice';
+      if (norm.includes('PAPEL') || norm.includes('TICKER') || norm.includes('CODIGO') || norm.includes('FUNDO') || norm.includes('ATIVO')) canonicalKey = 'ticker';
+      else if (norm.includes('COTACAO') || norm.includes('PRECO') || norm.includes('ULTIMO') || norm.includes('VALOR')) canonicalKey = 'lastPrice';
       else if (norm.includes('P/VP') || norm.includes('PVP')) canonicalKey = 'pvp';
       else if (norm.includes('P/L') || norm.includes('PL')) canonicalKey = 'pl';
-      else if (norm.includes('DY') || norm.includes('DIVIDEND') || norm.includes('YIELD')) canonicalKey = 'dividendYield';
+      else if (norm.includes('DY') || norm.includes('DIVIDEND') || norm.includes('YIELD') || norm.includes('DIV.')) canonicalKey = 'dividendYield';
       else if (norm.includes('ROE')) canonicalKey = 'roe';
       else if (norm.includes('ROIC')) canonicalKey = 'roic';
       else if (norm.includes('FFO')) canonicalKey = 'ffoYield';
@@ -422,7 +476,7 @@ export function parseFundamentusTable(rawText: string): FundamentusParseResult {
       else if (norm.includes('IMOVEIS') || norm.includes('IMOVEL') || norm.includes('PROPRIEDAD') || norm.includes('ATIVOS')) canonicalKey = 'propertiesCount';
       else if (norm.includes('EV/EBITDA')) canonicalKey = 'evEbitda';
       else if (norm.includes('EV/EBIT')) canonicalKey = 'evEbit';
-      else if (norm.includes('LIQ') && norm.includes('2')) canonicalKey = 'dailyLiquidity';
+      else if (norm.includes('LIQ') && (norm.includes('2') || norm.includes('MESES') || norm.includes('DIARIA'))) canonicalKey = 'dailyLiquidity';
       else if (norm.includes('LIQ') && norm.includes('CORR')) canonicalKey = 'currentLiquidity';
       else if (norm.includes('MERCADO')) canonicalKey = 'marketCap';
       else if (norm.includes('PATRIM')) canonicalKey = 'netWorth';
@@ -434,27 +488,23 @@ export function parseFundamentusTable(rawText: string): FundamentusParseResult {
     }
   });
 
-  // Default index-based mapping if header was not detected accurately
+  // Default index-based mapping ONLY as a last resort and if we have exactly the standard number of columns
   if (Object.keys(columnMap).length <= 2) {
-    if (detectedType === 'FII') {
-      // Standard Fundamentus FII columns:
-      // Papel, Segmento, Cotação, FFO Yield, Dividend Yield, P/VP, Valor de Mercado, Liquidez, Qtd de imóveis, Preço do m2, Aluguel por m2, Cap Rate, Vacância Média
+    if (detectedType === 'FII' && headerCells.length >= 10) {
       const defaultFiiKeys = [
         'ticker', 'segment', 'lastPrice', 'ffoYield', 'dividendYield', 'pvp',
         'marketCap', 'dailyLiquidity', 'propertiesCount', 'pricePerSqm', 'rentPerSqm',
         'capRate', 'physicalVacancy'
       ];
-      defaultFiiKeys.forEach((k, i) => { columnMap[i] = k; });
-    } else {
-      // Standard Fundamentus Stock columns:
-      // Papel, Cotação, P/L, P/VP, PSR, Div.Yield, P/Ativo, P/Cap.Giro, P/EBIT, P/Ativ Circ.Liq, EV/EBIT, EV/EBITDA, Mrg Bruta, Mrg Ebit, Mrg. Líq., Liq. Corr., ROIC, ROE, Liq.2meses, Patrim. Líq, Dív.Líq/ Patrim., Cresc. Rec.5a
+      defaultFiiKeys.forEach((k, i) => { if (!columnMap[i]) columnMap[i] = k; });
+    } else if (detectedType === 'Ação' && headerCells.length >= 15) {
       const defaultStockKeys = [
         'ticker', 'lastPrice', 'pl', 'pvp', 'psr', 'dividendYield', 'pAtivo',
         'pCapGiro', 'pEbit', 'pAtivCircLiq', 'evEbit', 'evEbitda', 'grossMargin',
         'ebitMargin', 'netMargin', 'currentLiquidity', 'roic', 'roe', 'dailyLiquidity',
         'netWorth', 'netDebtOverEquity', 'revenueCagr5y'
       ];
-      defaultStockKeys.forEach((k, i) => { columnMap[i] = k; });
+      defaultStockKeys.forEach((k, i) => { if (!columnMap[i]) columnMap[i] = k; });
     }
   }
 
