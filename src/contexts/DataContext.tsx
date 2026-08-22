@@ -227,14 +227,18 @@ export function DataProvider({ children }: { children: ReactNode }) {
           .maybeSingle();
 
         if (settingsData) {
-          if (settingsData.operational_expense_categories && !settingsData.operational_expense_categories.includes('Manutenção')) {
-            settingsData.operational_expense_categories.push('Manutenção');
-          }
-          if (settingsData.expense_categories && !settingsData.expense_categories.includes('Manutenção')) {
-            settingsData.expense_categories.push('Manutenção');
-          }
-          setSettings(settingsData);
-          localStorage.setItem(`user_settings_${userId}`, JSON.stringify(settingsData));
+          const opCats = settingsData.operational_expense_categories ? [...settingsData.operational_expense_categories] : [];
+          if (!opCats.includes('Manutenção')) opCats.push('Manutenção');
+          const expCats = settingsData.expense_categories ? [...settingsData.expense_categories] : [];
+          if (!expCats.includes('Manutenção')) expCats.push('Manutenção');
+
+          const finalSettings = {
+            ...settingsData,
+            operational_expense_categories: opCats,
+            expense_categories: expCats,
+          };
+          setSettings(finalSettings);
+          localStorage.setItem(`user_settings_${userId}`, JSON.stringify(finalSettings));
         } else {
           const defaultSettings: UserSettings = {
             user_id: userId,

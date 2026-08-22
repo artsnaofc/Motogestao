@@ -80,7 +80,11 @@ export function ScrollManager() {
 
     // Disable browser's default scroll restoration to have full control
     if ('scrollRestoration' in window.history) {
-      window.history.scrollRestoration = 'manual';
+      try {
+        window.history.scrollRestoration = 'manual';
+      } catch {
+        // Ignore in strict mode / iframe environments where window.history.scrollRestoration is read-only
+      }
     }
 
     // Immediate scroll
