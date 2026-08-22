@@ -246,7 +246,7 @@ export const PatrimonyEvolution: React.FC<PatrimonyEvolutionProps> = ({
         if (quantity <= 0) return acc;
         const lastTx = investmentTransactions
           .filter(t => t.ticker === ticker && parseLocalDate(t.date) <= endOfMonthDate)
-          .sort((a, b) => b.date.localeCompare(a.date))[0];
+          .sort((a, b) => (b.date || '').localeCompare(a.date || ''))[0];
         const fallbackPrice = lastTx ? Number(lastTx.price) : 0;
 
         // Use live quote ONLY if this month is current or future month; for past months, use last tx price

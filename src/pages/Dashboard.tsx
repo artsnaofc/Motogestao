@@ -1076,7 +1076,7 @@ export function Dashboard() {
       }
       const lastTx = investmentTransactions
         .filter(t => t.ticker === ticker)
-        .sort((a, b) => b.date.localeCompare(a.date))[0];
+        .sort((a, b) => (b.date || '').localeCompare(a.date || ''))[0];
       const fallbackPrice = lastTx ? Number(lastTx.price) : 0;
       return acc + (fallbackPrice * quantity);
     }, 0);
@@ -2371,7 +2371,7 @@ export function Dashboard() {
         // Find last transaction up to endOfMonthDate
         const lastTx = investmentTransactions
           .filter(t => t.ticker === ticker && parseLocalDate(t.date) <= endOfMonthDate)
-          .sort((a, b) => b.date.localeCompare(a.date))[0];
+          .sort((a, b) => (b.date || '').localeCompare(a.date || ''))[0];
         const fallbackPrice = lastTx ? Number(lastTx.price) : 0;
         const price = quotes[ticker] || fallbackPrice;
         return acc + (price * quantity);

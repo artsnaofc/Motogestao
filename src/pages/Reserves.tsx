@@ -600,7 +600,7 @@ export function Reserves() {
       rt => rt.reserve_id === res.id && rt.type === 'utilizacao'
     );
     if (utilizacoes.length === 0) return null;
-    const sorted = [...utilizacoes].sort((a, b) => b.date.localeCompare(a.date));
+    const sorted = [...utilizacoes].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
     return sorted[0].date;
   };
 
@@ -1866,7 +1866,7 @@ export function Reserves() {
 
                 const lastMv = reserveTransactions
                   .filter(rt => rt.reserve_id === r.id)
-                  .sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0];
+                  .sort((a,b) => (parseLocalDate(b.date)?.getTime() || 0) - (parseLocalDate(a.date)?.getTime() || 0))[0];
 
                 const lastMvIsRendimento = lastMv && lastMv.type === 'rendimento';
 

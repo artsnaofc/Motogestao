@@ -532,7 +532,7 @@ export const FundamentalAnalysisView: React.FC<FundamentalAnalysisViewProps> = (
         let valA: any = 0;
         let valB: any = 0;
 
-        if (sortField === 'ticker') { valA = a.ticker; valB = b.ticker; }
+        if (sortField === 'ticker') { valA = a.ticker || ''; valB = b.ticker || ''; }
         else if (sortField === 'score') { valA = a.score.totalScore; valB = b.score.totalScore; }
         else if (sortField === 'price') { valA = a.quote || 0; valB = b.quote || 0; }
         else if (sortField === 'pvp') { valA = a.fund.pvp || 0; valB = b.fund.pvp || 0; }

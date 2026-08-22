@@ -192,7 +192,7 @@ export function DividendSummaryCards({
   const provisionedList = useMemo(() => {
     return dividends
       .filter(d => d.status === 'provisioned')
-      .sort((a, b) => (a.data_ex || a.date).localeCompare(b.data_ex || b.date));
+      .sort((a, b) => (a.data_ex || a.date || '').localeCompare(b.data_ex || b.date || ''));
   }, [dividends]);
 
   return (

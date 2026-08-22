@@ -1518,17 +1518,17 @@ export function History() {
 
     // 6. Sorting
     if (sortBy === 'date-desc') {
-      result.sort((a, b) => b.date.localeCompare(a.date));
+      result.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
     } else if (sortBy === 'date-asc') {
-      result.sort((a, b) => a.date.localeCompare(b.date));
+      result.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
     } else if (sortBy === 'amount-desc') {
-      result.sort((a, b) => Number(b.amount) - Number(a.amount));
+      result.sort((a, b) => Number(b.amount || 0) - Number(a.amount || 0));
     } else if (sortBy === 'amount-asc') {
-      result.sort((a, b) => Number(a.amount) - Number(b.amount));
+      result.sort((a, b) => Number(a.amount || 0) - Number(b.amount || 0));
     } else if (sortBy === 'category-asc') {
-      result.sort((a, b) => a.category.localeCompare(b.category));
+      result.sort((a, b) => (a.category || '').localeCompare(b.category || ''));
     } else if (sortBy === 'category-desc') {
-      result.sort((a, b) => b.category.localeCompare(a.category));
+      result.sort((a, b) => (b.category || '').localeCompare(a.category || ''));
     }
 
     return result;
@@ -1614,11 +1614,11 @@ export function History() {
 
     // Sort transactions within each day according to sortBy
     sortedGroups.forEach(g => {
-      g.transactions.sort((a, b) => {
-        if (sortBy === 'amount-desc') return Number(b.amount) - Number(a.amount);
-        if (sortBy === 'amount-asc') return Number(a.amount) - Number(b.amount);
-        if (sortBy === 'date-desc') return b.date.localeCompare(a.date);
-        return a.date.localeCompare(b.date);
+      g.transactions = [...g.transactions].sort((a, b) => {
+        if (sortBy === 'amount-desc') return Number(b.amount || 0) - Number(a.amount || 0);
+        if (sortBy === 'amount-asc') return Number(a.amount || 0) - Number(b.amount || 0);
+        if (sortBy === 'date-desc') return (b.date || '').localeCompare(a.date || '');
+        return (a.date || '').localeCompare(b.date || '');
       });
     });
 
@@ -1691,7 +1691,7 @@ export function History() {
       }
       const lastTx = (investmentTransactions || [])
         .filter(t => t.ticker === ticker)
-        .sort((a, b) => b.date.localeCompare(a.date))[0];
+        .sort((a, b) => (b.date || '').localeCompare(a.date || ''))[0];
       const fallbackPrice = lastTx ? Number(lastTx.price) : 0;
       return acc + (fallbackPrice * quantity);
     }, 0);
