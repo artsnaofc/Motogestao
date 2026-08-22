@@ -127,15 +127,28 @@ export const DailyProductivityHeatmap: React.FC<DailyProductivityHeatmapProps> =
       entry.txs.push(t);
     });
 
-    // Calcular os valores diários usando as fórmulas idênticas às de calcTotals do Dashboard.tsx
+    // 2. Calcular os valores diários de cada dia de forma imutável
+    const computedMap: Record<string, {
+      income: number;
+      expense: number;
+      opExpense: number;
+      perExpense: number;
+      profit: number;       // Lucro Líquido
+      cashBalance: number;  // Balanço do Caixa
+      km: number;
+      deliveries: number;
+      txCount: number;
+      txs: Transaction[];
+    }> = {};
+
     Object.keys(map).forEach(dateStr => {
       const entry = map[dateStr];
       const dayTxs = entry.txs;
 
-      const inc = dayTxs.filter(t => t.type === 'income').reduce((acc, t) => acc + Number(t.amount), 0);
+      const inc = dayTxs.filter(t => t.type === 'income').reduce((acc, t) => acc + Number(t.amount || 0), 0);
       const rendimentosReserva = dayTxs
         .filter(t => (t as any).reserveTxType === 'rendimento' || (t as any).isDividendTx)
-        .reduce((acc, t) => acc + Number(t.amount), 0);
+        .reduce((acc, t) => acc + Number(t.amount || 0), 0);
       
       let totalVendaInvestimento = 0;
       let totalCompraInvestimento = 0;
@@ -147,9 +160,9 @@ export const DailyProductivityHeatmap: React.FC<DailyProductivityHeatmapProps> =
       dayTxs.forEach(t => {
         if ((t as any).isInvestmentTx) {
           if (t.type === 'income') {
-            totalVendaInvestimento += Number(t.amount);
+            totalVendaInvestimento += Number(t.amount || 0);
           } else {
-            totalCompraInvestimento += Number(t.amount);
+            totalCompraInvestimento += Number(t.amount || 0);
           }
           return;
         }
@@ -184,7 +197,7 @@ export const DailyProductivityHeatmap: React.FC<DailyProductivityHeatmapProps> =
           return;
         }
 
-        const rawAmt = (t as any).rawAmount !== undefined ? Number((t as any).rawAmount) : Number(t.amount);
+        const rawAmt = (t as any).rawAmount !== undefined ? Number((t as any).rawAmount) : Number(t.amount || 0);
         if (t.type === 'expense') {
           if (isFuelCategory(t.category)) {
             fuelExpense += rawAmt;
@@ -204,7 +217,7 @@ export const DailyProductivityHeatmap: React.FC<DailyProductivityHeatmapProps> =
 
         const isReserveAporteVal = (t as any).isReserveAporte === true || t.category === 'Aporte Reserva';
         const isReserveUse = t.is_reserve_use === true || (t as any).isReserveUseOriginal === true || (t as any).isReserveTx === true;
-        const rawAmt = (t as any).rawAmount !== undefined ? Number((t as any).rawAmount) : Number(t.amount);
+        const rawAmt = (t as any).rawAmount !== undefined ? Number((t as any).rawAmount) : Number(t.amount || 0);
 
         if (isReserveAporteVal) {
           rawReserveAporte += rawAmt;
@@ -234,17 +247,21 @@ export const DailyProductivityHeatmap: React.FC<DailyProductivityHeatmapProps> =
       // Lucro Líquido
       const profit = incomeNoRendimento - opExpPuro - perExpPuro;
 
-      entry.income = inc;
-      entry.expense = realExpense;
-      entry.opExpense = opExpPuro;
-      entry.perExpense = perExpPuro;
-      entry.profit = profit;
-      entry.cashBalance = cashBalance;
-      entry.km = km;
-      entry.deliveries = deliveries;
+      computedMap[dateStr] = {
+        income: inc,
+        expense: realExpense,
+        opExpense: opExpPuro,
+        perExpense: perExpPuro,
+        profit,
+        cashBalance,
+        km,
+        deliveries,
+        txCount: entry.txCount,
+        txs: dayTxs
+      };
     });
 
-    return map;
+    return computedMap;
   }, [transactions, settings]);
 
   // Todas as datas com atividade real

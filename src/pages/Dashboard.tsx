@@ -3000,6 +3000,7 @@ export function Dashboard() {
       {/* Calendário & Heatmap de Produtividade Diária (GitHub Style) */}
       <DailyProductivityHeatmap
         transactions={allTransactionsAdjusted}
+        settings={settings}
         hideValues={hideValues}
         formatCurrency={formatCurrency}
       />
