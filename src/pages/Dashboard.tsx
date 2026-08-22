@@ -2406,11 +2406,13 @@ export function Dashboard() {
 
   const expensesData = useMemo(() => {
     const colorsMap = ['#ef4444', '#f97316', '#eab308', '#3b82f6', '#8b5cf6', '#14b8a6', '#64748b'];
-    return Object.entries(expensesDataRaw).map(([name, value], idx) => ({
-      name, 
-      value: value as number, 
-      color: name === 'Compra de Investimentos' ? '#3b82f6' : colorsMap[idx % colorsMap.length]
-    }));
+    return Object.entries(expensesDataRaw)
+      .map(([name, value], idx) => ({
+        name, 
+        value: value as number, 
+        color: name === 'Compra de Investimentos' ? '#3b82f6' : colorsMap[idx % colorsMap.length]
+      }))
+      .sort((a, b) => b.value - a.value);
   }, [expensesDataRaw]);
 
   const formatCurrency = (val: any, ignoreHide = false) => {
@@ -2458,12 +2460,14 @@ export function Dashboard() {
 
   const incomeData = useMemo(() => {
     const incomeColorsMap = ['#10b981', '#3b82f6', '#8b5cf6', '#f59e0b', '#06b6d4', '#84cc16'];
-    return Object.entries(incomeByCategory).map(([name, value], idx) => {
-      let color = incomeColorsMap[idx % incomeColorsMap.length];
-      if (name === 'Venda de Investimentos') color = '#10b981';
-      if (name === 'Proventos (Investimentos)') color = '#8b5cf6';
-      return { name, value: value as number, color };
-    });
+    return Object.entries(incomeByCategory)
+      .map(([name, value], idx) => {
+        let color = incomeColorsMap[idx % incomeColorsMap.length];
+        if (name === 'Venda de Investimentos') color = '#10b981';
+        if (name === 'Proventos (Investimentos)') color = '#8b5cf6';
+        return { name, value: value as number, color };
+      })
+      .sort((a, b) => b.value - a.value);
   }, [incomeByCategory]);
 
   const opCats = settings?.operational_expense_categories || ['Combustível', 'Pedágio', 'Manutenção'];
@@ -5034,8 +5038,7 @@ export function Dashboard() {
                 </div>
 
                 <div className="mt-4 flex-1 overflow-y-auto pr-2 custom-scrollbar space-y-2">
-                  {incomeData
-                    .sort((a, b) => b.value - a.value)
+                  {[...incomeData]
                     .map((entry, idx) => {
                       const totalInc = incomeData.reduce((acc, curr) => acc + curr.value, 0);
                       const percentage = ((entry.value / totalInc) * 100).toFixed(1);
@@ -5114,8 +5117,7 @@ export function Dashboard() {
                 </div>
 
                 <div className="mt-4 flex-1 overflow-y-auto pr-2 custom-scrollbar space-y-2">
-                  {expensesData
-                    .sort((a, b) => b.value - a.value)
+                  {[...expensesData]
                     .map((entry, idx) => {
                       const totalExp = expensesData.reduce((acc, curr) => acc + curr.value, 0);
                       const percentage = ((entry.value / totalExp) * 100).toFixed(1);
