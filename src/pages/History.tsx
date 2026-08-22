@@ -840,6 +840,15 @@ export function History() {
 
     return reserves
       .map(r => {
+        const roundedBalance = Math.round((r.saldo_atual || 0) * 100) / 100;
+        const roundedGoal = Math.round((r.meta_objetivo || 0) * 100) / 100;
+        const isGoalReached = Boolean(roundedGoal > 0 && roundedBalance >= roundedGoal);
+        const isPaused = r.status === 'inactive' || r.is_paused;
+
+        if (isPaused || isGoalReached) {
+          return { reserve: r, amount: 0 };
+        }
+
         const isDefaultReserve = r.name === 'Reserva de Manutenção' || r.name === 'Reserva de Emergência';
         if (r.created_at && !isDefaultReserve) {
           const creationDay = r.created_at.split('T')[0];

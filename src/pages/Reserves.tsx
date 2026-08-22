@@ -608,7 +608,9 @@ export function Reserves() {
   // CALCULATE AUTOMATIC SUGGESTION ENGINE
   // ----------------------------------------------------
   const calculateSuggestion = (res: Reserve): number => {
-    const isGoalReached = Boolean(res.meta_objetivo && res.meta_objetivo > 0 && res.saldo_atual !== undefined && res.saldo_atual >= res.meta_objetivo);
+    const roundedBalance = Math.round((res.saldo_atual || 0) * 100) / 100;
+    const roundedGoal = Math.round((res.meta_objetivo || 0) * 100) / 100;
+    const isGoalReached = Boolean(roundedGoal > 0 && roundedBalance >= roundedGoal);
     const isPaused = res.status === 'inactive' || res.is_paused;
 
     if (isPaused || isGoalReached) {
@@ -732,7 +734,9 @@ export function Reserves() {
       return true;
     });
     const historyRules = res.rule_history || [];
-    const isGoalReached = res.meta_objetivo && res.saldo_atual !== undefined && res.saldo_atual >= res.meta_objetivo;
+    const roundedBalance = Math.round((res.saldo_atual || 0) * 100) / 100;
+    const roundedGoal = Math.round((res.meta_objetivo || 0) * 100) / 100;
+    const isGoalReached = Boolean(roundedGoal > 0 && roundedBalance >= roundedGoal);
     const isPaused = res.status === 'inactive' || res.is_paused;
 
     let auditDetails: {
@@ -1963,7 +1967,7 @@ export function Reserves() {
                                 <span className="text-muted-foreground font-semibold">
                                   {((r.saldo_atual || 0) / r.meta_objetivo * 100).toFixed(1)}% atingido
                                 </span>
-                                {r.meta_objetivo - (r.saldo_atual || 0) > 0 ? (
+                                {Math.round((r.meta_objetivo - (r.saldo_atual || 0)) * 100) / 100 > 0 ? (
                                   <span className="text-rose-500 font-extrabold flex items-center gap-0.5">
                                     Falta {formatCurrency(r.meta_objetivo - (r.saldo_atual || 0))}
                                   </span>
