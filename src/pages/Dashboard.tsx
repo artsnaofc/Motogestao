@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { motion } from 'motion/react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { 
@@ -80,7 +80,8 @@ import {
   CheckSquare,
   CalendarRange,
   Activity,
-  LogOut
+  LogOut,
+  RotateCw
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
@@ -90,6 +91,8 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { ExecutiveReportModal } from '../components/ExecutiveReportModal';
 import { PatrimonyEvolution } from '../components/PatrimonyEvolution';
+import { DailyProductivityHeatmap } from '../components/dashboard/DailyProductivityHeatmap';
+import { PassiveIncomeEvolutionChart } from '../components/dashboard/PassiveIncomeEvolutionChart';
 import {
   BarChart,
   Bar,
@@ -462,6 +465,59 @@ export function Dashboard() {
     }
   };
 
+  const cyclePeriod = (e?: React.MouseEvent) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    if (globalPeriod === 'last30Days') {
+      setGlobalPeriod('last90Days');
+      toast.info('Período alterado para: 90 dias', { duration: 1500 });
+    } else if (globalPeriod === 'last90Days') {
+      setGlobalPeriod('thisYear');
+      toast.info('Período alterado para: Este Ano', { duration: 1500 });
+    } else {
+      setGlobalPeriod('last30Days');
+      toast.info('Período alterado para: 30 dias', { duration: 1500 });
+    }
+  };
+
+  // Escala para o gráfico Ganhos vs Despesas proporcional ao período
+  const [gainsExpensesScale, setGainsExpensesScale] = useState<'daily' | 'weekly' | 'monthly'>('weekly');
+
+  const availableGainsExpensesScales = useMemo((): ('daily' | 'weekly' | 'monthly')[] => {
+    if (globalPeriod === 'thisYear' || globalPeriod === 'lastYear' || globalPeriod === 'all') {
+      return ['weekly', 'monthly'];
+    }
+    if (globalPeriod === 'last90Days' || globalPeriod === 'last3Months') {
+      return ['daily', 'weekly', 'monthly'];
+    }
+    // 30 dias e períodos menores/iguais a 30 dias (permite diária e semanal)
+    return ['daily', 'weekly'];
+  }, [globalPeriod]);
+
+  // Sincroniza a escala padrão proporcionalmente quando o período é alterado:
+  // 30 dias -> Semanal (padrão solicitado)
+  // 90 dias -> Semanal (padrão com opções diária, semanal e mensal)
+  // Este Ano -> Mensal (padrão com opções semanal e mensal)
+  useEffect(() => {
+    if (globalPeriod === 'last30Days') {
+      setGainsExpensesScale('weekly');
+    } else if (globalPeriod === 'last90Days' || globalPeriod === 'last3Months') {
+      setGainsExpensesScale('weekly');
+    } else if (globalPeriod === 'thisYear' || globalPeriod === 'lastYear' || globalPeriod === 'all') {
+      setGainsExpensesScale('monthly');
+    } else {
+      setGainsExpensesScale('weekly');
+    }
+  }, [globalPeriod]);
+
+  const activeGainsExpensesScale = useMemo(() => {
+    return availableGainsExpensesScales.includes(gainsExpensesScale)
+      ? gainsExpensesScale
+      : availableGainsExpensesScales[0];
+  }, [availableGainsExpensesScales, gainsExpensesScale]);
+
   const handleLegendClick = (o: any) => {
     const { dataKey } = o;
     if (dataKey) {
@@ -501,88 +557,122 @@ export function Dashboard() {
   };
 
   // --- CALCULATIONS ---
-  const now = new Date();
-  
-  let currentStart = new Date();
-  let currentEnd = new Date();
-  let pastStart = new Date();
-  let pastEnd = new Date();
-  
-  if (globalPeriod === 'today') {
-    currentStart = startOfDay(now);
-    currentEnd = endOfDay(now);
-    pastStart = startOfDay(subDays(now, 1));
-    pastEnd = endOfDay(subDays(now, 1));
-  } else if (globalPeriod === 'yesterday') {
-    currentStart = startOfDay(subDays(now, 1));
-    currentEnd = endOfDay(subDays(now, 1));
-    pastStart = startOfDay(subDays(now, 2));
-    pastEnd = endOfDay(subDays(now, 2));
-  } else if (globalPeriod === 'last7Days') {
-    currentStart = startOfDay(subDays(now, 6));
-    currentEnd = endOfDay(now);
-    pastStart = startOfDay(subDays(now, 13));
-    pastEnd = endOfDay(subDays(now, 7));
-  } else if (globalPeriod === 'last30Days') {
-    currentStart = startOfDay(subDays(now, 29));
-    currentEnd = endOfDay(now);
-    pastStart = startOfDay(subDays(now, 59));
-    pastEnd = endOfDay(subDays(now, 30));
-  } else if (globalPeriod === 'last90Days') {
-    currentStart = startOfDay(subDays(now, 89));
-    currentEnd = endOfDay(now);
-    pastStart = startOfDay(subDays(now, 179));
-    pastEnd = endOfDay(subDays(now, 90));
-  } else if (globalPeriod === 'week') {
-    currentStart = startOfWeek(now, { weekStartsOn: 1 });
-    currentEnd = endOfWeek(now, { weekStartsOn: 1 });
-    pastStart = startOfWeek(subWeeks(now, 1), { weekStartsOn: 1 });
-    pastEnd = subWeeks(now, 1); // Compare up to same point in previous week
-  } else if (globalPeriod === 'lastMonth') {
-    const lastM = subMonths(now, 1);
-    currentStart = startOfMonth(lastM);
-    currentEnd = endOfMonth(lastM);
-    const pastM = subMonths(now, 2);
-    pastStart = startOfMonth(pastM);
-    pastEnd = endOfMonth(pastM);
-  } else if (globalPeriod === 'month') {
-    currentStart = startOfMonth(now);
-    currentEnd = endOfMonth(now);
-    const pastM = subMonths(now, 1);
-    pastStart = startOfMonth(pastM);
-    pastEnd = pastM; // Compare up to same point in previous month
-  } else if (globalPeriod === 'last3Months') {
-    currentStart = startOfDay(subMonths(now, 3));
-    currentEnd = endOfDay(now);
-    pastStart = startOfDay(subMonths(now, 6));
-    pastEnd = startOfDay(subMonths(now, 3));
-  } else if (globalPeriod === 'thisYear') {
-    currentStart = startOfYear(now);
-    currentEnd = endOfDay(now);
-    pastStart = startOfYear(subYears(now, 1));
-    pastEnd = subYears(now, 1); // Compare up to same point in previous year
-  } else if (globalPeriod === 'lastYear') {
-    const lastY = subYears(now, 1);
-    currentStart = startOfYear(lastY);
-    currentEnd = endOfYear(lastY);
-    const pastY = subYears(now, 2);
-    pastStart = startOfYear(pastY);
-    pastEnd = endOfYear(pastY);
-  } else if (globalPeriod === 'custom' && customDateRange && customDateRange.start && customDateRange.end) {
-    try {
-      const parsedStart = parseLocalDate(customDateRange.start);
-      const parsedEnd = parseLocalDate(customDateRange.end);
-      if (!isNaN(parsedStart.getTime()) && !isNaN(parsedEnd.getTime())) {
-        currentStart = startOfDay(parsedStart);
-        currentEnd = endOfDay(parsedEnd);
-        const duration = currentEnd.getTime() - currentStart.getTime();
-        pastEnd = new Date(currentStart.getTime() - 1);
-        pastStart = new Date(pastEnd.getTime() - duration);
+  const {
+    currentStart,
+    currentEnd,
+    pastStart,
+    pastEnd,
+    currentStartTime,
+    currentEndTime,
+    pastStartTime,
+    pastEndTime,
+    chartStart,
+    chartEnd
+  } = useMemo(() => {
+    const nowDate = new Date();
+    let cStart = new Date();
+    let cEnd = new Date();
+    let pStart = new Date();
+    let pEnd = new Date();
+
+    if (globalPeriod === 'today') {
+      cStart = startOfDay(nowDate);
+      cEnd = endOfDay(nowDate);
+      pStart = startOfDay(subDays(nowDate, 1));
+      pEnd = endOfDay(subDays(nowDate, 1));
+    } else if (globalPeriod === 'yesterday') {
+      cStart = startOfDay(subDays(nowDate, 1));
+      cEnd = endOfDay(subDays(nowDate, 1));
+      pStart = startOfDay(subDays(nowDate, 2));
+      pEnd = endOfDay(subDays(nowDate, 2));
+    } else if (globalPeriod === 'last7Days') {
+      cStart = startOfDay(subDays(nowDate, 6));
+      cEnd = endOfDay(nowDate);
+      pStart = startOfDay(subDays(nowDate, 13));
+      pEnd = endOfDay(subDays(nowDate, 7));
+    } else if (globalPeriod === 'last30Days') {
+      cStart = startOfDay(subDays(nowDate, 29));
+      cEnd = endOfDay(nowDate);
+      pStart = startOfDay(subDays(nowDate, 59));
+      pEnd = endOfDay(subDays(nowDate, 30));
+    } else if (globalPeriod === 'last90Days') {
+      cStart = startOfDay(subDays(nowDate, 89));
+      cEnd = endOfDay(nowDate);
+      pStart = startOfDay(subDays(nowDate, 179));
+      pEnd = endOfDay(subDays(nowDate, 90));
+    } else if (globalPeriod === 'week') {
+      cStart = startOfWeek(nowDate, { weekStartsOn: 1 });
+      cEnd = endOfWeek(nowDate, { weekStartsOn: 1 });
+      pStart = startOfWeek(subWeeks(nowDate, 1), { weekStartsOn: 1 });
+      pEnd = subWeeks(nowDate, 1); // Compare up to same point in previous week
+    } else if (globalPeriod === 'lastMonth') {
+      const lastM = subMonths(nowDate, 1);
+      cStart = startOfMonth(lastM);
+      cEnd = endOfMonth(lastM);
+      const pastM = subMonths(nowDate, 2);
+      pStart = startOfMonth(pastM);
+      pEnd = endOfMonth(pastM);
+    } else if (globalPeriod === 'month') {
+      cStart = startOfMonth(nowDate);
+      cEnd = endOfMonth(nowDate);
+      const pastM = subMonths(nowDate, 1);
+      pStart = startOfMonth(pastM);
+      pEnd = pastM; // Compare up to same point in previous month
+    } else if (globalPeriod === 'last3Months') {
+      cStart = startOfDay(subMonths(nowDate, 3));
+      cEnd = endOfDay(nowDate);
+      pStart = startOfDay(subMonths(nowDate, 6));
+      pEnd = startOfDay(subMonths(nowDate, 3));
+    } else if (globalPeriod === 'thisYear') {
+      cStart = startOfYear(nowDate);
+      cEnd = endOfDay(nowDate);
+      pStart = startOfYear(subYears(nowDate, 1));
+      pEnd = subYears(nowDate, 1); // Compare up to same point in previous year
+    } else if (globalPeriod === 'lastYear') {
+      const lastY = subYears(nowDate, 1);
+      cStart = startOfYear(lastY);
+      cEnd = endOfYear(lastY);
+      const pastY = subYears(nowDate, 2);
+      pStart = startOfYear(pastY);
+      pEnd = endOfYear(pastY);
+    } else if (globalPeriod === 'custom' && customDateRange && customDateRange.start && customDateRange.end) {
+      try {
+        const parsedStart = parseLocalDate(customDateRange.start);
+        const parsedEnd = parseLocalDate(customDateRange.end);
+        if (!isNaN(parsedStart.getTime()) && !isNaN(parsedEnd.getTime())) {
+          cStart = startOfDay(parsedStart);
+          cEnd = endOfDay(parsedEnd);
+          const duration = cEnd.getTime() - cStart.getTime();
+          pEnd = new Date(cStart.getTime() - 1);
+          pStart = new Date(pEnd.getTime() - duration);
+        }
+      } catch {
+        // Fallback already prefilled
       }
-    } catch {
-      // Fallback already prefilled
     }
-  }
+
+    let chStart = cStart;
+    let chEnd = cEnd > nowDate ? endOfDay(nowDate) : cEnd;
+    if (globalPeriod === 'all') {
+      chStart = startOfDay(subDays(nowDate, 29));
+      chEnd = endOfDay(nowDate);
+    }
+
+    return {
+      currentStart: cStart,
+      currentEnd: cEnd,
+      pastStart: pStart,
+      pastEnd: pEnd,
+      currentStartTime: cStart.getTime(),
+      currentEndTime: cEnd.getTime(),
+      pastStartTime: pStart.getTime(),
+      pastEndTime: pEnd.getTime(),
+      chartStart: chStart,
+      chartEnd: chEnd
+    };
+  }, [globalPeriod, customDateRange]);
+
+  const now = useMemo(() => new Date(), []);
 
   // Create virtual transaction objects for reserve 'aporte' transactions
   const reserveAportesAsTxs = useMemo(() => {
@@ -671,50 +761,62 @@ export function Dashboard() {
   }, [transactions, reserveAportesAsTxs, investmentTxsAsVirtual, dividendTxsAsVirtual]);
 
   const allTransactionsAdjusted = useMemo(() => {
-    return adjustTransactionsForReserves(allTransactions);
+    const base = adjustTransactionsForReserves(allTransactions);
+    return base.map(t => {
+      const dateStr = t.date.split('T')[0];
+      const parsedDate = parseLocalDate(t.date);
+      return {
+        ...t,
+        _dateStr: dateStr,
+        _monthStr: dateStr.substring(0, 7),
+        _ts: parsedDate.getTime(),
+      };
+    });
   }, [allTransactions, settings]);
 
   const currentPeriodTx = useMemo(() => {
-    return allTransactionsAdjusted.filter(t => {
-      if (globalPeriod === 'all') return true;
-      return isWithinInterval(parseLocalDate(t.date), { start: currentStart, end: currentEnd });
-    });
-  }, [allTransactionsAdjusted, globalPeriod, currentStart, currentEnd]);
+    if (globalPeriod === 'all') return allTransactionsAdjusted;
+    return allTransactionsAdjusted.filter(t => (t as any)._ts >= currentStartTime && (t as any)._ts <= currentEndTime);
+  }, [allTransactionsAdjusted, globalPeriod, currentStartTime, currentEndTime]);
 
   const pastPeriodTx = useMemo(() => {
-    return allTransactionsAdjusted.filter(t => {
-      if (globalPeriod === 'all') return false;
-      return isWithinInterval(parseLocalDate(t.date), { start: pastStart, end: pastEnd });
-    });
-  }, [allTransactionsAdjusted, globalPeriod, pastStart, pastEnd]);
+    if (globalPeriod === 'all') return [];
+    return allTransactionsAdjusted.filter(t => (t as any)._ts >= pastStartTime && (t as any)._ts <= pastEndTime);
+  }, [allTransactionsAdjusted, globalPeriod, pastStartTime, pastEndTime]);
 
   const currentPeriodInvTx = useMemo(() => {
-    return (investmentTransactions || []).filter(t => {
-      if (globalPeriod === 'all') return true;
-      return isWithinInterval(parseLocalDate(t.date), { start: currentStart, end: currentEnd });
+    if (!investmentTransactions || investmentTransactions.length === 0) return [];
+    if (globalPeriod === 'all') return investmentTransactions;
+    return investmentTransactions.filter(t => {
+      const ts = parseLocalDate(t.date).getTime();
+      return ts >= currentStartTime && ts <= currentEndTime;
     });
-  }, [investmentTransactions, globalPeriod, currentStart, currentEnd]);
+  }, [investmentTransactions, globalPeriod, currentStartTime, currentEndTime]);
 
   const pastPeriodInvTx = useMemo(() => {
-    return (investmentTransactions || []).filter(t => {
-      if (globalPeriod === 'all') return false;
-      return isWithinInterval(parseLocalDate(t.date), { start: pastStart, end: pastEnd });
+    if (!investmentTransactions || investmentTransactions.length === 0 || globalPeriod === 'all') return [];
+    return investmentTransactions.filter(t => {
+      const ts = parseLocalDate(t.date).getTime();
+      return ts >= pastStartTime && ts <= pastEndTime;
     });
-  }, [investmentTransactions, globalPeriod, pastStart, pastEnd]);
+  }, [investmentTransactions, globalPeriod, pastStartTime, pastEndTime]);
 
   const currentPeriodDividends = useMemo(() => {
-    return (dividends || []).filter(t => {
-      if (globalPeriod === 'all') return true;
-      return isWithinInterval(parseLocalDate(t.date), { start: currentStart, end: currentEnd });
+    if (!dividends || dividends.length === 0) return [];
+    if (globalPeriod === 'all') return dividends;
+    return dividends.filter(t => {
+      const ts = parseLocalDate(t.date).getTime();
+      return ts >= currentStartTime && ts <= currentEndTime;
     });
-  }, [dividends, globalPeriod, currentStart, currentEnd]);
+  }, [dividends, globalPeriod, currentStartTime, currentEndTime]);
 
   const pastPeriodDividends = useMemo(() => {
-    return (dividends || []).filter(t => {
-      if (globalPeriod === 'all') return false;
-      return isWithinInterval(parseLocalDate(t.date), { start: pastStart, end: pastEnd });
+    if (!dividends || dividends.length === 0 || globalPeriod === 'all') return [];
+    return dividends.filter(t => {
+      const ts = parseLocalDate(t.date).getTime();
+      return ts >= pastStartTime && ts <= pastEndTime;
     });
-  }, [dividends, globalPeriod, pastStart, pastEnd]);
+  }, [dividends, globalPeriod, pastStartTime, pastEndTime]);
 
   const currentPeriodInvBuys = useMemo(() => {
     return currentPeriodInvTx.filter(t => t.operation === 'buy').reduce((acc, t) => acc + Number(t.amount), 0);
@@ -878,8 +980,8 @@ export function Dashboard() {
     };
   };
 
-  const current = calcTotals(currentPeriodTx);
-  const past = calcTotals(pastPeriodTx);
+  const current = useMemo(() => calcTotals(currentPeriodTx), [currentPeriodTx, settings]);
+  const past = useMemo(() => calcTotals(pastPeriodTx), [pastPeriodTx, settings]);
 
   const totalInReserves = useMemo(() => {
     return (reserves || []).reduce((sum, r) => sum + (r.saldo_atual || 0), 0);
@@ -887,27 +989,47 @@ export function Dashboard() {
 
   const totalDepositedInReservesPeriod = useMemo(() => {
     return (reserveTransactions || [])
-      .filter(rt => rt.type === 'aporte' && (globalPeriod === 'all' || isWithinInterval(parseLocalDate(rt.date), { start: currentStart, end: currentEnd })))
+      .filter(rt => {
+        if (rt.type !== 'aporte') return false;
+        if (globalPeriod === 'all') return true;
+        const ts = parseLocalDate(rt.date).getTime();
+        return ts >= currentStartTime && ts <= currentEndTime;
+      })
       .reduce((sum, rt) => sum + Number(rt.amount), 0);
-  }, [reserveTransactions, globalPeriod, currentStart, currentEnd]);
+  }, [reserveTransactions, globalPeriod, currentStartTime, currentEndTime]);
 
   const totalRendimentosInReservesPeriod = useMemo(() => {
     return (reserveTransactions || [])
-      .filter(rt => rt.type === 'rendimento' && (globalPeriod === 'all' || isWithinInterval(parseLocalDate(rt.date), { start: currentStart, end: currentEnd })))
+      .filter(rt => {
+        if (rt.type !== 'rendimento') return false;
+        if (globalPeriod === 'all') return true;
+        const ts = parseLocalDate(rt.date).getTime();
+        return ts >= currentStartTime && ts <= currentEndTime;
+      })
       .reduce((sum, rt) => sum + Number(rt.amount), 0);
-  }, [reserveTransactions, globalPeriod, currentStart, currentEnd]);
+  }, [reserveTransactions, globalPeriod, currentStartTime, currentEndTime]);
 
   const totalUtilizadosInReservesPeriod = useMemo(() => {
     return (reserveTransactions || [])
-      .filter(rt => rt.type === 'utilizacao' && (globalPeriod === 'all' || isWithinInterval(parseLocalDate(rt.date), { start: currentStart, end: currentEnd })))
+      .filter(rt => {
+        if (rt.type !== 'utilizacao') return false;
+        if (globalPeriod === 'all') return true;
+        const ts = parseLocalDate(rt.date).getTime();
+        return ts >= currentStartTime && ts <= currentEndTime;
+      })
       .reduce((sum, rt) => sum + Number(rt.amount), 0);
-  }, [reserveTransactions, globalPeriod, currentStart, currentEnd]);
+  }, [reserveTransactions, globalPeriod, currentStartTime, currentEndTime]);
 
   const pastTotalUtilizadosInReservesPeriod = useMemo(() => {
+    if (globalPeriod === 'all') return 0;
     return (reserveTransactions || [])
-      .filter(rt => rt.type === 'utilizacao' && (globalPeriod !== 'all' && isWithinInterval(parseLocalDate(rt.date), { start: pastStart, end: pastEnd })))
+      .filter(rt => {
+        if (rt.type !== 'utilizacao') return false;
+        const ts = parseLocalDate(rt.date).getTime();
+        return ts >= pastStartTime && ts <= pastEndTime;
+      })
       .reduce((sum, rt) => sum + Number(rt.amount), 0);
-  }, [reserveTransactions, globalPeriod, pastStart, pastEnd]);
+  }, [reserveTransactions, globalPeriod, pastStartTime, pastEndTime]);
 
   const reserveMovimentacaoPeriod = useMemo(() => {
     return totalDepositedInReservesPeriod + totalRendimentosInReservesPeriod - totalUtilizadosInReservesPeriod;
@@ -952,9 +1074,6 @@ export function Dashboard() {
       if (price > 0) {
         return acc + (price * quantity);
       }
-      // If no quote, use the last transaction price as fallback? 
-      // Or just return the cost basis? For now, if no quote, we just sum what we can.
-      // Better: find last transaction price for this ticker
       const lastTx = investmentTransactions
         .filter(t => t.ticker === ticker)
         .sort((a, b) => b.date.localeCompare(a.date))[0];
@@ -1006,9 +1125,6 @@ export function Dashboard() {
     
     const startOfLastW = subWeeks(startOfW, 1);
     const endOfLastW = subWeeks(endOfW, 1);
-    
-    // allTransactionsAdjusted is not readily available here if it is declared later or maybe we should use allTransactionsAdjusted?
-    // Let's check if allTransactionsAdjusted exists here.
     
     const weeklyTxs = (allTransactionsAdjusted || []).filter(t => isWithinInterval(parseLocalDate(t.date), { start: startOfW, end: endOfW }));
     const lastWeeklyTxs = (allTransactionsAdjusted || []).filter(t => isWithinInterval(parseLocalDate(t.date), { start: startOfLastW, end: endOfLastW }));
@@ -1068,49 +1184,51 @@ export function Dashboard() {
     return ((curr - prev) / Math.abs(prev)) * 100;
   };
 
-  const currentOpPuro = current.opExpPuro;
-  const pastOpPuro = past.opExpPuro;
+  const summary = useMemo(() => {
+    const currentOpPuro = current.opExpPuro;
+    const pastOpPuro = past.opExpPuro;
 
-  const currentNetPatrimony = current.net + current.reserveAporte + (current.rendimentosReserva || 0) - (current.totalVendaInvestimento || 0);
-  const pastNetPatrimony = past.net + past.reserveAporte + (past.rendimentosReserva || 0) - (past.totalVendaInvestimento || 0);
+    const currentNetPatrimony = current.net + current.reserveAporte + (current.rendimentosReserva || 0) - (current.totalVendaInvestimento || 0);
+    const pastNetPatrimony = past.net + past.reserveAporte + (past.rendimentosReserva || 0) - (past.totalVendaInvestimento || 0);
 
-  const currentNetOpProfit = current.income - currentOpPuro;
-  const pastNetOpProfit = past.income - pastOpPuro;
+    const currentNetOpProfit = current.income - currentOpPuro;
+    const pastNetOpProfit = past.income - pastOpPuro;
 
-  const summary = {
-    totalIncome: current.income,
-    totalExpense: current.expense,
-    netProfit: current.net,
-    netProfitPatrimony: currentNetPatrimony,
-    netOperatingProfit: currentNetOpProfit,
-    opExpense: current.opExp,
-    opExpensePuro: currentOpPuro,
-    opExpReserve: current.opExpReserve,
-    reserveAporte: current.reserveAporte,
-    rawReserveAporte: current.rawReserveAporte,
-    reserveSpending: current.reserveSpending,
-    perExpense: current.perExp,
-    perExpReserve: current.perExpReserve,
-    totalCompraInvestimento: current.totalCompraInvestimento || 0,
-    totalVendaInvestimento: current.totalVendaInvestimento || 0,
-    rendimentosReserva: current.rendimentosReserva || 0,
-    fuelExpense: current.fuelExpense || 0,
-    fuelReserve: current.fuelReserve || 0,
-    maintenanceExpense: current.maintenanceExpense || 0,
-    km: current.km,
-    incomeTrend: getTrend(current.income, past.income),
-    expenseTrend: getTrend(current.expense, past.expense),
-    profitTrend: getTrend(current.net, past.net),
-    netPatrimonyTrend: getTrend(currentNetPatrimony, pastNetPatrimony),
-    netOperatingProfitTrend: getTrend(currentNetOpProfit, pastNetOpProfit),
-    opTrend: getTrend(current.opExp, past.opExp),
-    opPuroTrend: getTrend(currentOpPuro, pastOpPuro),
-    reserveAporteTrend: getTrend(current.reserveAporte, past.reserveAporte),
-    rawReserveAporteTrend: getTrend(current.rawReserveAporte, past.rawReserveAporte),
-    reserveSpendingTrend: getTrend(current.reserveSpending, past.reserveSpending),
-    perTrend: getTrend(current.perExp, past.perExp),
-    kmTrend: getTrend(current.km, past.km),
-  };
+    return {
+      totalIncome: current.income,
+      totalExpense: current.expense,
+      netProfit: current.net,
+      netProfitPatrimony: currentNetPatrimony,
+      netOperatingProfit: currentNetOpProfit,
+      opExpense: current.opExp,
+      opExpensePuro: currentOpPuro,
+      opExpReserve: current.opExpReserve,
+      reserveAporte: current.reserveAporte,
+      rawReserveAporte: current.rawReserveAporte,
+      reserveSpending: current.reserveSpending,
+      perExpense: current.perExp,
+      perExpReserve: current.perExpReserve,
+      totalCompraInvestimento: current.totalCompraInvestimento || 0,
+      totalVendaInvestimento: current.totalVendaInvestimento || 0,
+      rendimentosReserva: current.rendimentosReserva || 0,
+      fuelExpense: current.fuelExpense || 0,
+      fuelReserve: current.fuelReserve || 0,
+      maintenanceExpense: current.maintenanceExpense || 0,
+      km: current.km,
+      incomeTrend: getTrend(current.income, past.income),
+      expenseTrend: getTrend(current.expense, past.expense),
+      profitTrend: getTrend(current.net, past.net),
+      netPatrimonyTrend: getTrend(currentNetPatrimony, pastNetPatrimony),
+      netOperatingProfitTrend: getTrend(currentNetOpProfit, pastNetOpProfit),
+      opTrend: getTrend(current.opExp, past.opExp),
+      opPuroTrend: getTrend(currentOpPuro, pastOpPuro),
+      reserveAporteTrend: getTrend(current.reserveAporte, past.reserveAporte),
+      rawReserveAporteTrend: getTrend(current.rawReserveAporte, past.rawReserveAporte),
+      reserveSpendingTrend: getTrend(current.reserveSpending, past.reserveSpending),
+      perTrend: getTrend(current.perExp, past.perExp),
+      kmTrend: getTrend(current.km, past.km),
+    };
+  }, [current, past, globalPeriod]);
 
   const analyticsMargins = useMemo(() => {
     const income = (summary.totalIncome || 0) + (summary.rendimentosReserva || 0) + (summary.totalVendaInvestimento || 0);
@@ -1549,21 +1667,11 @@ export function Dashboard() {
     }
   };
 
-  // Start and end of the charts based on the selected period
-  let chartStart = currentStart;
-  let chartEnd = currentEnd > now ? endOfDay(now) : currentEnd;
-
-  // If period is all, let's show the last 30 days of data or up to today
-  if (globalPeriod === 'all') {
-    chartStart = startOfDay(subDays(now, 29));
-    chartEnd = endOfDay(now);
-  }
-
   // Pre-group transactions by date (yyyy-MM-dd) to keep complexity O(N + D) instead of O(N * D)
   const txsByDate = useMemo(() => {
     const groups: Record<string, Transaction[]> = {};
     currentPeriodTx.forEach(t => {
-      const dateStr = t.date.split('T')[0];
+      const dateStr = (t as any)._dateStr || t.date.split('T')[0];
       if (!groups[dateStr]) {
         groups[dateStr] = [];
       }
@@ -1575,7 +1683,7 @@ export function Dashboard() {
   const pastTxsByDate = useMemo(() => {
     const groups: Record<string, Transaction[]> = {};
     pastPeriodTx.forEach(t => {
-      const dateStr = t.date.split('T')[0];
+      const dateStr = (t as any)._dateStr || t.date.split('T')[0];
       if (!groups[dateStr]) {
         groups[dateStr] = [];
       }
@@ -1587,7 +1695,7 @@ export function Dashboard() {
   const allTxsByDate = useMemo(() => {
     const groups: Record<string, Transaction[]> = {};
     (allTransactionsAdjusted || []).forEach(t => {
-      const dateStr = t.date.split('T')[0];
+      const dateStr = (t as any)._dateStr || t.date.split('T')[0];
       if (!groups[dateStr]) {
         groups[dateStr] = [];
       }
@@ -1597,23 +1705,24 @@ export function Dashboard() {
   }, [allTransactionsAdjusted]);
 
   // Generate list of days in the interval
-  let dayList: Date[] = [];
-  try {
-    if (chartStart <= chartEnd) {
-      dayList = eachDayOfInterval({ start: chartStart, end: chartEnd });
+  const dayList = useMemo(() => {
+    let list: Date[] = [];
+    try {
+      if (chartStart <= chartEnd) {
+        list = eachDayOfInterval({ start: chartStart, end: chartEnd });
+      }
+    } catch (err) {
+      console.error("Erro ao calcular os dias dos gráficos:", err);
     }
-  } catch (err) {
-    console.error("Erro ao calcular os dias dos gráficos:", err);
-  }
-
-  // Avoid visual lag or browser freeze if there are too many days (cap at at most 366 days)
-  if (dayList.length > 366) {
-    dayList = dayList.slice(dayList.length - 366);
-  }
+    if (list.length > 366) {
+      list = list.slice(list.length - 366);
+    }
+    return list;
+  }, [chartStart, chartEnd]);
 
   // Determine whether to use a weekly scale.
   // We use weekly scale if the period selected represents 90 days (approx 3 months) or more.
-  const isWeeklyScale = dayList.length >= 90;
+  const isWeeklyScale = useMemo(() => dayList.length >= 90, [dayList]);
 
   // Process the dailyData and dailyTrendData based on the scale
   const chartDataResult = useMemo(() => {
@@ -1807,6 +1916,56 @@ export function Dashboard() {
   const weeklyGainsExpensesData = useMemo(() => {
     if (!dayList || dayList.length === 0) return [];
 
+    if (activeGainsExpensesScale === 'daily') {
+      const targetDays = dayList.length > 31
+        ? dayList.filter(day => {
+            const dayStr = format(day, 'yyyy-MM-dd');
+            return (allTxsByDate[dayStr] || []).length > 0;
+          })
+        : dayList;
+
+      return targetDays.map(day => {
+        const dayStr = format(day, 'yyyy-MM-dd');
+        const dayTxs = allTxsByDate[dayStr] || [];
+        const { income, expense, rendimentosReserva, totalVendaInvestimento } = calcTotals(dayTxs);
+        return {
+          date: format(day, 'dd/MM'),
+          income: Number((income + (rendimentosReserva || 0) + (totalVendaInvestimento || 0)).toFixed(2)),
+          expense: Number(expense.toFixed(2))
+        };
+      });
+    }
+
+    if (activeGainsExpensesScale === 'monthly') {
+      const monthsMap: Record<string, { start: Date; txs: Transaction[] }> = {};
+      dayList.forEach(day => {
+        const startM = startOfMonth(day);
+        const mKey = format(startM, 'yyyy-MM');
+        if (!monthsMap[mKey]) {
+          monthsMap[mKey] = {
+            start: startM,
+            txs: []
+          };
+        }
+        const dStr = format(day, 'yyyy-MM-dd');
+        if (allTxsByDate[dStr]) {
+          monthsMap[mKey].txs.push(...allTxsByDate[dStr]);
+        }
+      });
+
+      return Object.keys(monthsMap).sort().map(mKey => {
+        const item = monthsMap[mKey];
+        const label = format(item.start, 'MMM/yy', { locale: ptBR });
+        const { income, expense, rendimentosReserva, totalVendaInvestimento } = calcTotals(item.txs);
+        return {
+          date: label,
+          income: Number((income + (rendimentosReserva || 0) + (totalVendaInvestimento || 0)).toFixed(2)),
+          expense: Number(expense.toFixed(2))
+        };
+      });
+    }
+
+    // Default: 'weekly'
     const weeksMap: Record<string, { start: Date; end: Date; txs: Transaction[] }> = {};
 
     dayList.forEach(day => {
@@ -1835,9 +1994,7 @@ export function Dashboard() {
       .map(key => weeksMap[key])
       .filter(w => w.txs.length > 0);
 
-    const displayWeeks = sortedWeeks.slice(-4);
-
-    return displayWeeks.map(w => {
+    return sortedWeeks.map(w => {
       const label = `Sem. ${format(w.start, 'dd/MM')}-${format(w.end, 'dd/MM')}`;
       const { income, expense, rendimentosReserva, totalVendaInvestimento } = calcTotals(w.txs);
       return { 
@@ -1846,7 +2003,7 @@ export function Dashboard() {
         expense: Number(expense.toFixed(2)) 
       };
     });
-  }, [dayList, allTxsByDate]);
+  }, [dayList, allTxsByDate, activeGainsExpensesScale]);
 
   const marginsTrendData = useMemo(() => {
     if (!dayList || dayList.length === 0) return [];
@@ -2041,19 +2198,23 @@ export function Dashboard() {
     });
   }, [dayList, txsByDate, pastTxsByDate, settings, currentStart, pastStart]);
 
-  const last6Months = Array.from({ length: 6 }).map((_, i) => subMonths(now, 5 - i)).filter(month => format(month, 'yyyy-MM') >= '2026-03');
-  const monthlyTrend = last6Months.map(month => {
-    const monthTxs = allTransactionsAdjusted.filter(t => isSameMonth(parseLocalDate(t.date), month));
-    const { income, expense, net, reserveAporte, rendimentosReserva, totalVendaInvestimento, totalCompraInvestimento } = calcTotals(monthTxs);
-    return {
-      month: format(month, 'MMM', { locale: ptBR }),
-      faturamento: Number((income + (rendimentosReserva || 0) + (totalVendaInvestimento || 0)).toFixed(2)),
-      despesas: Number(expense.toFixed(2)),
-      lucro: Number(net.toFixed(2)),
-      lucroPatrimonio: Number((net + reserveAporte + (rendimentosReserva || 0) - (totalVendaInvestimento || 0)).toFixed(2)),
-      hasTxs: monthTxs.length > 0
-    };
-  }).filter(m => m.hasTxs);
+  const monthlyTrend = useMemo(() => {
+    const nowDate = new Date();
+    const last6Months = Array.from({ length: 6 }).map((_, i) => subMonths(nowDate, 5 - i)).filter(month => format(month, 'yyyy-MM') >= '2026-03');
+    return last6Months.map(month => {
+      const monthStr = format(month, 'yyyy-MM');
+      const monthTxs = (allTransactionsAdjusted || []).filter(t => (t as any)._monthStr === monthStr);
+      const { income, expense, net, reserveAporte, rendimentosReserva, totalVendaInvestimento } = calcTotals(monthTxs);
+      return {
+        month: format(month, 'MMM', { locale: ptBR }),
+        faturamento: Number((income + (rendimentosReserva || 0) + (totalVendaInvestimento || 0)).toFixed(2)),
+        despesas: Number(expense.toFixed(2)),
+        lucro: Number(net.toFixed(2)),
+        lucroPatrimonio: Number((net + reserveAporte + (rendimentosReserva || 0) - (totalVendaInvestimento || 0)).toFixed(2)),
+        hasTxs: monthTxs.length > 0
+      };
+    }).filter(m => m.hasTxs);
+  }, [allTransactionsAdjusted, settings]);
 
   const weekdayData = useMemo(() => {
     const weekdayNames = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
@@ -2543,6 +2704,34 @@ export function Dashboard() {
         const totalInResv = (reserves || []).reduce((sum, r) => sum + (r.saldo_atual || 0), 0);
         return (
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3.5">
+            {/* Patrimônio Total - Primeiro no grid e no mobile ocupa 2 quadrados */}
+            <Card className="border border-border/70 hover:border-amber-500/30 shadow-2xs hover:shadow-sm transition-all duration-200 overflow-hidden relative group rounded-2xl bg-card/95 col-span-2 sm:col-span-1">
+              <div className="absolute top-0 right-0 w-24 h-24 bg-amber-500/5 rounded-full blur-2xl group-hover:bg-amber-500/10 transition-all pointer-events-none" />
+              <CardContent className="p-4 sm:p-4.5 flex flex-col justify-between h-full space-y-2">
+                <div className="flex items-center justify-between">
+                  <p className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">Patrimônio Total</p>
+                  <div className="h-8.5 w-8.5 bg-amber-500/10 border border-amber-500/20 rounded-xl flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+                    <Crown className="w-4 h-4 text-amber-500" />
+                  </div>
+                </div>
+                <div>
+                  <div className="text-lg sm:text-xl font-black text-amber-600 dark:text-amber-500 font-mono tracking-tight truncate">
+                    {formatCurrency(totalPatrimony)}
+                  </div>
+                  <div className="flex items-center gap-2 text-[10px] text-muted-foreground font-semibold mt-1">
+                    <div className="flex items-center gap-1 truncate">
+                      <span className="h-1.5 w-1.5 rounded-full bg-violet-500 shrink-0" />
+                      <span className="truncate">Base: {formatCompactValue(caixaMaisReservas)}</span>
+                    </div>
+                    <div className="flex items-center gap-1 truncate">
+                      <span className="h-1.5 w-1.5 rounded-full bg-blue-500 shrink-0" />
+                      <span className="truncate">Inv: {formatCompactValue(totalInvestmentEquity)}</span>
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
             {/* Caixa */}
             <Card className="border border-border/70 hover:border-emerald-500/30 shadow-2xs hover:shadow-sm transition-all duration-200 overflow-hidden relative group rounded-2xl bg-card/95">
               <div className="absolute top-0 right-0 w-24 h-24 bg-emerald-500/5 rounded-full blur-2xl group-hover:bg-emerald-500/10 transition-all pointer-events-none" />
@@ -2587,34 +2776,6 @@ export function Dashboard() {
                     <div className="flex items-center gap-1 truncate">
                       <span className="h-1.5 w-1.5 rounded-full bg-pink-500 shrink-0" />
                       <span className="truncate">Res: {formatCompactValue(totalInResv)}</span>
-                    </div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Patrimônio Total */}
-            <Card className="border border-border/70 hover:border-amber-500/30 shadow-2xs hover:shadow-sm transition-all duration-200 overflow-hidden relative group rounded-2xl bg-card/95 col-span-2 sm:col-span-1">
-              <div className="absolute top-0 right-0 w-24 h-24 bg-amber-500/5 rounded-full blur-2xl group-hover:bg-amber-500/10 transition-all pointer-events-none" />
-              <CardContent className="p-4 sm:p-4.5 flex flex-col justify-between h-full space-y-2">
-                <div className="flex items-center justify-between">
-                  <p className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">Patrimônio Total</p>
-                  <div className="h-8.5 w-8.5 bg-amber-500/10 border border-amber-500/20 rounded-xl flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
-                    <Crown className="w-4 h-4 text-amber-500" />
-                  </div>
-                </div>
-                <div>
-                  <div className="text-lg sm:text-xl font-black text-amber-600 dark:text-amber-500 font-mono tracking-tight truncate">
-                    {formatCurrency(totalPatrimony)}
-                  </div>
-                  <div className="flex items-center gap-2 text-[10px] text-muted-foreground font-semibold mt-1">
-                    <div className="flex items-center gap-1 truncate">
-                      <span className="h-1.5 w-1.5 rounded-full bg-violet-500 shrink-0" />
-                      <span className="truncate">Base: {formatCompactValue(caixaMaisReservas)}</span>
-                    </div>
-                    <div className="flex items-center gap-1 truncate">
-                      <span className="h-1.5 w-1.5 rounded-full bg-blue-500 shrink-0" />
-                      <span className="truncate">Inv: {formatCompactValue(totalInvestmentEquity)}</span>
                     </div>
                   </div>
                 </div>
@@ -2671,16 +2832,16 @@ export function Dashboard() {
       {/* Weekly Goal Section */}
       {/* Metas Semanais */}
       <Card className="border border-border/70 shadow-2xs hover:shadow-xs transition-all duration-200 overflow-hidden relative group bg-card/95 rounded-2xl">
-        <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/5 rounded-full blur-3xl group-hover:bg-indigo-500/10 transition-all pointer-events-none" />
-        <CardContent className="p-4 sm:p-5 space-y-4">
-          <div className="flex items-center justify-between border-b border-border/40 pb-3">
-            <div className="flex items-center gap-2.5">
-              <div className="h-8.5 w-8.5 bg-indigo-500/10 border border-indigo-500/20 rounded-xl flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
-                <Target className="w-4.5 h-4.5 text-indigo-500" />
+        <div className="absolute top-0 right-0 w-28 h-28 bg-indigo-500/5 rounded-full blur-3xl group-hover:bg-indigo-500/10 transition-all pointer-events-none" />
+        <CardContent className="p-3.5 sm:p-4 space-y-3">
+          <div className="flex items-center justify-between border-b border-border/40 pb-2.5">
+            <div className="flex items-center gap-2">
+              <div className="h-7 w-7 bg-indigo-500/10 border border-indigo-500/20 rounded-lg flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+                <Target className="w-4 h-4 text-indigo-500" />
               </div>
               <div>
                 <h3 className="text-xs sm:text-sm font-black text-foreground uppercase tracking-wider">Metas Semanais</h3>
-                <p className="text-[10px] text-muted-foreground font-medium">Acompanhe seu desempenho de segunda a domingo</p>
+                <p className="text-[9.5px] sm:text-[10px] text-muted-foreground font-medium">Acompanhe seu desempenho de segunda a domingo</p>
               </div>
             </div>
             <Button 
@@ -2699,45 +2860,45 @@ export function Dashboard() {
                   console.error("Erro ao abrir configuração de metas:", err);
                 }
               }}
-              className="h-8 px-3 text-xs font-extrabold text-indigo-500 bg-indigo-500/10 hover:bg-indigo-500/20 border-indigo-500/20 rounded-xl transition-all active:scale-95 gap-1.5 shadow-2xs"
+              className="h-7 px-2.5 text-xs font-extrabold text-indigo-500 bg-indigo-500/10 hover:bg-indigo-500/20 border-indigo-500/20 rounded-lg transition-all active:scale-95 gap-1.5 shadow-2xs"
             >
-              <Settings className="w-3.5 h-3.5" />
+              <Settings className="w-3 h-3" />
               <span className="hidden sm:inline">Configurar</span> Metas
             </Button>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 sm:gap-3">
             {/* Faturamento Goal Column */}
-            <div className="bg-muted/20 border border-border/50 hover:border-indigo-500/30 rounded-xl p-3.5 sm:p-4 space-y-3 transition-all">
+            <div className="bg-muted/20 border border-border/50 hover:border-indigo-500/30 rounded-xl p-2.5 sm:p-3 space-y-2 transition-all">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-1.5">
-                  <span className="h-2 w-2 rounded-full bg-indigo-500" />
-                  <span className="text-[10.5px] font-extrabold uppercase tracking-wider text-muted-foreground">Faturamento (Bruto)</span>
+                  <span className="h-1.5 w-1.5 rounded-full bg-indigo-500" />
+                  <span className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">Faturamento (Bruto)</span>
                 </div>
                 {weeklyGoalStats.goal > 0 && (
-                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${weeklyGoalStats.evolution >= 0 ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20' : 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20'}`}>
+                  <span className={`text-[9px] font-bold px-1.5 py-0.25 rounded-full border ${weeklyGoalStats.evolution >= 0 ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20' : 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20'}`}>
                     {weeklyGoalStats.evolution > 0 ? '+' : ''}{weeklyGoalStats.evolution.toFixed(1)}% vs ant.
                   </span>
                 )}
               </div>
 
               {weeklyGoalStats.goal > 0 ? (
-                <div className="space-y-1.5">
+                <div className="space-y-1">
                   <div className="flex flex-wrap items-baseline justify-between gap-1">
                     <div className="flex items-baseline gap-1.5">
-                      <span className="text-xl sm:text-2xl font-black text-foreground tracking-tight font-mono">
+                      <span className="text-lg sm:text-xl font-black text-foreground tracking-tight font-mono">
                         {hideValues ? '•••••' : formatCurrency(weeklyGoalStats.income)}
                       </span>
-                      <span className="text-xs text-muted-foreground font-semibold">
+                      <span className="text-[11px] text-muted-foreground font-semibold">
                         / {hideValues ? '•••••' : formatCurrency(weeklyGoalStats.goal)}
                       </span>
                     </div>
-                    <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-md ${weeklyGoalStats.income >= weeklyGoalStats.goal ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30' : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20'}`}>
+                    <span className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded-md ${weeklyGoalStats.income >= weeklyGoalStats.goal ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30' : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20'}`}>
                       {weeklyGoalStats.income >= weeklyGoalStats.goal ? 'Meta Batida 🎉' : `${weeklyGoalStats.progress.toFixed(0)}% Atingido`}
                     </span>
                   </div>
 
-                  <div className="text-[10.5px] font-bold text-muted-foreground">
+                  <div className="text-[9.5px] font-bold text-muted-foreground">
                     {weeklyGoalStats.income < weeklyGoalStats.goal ? (
                       <span>Falta <span className="text-rose-500 font-extrabold">{hideValues ? '•••••' : formatCurrency(weeklyGoalStats.goal - weeklyGoalStats.income)}</span> para a meta</span>
                     ) : (
@@ -2746,12 +2907,12 @@ export function Dashboard() {
                   </div>
                 </div>
               ) : (
-                <div className="text-xs font-semibold text-muted-foreground py-2">Meta de faturamento não definida</div>
+                <div className="text-xs font-semibold text-muted-foreground py-1.5">Meta de faturamento não definida</div>
               )}
 
               {weeklyGoalStats.goal > 0 && (
-                <div className="space-y-1.5 pt-1">
-                  <div className="h-2 w-full bg-muted/80 rounded-full overflow-hidden relative">
+                <div className="space-y-1 pt-0.5">
+                  <div className="h-1.5 w-full bg-muted/80 rounded-full overflow-hidden relative">
                     <div 
                       className={`absolute top-0 left-0 h-full rounded-full transition-all duration-700 ease-out opacity-25 ${weeklyGoalStats.lastIsCompleted ? 'bg-emerald-500' : 'bg-muted-foreground'}`}
                       style={{ width: `${Math.min(100, weeklyGoalStats.lastProgress)}%` }}
@@ -2762,7 +2923,7 @@ export function Dashboard() {
                       style={{ width: `${Math.min(100, weeklyGoalStats.progress)}%` }}
                     />
                   </div>
-                  <div className="flex justify-between items-center text-[9.5px] text-muted-foreground font-semibold">
+                  <div className="flex justify-between items-center text-[9px] text-muted-foreground font-semibold">
                     <span>Progresso: <strong className="text-foreground">{weeklyGoalStats.progress.toFixed(1)}%</strong></span>
                     <span>Ant: <strong className="text-foreground">{hideValues ? '••••' : formatCurrency(weeklyGoalStats.lastIncome)}</strong></span>
                   </div>
@@ -2771,36 +2932,36 @@ export function Dashboard() {
             </div>
 
             {/* Lucro Liquido Goal Column */}
-            <div className="bg-muted/20 border border-border/50 hover:border-emerald-500/30 rounded-xl p-3.5 sm:p-4 space-y-3 transition-all">
+            <div className="bg-muted/20 border border-border/50 hover:border-emerald-500/30 rounded-xl p-2.5 sm:p-3 space-y-2 transition-all">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-1.5">
-                  <span className="h-2 w-2 rounded-full bg-emerald-500" />
-                  <span className="text-[10.5px] font-extrabold uppercase tracking-wider text-muted-foreground">Lucro Líquido</span>
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                  <span className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">Lucro Líquido</span>
                 </div>
                 {weeklyGoalStats.netGoal > 0 && (
-                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${weeklyGoalStats.netEvolution >= 0 ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20' : 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20'}`}>
+                  <span className={`text-[9px] font-bold px-1.5 py-0.25 rounded-full border ${weeklyGoalStats.netEvolution >= 0 ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20' : 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20'}`}>
                     {weeklyGoalStats.netEvolution > 0 ? '+' : ''}{weeklyGoalStats.netEvolution.toFixed(1)}% vs ant.
                   </span>
                 )}
               </div>
 
               {weeklyGoalStats.netGoal > 0 ? (
-                <div className="space-y-1.5">
+                <div className="space-y-1">
                   <div className="flex flex-wrap items-baseline justify-between gap-1">
                     <div className="flex items-baseline gap-1.5">
-                      <span className="text-xl sm:text-2xl font-black text-foreground tracking-tight font-mono">
+                      <span className="text-lg sm:text-xl font-black text-foreground tracking-tight font-mono">
                         {hideValues ? '•••••' : formatCurrency(weeklyGoalStats.net)}
                       </span>
-                      <span className="text-xs text-muted-foreground font-semibold">
+                      <span className="text-[11px] text-muted-foreground font-semibold">
                         / {hideValues ? '•••••' : formatCurrency(weeklyGoalStats.netGoal)}
                       </span>
                     </div>
-                    <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-md ${weeklyGoalStats.net >= weeklyGoalStats.netGoal ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30' : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20'}`}>
+                    <span className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded-md ${weeklyGoalStats.net >= weeklyGoalStats.netGoal ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30' : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20'}`}>
                       {weeklyGoalStats.net >= weeklyGoalStats.netGoal ? 'Meta Batida 🎉' : `${weeklyGoalStats.netProgress.toFixed(0)}% Atingido`}
                     </span>
                   </div>
 
-                  <div className="text-[10.5px] font-bold text-muted-foreground">
+                  <div className="text-[9.5px] font-bold text-muted-foreground">
                     {weeklyGoalStats.net < weeklyGoalStats.netGoal ? (
                       <span>Falta <span className="text-rose-500 font-extrabold">{hideValues ? '•••••' : formatCurrency(weeklyGoalStats.netGoal - weeklyGoalStats.net)}</span> para a meta</span>
                     ) : (
@@ -2809,12 +2970,12 @@ export function Dashboard() {
                   </div>
                 </div>
               ) : (
-                <div className="text-xs font-semibold text-muted-foreground py-2">Meta de lucro não definida</div>
+                <div className="text-xs font-semibold text-muted-foreground py-1.5">Meta de lucro não definida</div>
               )}
 
               {weeklyGoalStats.netGoal > 0 && (
-                <div className="space-y-1.5 pt-1">
-                  <div className="h-2 w-full bg-muted/80 rounded-full overflow-hidden relative">
+                <div className="space-y-1 pt-0.5">
+                  <div className="h-1.5 w-full bg-muted/80 rounded-full overflow-hidden relative">
                     <div 
                       className={`absolute top-0 left-0 h-full rounded-full transition-all duration-700 ease-out opacity-25 ${weeklyGoalStats.lastIsNetCompleted ? 'bg-emerald-500' : 'bg-muted-foreground'}`}
                       style={{ width: `${Math.min(100, weeklyGoalStats.lastNetProgress)}%` }}
@@ -2825,7 +2986,7 @@ export function Dashboard() {
                       style={{ width: `${Math.min(100, weeklyGoalStats.netProgress)}%` }}
                     />
                   </div>
-                  <div className="flex justify-between items-center text-[9.5px] text-muted-foreground font-semibold">
+                  <div className="flex justify-between items-center text-[9px] text-muted-foreground font-semibold">
                     <span>Progresso: <strong className="text-foreground">{weeklyGoalStats.netProgress.toFixed(1)}%</strong></span>
                     <span>Ant: <strong className="text-foreground">{hideValues ? '••••' : formatCurrency(weeklyGoalStats.lastNet)}</strong></span>
                   </div>
@@ -2836,6 +2997,13 @@ export function Dashboard() {
         </CardContent>
       </Card>
 
+      {/* Calendário & Heatmap de Produtividade Diária (GitHub Style) */}
+      <DailyProductivityHeatmap
+        transactions={allTransactionsAdjusted}
+        hideValues={hideValues}
+        formatCurrency={formatCurrency}
+      />
+
       {/* Evolução Patrimonial: Caixa, Reservas e Investimentos */}
       <PatrimonyEvolution
         transactions={transactions}
@@ -2845,6 +3013,16 @@ export function Dashboard() {
         settings={settings}
         quotes={quotes}
         dividends={dividends}
+        hideValues={hideValues}
+        formatCurrency={formatCurrency}
+      />
+
+      {/* Curva de Proventos & Renda Passiva */}
+      <PassiveIncomeEvolutionChart
+        dividends={dividends}
+        reserveTransactions={reserveTransactions}
+        investmentTransactions={investmentTransactions}
+        reserves={reserves}
         hideValues={hideValues}
         formatCurrency={formatCurrency}
       />
@@ -3491,6 +3669,64 @@ export function Dashboard() {
             </div>
           </CardContent>
         </Card>
+
+        {/* indicator 9: Combustível (Lançamentos Reais vs Estimado) */}
+        {(() => {
+          const diffFuel = actualFuelCost - estimatedFuelCost;
+          const pastActualFuel = pastPeriodTx
+            .filter(t => t.type === 'expense' && (t.category === 'Combustível' || t.category === 'Combustivel'))
+            .reduce((acc, t) => acc + Number(t.amount), 0);
+          const fuelTrend = getTrend(actualFuelCost, pastActualFuel);
+          
+          // Consumo real calculado em km/L: km rodado ÷ (gasto real ÷ preço/L da config)
+          const fuelPrice = settings?.fuel_price && settings.fuel_price > 0 ? settings.fuel_price : 0;
+          const calculatedKmL = (actualFuelCost > 0 && fuelPrice > 0 && summary.km > 0)
+            ? (summary.km / (actualFuelCost / fuelPrice))
+            : null;
+
+          return (
+            <Card className="border border-border/70 hover:border-amber-500/30 shadow-2xs hover:shadow-sm transition-all duration-200 bg-card/95 flex flex-col justify-between rounded-xl overflow-hidden group">
+              <CardHeader className="p-2.5 pb-1 sm:p-3 sm:pb-1 flex flex-row items-center justify-between space-y-0">
+                <CardTitle className="text-[10px] sm:text-[10.5px] font-extrabold uppercase tracking-wider text-amber-500 w-[85%] truncate">
+                  Combustível
+                </CardTitle>
+                <div className="p-1 bg-amber-500/10 border border-amber-500/20 rounded-lg shrink-0 group-hover:scale-105 transition-transform">
+                  <Fuel className="w-3 h-3 text-amber-500" />
+                </div>
+              </CardHeader>
+              <CardContent className="p-2.5 pt-0 sm:p-3 sm:pt-0 space-y-1.5">
+                <div>
+                  <div className="text-base sm:text-lg font-black text-amber-600 dark:text-amber-500 tracking-tight font-mono leading-tight">
+                    {hideValues ? '•••••' : formatCurrency(actualFuelCost)}
+                  </div>
+                  <div className="flex flex-wrap items-center justify-between gap-1">
+                    {renderTrend(fuelTrend, true)}
+                  </div>
+                </div>
+                <div className="pt-1.5 border-t border-border/40 flex items-center justify-between gap-1 text-[8.5px] font-bold text-muted-foreground leading-none">
+                  <div className="truncate">
+                    <span className="text-[6.5px] sm:text-[7px] uppercase font-black text-amber-500 block">Estimado</span>
+                    <span className="font-mono text-amber-600 dark:text-amber-400 font-bold text-[8px] sm:text-[8.5px]">
+                      {hideValues ? 'R$ •••••' : formatCurrency(estimatedFuelCost)}
+                    </span>
+                  </div>
+                  <div className="truncate border-l border-border/40 pl-1">
+                    <span className="text-[6.5px] sm:text-[7px] uppercase font-black text-muted-foreground block">Diferença</span>
+                    <span className={`font-mono font-bold text-[8px] sm:text-[8.5px] ${diffFuel > 0 ? 'text-rose-500' : 'text-emerald-500'}`}>
+                      {hideValues ? 'R$ •••••' : `${diffFuel > 0 ? '+' : ''}${formatCurrency(diffFuel)}`}
+                    </span>
+                  </div>
+                  <div className="truncate text-right border-l border-border/40 pl-1">
+                    <span className="text-[6.5px] sm:text-[7px] uppercase font-black text-cyan-500 block">Consumo</span>
+                    <span className="font-mono text-foreground font-bold text-[8px] sm:text-[8.5px]">
+                      {hideValues ? '••••' : (calculatedKmL !== null ? `${calculatedKmL.toFixed(1)} km/L` : '-')}
+                    </span>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          );
+        })()}
       </div>
 
       {/* Daily/Weekly Trend (Evolução Diária) */}
@@ -3503,9 +3739,15 @@ export function Dashboard() {
                 Evolução {chartDataResult.scaleLabel === 'Semanal' ? 'Semanal' : 'Diária'}
               </CardTitle>
             </div>
-            <div className="px-3 py-1 bg-violet-400/10 border border-violet-400/20 text-violet-400 text-[10px] sm:text-xs font-black rounded-full select-none">
-              {getPeriodLabel()} • {chartDataResult.scaleLabel}
-            </div>
+            <button
+              type="button"
+              onClick={cyclePeriod}
+              title="Clique para alternar período (30 dias ➔ 90 dias ➔ Este Ano)"
+              className="group inline-flex items-center gap-1.5 px-3 py-1 bg-violet-400/10 hover:bg-violet-400/20 border border-violet-400/30 hover:border-violet-400/60 text-violet-400 text-[10px] sm:text-xs font-black rounded-full transition-all duration-200 cursor-pointer shadow-2xs hover:shadow-xs active:scale-95 select-none"
+            >
+              <span>{getPeriodLabel()} • {chartDataResult.scaleLabel}</span>
+              <RotateCw className="w-2.5 h-2.5 opacity-70 group-hover:rotate-180 transition-transform duration-500" />
+            </button>
           </div>
           <CardDescription className="text-xs">Métricas de Faturamento, Despesas e Lucro Líquido. Clique no nome da linha na legenda para ativar ou desativar.</CardDescription>
         </CardHeader>
@@ -3902,9 +4144,15 @@ export function Dashboard() {
                 Evolução de Quilometragem
               </CardTitle>
             </div>
-            <div className="px-3 py-1 bg-cyan-400/10 border border-cyan-400/20 text-cyan-400 text-[10px] sm:text-xs font-black rounded-full select-none">
-              {getPeriodLabel()}
-            </div>
+            <button
+              type="button"
+              onClick={cyclePeriod}
+              title="Clique para alternar período (30 dias ➔ 90 dias ➔ Este Ano)"
+              className="group inline-flex items-center gap-1.5 px-3 py-1 bg-cyan-400/10 hover:bg-cyan-400/20 border border-cyan-400/30 hover:border-cyan-400/60 text-cyan-400 text-[10px] sm:text-xs font-black rounded-full transition-all duration-200 cursor-pointer shadow-2xs hover:shadow-xs active:scale-95 select-none"
+            >
+              <span>{getPeriodLabel()}</span>
+              <RotateCw className="w-2.5 h-2.5 opacity-70 group-hover:rotate-180 transition-transform duration-500" />
+            </button>
           </div>
           <CardDescription className="text-xs">Quilometragem (km) rodada no período atual comparado ao período anterior.</CardDescription>
         </CardHeader>
@@ -4447,181 +4695,59 @@ export function Dashboard() {
           </div>
 
 
-
-          {/* Painel de Ponto de Equilíbrio (Breakeven) */}
-          <div className="bg-muted/30 border border-border/60 rounded-xl p-3 sm:p-3.5 space-y-2">
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <Target className="w-4 h-4 text-violet-500 shrink-0" />
-                <span className="text-xs font-black uppercase tracking-wider text-foreground">
-                  Ponto de Equilíbrio Financeiro (Breakeven)
-                </span>
-              </div>
-              <span className={`text-[9px] font-black px-2 py-0.5 rounded-full border ${fundamentalIndexes.fatTotal >= fundamentalIndexes.fatBreakeven ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30' : 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30'}`}>
-                {fundamentalIndexes.fatTotal >= fundamentalIndexes.fatBreakeven ? 'Meta Batida' : 'Em Progresso'}
-              </span>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
-              <div className="bg-card/60 p-2 rounded-lg border border-border/40">
-                <span className="text-[9.5px] font-bold text-muted-foreground uppercase block">Receita de Equilíbrio</span>
-                <span className="font-mono font-black text-violet-500 text-sm">
-                  {hideValues ? 'R$ •••••' : formatCurrency(fundamentalIndexes.fatBreakeven)}
-                </span>
-              </div>
-
-              <div className="bg-card/60 p-2 rounded-lg border border-border/40">
-                <span className="text-[9.5px] font-bold text-muted-foreground uppercase block">Quilometragem Mínima</span>
-                <span className="font-mono font-black text-foreground text-sm">
-                  {Math.round(fundamentalIndexes.kmBreakevenTotal)} km
-                </span>
-              </div>
-
-              <div className="bg-card/60 p-2 rounded-lg border border-border/40">
-                <span className="text-[9.5px] font-bold text-muted-foreground uppercase block">Atingimento do Ponto</span>
-                <span className="font-mono font-black text-emerald-500 text-sm">
-                  {fundamentalIndexes.breakevenProgress.toFixed(0)}%
-                </span>
-              </div>
-            </div>
-
-            <div className="h-2 w-full bg-muted rounded-full overflow-hidden">
-              <div 
-                className={`h-full rounded-full transition-all duration-500 ${fundamentalIndexes.fatTotal >= fundamentalIndexes.fatBreakeven ? 'bg-emerald-500' : 'bg-violet-500'}`} 
-                style={{ width: `${Math.min(100, fundamentalIndexes.breakevenProgress)}%` }} 
-              />
-            </div>
-            <p className="text-[10px] text-muted-foreground font-medium">
-              Faturamento necessário para zerar simultaneamente despesas operacionais veiculares e despesas pessoais.
-            </p>
-          </div>
-
-          {/* Diagnostic Banner Corporativo */}
-          <div className="p-3 bg-indigo-500/5 border border-indigo-500/20 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <div className="p-1.5 bg-indigo-500/10 text-indigo-500 rounded-lg shrink-0">
-                <Gauge className="w-4 h-4" />
-              </div>
-              <p className="text-[11px] text-foreground font-medium leading-relaxed">
-                <strong>Análise Operacional:</strong> A operação registra faturamento de <span className="font-mono font-bold text-foreground">{hideValues ? 'R$ •••••' : formatCurrency(fundamentalIndexes.fatTotal)}</span>, margem operacional de <span className="font-mono font-bold text-indigo-500">{fundamentalIndexes.margemOperacional.toFixed(1)}%</span> e CPK unitário de <span className="font-mono font-bold text-amber-500">{hideValues ? 'R$ •••••' : `${formatCurrency(fundamentalIndexes.cpk)}/km`}</span>.
-              </p>
-            </div>
-            <span className="text-[9px] font-extrabold text-indigo-500 bg-indigo-500/10 px-2 py-0.5 rounded-md border border-indigo-500/20 shrink-0 self-end sm:self-auto uppercase tracking-wide">
-              Métricas Consolidadas
-            </span>
-          </div>
         </CardContent>
       </Card>
 
-      {/* Recordes & Conquistas Históricas */}
-      <div className="space-y-4">
-        <div className="flex items-center gap-2 px-1">
-          <Trophy className="w-4 h-4 text-amber-500 shrink-0" />
-          <h2 className="text-xs sm:text-sm font-extrabold uppercase tracking-wider text-muted-foreground">
-            Recordes & Conquistas Históricas
-          </h2>
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-          {/* Recorde 1: Faturamento Diário */}
-          <div className="bg-card hover:bg-muted/10 border border-border/80 rounded-2xl p-4 flex flex-col justify-between transition-all hover:scale-[1.01] hover:border-emerald-500/20 shadow-xs relative overflow-hidden group">
-            <div className="absolute top-0 right-0 w-16 h-16 bg-emerald-500/[0.02] rounded-full blur-xl group-hover:bg-emerald-500/[0.04] transition-all pointer-events-none" />
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-emerald-500/10 text-emerald-500 rounded-xl">
-                <TrendingUp className="w-4 h-4" />
-              </div>
-              <div className="truncate">
-                <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider truncate">Faturamento Diário Máximo</p>
-                <h3 className="text-base sm:text-lg font-black text-emerald-500 tracking-tight mt-0.5 truncate">
-                  {hideValues ? '•••••' : formatCurrency(queryRecords.maxDailyIncome.amount)}
-                </h3>
-              </div>
-            </div>
-            <div className="mt-3 text-[10px] text-muted-foreground font-semibold flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-              Batido em: <span className="text-foreground font-bold">{formatRecordDate(queryRecords.maxDailyIncome.date)}</span>
-            </div>
-          </div>
-
-          {/* Recorde 2: Lucro Diário */}
-          <div className="bg-card hover:bg-muted/10 border border-border/80 rounded-2xl p-4 flex flex-col justify-between transition-all hover:scale-[1.01] hover:border-violet-500/20 shadow-xs relative overflow-hidden group">
-            <div className="absolute top-0 right-0 w-16 h-16 bg-violet-500/[0.02] rounded-full blur-xl group-hover:bg-violet-500/[0.04] transition-all pointer-events-none" />
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-violet-500/10 text-violet-500 rounded-xl">
-                <Award className="w-4 h-4" />
-              </div>
-              <div className="truncate">
-                <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider truncate">Lucro Diário Máximo</p>
-                <h3 className="text-base sm:text-lg font-black text-violet-500 tracking-tight mt-0.5 truncate">
-                  {hideValues ? '•••••' : formatCurrency(queryRecords.maxDailyProfit.amount)}
-                </h3>
-              </div>
-            </div>
-            <div className="mt-3 text-[10px] text-muted-foreground font-semibold flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-violet-500" />
-              Batido em: <span className="text-foreground font-bold">{formatRecordDate(queryRecords.maxDailyProfit.date)}</span>
-            </div>
-          </div>
-
-          {/* Recorde 3: Faturamento Mensal */}
-          <div className="bg-card hover:bg-muted/10 border border-border/80 rounded-2xl p-4 flex flex-col justify-between transition-all hover:scale-[1.01] hover:border-blue-500/20 shadow-xs relative overflow-hidden group">
-            <div className="absolute top-0 right-0 w-16 h-16 bg-blue-500/[0.02] rounded-full blur-xl group-hover:bg-blue-500/[0.04] transition-all pointer-events-none" />
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-blue-500/10 text-blue-500 rounded-xl">
-                <Crown className="w-4 h-4" />
-              </div>
-              <div className="truncate">
-                <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider truncate">Faturamento Mensal Máximo</p>
-                <h3 className="text-base sm:text-lg font-black text-blue-500 tracking-tight mt-0.5 truncate">
-                  {hideValues ? '•••••' : formatCurrency(queryRecords.maxMonthlyIncome.amount)}
-                </h3>
-              </div>
-            </div>
-            <div className="mt-3 text-[10px] text-muted-foreground font-semibold flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
-              Mês: <span className="text-foreground font-bold capitalize">{formatRecordMonth(queryRecords.maxMonthlyIncome.date)}</span>
-            </div>
-          </div>
-
-          {/* Recorde 4: Lucro Mensal */}
-          <div className="bg-card hover:bg-muted/10 border border-border/80 rounded-2xl p-4 flex flex-col justify-between transition-all hover:scale-[1.01] hover:border-amber-500/20 shadow-xs relative overflow-hidden group">
-            <div className="absolute top-0 right-0 w-16 h-16 bg-amber-500/[0.02] rounded-full blur-xl group-hover:bg-amber-500/[0.04] transition-all pointer-events-none" />
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-amber-500/10 text-amber-500 rounded-xl">
-                <Trophy className="w-4 h-4" />
-              </div>
-              <div className="truncate">
-                <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider truncate">Lucro Mensal Máximo</p>
-                <h3 className="text-base sm:text-lg font-black text-amber-500 tracking-tight mt-0.5 truncate">
-                  {hideValues ? '•••••' : formatCurrency(queryRecords.maxMonthlyProfit.amount)}
-                </h3>
-              </div>
-            </div>
-            <div className="mt-3 text-[10px] text-muted-foreground font-semibold flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-              Mês: <span className="text-foreground font-bold capitalize">{formatRecordMonth(queryRecords.maxMonthlyProfit.date)}</span>
-            </div>
-          </div>
-
-        </div>
-      </div>
       {/* Charts Presentation Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* Dynamic scale Bars: Ganhos vs Despesas */}
         <Card className="col-span-1 md:col-span-2 border border-border/80 shadow-xs">
           <CardHeader className="pb-2">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between flex-wrap gap-2">
               <div className="flex items-center gap-2">
                 <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 shrink-0" />
                 <CardTitle className="text-xs sm:text-sm font-extrabold uppercase tracking-wider text-muted-foreground">
                   Ganhos vs Despesas
                 </CardTitle>
               </div>
-              <div className="px-3 py-1 bg-emerald-400/10 border border-emerald-400/20 text-emerald-400 text-[10px] sm:text-xs font-black rounded-full select-none">
-                {getPeriodLabel()} • Semanal
+              <div className="flex items-center gap-2 flex-wrap">
+                {/* Seletor de Escalas proporcional ao período (Diária, Semanal, Mensal) */}
+                <div className="flex items-center p-0.5 bg-muted/60 rounded-xl border border-border/60 shrink-0">
+                  {availableGainsExpensesScales.map((scale) => {
+                    const labels = { daily: 'Diária', weekly: 'Semanal', monthly: 'Mensal' };
+                    const isSel = activeGainsExpensesScale === scale;
+                    return (
+                      <button
+                        key={scale}
+                        type="button"
+                        onClick={() => setGainsExpensesScale(scale)}
+                        className={`px-2.5 py-0.5 text-[10px] font-extrabold rounded-lg transition-all cursor-pointer ${
+                          isSel ? 'bg-emerald-500 text-white shadow-xs' : 'text-muted-foreground hover:text-foreground'
+                        }`}
+                      >
+                        {labels[scale]}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Badge Período Clicável */}
+                <button
+                  type="button"
+                  onClick={cyclePeriod}
+                  title="Clique para alternar período (30 dias ➔ 90 dias ➔ Este Ano)"
+                  className="group inline-flex items-center gap-1.5 px-3 py-1 bg-emerald-400/10 hover:bg-emerald-400/20 border border-emerald-400/30 hover:border-emerald-400/60 text-emerald-400 text-[10px] sm:text-xs font-black rounded-full transition-all duration-200 cursor-pointer shadow-2xs hover:shadow-xs active:scale-95 select-none"
+                >
+                  <span>{getPeriodLabel()}</span>
+                  <RotateCw className="w-2.5 h-2.5 opacity-70 group-hover:rotate-180 transition-transform duration-500" />
+                </button>
               </div>
             </div>
-            <CardDescription className="text-xs">Visualização do faturamento bruto contra o total de despesas agrupado por semana.</CardDescription>
+            <CardDescription className="text-xs">
+              Visualização do faturamento bruto contra o total de despesas agrupado por {
+                activeGainsExpensesScale === 'daily' ? 'dia' : activeGainsExpensesScale === 'weekly' ? 'semana' : 'mês'
+              }.
+            </CardDescription>
           </CardHeader>
           <CardContent className="h-[360px] w-full pt-4">
             <ResponsiveContainer width="100%" height={340}>
@@ -4694,13 +4820,19 @@ export function Dashboard() {
                   <span className="text-[10px] font-bold opacity-80 uppercase tracking-wider">Média Total Semanal:</span>
                   <span>{formatCurrency(pizzariaOrFreteTab === 'pizzaria' ? totalWeeklyPizzaria : totalWeeklyFrete)}</span>
                 </div>
-                <div className={`px-3 py-1 border text-[10px] sm:text-xs font-black rounded-full select-none transition-colors ${
-                  pizzariaOrFreteTab === 'pizzaria'
-                    ? 'bg-orange-400/10 border-orange-400/20 text-orange-400'
-                    : 'bg-cyan-400/10 border-cyan-400/20 text-cyan-400'
-                }`}>
-                  {getPeriodLabel()}
-                </div>
+                <button
+                  type="button"
+                  onClick={cyclePeriod}
+                  title="Clique para alternar período (30 dias ➔ 90 dias ➔ Este Ano)"
+                  className={`group inline-flex items-center gap-1.5 px-3 py-1 border text-[10px] sm:text-xs font-black rounded-full select-none transition-all duration-200 cursor-pointer shadow-2xs hover:shadow-xs active:scale-95 ${
+                    pizzariaOrFreteTab === 'pizzaria'
+                      ? 'bg-orange-400/10 hover:bg-orange-400/20 border-orange-400/30 hover:border-orange-400/60 text-orange-400'
+                      : 'bg-cyan-400/10 hover:bg-cyan-400/20 border-cyan-400/30 hover:border-cyan-400/60 text-cyan-400'
+                  }`}
+                >
+                  <span>{getPeriodLabel()}</span>
+                  <RotateCw className="w-2.5 h-2.5 opacity-70 group-hover:rotate-180 transition-transform duration-500" />
+                </button>
               </div>
             </div>
             <CardDescription className="text-xs">
@@ -4762,9 +4894,15 @@ export function Dashboard() {
                   <span className="text-[10px] font-bold opacity-80 uppercase tracking-wider">Média Total Semanal:</span>
                   <span>{formatCurrency(totalWeeklyGanhos)}</span>
                 </div>
-                <div className="px-3 py-1 bg-blue-400/10 border border-blue-400/20 text-blue-400 text-[10px] sm:text-xs font-black rounded-full select-none">
-                  {getPeriodLabel()}
-                </div>
+                <button
+                  type="button"
+                  onClick={cyclePeriod}
+                  title="Clique para alternar período (30 dias ➔ 90 dias ➔ Este Ano)"
+                  className="group inline-flex items-center gap-1.5 px-3 py-1 bg-blue-400/10 hover:bg-blue-400/20 border border-blue-400/30 hover:border-blue-400/60 text-blue-400 text-[10px] sm:text-xs font-black rounded-full transition-all duration-200 cursor-pointer shadow-2xs hover:shadow-xs active:scale-95 select-none"
+                >
+                  <span>{getPeriodLabel()}</span>
+                  <RotateCw className="w-2.5 h-2.5 opacity-70 group-hover:rotate-180 transition-transform duration-500" />
+                </button>
               </div>
             </div>
             <CardDescription className="text-xs">Média de ganhos brutos para cada dia da semana.</CardDescription>
@@ -4810,9 +4948,15 @@ export function Dashboard() {
                   <span className="text-[10px] font-bold opacity-80 uppercase tracking-wider">Média Total Semanal:</span>
                   <span>{formatCurrency(totalWeeklyGastos)}</span>
                 </div>
-                <div className="px-3 py-1 bg-rose-400/10 border border-rose-400/20 text-rose-400 text-[10px] sm:text-xs font-black rounded-full select-none">
-                  {getPeriodLabel()}
-                </div>
+                <button
+                  type="button"
+                  onClick={cyclePeriod}
+                  title="Clique para alternar período (30 dias ➔ 90 dias ➔ Este Ano)"
+                  className="group inline-flex items-center gap-1.5 px-3 py-1 bg-rose-400/10 hover:bg-rose-400/20 border border-rose-400/30 hover:border-rose-400/60 text-rose-400 text-[10px] sm:text-xs font-black rounded-full transition-all duration-200 cursor-pointer shadow-2xs hover:shadow-xs active:scale-95 select-none"
+                >
+                  <span>{getPeriodLabel()}</span>
+                  <RotateCw className="w-2.5 h-2.5 opacity-70 group-hover:rotate-180 transition-transform duration-500" />
+                </button>
               </div>
             </div>
             <CardDescription className="text-xs">Média de despesas totais para cada dia da semana.</CardDescription>
@@ -5144,53 +5288,6 @@ export function Dashboard() {
                 </div>
               </div>
             </div>
-          </CardContent>
-        </Card>
-        
-        {/* Combustível: Estimado (KM) vs Lançamentos reais */}
-        <Card className="col-span-1 md:col-span-2 border border-border/80 shadow-xs">
-          <CardHeader className="border-b border-border/50">
-            <CardTitle className="text-xs sm:text-sm font-extrabold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-              <Fuel className="w-4 h-4 text-amber-500" /> Rendimento Combustível: Estimado vs Lançamentos Reais
-            </CardTitle>
-            <CardDescription className="text-xs">Controle cruzado entre a estimativa matemática de gasto por KM rodado e suas despesas de combustível registradas na bomba.</CardDescription>
-          </CardHeader>
-          <CardContent className="pt-6">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="bg-muted/10 p-4 rounded-xl border border-border/60 flex flex-col justify-between">
-                <div>
-                  <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Cálculo Estimado por KM</span>
-                  <p className="text-xl sm:text-2xl font-black text-amber-500 font-mono mt-1">{formatCurrency(estimatedFuelCost)}</p>
-                </div>
-                <p className="text-[10px] text-muted-foreground font-semibold mt-4 line-clamp-2">
-                  Regra do veículo configurada: <span className="text-foreground">{settings?.vehicle_km_per_liter} km/L</span> com preço básico de <span className="text-foreground">{formatCurrency(settings?.fuel_price || 0)}/L</span>.
-                </p>
-              </div>
-              <div className="bg-muted/10 p-4 rounded-xl border border-border/60 flex flex-col justify-between">
-                <div>
-                  <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Comprovantes Reais</span>
-                  <p className={`text-xl sm:text-2xl font-black font-mono mt-1 ${actualFuelCost > estimatedFuelCost ? 'text-rose-500' : 'text-emerald-500'}`}>
-                    {formatCurrency(actualFuelCost)}
-                  </p>
-                </div>
-                <div className="space-y-1 mt-4">
-                  <div className="flex justify-between text-[11px] font-semibold">
-                    <span className="text-muted-foreground">Ágio/Diferença:</span>
-                    <span className={actualFuelCost - estimatedFuelCost > 0 ? 'text-rose-500' : 'text-emerald-500'}>
-                      {formatCurrency(actualFuelCost - estimatedFuelCost)}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </div>
-            {estimatedFuelCost > 0 && (
-              <div className="mt-4 p-3.5 bg-primary/[0.03] border border-primary/10 rounded-xl flex items-start gap-2 text-xs text-muted-foreground">
-                <Info className="w-4 h-4 text-primary shrink-0 mt-0.5" />
-                <p className="leading-relaxed">
-                  Para maior precisão, mantenha as despesas de combustível sincronizadas e registre sempre o odômetro de faturamento inicial/final nas corridas de Pizzaria ou Frete.
-                </p>
-              </div>
-            )}
           </CardContent>
         </Card>
       </div>

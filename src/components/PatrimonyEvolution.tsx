@@ -84,8 +84,8 @@ export const PatrimonyEvolution: React.FC<PatrimonyEvolutionProps> = ({
 
   // Selected Year
   const [selectedYear, setSelectedYear] = useState<number>(currentYear);
-  // Chart Visual Mode
-  const [chartType, setChartType] = useState<ChartType>('area');
+  // Chart Visual Mode (default: 'bar')
+  const [chartType, setChartType] = useState<ChartType>('bar');
   // Show Table Detail
   const [showTable, setShowTable] = useState<boolean>(false);
 
@@ -762,53 +762,53 @@ export const PatrimonyEvolution: React.FC<PatrimonyEvolutionProps> = ({
                 />
                 <RechartsTooltip content={<CustomTooltip />} />
                 
-                {visibleSeries.Caixa && (
-                  <Area
-                    type="monotone"
-                    dataKey="Caixa"
-                    name="Caixa"
-                    stackId="1"
-                    stroke="#10b981"
-                    strokeWidth={2}
-                    fillOpacity={1}
-                    fill="url(#colorCaixa)"
-                  />
-                )}
-                {visibleSeries.Reservas && (
-                  <Area
-                    type="monotone"
-                    dataKey="Reservas"
-                    name="Reservas"
-                    stackId="1"
-                    stroke="#ec4899"
-                    strokeWidth={2}
-                    fillOpacity={1}
-                    fill="url(#colorReservas)"
-                  />
-                )}
-                {visibleSeries.Investimentos && (
-                  <Area
-                    type="monotone"
-                    dataKey="Investimentos"
-                    name="Investimentos"
-                    stackId="1"
-                    stroke="#f59e0b"
-                    strokeWidth={2}
-                    fillOpacity={1}
-                    fill="url(#colorInvestimentos)"
-                  />
-                )}
-                {visibleSeries.PatrimonioTotal && (
-                  <Line
-                    type="monotone"
-                    dataKey="PatrimonioTotal"
-                    name="Patrimônio Total"
-                    stroke="#6366f1"
-                    strokeWidth={3.5}
-                    dot={{ r: 4, stroke: '#6366f1', strokeWidth: 2, fill: '#18181b' }}
-                    activeDot={{ r: 7 }}
-                  />
-                )}
+                <Area
+                  key="area-caixa"
+                  type="monotone"
+                  dataKey="Caixa"
+                  name="Caixa"
+                  stackId="1"
+                  stroke="#10b981"
+                  strokeWidth={2}
+                  fillOpacity={1}
+                  fill="url(#colorCaixa)"
+                  hide={!visibleSeries.Caixa}
+                />
+                <Area
+                  key="area-reservas"
+                  type="monotone"
+                  dataKey="Reservas"
+                  name="Reservas"
+                  stackId="1"
+                  stroke="#ec4899"
+                  strokeWidth={2}
+                  fillOpacity={1}
+                  fill="url(#colorReservas)"
+                  hide={!visibleSeries.Reservas}
+                />
+                <Area
+                  key="area-investimentos"
+                  type="monotone"
+                  dataKey="Investimentos"
+                  name="Investimentos"
+                  stackId="1"
+                  stroke="#f59e0b"
+                  strokeWidth={2}
+                  fillOpacity={1}
+                  fill="url(#colorInvestimentos)"
+                  hide={!visibleSeries.Investimentos}
+                />
+                <Line
+                  key="line-patrimonio-area"
+                  type="monotone"
+                  dataKey="PatrimonioTotal"
+                  name="Patrimônio Total"
+                  stroke="#6366f1"
+                  strokeWidth={3.5}
+                  dot={{ r: 4, stroke: '#6366f1', strokeWidth: 2, fill: '#18181b' }}
+                  activeDot={{ r: 7 }}
+                  hide={!visibleSeries.PatrimonioTotal}
+                />
               </AreaChart>
             ) : chartType === 'line' ? (
               <LineChart data={processedData} margin={{ top: 15, right: 15, left: -15, bottom: 0 }}>
@@ -822,51 +822,51 @@ export const PatrimonyEvolution: React.FC<PatrimonyEvolutionProps> = ({
                 />
                 <RechartsTooltip content={<CustomTooltip />} />
 
-                {visibleSeries.Caixa && (
-                  <Line
-                    type="monotone"
-                    dataKey="Caixa"
-                    name="Caixa"
-                    stroke="#10b981"
-                    strokeWidth={2.5}
-                    dot={{ r: 4, stroke: '#10b981', strokeWidth: 2, fill: '#18181b' }}
-                    activeDot={{ r: 6 }}
-                  />
-                )}
-                {visibleSeries.Reservas && (
-                  <Line
-                    type="monotone"
-                    dataKey="Reservas"
-                    name="Reservas"
-                    stroke="#ec4899"
-                    strokeWidth={2.5}
-                    dot={{ r: 4, stroke: '#ec4899', strokeWidth: 2, fill: '#18181b' }}
-                    activeDot={{ r: 6 }}
-                  />
-                )}
-                {visibleSeries.Investimentos && (
-                  <Line
-                    type="monotone"
-                    dataKey="Investimentos"
-                    name="Investimentos"
-                    stroke="#f59e0b"
-                    strokeWidth={2.5}
-                    dot={{ r: 4, stroke: '#f59e0b', strokeWidth: 2, fill: '#18181b' }}
-                    activeDot={{ r: 6 }}
-                  />
-                )}
-                {visibleSeries.PatrimonioTotal && (
-                  <Line
-                    type="monotone"
-                    dataKey="PatrimonioTotal"
-                    name="Patrimônio Total"
-                    stroke="#6366f1"
-                    strokeWidth={3.5}
-                    strokeDasharray="4 4"
-                    dot={{ r: 5, stroke: '#6366f1', strokeWidth: 2, fill: '#18181b' }}
-                    activeDot={{ r: 7 }}
-                  />
-                )}
+                <Line
+                  key="line-caixa"
+                  type="monotone"
+                  dataKey="Caixa"
+                  name="Caixa"
+                  stroke="#10b981"
+                  strokeWidth={2.5}
+                  dot={{ r: 4, stroke: '#10b981', strokeWidth: 2, fill: '#18181b' }}
+                  activeDot={{ r: 6 }}
+                  hide={!visibleSeries.Caixa}
+                />
+                <Line
+                  key="line-reservas"
+                  type="monotone"
+                  dataKey="Reservas"
+                  name="Reservas"
+                  stroke="#ec4899"
+                  strokeWidth={2.5}
+                  dot={{ r: 4, stroke: '#ec4899', strokeWidth: 2, fill: '#18181b' }}
+                  activeDot={{ r: 6 }}
+                  hide={!visibleSeries.Reservas}
+                />
+                <Line
+                  key="line-investimentos"
+                  type="monotone"
+                  dataKey="Investimentos"
+                  name="Investimentos"
+                  stroke="#f59e0b"
+                  strokeWidth={2.5}
+                  dot={{ r: 4, stroke: '#f59e0b', strokeWidth: 2, fill: '#18181b' }}
+                  activeDot={{ r: 6 }}
+                  hide={!visibleSeries.Investimentos}
+                />
+                <Line
+                  key="line-patrimonio"
+                  type="monotone"
+                  dataKey="PatrimonioTotal"
+                  name="Patrimônio Total"
+                  stroke="#6366f1"
+                  strokeWidth={3.5}
+                  strokeDasharray="4 4"
+                  dot={{ r: 5, stroke: '#6366f1', strokeWidth: 2, fill: '#18181b' }}
+                  activeDot={{ r: 7 }}
+                  hide={!visibleSeries.PatrimonioTotal}
+                />
               </LineChart>
             ) : (
               <BarChart data={processedData} margin={{ top: 15, right: 15, left: -15, bottom: 0 }}>
@@ -880,15 +880,33 @@ export const PatrimonyEvolution: React.FC<PatrimonyEvolutionProps> = ({
                 />
                 <RechartsTooltip content={<CustomTooltip />} />
 
-                {visibleSeries.Caixa && (
-                  <Bar dataKey="Caixa" name="Caixa" stackId="a" fill="#10b981" radius={[0, 0, 0, 0]} />
-                )}
-                {visibleSeries.Reservas && (
-                  <Bar dataKey="Reservas" name="Reservas" stackId="a" fill="#ec4899" radius={[0, 0, 0, 0]} />
-                )}
-                {visibleSeries.Investimentos && (
-                  <Bar dataKey="Investimentos" name="Investimentos" stackId="a" fill="#f59e0b" radius={[4, 4, 0, 0]} />
-                )}
+                <Bar
+                  key="bar-caixa"
+                  dataKey="Caixa"
+                  name="Caixa"
+                  stackId="a"
+                  fill="#10b981"
+                  radius={!visibleSeries.Reservas && !visibleSeries.Investimentos ? [4, 4, 0, 0] : [0, 0, 0, 0]}
+                  hide={!visibleSeries.Caixa}
+                />
+                <Bar
+                  key="bar-reservas"
+                  dataKey="Reservas"
+                  name="Reservas"
+                  stackId="a"
+                  fill="#ec4899"
+                  radius={!visibleSeries.Investimentos ? [4, 4, 0, 0] : [0, 0, 0, 0]}
+                  hide={!visibleSeries.Reservas}
+                />
+                <Bar
+                  key="bar-investimentos"
+                  dataKey="Investimentos"
+                  name="Investimentos"
+                  stackId="a"
+                  fill="#f59e0b"
+                  radius={[4, 4, 0, 0]}
+                  hide={!visibleSeries.Investimentos}
+                />
               </BarChart>
             )}
           </ResponsiveContainer>
