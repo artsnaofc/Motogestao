@@ -76,7 +76,7 @@ export const DailyProductivityHeatmap: React.FC<DailyProductivityHeatmapProps> =
       deliveries: number;
       txCount: number;
       txs: Transaction[];
-    }> = {};
+    }> = Object.create(null);
 
     const personalCats = settings?.personal_expense_categories || ['Alimentação', 'Mercado', 'Lazer', 'Saúde', 'Pessoal'];
     const opCats = settings?.operational_expense_categories || ['Combustível', 'Pedágio', 'Manutenção'];
@@ -104,9 +104,11 @@ export const DailyProductivityHeatmap: React.FC<DailyProductivityHeatmapProps> =
       return opCats.includes(cat) || isFuelCategory(cat) || isMaintCategory(cat) || isTollCategory(cat);
     };
 
-    transactions.forEach(t => {
-      if (!t.date) return;
-      const dateStr = t.date.split('T')[0];
+    (transactions || []).forEach(t => {
+      if (!t || !t.date) return;
+      const dateStr = String(t.date).split('T')[0];
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return;
+
       if (!map[dateStr]) {
         map[dateStr] = {
           income: 0,
@@ -124,7 +126,7 @@ export const DailyProductivityHeatmap: React.FC<DailyProductivityHeatmapProps> =
 
       const entry = map[dateStr];
       entry.txCount += 1;
-      entry.txs.push(t);
+      entry.txs = [...entry.txs, t];
     });
 
     // 2. Calcular os valores diários de cada dia de forma imutável
