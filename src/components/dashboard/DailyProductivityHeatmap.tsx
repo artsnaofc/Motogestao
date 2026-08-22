@@ -731,10 +731,13 @@ export const DailyProductivityHeatmap: React.FC<DailyProductivityHeatmapProps> =
         </div>
 
         {/* Heatmap Grid Principal */}
-        <div className="overflow-x-auto pb-2 -mx-2 px-2 scrollbar-thin relative">
-          <div className="min-w-[600px] inline-flex flex-col gap-1.5">
+        <div className="overflow-x-auto pb-2 scrollbar-thin relative">
+          <div className="min-w-[580px] inline-flex flex-col gap-1.5">
             {/* Header com os Meses */}
-            <div className="flex gap-1 pl-5 text-[10px] font-extrabold text-muted-foreground uppercase tracking-wider">
+            <div className="flex gap-1 text-[10px] font-extrabold text-muted-foreground uppercase tracking-wider items-center">
+              {/* Espaçador sticky no canto superior esquerdo para manter o alinhamento com a coluna dos dias */}
+              <div className="sticky left-0 z-20 bg-card dark:bg-card shrink-0 w-4.5 h-4" />
+
               {weeks.map((week, wIdx) => {
                 const firstDayOfWeek = week[0];
                 const isFirstWeekOfMonth = firstDayOfWeek.getDate() <= 7;
@@ -742,21 +745,21 @@ export const DailyProductivityHeatmap: React.FC<DailyProductivityHeatmapProps> =
                   return (
                     <div 
                       key={wIdx} 
-                      className="text-left font-black text-foreground/80 capitalize"
-                      style={{ width: '18px' }}
+                      className="text-left font-black text-foreground/80 capitalize shrink-0"
+                      style={{ width: '14px' }}
                     >
                       {format(firstDayOfWeek, 'MMM', { locale: ptBR })}
                     </div>
                   );
                 }
-                return <div key={wIdx} style={{ width: '18px' }} />;
+                return <div key={wIdx} className="shrink-0" style={{ width: '14px' }} />;
               })}
             </div>
 
             {/* Grid com dias da semana nas linhas e semanas nas colunas */}
-            <div className="flex gap-1.5 items-start">
-              {/* Rótulos dos dias da semana à esquerda (D, S, T, Q, Q, S, S) fixos e alinhados */}
-              <div className="flex flex-col gap-1 text-[9px] font-extrabold text-muted-foreground/80 select-none w-3.5 shrink-0 text-center">
+            <div className="flex gap-1 items-start">
+              {/* Rótulos dos dias da semana à esquerda (D, S, T, Q, Q, S, S) fixos diretamente na borda */}
+              <div className="sticky left-0 z-20 bg-card dark:bg-card flex flex-col gap-1 text-[9px] font-extrabold text-muted-foreground select-none w-4.5 shrink-0 text-center">
                 {weekdays.map((dayName, idx) => (
                   <span 
                     key={idx} 
