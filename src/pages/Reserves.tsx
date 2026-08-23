@@ -75,6 +75,15 @@ import {
 } from 'date-fns';
 import { Reserve, ReserveTransaction } from '../types';
 
+const parseLocalDate = (dateStr: string | Date | undefined | null): Date => {
+  if (!dateStr) return new Date();
+  if (dateStr instanceof Date) return dateStr;
+  const cleaned = String(dateStr).split('T')[0];
+  const [year, month, day] = cleaned.split('-').map(Number);
+  if (!year || !month || !day) return new Date(dateStr);
+  return new Date(year, month - 1, day);
+};
+
 // Dynamic icon directory
 const iconOptions = {
   PiggyBank,
