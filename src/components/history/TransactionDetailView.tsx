@@ -188,6 +188,7 @@ export function TransactionDetailView({
       const ticker = (t as any).ticker || 'ATIVO';
       const divType = (t as any).dividendType || 'Dividendo';
       const unitAmt = (t as any).unitAmount;
+      const divStatus = (t as any).dividendStatus || 'received';
 
       return (
         <div className="space-y-2.5">
@@ -204,15 +205,21 @@ export function TransactionDetailView({
                   <h4 className="font-extrabold text-xs sm:text-sm text-foreground">{divType} de {ticker}</h4>
                 </div>
               </div>
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
-                Recebido no Caixa
+              <span className={`px-2 py-0.5 rounded-full text-[10px] font-black border ${
+                divStatus === 'provisioned'
+                  ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20'
+                  : 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20'
+              }`}>
+                {divStatus === 'provisioned' ? 'A Receber' : 'Recebido'}
               </span>
             </div>
 
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
               <div className="p-2 rounded-lg bg-card border border-border/60">
                 <span className="text-[9px] text-muted-foreground uppercase font-extrabold block">Valor Total</span>
-                <span className="font-mono font-black text-xs sm:text-sm text-emerald-600 dark:text-emerald-400">+{formatCurrency(displayAmount)}</span>
+                <span className={`font-mono font-black text-xs sm:text-sm ${
+                  divStatus === 'provisioned' ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'
+                }`}>+{formatCurrency(displayAmount)}</span>
               </div>
               {unitAmt && (
                 <div className="p-2 rounded-lg bg-card border border-border/60">

@@ -937,6 +937,7 @@ export function History() {
     // Create virtual transaction objects for dividend payments
     const dividendTxsAsVirtual = (dividends || [])
       .map(d => {
+        const isProvisioned = d.status === 'provisioned';
         return {
           id: d.id,
           user_id: d.user_id,
@@ -944,9 +945,12 @@ export function History() {
           amount: Number(d.amount),
           date: d.date,
           category: 'Dividendos',
-          description: d.description || `Recebimento de proventos (${d.type}) do ativo ${d.ticker.toUpperCase()}`,
+          description: isProvisioned
+            ? `[A Receber] ${d.description || `Provento (${d.type}) do ativo ${d.ticker.toUpperCase()}`}`
+            : `[Recebido] ${d.description || `Recebimento de proventos (${d.type}) do ativo ${d.ticker.toUpperCase()}`}`,
           isDividendTx: true,
           dividendType: d.type,
+          dividendStatus: d.status,
           ticker: d.ticker.toUpperCase(),
           created_at: d.created_at,
         } as unknown as Transaction;
@@ -2060,8 +2064,12 @@ export function History() {
                 )}
 
                 {(t as any).isDividendTx && (
-                  <span className="text-[9px] font-black px-1.5 py-0.5 rounded-md uppercase tracking-wider bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20">
-                    Provento / Dividendo
+                  <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-md uppercase tracking-wider border ${
+                    (t as any).dividendStatus === 'provisioned'
+                      ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/20'
+                      : 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20'
+                  }`}>
+                    {(t as any).dividendStatus === 'provisioned' ? 'Provento a Receber' : 'Provento Recebido'}
                   </span>
                 )}
 
@@ -3431,7 +3439,11 @@ export function History() {
                                 <TrendingUp className="w-4 h-4 shrink-0" />
                               </div>
                             ) : (t as any).isDividendTx ? (
-                              <div className="p-2.5 rounded-xl border border-amber-500/20 bg-amber-500/10 text-amber-500 shrink-0">
+                              <div className={`p-2.5 rounded-xl border shrink-0 ${
+                                (t as any).dividendStatus === 'provisioned'
+                                  ? 'border-amber-500/20 bg-amber-500/10 text-amber-500'
+                                  : 'border-emerald-500/20 bg-emerald-500/10 text-emerald-500'
+                              }`}>
                                 <Coins className="w-4 h-4 shrink-0" />
                               </div>
                             ) : (
@@ -3449,7 +3461,7 @@ export function History() {
                                       : (t as any).isInvestmentTx
                                         ? `Investimento: ${(t as any).ticker}`
                                         : (t as any).isDividendTx
-                                          ? `Proventos: ${(t as any).ticker}`
+                                          ? `${(t as any).dividendStatus === 'provisioned' ? 'A Receber: ' : 'Recebido: '}${(t as any).ticker}`
                                           : t.category
                                   }
                                 </span>
@@ -3471,8 +3483,12 @@ export function History() {
                                   </span>
                                 )}
                                 {(t as any).isDividendTx && (
-                                  <span className="text-[9px] font-extrabold border border-amber-500/30 bg-amber-500/10 text-amber-500 rounded px-1.5 py-0.5 tracking-wider uppercase scale-95 shrink-0 animate-in fade-in">
-                                    {(t as any).dividendType || 'Provento'}
+                                  <span className={`text-[9px] font-extrabold border rounded px-1.5 py-0.5 tracking-wider uppercase scale-95 shrink-0 animate-in fade-in ${
+                                    (t as any).dividendStatus === 'provisioned'
+                                      ? 'border-amber-500/30 bg-amber-500/10 text-amber-500'
+                                      : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-500'
+                                  }`}>
+                                    {((t as any).dividendStatus === 'provisioned' ? 'A Receber • ' : 'Recebido • ') + ((t as any).dividendType || 'Provento')}
                                   </span>
                                 )}
                                 {isReserveUseEx && (
