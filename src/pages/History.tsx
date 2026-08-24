@@ -2095,7 +2095,7 @@ export function History() {
                   : (isIncome ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400')
               }`}>
                 {isReserveTx 
-                  ? (isAporte ? `-${formatCurrency(displayAmount)}` : `+${formatCurrency(displayAmount)}`)
+                  ? (isRendimento ? `+${formatCurrency(displayAmount)}` : `-${formatCurrency(displayAmount)}`)
                   : (isIncome ? `+${formatCurrency(displayAmount)}` : `-${formatCurrency(displayAmount)}`)}
               </span>
 
