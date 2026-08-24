@@ -1,0 +1,373 @@
+import { 
+  PiggyBank, 
+  Wrench, 
+  ShieldAlert, 
+  Car, 
+  Coins, 
+  Sparkles, 
+  Heart, 
+  TrendingUp, 
+  Briefcase,
+  Shield,
+  ShieldCheck,
+  Fuel,
+  ShoppingBag,
+  Gift,
+  Plane,
+  Coffee,
+  GraduationCap,
+  Laptop,
+  Stethoscope,
+  Hammer,
+  Home,
+  Award,
+  Wallet,
+  Zap,
+  Tag,
+  Building,
+  Key,
+  Umbrella,
+  Smartphone,
+  BookOpen
+} from 'lucide-react';
+import { Reserve, ReserveTransaction, Transaction } from '../../types';
+import { isWithinInterval } from 'date-fns';
+
+export const iconOptions: Record<string, any> = {
+  PiggyBank,
+  Wrench,
+  ShieldAlert,
+  Car,
+  Coins,
+  Sparkles,
+  Heart,
+  TrendingUp,
+  Briefcase,
+  Shield,
+  ShieldCheck,
+  Fuel,
+  ShoppingBag,
+  Gift,
+  Plane,
+  Coffee,
+  GraduationCap,
+  Laptop,
+  Stethoscope,
+  Hammer,
+  Home,
+  Award,
+  Wallet,
+  Zap,
+  Tag,
+  Building,
+  Key,
+  Umbrella,
+  Smartphone,
+  BookOpen
+};
+
+export const COLOR_PALETTE = [
+  '#6366f1', // Indigo
+  '#3b82f6', // Blue
+  '#06b6d4', // Cyan
+  '#10b981', // Emerald
+  '#84cc16', // Lime
+  '#eab308', // Yellow
+  '#f97316', // Orange
+  '#ef4444', // Red
+  '#ec4899', // Pink
+  '#8b5cf6', // Violet
+  '#a855f7', // Purple
+  '#64748b', // Slate
+  '#14b8a6', // Teal
+  '#f43f5e', // Rose
+];
+
+export const parseLocalDate = (dateStr: string | Date | undefined | null): Date => {
+  if (!dateStr) return new Date();
+  if (dateStr instanceof Date) return dateStr;
+  const cleaned = String(dateStr).split('T')[0];
+  const [year, month, day] = cleaned.split('-').map(Number);
+  if (!year || !month || !day) return new Date(dateStr);
+  return new Date(year, month - 1, day);
+};
+
+export const formatCurrency = (val: any, ignoreHide = false): string => {
+  const num = Number(val);
+  if (isNaN(num)) return 'R$ 0,00';
+  return new Intl.NumberFormat('pt-BR', {
+    style: 'currency',
+    currency: 'BRL'
+  }).format(num);
+};
+
+export const formatDateDisplay = (dateStr: string | undefined | null): string => {
+  if (!dateStr) return '--/--/----';
+  try {
+    const d = parseLocalDate(dateStr);
+    const day = String(d.getDate()).padStart(2, '0');
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const year = d.getFullYear();
+    return `${day}/${month}/${year}`;
+  } catch {
+    return dateStr;
+  }
+};
+
+export const isTxInPeriod = (
+  dateStr: string | undefined | null,
+  globalPeriod: string,
+  customDateRange: { start: string; end: string }
+): boolean => {
+  if (!dateStr) return false;
+  try {
+    const d = parseLocalDate(dateStr);
+    const now = new Date();
+
+    if (globalPeriod === 'all') return true;
+
+    if (globalPeriod === 'custom') {
+      if (!customDateRange.start || !customDateRange.end) return true;
+      const start = parseLocalDate(customDateRange.start);
+      const end = parseLocalDate(customDateRange.end);
+      end.setHours(23, 59, 59, 999);
+      return isWithinInterval(d, { start, end });
+    }
+
+    if (globalPeriod === 'month') {
+      return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+    }
+
+    if (globalPeriod === 'last_month') {
+      const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      return d.getFullYear() === lastMonth.getFullYear() && d.getMonth() === lastMonth.getMonth();
+    }
+
+    if (globalPeriod === 'year') {
+      return d.getFullYear() === now.getFullYear();
+    }
+
+    if (globalPeriod === 'week') {
+      const dayOfWeek = now.getDay();
+      const startOfWeek = new Date(now);
+      startOfWeek.setDate(now.getDate() - dayOfWeek);
+      startOfWeek.setHours(0, 0, 0, 0);
+      const endOfWeek = new Date(startOfWeek);
+      endOfWeek.setDate(startOfWeek.getDate() + 6);
+      endOfWeek.setHours(23, 59, 59, 999);
+      return isWithinInterval(d, { start: startOfWeek, end: endOfWeek });
+    }
+
+    // Default fallback to 30 days
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    return d >= thirtyDaysAgo;
+  } catch {
+    return false;
+  }
+};
+
+export const getLatestWithdrawalDate = (
+  res: Reserve,
+  reserveTransactions: ReserveTransaction[]
+): string | null => {
+  const utilizacoes = (reserveTransactions || []).filter(
+    rt => rt.reserve_id === res.id && rt.type === 'utilizacao'
+  );
+  if (utilizacoes.length === 0) return null;
+  const sorted = [...utilizacoes].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  return sorted[0].date;
+};
+
+export const calculateSuggestion = (
+  res: Reserve,
+  transactions: Transaction[],
+  reserveTransactions: ReserveTransaction[],
+  globalPeriod: string,
+  customDateRange: { start: string; end: string }
+): number => {
+  const roundedBalance = Math.round((res.saldo_atual || 0) * 100) / 100;
+  const roundedGoal = Math.round((res.meta_objetivo || 0) * 100) / 100;
+  const isGoalReached = Boolean(roundedGoal > 0 && roundedBalance >= roundedGoal);
+  const isPaused = res.status === 'inactive' || res.is_paused;
+
+  if (isPaused || isGoalReached) {
+    return 0;
+  }
+
+  const lastWDate = getLatestWithdrawalDate(res, reserveTransactions);
+  const periodTxs = (transactions || []).filter(t => {
+    const inPeriod = isTxInPeriod(t.date, globalPeriod, customDateRange);
+    if (!inPeriod) return false;
+    const isDefaultRes = res.name === 'Reserva de Manutenção' || res.name === 'Reserva de Emergência';
+    if (res.created_at && !isDefaultRes) {
+      const creationDay = res.created_at.split('T')[0];
+      if (t.date < creationDay) return false;
+    }
+    if (lastWDate && t.date <= lastWDate) return false;
+    return true;
+  });
+  
+  let totalSuggestion = 0;
+  const historyRules = res.rule_history || [];
+  
+  const buckets = periodTxs.reduce((acc, t) => {
+    const tTime = new Date(`${t.date}T12:00:00.000Z`).getTime();
+    let matchedRuleObj: any = null;
+    let matchedIdx = -1;
+
+    for (let i = 0; i < historyRules.length; i++) {
+      const histEndDate = new Date(historyRules[i].end_date);
+      if (tTime < histEndDate.getTime()) {
+        matchedRuleObj = historyRules[i];
+        matchedIdx = i;
+        break;
+      }
+    }
+
+    const ruleKey = matchedIdx !== -1 ? `hist_${matchedIdx}` : 'current';
+    const activeRule = matchedRuleObj || {
+      regra_ativa: res.regra_ativa && !isPaused && !isGoalReached,
+      regra_tipo: res.regra_tipo,
+      regra_valor: res.regra_valor,
+      regra_categorias: res.regra_categorias,
+    };
+
+    if (!acc[ruleKey]) {
+      acc[ruleKey] = { rule: activeRule, txs: [] };
+    }
+    acc[ruleKey].txs.push(t);
+    return acc;
+  }, {} as Record<string, { rule: any, txs: typeof periodTxs }>);
+
+  Object.values(buckets).forEach((bucket: any) => {
+    const { rule, txs } = bucket;
+    if (!rule.regra_ativa || !rule.regra_tipo) return;
+
+    const ruleValue = Number(rule.regra_valor) || 0;
+    const ruleCats = rule.regra_categorias || [];
+    
+    if (rule.regra_tipo === 'km') {
+      const eligible = txs.filter((t: Transaction) => t.type === 'income' && ruleCats.includes(t.category) && t.start_km !== null && t.end_km !== null);
+      eligible.forEach((t: Transaction) => {
+        const distance = (Number(t.end_km) || 0) - (Number(t.start_km) || 0);
+        if (distance > 0) {
+          totalSuggestion += distance * ruleValue;
+        }
+      });
+    } else if (rule.regra_tipo === 'bruto') {
+      const eligible = txs.filter((t: Transaction) => t.type === 'income' && ruleCats.includes(t.category));
+      const grossSum = eligible.reduce((sum: number, t: Transaction) => sum + Number(t.amount || 0), 0);
+      totalSuggestion += grossSum * (ruleValue / 100);
+    } else if (rule.regra_tipo === 'liquido') {
+      const totalIncome = txs
+        .filter((t: Transaction) => t.type === 'income')
+        .reduce((sum: number, t: Transaction) => sum + Number(t.amount || 0), 0);
+      const totalExpense = txs
+        .filter((t: Transaction) => t.type === 'expense')
+        .filter((t: Transaction) => {
+          const isReserveUse = t.is_reserve_use || 
+                               t.description?.includes('[Reserva]') || 
+                               (t as any).isReserveTx === true ||
+                               t.category === 'Aporte Reserva';
+          return !isReserveUse;
+        })
+        .reduce((sum: number, t: Transaction) => sum + Number(t.amount || 0), 0);
+      const netProfit = totalIncome - totalExpense;
+      totalSuggestion += Math.max(0, netProfit) * (ruleValue / 100);
+    } else if (rule.regra_tipo === 'fixo') {
+      const eligible = txs.filter((t: Transaction) => t.type === 'income' && ruleCats.includes(t.category));
+      const uniqueDays = new Set(eligible.map((t: Transaction) => t.date));
+      totalSuggestion += uniqueDays.size * ruleValue;
+    }
+  });
+
+  if (res.meta_objetivo && res.meta_objetivo > 0) {
+    if (totalSuggestion > res.meta_objetivo) {
+      totalSuggestion = res.meta_objetivo;
+    }
+  }
+
+  return Number(totalSuggestion.toFixed(2));
+};
+
+export const getSuggestionAudit = (
+  res: Reserve,
+  transactions: Transaction[],
+  reserveTransactions: ReserveTransaction[],
+  globalPeriod: string,
+  customDateRange: { start: string; end: string }
+) => {
+  const lastWDate = getLatestWithdrawalDate(res, reserveTransactions);
+  const periodTxs = (transactions || []).filter(t => {
+    const inPeriod = isTxInPeriod(t.date, globalPeriod, customDateRange);
+    if (!inPeriod) return false;
+    const isDefaultRes = res.name === 'Reserva de Manutenção' || res.name === 'Reserva de Emergência';
+    if (res.created_at && !isDefaultRes) {
+      const creationDay = res.created_at.split('T')[0];
+      if (t.date < creationDay) return false;
+    }
+    if (lastWDate && t.date <= lastWDate) return false;
+    return true;
+  });
+
+  const historyRules = res.rule_history || [];
+  const roundedBalance = Math.round((res.saldo_atual || 0) * 100) / 100;
+  const roundedGoal = Math.round((res.meta_objetivo || 0) * 100) / 100;
+  const isGoalReached = Boolean(roundedGoal > 0 && roundedBalance >= roundedGoal);
+  const isPaused = res.status === 'inactive' || res.is_paused;
+
+  let auditDetails = {
+    ruleType: res.regra_tipo || '',
+    ruleValue: Number(res.regra_valor) || 0,
+    categories: res.regra_categorias || [],
+    details: [] as string[],
+    totalSuggested: 0,
+    txCount: periodTxs.length,
+    isGoalReached,
+    isPaused
+  };
+
+  const calculated = calculateSuggestion(res, transactions, reserveTransactions, globalPeriod, customDateRange);
+  auditDetails.totalSuggested = calculated;
+
+  if (isPaused) {
+    auditDetails.details.push('Reserva está pausada ou inativa no momento.');
+  } else if (isGoalReached) {
+    auditDetails.details.push(`Meta de ${formatCurrency(res.meta_objetivo)} atingida com sucesso.`);
+  } else if (res.regra_tipo === 'km') {
+    auditDetails.details.push(`Regra: R$ ${res.regra_valor?.toFixed(2)} por KM rodado.`);
+  } else if (res.regra_tipo === 'bruto') {
+    auditDetails.details.push(`Regra: ${res.regra_valor}% sobre o faturamento bruto das categorias selecionadas.`);
+  } else if (res.regra_tipo === 'liquido') {
+    auditDetails.details.push(`Regra: ${res.regra_valor}% sobre o lucro líquido do período.`);
+  } else if (res.regra_tipo === 'fixo') {
+    auditDetails.details.push(`Regra: R$ ${res.regra_valor?.toFixed(2)} fixos por dia trabalhado.`);
+  }
+
+  return auditDetails;
+};
+
+export const getEffectiveAportesInPeriod = (
+  res: Reserve,
+  reserveTransactions: ReserveTransaction[],
+  globalPeriod: string,
+  customDateRange: { start: string; end: string }
+): number => {
+  const lastWDate = getLatestWithdrawalDate(res, reserveTransactions);
+  return Number(
+    (reserveTransactions || [])
+      .filter(rt => {
+        const matches = rt.reserve_id === res.id && 
+                        rt.type === 'aporte' && 
+                        isTxInPeriod(rt.date, globalPeriod, customDateRange) && 
+                        rt.category !== 'Aporte Extra' && 
+                        rt.category !== 'Rendimento';
+        if (!matches) return false;
+        if (lastWDate && rt.date <= lastWDate) return false;
+        return true;
+      })
+      .reduce((sum, rt) => sum + Number(rt.amount || 0), 0)
+      .toFixed(2)
+  );
+};

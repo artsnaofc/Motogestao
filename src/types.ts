@@ -96,6 +96,8 @@ export interface ReserveTransaction {
   description?: string;
   linked_investment_id?: string;
   transaction_id?: string;
+  source?: 'manual' | 'mass_contribution' | 'automation' | 'investment';
+  batch_id?: string;
   created_at?: string;
 }
 
