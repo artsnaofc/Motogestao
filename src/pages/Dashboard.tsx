@@ -1012,10 +1012,27 @@ export function Dashboard() {
       .reduce((sum, rt) => sum + Number(rt.amount), 0);
   }, [reserveTransactions, globalPeriod, currentStartTime, currentEndTime]);
 
+  const isAssetPurchaseReserveTx = (rt: any) => {
+    if (!rt) return false;
+    const cat = (rt.category || '').toLowerCase().trim();
+    const desc = (rt.description || '').toLowerCase().trim();
+    return Boolean(
+      rt.linked_investment_id ||
+      (rt as any).linkedInvestmentId ||
+      cat === 'investimentos' ||
+      cat === 'investimento' ||
+      cat === 'investimento na carteira' ||
+      desc.includes('investiment') ||
+      desc.includes('compra de ativo') ||
+      desc.includes('compra ativo')
+    );
+  };
+
   const totalUtilizadosInReservesPeriod = useMemo(() => {
     return (reserveTransactions || [])
       .filter(rt => {
         if (rt.type !== 'utilizacao') return false;
+        if (isAssetPurchaseReserveTx(rt)) return false;
         if (globalPeriod === 'all') return true;
         const ts = parseLocalDate(rt.date).getTime();
         return ts >= currentStartTime && ts <= currentEndTime;
@@ -1028,11 +1045,47 @@ export function Dashboard() {
     return (reserveTransactions || [])
       .filter(rt => {
         if (rt.type !== 'utilizacao') return false;
+        if (isAssetPurchaseReserveTx(rt)) return false;
         const ts = parseLocalDate(rt.date).getTime();
         return ts >= pastStartTime && ts <= pastEndTime;
       })
       .reduce((sum, rt) => sum + Number(rt.amount), 0);
   }, [reserveTransactions, globalPeriod, pastStartTime, pastEndTime]);
+
+  const unlinkedReserveAssetPurchasesCurrent = useMemo(() => {
+    return (reserveTransactions || [])
+      .filter(rt => {
+        if (rt.type !== 'utilizacao') return false;
+        if (rt.linked_investment_id) return false;
+        if (!isAssetPurchaseReserveTx(rt)) return false;
+        if (globalPeriod === 'all') return true;
+        const ts = parseLocalDate(rt.date).getTime();
+        return ts >= currentStartTime && ts <= currentEndTime;
+      })
+      .reduce((sum, rt) => sum + Number(rt.amount), 0);
+  }, [reserveTransactions, globalPeriod, currentStartTime, currentEndTime]);
+
+  const totalInvestedInPeriodCurrent = useMemo(() => {
+    return (currentPeriodInvBuys || 0) + unlinkedReserveAssetPurchasesCurrent;
+  }, [currentPeriodInvBuys, unlinkedReserveAssetPurchasesCurrent]);
+
+  const unlinkedReserveAssetPurchasesPast = useMemo(() => {
+    if (globalPeriod === 'all') return 0;
+    return (reserveTransactions || [])
+      .filter(rt => {
+        if (rt.type !== 'utilizacao') return false;
+        if (rt.linked_investment_id) return false;
+        if (!isAssetPurchaseReserveTx(rt)) return false;
+        const ts = parseLocalDate(rt.date).getTime();
+        return ts >= pastStartTime && ts <= pastEndTime;
+      })
+      .reduce((sum, rt) => sum + Number(rt.amount), 0);
+  }, [reserveTransactions, globalPeriod, pastStartTime, pastEndTime]);
+
+  const pastPeriodInvBuysTotal = useMemo(() => {
+    const buys = pastPeriodInvTx.filter(t => t.operation === 'buy').reduce((acc, t) => acc + Number(t.amount), 0);
+    return buys + unlinkedReserveAssetPurchasesPast;
+  }, [pastPeriodInvTx, unlinkedReserveAssetPurchasesPast]);
 
   const reserveMovimentacaoPeriod = useMemo(() => {
     return totalDepositedInReservesPeriod + totalRendimentosInReservesPeriod - totalUtilizadosInReservesPeriod;
@@ -3645,6 +3698,46 @@ export function Dashboard() {
               <div className="truncate text-right border-l border-border/40 pl-1">
                 <span className="text-[6.5px] sm:text-[7px] uppercase font-black text-indigo-500 block">Movimentado</span>
                 <span className="font-mono text-indigo-600 dark:text-indigo-400 font-bold text-[8px] sm:text-[8.5px]">{formatCurrency(reserveMovimentacaoPeriod)}</span>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* indicator 6.5: Investimentos (Aportes & Ativos) */}
+        <Card 
+          onClick={() => navigate('/investments')}
+          className="border border-border/70 hover:border-indigo-500/40 shadow-2xs hover:shadow-sm transition-all duration-200 bg-card/95 flex flex-col justify-between rounded-xl overflow-hidden group cursor-pointer active:scale-[0.99]"
+        >
+          <CardHeader className="p-2.5 pb-1 sm:p-3 sm:pb-1 flex flex-row items-center justify-between space-y-0">
+            <CardTitle className="text-[10px] sm:text-[10.5px] font-extrabold uppercase tracking-wider text-indigo-500 w-[85%] truncate flex items-center gap-1">
+              Investimentos
+            </CardTitle>
+            <div className="p-1 bg-indigo-500/10 border border-indigo-500/20 rounded-lg shrink-0 group-hover:scale-105 transition-transform">
+              <TrendingUp className="w-3 h-3 text-indigo-500" />
+            </div>
+          </CardHeader>
+          <CardContent className="p-2.5 pt-0 sm:p-3 sm:pt-0 space-y-1.5">
+            <div>
+              <div className="text-base sm:text-lg font-black text-indigo-600 dark:text-indigo-400 tracking-tight font-mono leading-tight">
+                {formatCurrency(totalInvestedInPeriodCurrent)}
+              </div>
+              <div className="flex items-center justify-between gap-1">
+                {renderTrend(getTrend(totalInvestedInPeriodCurrent, pastPeriodInvBuysTotal), true)}
+                <span className="text-[7.5px] text-muted-foreground font-semibold truncate">Aportado no período</span>
+              </div>
+            </div>
+            <div className="pt-1.5 border-t border-border/40 grid grid-cols-3 gap-1 text-[8.5px] font-bold text-muted-foreground leading-none">
+              <div className="truncate">
+                <span className="text-[6.5px] sm:text-[7px] uppercase font-black text-indigo-500 block">Total Carteira</span>
+                <span className="font-mono text-indigo-600 dark:text-indigo-400 font-bold text-[8px] sm:text-[8.5px]">{formatCurrency(totalInvestmentEquity)}</span>
+              </div>
+              <div className="truncate text-center border-l border-border/40 pl-0.5">
+                <span className="text-[6.5px] sm:text-[7px] uppercase font-black text-emerald-500 block">Proventos</span>
+                <span className="font-mono text-emerald-600 dark:text-emerald-400 font-bold text-[8px] sm:text-[8.5px]">{formatCurrency(currentPeriodDivSum)}</span>
+              </div>
+              <div className="truncate text-right border-l border-border/40 pl-0.5">
+                <span className="text-[6.5px] sm:text-[7px] uppercase font-black text-rose-500 block">Vendas</span>
+                <span className="font-mono text-rose-600 dark:text-rose-400 font-bold text-[8px] sm:text-[8.5px]">{formatCurrency(currentPeriodInvSells)}</span>
               </div>
             </div>
           </CardContent>

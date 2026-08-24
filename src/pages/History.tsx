@@ -3088,7 +3088,7 @@ export function History() {
                   }> = {
                     income: {
                       key: 'income',
-                      title: 'Receitas & Entradas',
+                      title: 'Entradas',
                       badgeBg: 'bg-emerald-500/10 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-400 border-emerald-500/20',
                       badgeText: 'text-emerald-600 dark:text-emerald-400',
                       borderColor: 'border-emerald-500/30',
@@ -3118,7 +3118,7 @@ export function History() {
                     },
                     reserves: {
                       key: 'reserves',
-                      title: 'Reservas & Cofrinhos',
+                      title: 'Reservas',
                       badgeBg: 'bg-pink-500/10 dark:bg-pink-500/20 text-pink-700 dark:text-pink-400 border-pink-500/20',
                       badgeText: 'text-pink-600 dark:text-pink-400',
                       borderColor: 'border-pink-500/30',
@@ -3128,7 +3128,7 @@ export function History() {
                     },
                     investments: {
                       key: 'investments',
-                      title: 'Investimentos & Proventos',
+                      title: 'Investimentos',
                       badgeBg: 'bg-indigo-500/10 dark:bg-indigo-500/20 text-indigo-700 dark:text-indigo-400 border-indigo-500/20',
                       badgeText: 'text-indigo-600 dark:text-indigo-400',
                       borderColor: 'border-indigo-500/30',
