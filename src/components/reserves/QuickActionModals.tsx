@@ -37,11 +37,13 @@ interface AporteManualModalProps {
   reserve: Reserve | null;
   isOpen: boolean;
   onClose: () => void;
+  initialAmount?: number;
+  initialDescription?: string;
+  isSuggestion?: boolean;
   onSubmit: (data: {
     amount: number;
     date: string;
     description: string;
-    createCashflowExpense: boolean;
   }) => Promise<void>;
 }
 
@@ -49,30 +51,37 @@ export function AporteManualModal({
   reserve,
   isOpen,
   onClose,
+  initialAmount,
+  initialDescription,
+  isSuggestion,
   onSubmit
 }: AporteManualModalProps) {
   const [amount, setAmount] = useState('');
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
   const [description, setDescription] = useState('');
-  const [createCashflowExpense, setCreateCashflowExpense] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
     if (reserve) {
-      setDescription(`Aporte manual - ${reserve.name}`);
-      setAmount('');
+      setDescription(initialDescription || (isSuggestion ? `Aporte sugerido - ${reserve.name}` : `Aporte manual - ${reserve.name}`));
+      setAmount(initialAmount && initialAmount > 0 ? String(Math.round(initialAmount * 100) / 100) : '');
       setDate(new Date().toISOString().split('T')[0]);
-      setCreateCashflowExpense(false);
     }
-  }, [reserve, isOpen]);
+  }, [reserve, isOpen, initialAmount, initialDescription, isSuggestion]);
 
   if (!isOpen || !reserve) return null;
 
   const IconComp = iconOptions[reserve.icon] || PiggyBank;
+  const numAmount = Math.round((parseFloat(amount) || 0) * 100) / 100;
+  const currentBalance = Math.round((reserve.saldo_atual || 0) * 100) / 100;
+  const newBalance = Math.round((currentBalance + (numAmount > 0 ? numAmount : 0)) * 100) / 100;
+  const hasGoal = Boolean(reserve.meta_objetivo && reserve.meta_objetivo > 0);
+  const currentGoalPct = hasGoal ? Math.min(100, Math.round((currentBalance / reserve.meta_objetivo!) * 100)) : 0;
+  const newGoalPct = hasGoal ? Math.min(100, Math.round((newBalance / reserve.meta_objetivo!) * 100)) : 0;
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    const val = parseFloat(amount);
+    const val = Math.round((parseFloat(amount) || 0) * 100) / 100;
     if (isNaN(val) || val <= 0) {
       toast.error('Informe um valor de aporte válido maior que zero.');
       return;
@@ -83,8 +92,7 @@ export function AporteManualModal({
       await onSubmit({
         amount: val,
         date,
-        description: description || `Aporte manual - ${reserve.name}`,
-        createCashflowExpense
+        description: description || `Aporte manual - ${reserve.name}`
       });
       onClose();
     } catch (err) {
@@ -95,8 +103,8 @@ export function AporteManualModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-      <div className="bg-card w-full max-w-md rounded-3xl border border-border/80 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+    <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+      <div className="bg-card w-full max-w-md my-auto rounded-3xl border border-border/80 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200 text-left">
         {/* Header */}
         <div className="p-5 bg-gradient-to-r from-emerald-500/10 via-emerald-500/5 to-transparent border-b border-border/80 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -107,24 +115,45 @@ export function AporteManualModal({
               <IconComp className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="text-base font-black text-foreground">Aporte Manual Individual</h3>
+              <div className="flex items-center gap-2">
+                <h3 className="text-base font-black text-foreground">
+                  {isSuggestion ? 'Confirmar Aporte Sugerido' : 'Confirmar Aporte Unitário'}
+                </h3>
+                {isSuggestion && (
+                  <span className="px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wider bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
+                    Sugerido
+                  </span>
+                )}
+              </div>
               <p className="text-xs text-muted-foreground font-medium truncate max-w-[240px]">
-                {reserve.name} • Saldo: {formatCurrency(reserve.saldo_atual || 0)}
+                {reserve.name} • Saldo atual: {formatCurrency(currentBalance)}
               </p>
             </div>
           </div>
 
-          <Button variant="ghost" size="sm" onClick={onClose} className="w-8 h-8 p-0 rounded-full">
+          <Button variant="ghost" size="sm" onClick={onClose} className="w-8 h-8 p-0 rounded-full cursor-pointer">
             <X className="w-4 h-4" />
           </Button>
         </div>
 
         {/* Form */}
         <form onSubmit={handleSave} className="p-5 space-y-4 text-left">
+          {/* Valor Input */}
           <div className="space-y-1.5">
-            <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
-              Valor do Aporte
-            </label>
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
+                Valor do Aporte
+              </label>
+              {isSuggestion && initialAmount && initialAmount > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setAmount(String(Math.round(initialAmount * 100) / 100))}
+                  className="text-[11px] font-bold text-amber-600 dark:text-amber-400 hover:underline cursor-pointer"
+                >
+                  Usar Sugerido ({formatCurrency(initialAmount)})
+                </button>
+              )}
+            </div>
             <div className="relative">
               <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-bold text-muted-foreground">R$</span>
               <Input
@@ -140,7 +169,63 @@ export function AporteManualModal({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          {/* Atalhos de valor rápido */}
+          <div className="flex items-center gap-1.5">
+            {[20, 50, 100, 200].map(val => (
+              <button
+                key={val}
+                type="button"
+                onClick={() => setAmount(prev => {
+                  const cur = parseFloat(prev) || 0;
+                  return String(Math.round((cur + val) * 100) / 100);
+                })}
+                className="flex-1 h-8 rounded-xl border border-border/80 text-xs font-bold hover:bg-muted text-foreground transition-all cursor-pointer"
+              >
+                +{val}
+              </button>
+            ))}
+          </div>
+
+          {/* Live Balance Impact Preview Box */}
+          <div className="p-3.5 bg-muted/40 rounded-2xl border border-border/80 space-y-2">
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-muted-foreground font-medium">Saldo Atual:</span>
+              <span className="font-mono font-bold text-foreground">{formatCurrency(currentBalance)}</span>
+            </div>
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-emerald-600 dark:text-emerald-400 font-bold flex items-center gap-1">
+                <Plus className="w-3 h-3" /> Aporte:
+              </span>
+              <span className="font-mono font-black text-emerald-600 dark:text-emerald-400">
+                +{formatCurrency(numAmount)}
+              </span>
+            </div>
+            <div className="pt-1.5 border-t border-border/60 flex items-center justify-between text-xs">
+              <span className="font-bold text-foreground">Novo Saldo Estimado:</span>
+              <span className="font-mono font-black text-base text-foreground">
+                {formatCurrency(newBalance)}
+              </span>
+            </div>
+
+            {hasGoal && (
+              <div className="pt-1 text-[11px] space-y-1">
+                <div className="flex items-center justify-between font-medium text-muted-foreground">
+                  <span>Meta: {formatCurrency(reserve.meta_objetivo!)}</span>
+                  <span className="font-bold text-emerald-600 dark:text-emerald-400">
+                    {currentGoalPct}% → {newGoalPct}%
+                  </span>
+                </div>
+                <div className="w-full bg-muted h-1.5 rounded-full overflow-hidden">
+                  <div 
+                    className="h-full bg-emerald-500 transition-all duration-300 rounded-full"
+                    style={{ width: `${newGoalPct}%` }}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <label className="text-xs font-bold text-muted-foreground">Data</label>
               <Input
@@ -153,67 +238,27 @@ export function AporteManualModal({
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-xs font-bold text-muted-foreground">Atalhos</label>
-              <div className="flex items-center gap-1.5 pt-0.5">
-                <button
-                  type="button"
-                  onClick={() => setAmount(prev => String((parseFloat(prev) || 0) + 50))}
-                  className="flex-1 h-9 rounded-xl border border-border text-xs font-bold hover:bg-muted"
-                >
-                  +50
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setAmount(prev => String((parseFloat(prev) || 0) + 100))}
-                  className="flex-1 h-9 rounded-xl border border-border text-xs font-bold hover:bg-muted"
-                >
-                  +100
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <div className="space-y-1.5">
-            <label className="text-xs font-bold text-muted-foreground">Descrição</label>
-            <Input
-              placeholder="Ex: Aporte extra da semana"
-              value={description}
-              onChange={e => setDescription(e.target.value)}
-              className="h-10 text-xs rounded-xl"
-            />
-          </div>
-
-          {/* Debitar do Caixa */}
-          <div className="p-3 bg-muted/30 rounded-2xl border border-border/80">
-            <label className="flex items-start gap-2.5 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={createCashflowExpense}
-                onChange={e => setCreateCashflowExpense(e.target.checked)}
-                className="mt-0.5 w-4 h-4 rounded text-emerald-600 accent-emerald-600"
+              <label className="text-xs font-bold text-muted-foreground">Descrição</label>
+              <Input
+                placeholder="Ex: Aporte extra"
+                value={description}
+                onChange={e => setDescription(e.target.value)}
+                className="h-10 text-xs rounded-xl"
               />
-              <div className="text-xs leading-tight">
-                <span className="font-bold text-foreground block">
-                  Debitar do Fluxo de Caixa Geral
-                </span>
-                <span className="text-muted-foreground font-medium text-[11px]">
-                  Cria uma despesa na categoria &quot;Aporte Reserva&quot; para equilibrar o caixa.
-                </span>
-              </div>
-            </label>
+            </div>
           </div>
 
           {/* Actions */}
           <div className="flex items-center justify-end gap-2 pt-2">
-            <Button type="button" variant="ghost" onClick={onClose} className="h-10 text-xs font-bold">
+            <Button type="button" variant="ghost" onClick={onClose} className="h-10 text-xs font-bold cursor-pointer">
               Cancelar
             </Button>
             <Button
               type="submit"
-              disabled={isSubmitting}
-              className="h-10 px-5 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl shadow-md shadow-emerald-500/20"
+              disabled={isSubmitting || numAmount <= 0}
+              className="h-10 px-5 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl shadow-md shadow-emerald-500/20 cursor-pointer"
             >
-              {isSubmitting ? 'Salvando...' : 'Confirmar Aporte Manual'}
+              {isSubmitting ? 'Confirmando...' : `Confirmar Aporte de ${numAmount > 0 ? formatCurrency(numAmount) : 'R$ 0,00'}`}
             </Button>
           </div>
         </form>
@@ -264,11 +309,11 @@ export function WithdrawModal({
 
   if (!isOpen || !reserve) return null;
 
-  const currentBalance = reserve.saldo_atual || 0;
+  const currentBalance = Math.round((reserve.saldo_atual || 0) * 100) / 100;
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    const val = parseFloat(amount);
+    const val = Math.round((parseFloat(amount) || 0) * 100) / 100;
     if (isNaN(val) || val <= 0) {
       toast.error('Informe um valor de resgate válido.');
       return;
@@ -423,7 +468,7 @@ export function UpdateBalanceModal({
 
   useEffect(() => {
     if (reserve) {
-      setNewBalanceInput(String(reserve.saldo_atual || 0));
+      setNewBalanceInput(String(Math.round((reserve.saldo_atual || 0) * 100) / 100));
       setDescription(`Atualização de saldo / rendimento - ${reserve.name}`);
       setDate(new Date().toISOString().split('T')[0]);
     }
@@ -431,9 +476,9 @@ export function UpdateBalanceModal({
 
   if (!isOpen || !reserve) return null;
 
-  const currentBalance = reserve.saldo_atual || 0;
-  const newBalanceNum = parseFloat(newBalanceInput) || 0;
-  const diff = Number((newBalanceNum - currentBalance).toFixed(2));
+  const currentBalance = Math.round((reserve.saldo_atual || 0) * 100) / 100;
+  const newBalanceNum = Math.round((parseFloat(newBalanceInput) || 0) * 100) / 100;
+  const diff = Math.round((newBalanceNum - currentBalance) * 100) / 100;
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();

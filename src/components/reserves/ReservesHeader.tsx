@@ -71,18 +71,18 @@ export function ReservesHeader({
         {/* Action Buttons */}
         <div className="flex items-center gap-1.5 flex-wrap">
           {/* Period Filter */}
-          <div className="flex items-center gap-1 bg-card border border-border/80 rounded-xl px-2 py-0.5 shadow-2xs">
-            <Calendar className="w-3 h-3 text-muted-foreground shrink-0" />
+          <div className="flex items-center gap-1.5 bg-card border border-border/80 rounded-xl px-2.5 py-1 shadow-2xs">
+            <Calendar className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
             <Select value={globalPeriod} onValueChange={setGlobalPeriod}>
-              <SelectTrigger className="h-7 text-xs border-0 bg-transparent shadow-none focus:ring-0 px-1 font-semibold text-foreground w-[100px] sm:w-[120px]">
-                <SelectValue placeholder="Período" />
+              <SelectTrigger className="h-6 text-xs border-0 bg-transparent shadow-none focus:ring-0 px-0.5 font-bold text-foreground w-auto min-w-[105px] sm:min-w-[125px] cursor-pointer">
+                <SelectValue placeholder="Selecionar Período" />
               </SelectTrigger>
               <SelectContent align="end" className="text-xs">
                 <SelectItem value="month">Mês Atual</SelectItem>
                 <SelectItem value="last_month">Mês Anterior</SelectItem>
                 <SelectItem value="week">Esta Semana</SelectItem>
                 <SelectItem value="year">Este Ano</SelectItem>
-                <SelectItem value="all">Todo Histórico</SelectItem>
+                <SelectItem value="all">Todo o Histórico</SelectItem>
                 <SelectItem value="custom">Personalizado</SelectItem>
               </SelectContent>
             </Select>

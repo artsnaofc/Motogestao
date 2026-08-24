@@ -40,8 +40,6 @@ interface MassAporteConsolidatorProps {
     items: { reserve_id: string; amount: number; name: string }[];
     date: string;
     description: string;
-    createCashflowExpense?: boolean;
-    cashflowCategory?: string;
   }) => Promise<void>;
   onClose?: () => void;
   isModal?: boolean;
@@ -63,8 +61,6 @@ export function MassAporteConsolidator({
   const [customAmounts, setCustomAmounts] = useState<Record<string, string>>({});
   const [batchDate, setBatchDate] = useState<string>(new Date().toISOString().split('T')[0]);
   const [batchDesc, setBatchDesc] = useState<string>('Aporte Consolidado');
-  const [createCashflowExpense, setCreateCashflowExpense] = useState(false);
-  const [cashflowCategory, setCashflowCategory] = useState('Aporte Reserva');
 
   // Search & Filter
   const [searchTerm, setSearchTerm] = useState('');
@@ -131,9 +127,9 @@ export function MassAporteConsolidator({
     setCustomAmounts(initialAmounts);
   }, [activeReserves, reserveMetrics]);
 
-  // Filtered reserves list
+  // Filtered reserves list sorted by suggestion amount (descending) then alphabetical
   const displayedReserves = useMemo(() => {
-    return activeReserves.filter(r => {
+    const list = activeReserves.filter(r => {
       const matchesSearch = r.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                             (r.description || '').toLowerCase().includes(searchTerm.toLowerCase());
       if (!matchesSearch) return false;
@@ -146,6 +142,19 @@ export function MassAporteConsolidator({
         return !!selectedReserves[r.id];
       }
       return true;
+    });
+
+    return list.sort((a, b) => {
+      const pendA = reserveMetrics[a.id]?.pending || 0;
+      const pendB = reserveMetrics[b.id]?.pending || 0;
+
+      if (pendA > 0 && pendB <= 0) return -1;
+      if (pendB > 0 && pendA <= 0) return 1;
+      if (pendA > 0 && pendB > 0) {
+        if (pendB !== pendA) return pendB - pendA;
+      }
+
+      return a.name.localeCompare(b.name);
     });
   }, [activeReserves, searchTerm, filterMode, reserveMetrics, selectedReserves]);
 
@@ -226,13 +235,14 @@ export function MassAporteConsolidator({
     const nextAmounts = { ...customAmounts };
 
     if (distributeStrategy === 'equal') {
-      const splitVal = Number((targetVal / selectedIds.length).toFixed(2));
+      const splitVal = Math.round((targetVal / selectedIds.length) * 100) / 100;
       selectedIds.forEach(id => {
         nextAmounts[id] = splitVal.toFixed(2);
       });
     } else if (distributeStrategy === 'fixed_each') {
+      const fixedVal = Math.round(targetVal * 100) / 100;
       selectedIds.forEach(id => {
-        nextAmounts[id] = targetVal.toFixed(2);
+        nextAmounts[id] = fixedVal.toFixed(2);
       });
     } else if (distributeStrategy === 'goal_proportional') {
       const totalGoals = selectedIds.reduce((sum, id) => {
@@ -243,8 +253,8 @@ export function MassAporteConsolidator({
       selectedIds.forEach(id => {
         const r = activeReserves.find(item => item.id === id);
         const goal = r?.meta_objetivo || 100;
-        const prop = (goal / totalGoals) * targetVal;
-        nextAmounts[id] = Number(prop.toFixed(2)).toFixed(2);
+        const prop = Math.round(((goal / totalGoals) * targetVal) * 100) / 100;
+        nextAmounts[id] = prop.toFixed(2);
       });
     }
 
@@ -272,13 +282,11 @@ export function MassAporteConsolidator({
       await onExecuteBatch({
         items: selectedItems.map(i => ({
           reserve_id: i.reserve_id,
-          amount: i.amount,
+          amount: Math.round(i.amount * 100) / 100,
           name: i.name
         })),
         date: batchDate,
-        description: batchDesc || 'Aporte Consolidado de Reservas',
-        createCashflowExpense,
-        cashflowCategory
+        description: batchDesc || 'Aporte Consolidado de Reservas'
       });
     } catch (err) {
       console.error(err);
@@ -663,31 +671,19 @@ export function MassAporteConsolidator({
           )}
         </div>
 
-        {/* Batch Metadata (Date & Cashflow Debit Checkbox) */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 border-t border-border/70">
-          <div className="space-y-0.5">
-            <label className="text-[10px] font-bold text-muted-foreground">Data do Aporte</label>
+        {/* Batch Metadata (Date) */}
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 pt-2 border-t border-border/70">
+          <div className="flex items-center gap-2">
+            <label className="text-xs font-bold text-muted-foreground whitespace-nowrap">Data do Aporte:</label>
             <Input
               type="date"
               value={batchDate}
               onChange={e => setBatchDate(e.target.value)}
-              className="h-7.5 text-xs rounded-lg"
+              className="h-8 text-xs rounded-xl w-auto"
             />
           </div>
-
-          <div className="flex items-center p-2 bg-muted/30 rounded-lg border border-border/60">
-            <label className="flex items-start gap-2 cursor-pointer text-[11px] leading-tight">
-              <input
-                type="checkbox"
-                checked={createCashflowExpense}
-                onChange={e => setCreateCashflowExpense(e.target.checked)}
-                className="mt-0.5 w-3.5 h-3.5 rounded text-indigo-600 accent-indigo-600 cursor-pointer"
-              />
-              <div>
-                <span className="font-bold text-foreground block">Debitar do Fluxo de Caixa</span>
-                <span className="text-[10px] text-muted-foreground">Lança despesa contábil no caixa geral</span>
-              </div>
-            </label>
+          <div className="text-[11px] text-muted-foreground font-medium">
+            Todos os valores serão creditados diretamente nos saldos das reservas.
           </div>
         </div>
       </div>

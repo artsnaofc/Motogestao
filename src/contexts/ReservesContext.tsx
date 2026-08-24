@@ -9,7 +9,7 @@ export interface ReservesContextType {
   addReserve: (reserve: Omit<Reserve, 'id' | 'user_id' | 'created_at' | 'updated_at'>) => Promise<void>;
   updateReserve: (id: string, reserve: Partial<Reserve>) => Promise<void>;
   deleteReserve: (id: string) => Promise<void>;
-  addReserveTransaction: (rt: Omit<ReserveTransaction, 'id' | 'user_id' | 'created_at'>) => Promise<string | undefined>;
+  addReserveTransaction: (rt: Omit<ReserveTransaction, 'id' | 'user_id' | 'created_at'>, options?: { silent?: boolean }) => Promise<string | undefined>;
   deleteReserveTransaction: (id: string) => Promise<void>;
   updateReserveTransaction: (id: string, rt: Partial<ReserveTransaction>) => Promise<void>;
   setReserves: React.Dispatch<React.SetStateAction<Reserve[]>>;
@@ -173,7 +173,10 @@ export function ReservesProvider({
     }
   }, [onDataChange]);
 
-  const addReserveTransaction = useCallback(async (newRt: Omit<ReserveTransaction, 'id' | 'user_id' | 'created_at'>): Promise<string | undefined> => {
+  const addReserveTransaction = useCallback(async (
+    newRt: Omit<ReserveTransaction, 'id' | 'user_id' | 'created_at'>,
+    options?: { silent?: boolean }
+  ): Promise<string | undefined> => {
     const { data: userData } = await supabase.auth.getUser();
     if (!userData.user) return;
 
@@ -185,24 +188,51 @@ export function ReservesProvider({
       created_at: new Date().toISOString(),
     };
 
+    // Sanitize payload specifically for Supabase table schema
+    // PostgREST errors out if extra client-side keys (like source/batch_id) are present
+    const supabasePayload: Record<string, any> = {
+      id: rtObj.id,
+      user_id: rtObj.user_id,
+      reserve_id: rtObj.reserve_id,
+      type: rtObj.type,
+      amount: rtObj.amount,
+      date: rtObj.date,
+      created_at: rtObj.created_at,
+    };
+    if (rtObj.description) supabasePayload.description = rtObj.description;
+    if (rtObj.category) supabasePayload.category = rtObj.category;
+    if (rtObj.linked_investment_id) supabasePayload.linked_investment_id = rtObj.linked_investment_id;
+    if (rtObj.transaction_id) supabasePayload.transaction_id = rtObj.transaction_id;
+
     try {
       const { error } = await supabase
         .from('reserve_transactions')
-        .insert(rtObj);
+        .insert(supabasePayload);
 
-      if (error) throw error;
+      if (error) {
+        console.warn('Supabase transaction insert error:', error);
+        throw error;
+      }
+
+      setReserveTransactions(prev => {
+        const filtered = prev.filter(item => item.id !== rtObj.id);
+        const existing = [rtObj, ...filtered];
+        localStorage.setItem(`reserve_transactions_${userId}`, JSON.stringify(existing));
+        return existing;
+      });
 
       if (onDataChange) await onDataChange();
-      toast.success('Movimentação registrada com sucesso!');
+      if (!options?.silent) toast.success('Movimentação registrada com sucesso!');
       return rtObj.id;
     } catch (err) {
       console.warn('Supabase transaction insert failed, adding to localStorage:', err);
       setReserveTransactions(prev => {
-        const existing = [rtObj, ...prev];
+        const filtered = prev.filter(item => item.id !== rtObj.id);
+        const existing = [rtObj, ...filtered];
         localStorage.setItem(`reserve_transactions_${userId}`, JSON.stringify(existing));
         return existing;
       });
-      toast.success('Movimentação registrada com sucesso (localmente)!');
+      if (!options?.silent) toast.success('Movimentação registrada com sucesso (localmente)!');
       return rtObj.id;
     }
   }, [onDataChange]);
@@ -212,11 +242,30 @@ export function ReservesProvider({
     if (!userData.user) return;
 
     const userId = userData.user.id;
+    const rtToDelete = reserveTransactions.find(rt => rt.id === id);
+
+    // 1. Optimistically update local state & localStorage immediately
+    setReserveTransactions(prev => {
+      const existing = prev.filter(rt => rt.id !== id);
+      localStorage.setItem(`reserve_transactions_${userId}`, JSON.stringify(existing));
+      return existing;
+    });
 
     try {
-      const rtToDelete = reserveTransactions.find(rt => rt.id === id);
       if (rtToDelete?.linked_investment_id) {
-        await supabase.from('investment_transactions').delete().eq('id', rtToDelete.linked_investment_id);
+        try {
+          await supabase.from('investment_transactions').delete().eq('id', rtToDelete.linked_investment_id);
+        } catch (e) {
+          console.warn('Could not delete linked investment transaction:', e);
+        }
+      }
+
+      if (rtToDelete?.transaction_id) {
+        try {
+          await supabase.from('transactions').delete().eq('id', rtToDelete.transaction_id);
+        } catch (e) {
+          console.warn('Could not delete linked transaction:', e);
+        }
       }
 
       const { error } = await supabase
@@ -224,18 +273,15 @@ export function ReservesProvider({
         .delete()
         .eq('id', id);
 
-      if (error) throw error;
+      if (error) {
+        console.warn('Supabase rt delete returned error, but local state was updated:', error);
+      }
 
       if (onDataChange) await onDataChange();
       toast.success('Movimentação excluída com sucesso!');
     } catch (err) {
-      console.warn('Supabase transaction delete failed, removing from localStorage:', err);
-      setReserveTransactions(prev => {
-        const existing = prev.filter(rt => rt.id !== id);
-        localStorage.setItem(`reserve_transactions_${userId}`, JSON.stringify(existing));
-        return existing;
-      });
-      toast.success('Movimentação excluída com sucesso (localmente)!');
+      console.warn('Supabase transaction delete failed, local state updated:', err);
+      toast.success('Movimentação excluída com sucesso!');
     }
   }, [reserveTransactions, onDataChange]);
 
@@ -245,10 +291,20 @@ export function ReservesProvider({
 
     const userId = userData.user.id;
 
+    // Optimistically update local state
+    setReserveTransactions(prev => {
+      const existing = prev.map(rt => rt.id === id ? { ...rt, ...updatedFields } : rt);
+      localStorage.setItem(`reserve_transactions_${userId}`, JSON.stringify(existing));
+      return existing;
+    });
+
+    // Sanitize payload for Supabase
+    const { source, batch_id, ...supabasePayload } = updatedFields as any;
+
     try {
       const { error } = await supabase
         .from('reserve_transactions')
-        .update(updatedFields)
+        .update(supabasePayload)
         .eq('id', id);
 
       if (error) throw error;
@@ -256,12 +312,7 @@ export function ReservesProvider({
       if (onDataChange) await onDataChange();
       toast.success('Movimentação de reserva atualizada!');
     } catch (err) {
-      console.warn('Supabase rt update failed, updating in localStorage:', err);
-      setReserveTransactions(prev => {
-        const existing = prev.map(rt => rt.id === id ? { ...rt, ...updatedFields } : rt);
-        localStorage.setItem(`reserve_transactions_${userId}`, JSON.stringify(existing));
-        return existing;
-      });
+      console.warn('Supabase rt update failed, preserved in localStorage:', err);
       toast.success('Movimentação de reserva atualizada (localmente)!');
     }
   }, [onDataChange]);

@@ -84,8 +84,8 @@ export function ReserveCard({
   }, [showMenu]);
 
   const IconComp = iconOptions[reserve.icon] || PiggyBank;
-  const currentBalance = reserve.saldo_atual || 0;
-  const goal = reserve.meta_objetivo || 0;
+  const currentBalance = Math.round((reserve.saldo_atual || 0) * 100) / 100;
+  const goal = Math.round((reserve.meta_objetivo || 0) * 100) / 100;
   const hasGoal = goal > 0;
   const goalProgress = hasGoal ? Math.min(100, Math.round((currentBalance / goal) * 100)) : 0;
   const isGoalReached = hasGoal && currentBalance >= goal;
@@ -94,13 +94,15 @@ export function ReserveCard({
   // Calculate suggestions
   const suggested = calculateSuggestion(reserve, transactions, reserveTransactions, globalPeriod, customDateRange);
   const effectiveAportes = getEffectiveAportesInPeriod(reserve, reserveTransactions, globalPeriod, customDateRange);
-  const pendingSuggestion = Math.max(0, suggested - effectiveAportes);
+  const pendingSuggestion = Math.round(Math.max(0, suggested - effectiveAportes) * 100) / 100;
 
   // Recent transactions count
   const recentTxs = (reserveTransactions || []).filter(rt => rt.reserve_id === reserve.id);
-  const totalYield = recentTxs
-    .filter(rt => rt.type === 'rendimento')
-    .reduce((sum, rt) => sum + Number(rt.amount || 0), 0);
+  const totalYield = Math.round(
+    recentTxs
+      .filter(rt => rt.type === 'rendimento')
+      .reduce((sum, rt) => sum + Number(rt.amount || 0), 0) * 100
+  ) / 100;
 
   // Rule label format
   const getRuleBadge = () => {

@@ -61,6 +61,9 @@ export function Reserves() {
 
   const [selectedReserveForAction, setSelectedReserveForAction] = useState<Reserve | null>(null);
   const [actionModalType, setActionModalType] = useState<'aporte_manual' | 'withdraw' | 'update_balance' | 'rule_history' | null>(null);
+  const [aporteInitialAmount, setAporteInitialAmount] = useState<number | undefined>(undefined);
+  const [aporteInitialDesc, setAporteInitialDesc] = useState<string | undefined>(undefined);
+  const [isSuggestionAporte, setIsSuggestionAporte] = useState<boolean>(false);
 
   const [isSubmittingBatch, setIsSubmittingBatch] = useState(false);
 
@@ -111,9 +114,9 @@ export function Reserves() {
     };
   }, [activeReserves, transactions, reserveTransactions, globalPeriod, customDateRange]);
 
-  // Filtered reserves list for cards
+  // Filtered reserves list for cards with suggested amounts first
   const filteredCards = useMemo(() => {
-    return activeReserves.filter(r => {
+    const list = activeReserves.filter(r => {
       // Search
       const matchesSearch = r.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                             (r.description || '').toLowerCase().includes(searchTerm.toLowerCase());
@@ -147,28 +150,39 @@ export function Reserves() {
 
       return true;
     });
-  }, [activeReserves, searchTerm, statusFilter, transactions, reserveTransactions, globalPeriod, customDateRange]);
 
-  // Helper to record expense transaction in general cashflow
-  const registerCashflowExpense = async (amount: number, date: string, category: string, description: string) => {
-    try {
-      const { data: userData } = await supabase.auth.getUser();
-      if (!userData.user) return;
-      await supabase.from('transactions').insert({
-        user_id: userData.user.id,
-        type: 'expense',
-        amount,
-        date,
-        category: category || 'Aporte Reserva',
-        description,
-        is_reserve_use: true,
-        created_at: new Date().toISOString()
-      });
-      if (refreshData) await refreshData(true);
-    } catch (err) {
-      console.warn('Could not insert cashflow transaction:', err);
-    }
-  };
+    // Helper to get pending suggestion for sorting
+    const getPendingAmount = (r: Reserve) => {
+      const sugg = calculateSuggestion(
+        r,
+        transactions,
+        reserveTransactions,
+        globalPeriod,
+        customDateRange || { start: '', end: '' }
+      );
+      const eff = getEffectiveAportesInPeriod(
+        r,
+        reserveTransactions,
+        globalPeriod,
+        customDateRange || { start: '', end: '' }
+      );
+      return Math.max(0, Math.round((sugg - eff) * 100) / 100);
+    };
+
+    // Sort: reserves with suggestions first (descending by suggestion amount), then alphabetical
+    return list.sort((a, b) => {
+      const pendA = getPendingAmount(a);
+      const pendB = getPendingAmount(b);
+
+      if (pendA > 0 && pendB <= 0) return -1;
+      if (pendB > 0 && pendA <= 0) return 1;
+      if (pendA > 0 && pendB > 0) {
+        if (pendB !== pendA) return pendB - pendA;
+      }
+
+      return a.name.localeCompare(b.name);
+    });
+  }, [activeReserves, searchTerm, statusFilter, transactions, reserveTransactions, globalPeriod, customDateRange]);
 
   // ----------------------------------------------------
   // HANDLERS
@@ -179,8 +193,6 @@ export function Reserves() {
     items: { reserve_id: string; amount: number; name: string }[];
     date: string;
     description: string;
-    createCashflowExpense?: boolean;
-    cashflowCategory?: string;
   }) => {
     try {
       setIsSubmittingBatch(true);
@@ -188,39 +200,32 @@ export function Reserves() {
       let totalSum = 0;
 
       for (const item of batchData.items) {
-        if (item.amount <= 0) continue;
-        totalSum += item.amount;
+        const cleanAmount = Math.round(item.amount * 100) / 100;
+        if (cleanAmount <= 0) continue;
+        totalSum += cleanAmount;
 
         await addReserveTransaction({
           reserve_id: item.reserve_id,
           type: 'aporte',
-          amount: item.amount,
+          amount: cleanAmount,
           date: batchData.date,
           description: `[Consolidador em Massa] ${batchData.description}`,
           source: 'mass_contribution',
           batch_id: batchId
-        });
+        }, { silent: true });
 
         // Update reserve balance
         const res = reserves.find(r => r.id === item.reserve_id);
         if (res) {
-          const newBal = (res.saldo_atual || 0) + item.amount;
+          const newBal = Math.round(((res.saldo_atual || 0) + cleanAmount) * 100) / 100;
           await updateReserve(item.reserve_id, { saldo_atual: newBal });
         }
       }
 
-      // If user selected to register a cashflow expense
-      if (batchData.createCashflowExpense && totalSum > 0) {
-        await registerCashflowExpense(
-          totalSum, 
-          batchData.date, 
-          batchData.cashflowCategory || 'Aporte Reserva',
-          `[Aporte Consolidado em Reservas] ${batchData.description}`
-        );
-      }
-
+      totalSum = Math.round(totalSum * 100) / 100;
       toast.success(`Aporte em lote de ${formatCurrency(totalSum)} efetivado em ${batchData.items.length} reservas!`);
       setShowMassAporteModal(false);
+      if (refreshData) await refreshData(true);
     } catch (err: any) {
       console.error(err);
       toast.error('Erro ao efetivar lote: ' + (err.message || 'Tente novamente.'));
@@ -229,25 +234,13 @@ export function Reserves() {
     }
   };
 
-  // 2. Direct single 1-click suggestion aporte
-  const handleApplyDirectSuggestion = async (reserve: Reserve, amount: number) => {
-    try {
-      const today = new Date().toISOString().split('T')[0];
-      await addReserveTransaction({
-        reserve_id: reserve.id,
-        type: 'aporte',
-        amount: amount,
-        date: today,
-        description: `[Aporte Manual] Regra sugerida: ${reserve.name}`,
-        source: 'manual'
-      });
-
-      const newBal = (reserve.saldo_atual || 0) + amount;
-      await updateReserve(reserve.id, { saldo_atual: newBal });
-      toast.success(`Aporte sugerido de ${formatCurrency(amount)} aplicado em ${reserve.name}!`);
-    } catch (err: any) {
-      toast.error('Erro ao aplicar aporte: ' + err.message);
-    }
+  // 2. Direct single suggestion aporte (opens confirmation modal with prefilled data)
+  const handleApplyDirectSuggestion = (reserve: Reserve, amount: number) => {
+    setSelectedReserveForAction(reserve);
+    setAporteInitialAmount(Math.round(amount * 100) / 100);
+    setAporteInitialDesc(`[Aporte Sugerido] Regra calculada: ${reserve.name}`);
+    setIsSuggestionAporte(true);
+    setActionModalType('aporte_manual');
   };
 
   // 3. Manual Individual Aporte
@@ -255,33 +248,25 @@ export function Reserves() {
     amount: number;
     date: string;
     description: string;
-    createCashflowExpense: boolean;
   }) => {
     if (!selectedReserveForAction) return;
     const res = selectedReserveForAction;
+    const cleanAmount = Math.round(data.amount * 100) / 100;
 
     await addReserveTransaction({
       reserve_id: res.id,
       type: 'aporte',
-      amount: data.amount,
+      amount: cleanAmount,
       date: data.date,
-      description: `[Aporte Manual] ${data.description}`,
+      description: data.description || `[Aporte Manual] ${res.name}`,
       source: 'manual'
     });
 
-    const newBal = (res.saldo_atual || 0) + data.amount;
+    const newBal = Math.round(((res.saldo_atual || 0) + cleanAmount) * 100) / 100;
     await updateReserve(res.id, { saldo_atual: newBal });
 
-    if (data.createCashflowExpense) {
-      await registerCashflowExpense(
-        data.amount,
-        data.date,
-        'Aporte Reserva',
-        `[Aporte Manual] ${res.name} - ${data.description}`
-      );
-    }
-
-    toast.success(`Aporte manual de ${formatCurrency(data.amount)} registrado!`);
+    toast.success(`Aporte de ${formatCurrency(cleanAmount)} confirmado em ${res.name}!`);
+    if (refreshData) await refreshData(true);
   };
 
   // 4. Withdraw / Utilizacao Submit
@@ -293,21 +278,23 @@ export function Reserves() {
   }) => {
     if (!selectedReserveForAction) return;
     const res = selectedReserveForAction;
+    const cleanAmount = Math.round(data.amount * 100) / 100;
 
     await addReserveTransaction({
       reserve_id: res.id,
       type: 'utilizacao',
-      amount: data.amount,
+      amount: cleanAmount,
       date: data.date,
       category: data.category,
       description: data.description,
       source: 'manual'
     });
 
-    const newBal = Math.max(0, (res.saldo_atual || 0) - data.amount);
+    const newBal = Math.max(0, Math.round(((res.saldo_atual || 0) - cleanAmount) * 100) / 100);
     await updateReserve(res.id, { saldo_atual: newBal });
 
-    toast.success(`Resgate de ${formatCurrency(data.amount)} registrado com sucesso!`);
+    toast.success(`Resgate de ${formatCurrency(cleanAmount)} registrado com sucesso!`);
+    if (refreshData) await refreshData(true);
   };
 
   // 5. Update Balance / Rendimento Submit
@@ -319,8 +306,9 @@ export function Reserves() {
   }) => {
     if (!selectedReserveForAction) return;
     const res = selectedReserveForAction;
-    const currentBal = res.saldo_atual || 0;
-    const diff = Number((data.newBalance - currentBal).toFixed(2));
+    const currentBal = Math.round((res.saldo_atual || 0) * 100) / 100;
+    const cleanNewBal = Math.round(data.newBalance * 100) / 100;
+    const diff = Math.round((cleanNewBal - currentBal) * 100) / 100;
 
     if (diff !== 0) {
       await addReserveTransaction({
@@ -333,8 +321,9 @@ export function Reserves() {
       });
     }
 
-    await updateReserve(res.id, { saldo_atual: data.newBalance });
-    toast.success(`Saldo atualizado para ${formatCurrency(data.newBalance)}!`);
+    await updateReserve(res.id, { saldo_atual: cleanNewBal });
+    toast.success(`Saldo atualizado para ${formatCurrency(cleanNewBal)}!`);
+    if (refreshData) await refreshData(true);
   };
 
   // 6. Create or Edit Reserve
@@ -556,13 +545,19 @@ export function Reserves() {
         onSave={handleSaveReserve}
       />
 
-      {/* 3. Modal Aporte Manual Individual */}
+      {/* 3. Modal Aporte Manual Individual com Confirmação */}
       <AporteManualModal
         isOpen={actionModalType === 'aporte_manual'}
         reserve={selectedReserveForAction}
+        initialAmount={aporteInitialAmount}
+        initialDescription={aporteInitialDesc}
+        isSuggestion={isSuggestionAporte}
         onClose={() => {
           setActionModalType(null);
           setSelectedReserveForAction(null);
+          setAporteInitialAmount(undefined);
+          setAporteInitialDesc(undefined);
+          setIsSuggestionAporte(false);
         }}
         onSubmit={handleAporteManualSubmit}
       />

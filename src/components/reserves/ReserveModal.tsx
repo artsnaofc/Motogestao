@@ -125,19 +125,23 @@ export function ReserveModal({
     try {
       setIsSubmitting(true);
 
+      const parsedMeta = metaObjetivo ? Math.round(parseFloat(metaObjetivo) * 100) / 100 : 0;
+      const parsedRegraVal = regraAtiva && regraValor ? Math.round(parseFloat(regraValor) * 100) / 100 : undefined;
+
       const payload: Partial<Reserve> = {
         name: name.trim(),
         description: description.trim(),
-        meta_objetivo: metaObjetivo ? parseFloat(metaObjetivo) : 0,
+        meta_objetivo: isNaN(parsedMeta) ? 0 : parsedMeta,
         icon,
         color,
         regra_ativa: regraAtiva,
         regra_tipo: regraAtiva ? (regraTipo as any) : undefined,
-        regra_valor: regraAtiva && regraValor ? parseFloat(regraValor) : undefined,
+        regra_valor: parsedRegraVal !== undefined && !isNaN(parsedRegraVal) ? parsedRegraVal : undefined,
         regra_categorias: regraAtiva ? regraCategorias : []
       };
 
-      const initBalNum = initialBalance ? parseFloat(initialBalance) : 0;
+      const parsedInit = initialBalance ? Math.round(parseFloat(initialBalance) * 100) / 100 : 0;
+      const initBalNum = isNaN(parsedInit) ? 0 : parsedInit;
       await onSave(payload, isEditing ? undefined : initBalNum);
       onClose();
     } catch (err) {

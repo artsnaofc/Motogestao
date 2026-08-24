@@ -252,13 +252,13 @@ export const calculateSuggestion = (
       eligible.forEach((t: Transaction) => {
         const distance = (Number(t.end_km) || 0) - (Number(t.start_km) || 0);
         if (distance > 0) {
-          totalSuggestion += distance * ruleValue;
+          totalSuggestion += Math.round(distance * ruleValue * 100) / 100;
         }
       });
     } else if (rule.regra_tipo === 'bruto') {
       const eligible = txs.filter((t: Transaction) => t.type === 'income' && ruleCats.includes(t.category));
       const grossSum = eligible.reduce((sum: number, t: Transaction) => sum + Number(t.amount || 0), 0);
-      totalSuggestion += grossSum * (ruleValue / 100);
+      totalSuggestion += Math.round(grossSum * (ruleValue / 100) * 100) / 100;
     } else if (rule.regra_tipo === 'liquido') {
       const totalIncome = txs
         .filter((t: Transaction) => t.type === 'income')
@@ -274,11 +274,11 @@ export const calculateSuggestion = (
         })
         .reduce((sum: number, t: Transaction) => sum + Number(t.amount || 0), 0);
       const netProfit = totalIncome - totalExpense;
-      totalSuggestion += Math.max(0, netProfit) * (ruleValue / 100);
+      totalSuggestion += Math.round(Math.max(0, netProfit) * (ruleValue / 100) * 100) / 100;
     } else if (rule.regra_tipo === 'fixo') {
       const eligible = txs.filter((t: Transaction) => t.type === 'income' && ruleCats.includes(t.category));
       const uniqueDays = new Set(eligible.map((t: Transaction) => t.date));
-      totalSuggestion += uniqueDays.size * ruleValue;
+      totalSuggestion += Math.round(uniqueDays.size * ruleValue * 100) / 100;
     }
   });
 
@@ -288,7 +288,7 @@ export const calculateSuggestion = (
     }
   }
 
-  return Number(totalSuggestion.toFixed(2));
+  return Math.round(totalSuggestion * 100) / 100;
 };
 
 export const getSuggestionAudit = (
@@ -355,19 +355,17 @@ export const getEffectiveAportesInPeriod = (
   customDateRange: { start: string; end: string }
 ): number => {
   const lastWDate = getLatestWithdrawalDate(res, reserveTransactions);
-  return Number(
-    (reserveTransactions || [])
-      .filter(rt => {
-        const matches = rt.reserve_id === res.id && 
-                        rt.type === 'aporte' && 
-                        isTxInPeriod(rt.date, globalPeriod, customDateRange) && 
-                        rt.category !== 'Aporte Extra' && 
-                        rt.category !== 'Rendimento';
-        if (!matches) return false;
-        if (lastWDate && rt.date <= lastWDate) return false;
-        return true;
-      })
-      .reduce((sum, rt) => sum + Number(rt.amount || 0), 0)
-      .toFixed(2)
-  );
+  const total = (reserveTransactions || [])
+    .filter(rt => {
+      const matches = rt.reserve_id === res.id && 
+                      rt.type === 'aporte' && 
+                      isTxInPeriod(rt.date, globalPeriod, customDateRange) && 
+                      rt.category !== 'Aporte Extra' && 
+                      rt.category !== 'Rendimento';
+      if (!matches) return false;
+      if (lastWDate && rt.date <= lastWDate) return false;
+      return true;
+    })
+    .reduce((sum, rt) => sum + Number(rt.amount || 0), 0);
+  return Math.round(total * 100) / 100;
 };

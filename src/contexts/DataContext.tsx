@@ -35,7 +35,7 @@ export interface DataContextType {
   addReserve: (reserve: Omit<Reserve, 'id' | 'user_id' | 'created_at' | 'updated_at'>) => Promise<void>;
   updateReserve: (id: string, reserve: Partial<Reserve>) => Promise<void>;
   deleteReserve: (id: string) => Promise<void>;
-  addReserveTransaction: (rt: Omit<ReserveTransaction, 'id' | 'user_id' | 'created_at'>) => Promise<string | undefined>;
+  addReserveTransaction: (rt: Omit<ReserveTransaction, 'id' | 'user_id' | 'created_at'>, options?: { silent?: boolean }) => Promise<string | undefined>;
   deleteReserveTransaction: (id: string) => Promise<void>;
   updateReserveTransaction: (id: string, rt: Partial<ReserveTransaction>) => Promise<void>;
 
@@ -359,8 +359,20 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
         if (rtSupaerror) throw rtSupaerror;
         if (rtSupadata) {
-          setReserveTransactions(rtSupadata);
-          localStorage.setItem(`reserve_transactions_${userId}`, JSON.stringify(rtSupadata));
+          const localRtsRaw = localStorage.getItem(`reserve_transactions_${userId}`);
+          let mergedRts = rtSupadata;
+          if (localRtsRaw) {
+            try {
+              const localRts = JSON.parse(localRtsRaw);
+              if (Array.isArray(localRts)) {
+                const supaIds = new Set(rtSupadata.map(item => item.id));
+                const localOnly = localRts.filter((item: any) => item && item.id && !supaIds.has(item.id));
+                mergedRts = [...rtSupadata, ...localOnly];
+              }
+            } catch {}
+          }
+          setReserveTransactions(mergedRts);
+          localStorage.setItem(`reserve_transactions_${userId}`, JSON.stringify(mergedRts));
         }
       } catch (errRt) {
         console.warn('Could not load reserve transactions from Supabase, loading from localStorage:', errRt);

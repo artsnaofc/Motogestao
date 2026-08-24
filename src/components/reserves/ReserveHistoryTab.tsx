@@ -40,6 +40,8 @@ export function ReserveHistoryTab({
   const [selectedReserveId, setSelectedReserveId] = useState<string>('all');
   const [selectedType, setSelectedType] = useState<string>('all'); // all, manual_aporte, mass_aporte, utilizacao, rendimento
   const [sortOrder, setSortOrder] = useState<'desc' | 'asc'>('desc');
+  const [txToDelete, setTxToDelete] = useState<ReserveTransaction | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // Map reserves by id for quick lookup
   const reserveMap = useMemo(() => {
@@ -164,12 +166,12 @@ export function ReserveHistoryTab({
     });
 
     return {
-      totalAportesManuais,
-      totalAportesMassa,
-      totalAportesTotal: totalAportesManuais + totalAportesMassa,
-      totalUtilizacoes,
-      totalRendimentos,
-      netFlow: (totalAportesManuais + totalAportesMassa + totalRendimentos) - totalUtilizacoes
+      totalAportesManuais: Math.round(totalAportesManuais * 100) / 100,
+      totalAportesMassa: Math.round(totalAportesMassa * 100) / 100,
+      totalAportesTotal: Math.round((totalAportesManuais + totalAportesMassa) * 100) / 100,
+      totalUtilizacoes: Math.round(totalUtilizacoes * 100) / 100,
+      totalRendimentos: Math.round(totalRendimentos * 100) / 100,
+      netFlow: Math.round(((totalAportesManuais + totalAportesMassa + totalRendimentos) - totalUtilizacoes) * 100) / 100
     };
   }, [filteredTransactions]);
 
@@ -350,12 +352,9 @@ export function ReserveHistoryTab({
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() => {
-                      if (confirm('Tem certeza que deseja excluir esta movimentação? O saldo da reserva será recalculado.')) {
-                        onDeleteTransaction(tx.id);
-                      }
-                    }}
-                    className="w-8 h-8 p-0 rounded-xl text-muted-foreground hover:text-rose-600 hover:bg-rose-500/10"
+                    onClick={() => setTxToDelete(tx)}
+                    className="w-8 h-8 p-0 rounded-xl text-muted-foreground hover:text-rose-600 hover:bg-rose-500/10 cursor-pointer"
+                    title="Excluir movimentação"
                   >
                     <Trash2 className="w-4 h-4" />
                   </Button>
@@ -365,6 +364,83 @@ export function ReserveHistoryTab({
           })
         )}
       </div>
+
+      {/* Delete Confirmation Modal */}
+      {txToDelete && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-card w-full max-w-md my-auto rounded-3xl border border-border/80 shadow-2xl p-6 space-y-4 animate-in fade-in zoom-in-95 duration-200 text-left">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-rose-500/10 text-rose-600 dark:text-rose-400 flex items-center justify-center shrink-0">
+                <AlertCircle className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-black text-foreground">Excluir Movimentação?</h3>
+                <p className="text-xs text-muted-foreground">Esta ação não pode ser desfeita.</p>
+              </div>
+            </div>
+
+            <div className="p-3.5 bg-muted/40 rounded-2xl border border-border/80 space-y-2 text-xs">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Reserva:</span>
+                <span className="font-bold text-foreground">{reserveMap[txToDelete.reserve_id]?.name || 'Reserva'}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Tipo:</span>
+                <span className="font-bold capitalize">{txToDelete.type}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Data:</span>
+                <span className="font-medium">{formatDateDisplay(txToDelete.date)}</span>
+              </div>
+              <div className="flex justify-between border-t border-border/60 pt-1.5">
+                <span className="font-bold text-foreground">Valor:</span>
+                <span className="font-mono font-black text-sm text-foreground">
+                  {formatCurrency(txToDelete.amount)}
+                </span>
+              </div>
+              {txToDelete.description && (
+                <div className="text-[11px] text-muted-foreground pt-1 italic">
+                  &quot;{txToDelete.description}&quot;
+                </div>
+              )}
+            </div>
+
+            <p className="text-[11px] text-muted-foreground">
+              O saldo da reserva será recalculado automaticamente com base nas movimentações restantes.
+            </p>
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <Button
+                variant="ghost"
+                onClick={() => setTxToDelete(null)}
+                disabled={isDeleting}
+                className="h-10 text-xs font-bold cursor-pointer"
+              >
+                Cancelar
+              </Button>
+              <Button
+                variant="destructive"
+                disabled={isDeleting}
+                onClick={async () => {
+                  if (!txToDelete) return;
+                  try {
+                    setIsDeleting(true);
+                    await onDeleteTransaction(txToDelete.id);
+                    setTxToDelete(null);
+                  } catch (e) {
+                    console.error(e);
+                  } finally {
+                    setIsDeleting(false);
+                  }
+                }}
+                className="h-10 px-5 text-xs font-bold bg-rose-600 hover:bg-rose-700 text-white rounded-xl shadow-md shadow-rose-500/20 cursor-pointer"
+              >
+                {isDeleting ? 'Excluindo...' : 'Confirmar Exclusão'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
