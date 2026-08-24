@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { 
   PiggyBank, 
   X, 
@@ -9,12 +9,13 @@ import {
   Layers, 
   HelpCircle,
   Zap,
-  Tag
+  Tag,
+  ShieldCheck
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Reserve, Transaction } from '../../types';
+import { Reserve, Transaction, UserSettings } from '../../types';
 import { iconOptions, COLOR_PALETTE, formatCurrency } from './reserveUtils';
 import { toast } from 'sonner';
 
@@ -23,6 +24,7 @@ interface ReserveModalProps {
   onClose: () => void;
   reserveToEdit: Reserve | null;
   transactions: Transaction[];
+  settings?: UserSettings | null;
   onSave: (reserveData: Partial<Reserve>, initialBalance?: number) => Promise<void>;
 }
 
@@ -31,6 +33,7 @@ export function ReserveModal({
   onClose,
   reserveToEdit,
   transactions,
+  settings,
   onSave
 }: ReserveModalProps) {
   const isEditing = !!reserveToEdit;
@@ -48,22 +51,40 @@ export function ReserveModal({
   const [regraTipo, setRegraTipo] = useState<Reserve['regra_tipo'] | ''>('');
   const [regraValor, setRegraValor] = useState('');
   const [regraCategorias, setRegraCategorias] = useState<string[]>([]);
+  const [requireCategoryOnUse, setRequireCategoryOnUse] = useState<boolean>(true);
+  const [defaultUseCategory, setDefaultUseCategory] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Tab
   const [activeTab, setActiveTab] = useState<'general' | 'automation'>('general');
 
-  // Extract unique income categories from transactions
-  const availableIncomeCategories = Array.from(
-    new Set(
-      transactions
-        .filter(t => t.type === 'income' && t.category)
-        .map(t => t.category as string)
-    )
-  );
+  // Income categories from profile settings
+  const allCategories = useMemo(() => {
+    const fromSettings = settings?.income_categories || [];
+    if (fromSettings.length > 0) return fromSettings;
 
-  const defaultCategories = ['Uber', '99', 'Indrive', 'Particular', 'Ifood', 'Entregas', 'Passageiro'];
-  const allCategories = Array.from(new Set([...defaultCategories, ...availableIncomeCategories]));
+    const fromTx = Array.from(
+      new Set(
+        transactions
+          .filter(t => t.type === 'income' && t.category)
+          .map(t => t.category as string)
+      )
+    );
+    const defaults = ['iFood', 'Uber', '99Moto', 'Particular', 'Gorjeta', 'Frete do Dia', 'Pizzaria', 'Outros'];
+    return Array.from(new Set([...defaults, ...fromTx]));
+  }, [settings, transactions]);
+
+  // Expense categories from profile settings
+  const profileExpenseCategories = useMemo(() => {
+    const fromSettings = settings?.expense_categories && settings.expense_categories.length > 0
+      ? settings.expense_categories
+      : [
+          ...(settings?.operational_expense_categories || []),
+          ...(settings?.personal_expense_categories || [])
+        ];
+    if (fromSettings.length > 0) return Array.from(new Set(fromSettings));
+    return ['Combustível', 'Pedágio', 'Manutenção', 'Alimentação', 'Plano de Internet', 'Equipamento', 'Outras Despesas', 'Emergência', 'Outros'];
+  }, [settings]);
 
   useEffect(() => {
     if (reserveToEdit) {
@@ -75,7 +96,13 @@ export function ReserveModal({
       setRegraAtiva(!!reserveToEdit.regra_ativa);
       setRegraTipo(reserveToEdit.regra_tipo || '');
       setRegraValor(reserveToEdit.regra_valor ? String(reserveToEdit.regra_valor) : '');
-      setRegraCategorias(reserveToEdit.regra_categorias || allCategories);
+      setRegraCategorias(reserveToEdit.regra_categorias && reserveToEdit.regra_categorias.length > 0 ? reserveToEdit.regra_categorias : allCategories);
+      
+      const reqCat = reserveToEdit.require_category_on_use !== undefined
+        ? Boolean(reserveToEdit.require_category_on_use)
+        : !reserveToEdit.default_use_category;
+      setRequireCategoryOnUse(reqCat);
+      setDefaultUseCategory(reserveToEdit.default_use_category || profileExpenseCategories[0] || 'Manutenção');
       setInitialBalance('');
     } else {
       setName('');
@@ -88,9 +115,11 @@ export function ReserveModal({
       setRegraTipo('');
       setRegraValor('');
       setRegraCategorias(allCategories);
+      setRequireCategoryOnUse(true);
+      setDefaultUseCategory(profileExpenseCategories[0] || 'Manutenção');
     }
     setActiveTab('general');
-  }, [reserveToEdit, isOpen]);
+  }, [reserveToEdit, isOpen, allCategories, profileExpenseCategories]);
 
   if (!isOpen) return null;
 
@@ -122,6 +151,11 @@ export function ReserveModal({
       return;
     }
 
+    if (!requireCategoryOnUse && !defaultUseCategory) {
+      toast.error('Informe a categoria de despesa fixa para o resgate.');
+      return;
+    }
+
     try {
       setIsSubmitting(true);
 
@@ -137,7 +171,9 @@ export function ReserveModal({
         regra_ativa: regraAtiva,
         regra_tipo: regraAtiva ? (regraTipo as any) : undefined,
         regra_valor: parsedRegraVal !== undefined && !isNaN(parsedRegraVal) ? parsedRegraVal : undefined,
-        regra_categorias: regraAtiva ? regraCategorias : []
+        regra_categorias: regraAtiva ? regraCategorias : [],
+        require_category_on_use: requireCategoryOnUse,
+        default_use_category: !requireCategoryOnUse ? defaultUseCategory : undefined
       };
 
       const parsedInit = initialBalance ? Math.round(parseFloat(initialBalance) * 100) / 100 : 0;
@@ -167,14 +203,14 @@ export function ReserveModal({
             </div>
             <div>
               <h3 className="text-base font-black text-foreground">
-                {isEditing ? 'Editar Reserva & Regras' : 'Nova Reserva Financeira'}
+                {isEditing ? 'Editar Reserva' : 'Nova Reserva Financeira'}
               </h3>
               <p className="text-xs text-muted-foreground font-medium">
                 Configure metas, visualização e automação de aportes
               </p>
             </div>
           </div>
-          <Button variant="ghost" size="sm" onClick={onClose} className="w-8 h-8 p-0 rounded-full">
+          <Button variant="ghost" size="sm" onClick={onClose} className="w-8 h-8 p-0 rounded-full cursor-pointer">
             <X className="w-4 h-4" />
           </Button>
         </div>
@@ -202,7 +238,7 @@ export function ReserveModal({
             }`}
           >
             <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-            <span>Regra de Aporte Automático</span>
+            <span>Regras & Resgates</span>
           </button>
         </div>
 
@@ -271,7 +307,7 @@ export function ReserveModal({
                       key={c}
                       type="button"
                       onClick={() => setColor(c)}
-                      className={`w-7 h-7 rounded-xl transition-all ${
+                      className={`w-7 h-7 rounded-xl transition-all cursor-pointer ${
                         color === c ? 'ring-2 ring-foreground scale-110 shadow-sm' : 'opacity-80 hover:opacity-100'
                       }`}
                       style={{ backgroundColor: c }}
@@ -292,7 +328,7 @@ export function ReserveModal({
                         key={iconKey}
                         type="button"
                         onClick={() => setIcon(iconKey)}
-                        className={`p-2 rounded-xl flex items-center justify-center transition-all ${
+                        className={`p-2 rounded-xl flex items-center justify-center transition-all cursor-pointer ${
                           isSelected
                             ? 'bg-indigo-600 text-white shadow-xs scale-105'
                             : 'text-muted-foreground hover:bg-muted hover:text-foreground'
@@ -344,7 +380,7 @@ export function ReserveModal({
                   {/* Rule Value */}
                   <div className="space-y-1.5">
                     <label className="text-xs font-bold text-muted-foreground">
-                      {regraTipo === 'km' && 'Valor em R$ por cada KM rodado (Ex: 0.10)'}
+                      {regraTipo === 'km' && 'Valor em R$ por cada KM rodado (Ex: 0.15)'}
                       {regraTipo === 'bruto' && 'Percentual % sobre o Faturamento Bruto (Ex: 5)'}
                       {regraTipo === 'liquido' && 'Percentual % sobre o Lucro Líquido (Ex: 10)'}
                       {regraTipo === 'fixo' && 'Valor em R$ fixo por dia trabalhado (Ex: 20)'}
@@ -366,20 +402,20 @@ export function ReserveModal({
                     <div className="space-y-2 pt-1">
                       <div className="flex items-center justify-between">
                         <label className="text-xs font-bold text-muted-foreground">
-                          Categorias Elegíveis
+                          Categorias Elegíveis do Perfil
                         </label>
                         <div className="flex items-center gap-2">
                           <button
                             type="button"
                             onClick={handleSelectAllCategories}
-                            className="text-[10px] font-bold text-indigo-600 hover:underline"
+                            className="text-[10px] font-bold text-indigo-600 hover:underline cursor-pointer"
                           >
                             Todas
                           </button>
                           <button
                             type="button"
                             onClick={handleClearCategories}
-                            className="text-[10px] font-bold text-muted-foreground hover:underline"
+                            className="text-[10px] font-bold text-muted-foreground hover:underline cursor-pointer"
                           >
                             Nenhuma
                           </button>
@@ -394,7 +430,7 @@ export function ReserveModal({
                               key={cat}
                               type="button"
                               onClick={() => handleToggleCategory(cat)}
-                              className={`px-2.5 py-1 rounded-xl text-xs font-bold transition-all ${
+                              className={`px-2.5 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer ${
                                 isCatSelected
                                   ? 'bg-indigo-600 text-white shadow-xs'
                                   : 'bg-muted/60 text-muted-foreground hover:bg-muted'
@@ -409,18 +445,82 @@ export function ReserveModal({
                   )}
                 </div>
               )}
+
+              {/* Resgate: Controle de Categoria */}
+              <div className="space-y-3 pt-3 border-t border-border/80">
+                <div className="flex items-center gap-1.5">
+                  <ShieldCheck className="w-4 h-4 text-purple-500" />
+                  <h4 className="text-xs font-bold text-foreground">Regra de Categoria no Resgate</h4>
+                </div>
+
+                <div className="p-3 bg-muted/30 rounded-2xl border border-border/80 space-y-2.5">
+                  <label className="flex items-start gap-2.5 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="modal_require_category_mode"
+                      checked={requireCategoryOnUse}
+                      onChange={() => setRequireCategoryOnUse(true)}
+                      className="mt-0.5 w-4 h-4 text-indigo-600 accent-indigo-600 cursor-pointer"
+                    />
+                    <div className="text-xs leading-tight">
+                      <span className="font-bold text-foreground block">
+                        Exigir categoria de despesa a cada resgate
+                      </span>
+                      <span className="text-muted-foreground text-[11px]">
+                        Você escolherá a categoria do perfil toda vez que resgatar.
+                      </span>
+                    </div>
+                  </label>
+
+                  <label className="flex items-start gap-2.5 cursor-pointer pt-1">
+                    <input
+                      type="radio"
+                      name="modal_require_category_mode"
+                      checked={!requireCategoryOnUse}
+                      onChange={() => setRequireCategoryOnUse(false)}
+                      className="mt-0.5 w-4 h-4 text-indigo-600 accent-indigo-600 cursor-pointer"
+                    />
+                    <div className="text-xs leading-tight">
+                      <span className="font-bold text-foreground block">
+                        Definir categoria de despesa fixa
+                      </span>
+                      <span className="text-muted-foreground text-[11px]">
+                        Os resgates desta reserva serão lançados automaticamente com esta categoria.
+                      </span>
+                    </div>
+                  </label>
+
+                  {!requireCategoryOnUse && (
+                    <div className="space-y-1 pt-1.5 border-t border-border/60">
+                      <label className="text-[11px] font-bold text-muted-foreground">Categoria Fixa do Perfil:</label>
+                      <Select value={defaultUseCategory} onValueChange={setDefaultUseCategory}>
+                        <SelectTrigger className="h-9 text-xs font-bold rounded-xl bg-card">
+                          <SelectValue placeholder="Selecione a categoria..." />
+                        </SelectTrigger>
+                        <SelectContent className="text-xs">
+                          {profileExpenseCategories.map(cat => (
+                            <SelectItem key={cat} value={cat} className="cursor-pointer">
+                              {cat}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
           )}
 
           {/* Action Buttons */}
           <div className="flex items-center justify-end gap-2 pt-3 border-t border-border/80">
-            <Button type="button" variant="ghost" onClick={onClose} className="h-10 text-xs font-bold">
+            <Button type="button" variant="ghost" onClick={onClose} className="h-10 text-xs font-bold cursor-pointer">
               Cancelar
             </Button>
             <Button
               type="submit"
               disabled={isSubmitting}
-              className="h-10 px-6 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-md shadow-indigo-500/20"
+              className="h-10 px-6 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-md shadow-indigo-500/20 cursor-pointer"
             >
               {isSubmitting ? 'Salvando...' : isEditing ? 'Atualizar Reserva' : 'Criar Reserva'}
             </Button>

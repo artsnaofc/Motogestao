@@ -190,7 +190,7 @@ export const ExecutiveReportModal: React.FC<ExecutiveReportModalProps> = ({
           return;
         }
 
-        if (t.is_reserve_use) {
+        if ((t as any).isReserveTx === true && (t as any).reserveTxType === 'utilizacao') {
           reserveSpending += amt;
         }
 

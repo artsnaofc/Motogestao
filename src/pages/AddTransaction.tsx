@@ -337,23 +337,6 @@ export function AddTransaction() {
 
         let targetHighlightId = rtId;
 
-        // For UTILIZACAO (Usage), we also record a regular expense so it appears in standard ledger
-        if (rtType === 'utilizacao') {
-          const { data: insertedTxs, error: expenseError } = await supabase.from('transactions').insert({
-            user_id: userData.user.id,
-            type: 'expense',
-            amount: finalAmt,
-            date: date,
-            category: finalRtCategory || 'Manutenção',
-            description: description || `Uso da reserva ${selectedRes?.name}`,
-            is_reserve_use: true,
-          }).select();
-
-          if (!expenseError && insertedTxs && insertedTxs.length > 0) {
-            targetHighlightId = insertedTxs[0].id;
-          }
-        }
-
         toast.success(rtType === 'aporte' ? 'Aporte efetuado com sucesso!' : 'Resgate efetuado com sucesso!');
         resetForm();
         await refreshData(true);

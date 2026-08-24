@@ -42,6 +42,7 @@ interface ReserveCardProps {
   onWithdraw: (reserve: Reserve) => void;
   onUpdateBalance: (reserve: Reserve) => void;
   onEdit: (reserve: Reserve) => void;
+  onUpdateRule?: (reserve: Reserve) => void;
   onTogglePause: (reserve: Reserve) => void;
   onFinalize: (reserve: Reserve) => void;
   onDelete: (reserve: Reserve) => void;
@@ -59,6 +60,7 @@ export function ReserveCard({
   onWithdraw,
   onUpdateBalance,
   onEdit,
+  onUpdateRule,
   onTogglePause,
   onFinalize,
   onDelete,
@@ -186,6 +188,19 @@ export function ReserveCard({
 
             {showMenu && (
               <div className="absolute right-0 top-8 z-30 w-48 bg-card border border-border/80 rounded-xl shadow-xl p-1 text-xs font-semibold animate-in fade-in zoom-in-95 duration-150">
+                {onUpdateRule && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowMenu(false);
+                      onUpdateRule(reserve);
+                    }}
+                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left text-indigo-600 dark:text-indigo-400 font-bold hover:bg-indigo-500/10 transition-colors cursor-pointer"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-indigo-600" /> Atualizar Regra
+                  </button>
+                )}
+
                 <button
                   type="button"
                   onClick={() => {
@@ -194,7 +209,7 @@ export function ReserveCard({
                   }}
                   className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left text-foreground hover:bg-muted transition-colors cursor-pointer"
                 >
-                  <Edit3 className="w-3.5 h-3.5 text-indigo-600" /> Editar Reserva
+                  <Edit3 className="w-3.5 h-3.5 text-muted-foreground" /> Editar Reserva
                 </button>
 
                 <button
@@ -205,7 +220,7 @@ export function ReserveCard({
                   }}
                   className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left text-foreground hover:bg-muted transition-colors cursor-pointer"
                 >
-                  <HistIcon className="w-3.5 h-3.5 text-indigo-600" /> Histórico de Regras
+                  <HistIcon className="w-3.5 h-3.5 text-muted-foreground" /> Histórico de Regras
                 </button>
 
                 <button
@@ -300,13 +315,23 @@ export function ReserveCard({
         {/* Automation Rule & Pending Suggestion Pill */}
         <div className="flex flex-wrap items-center justify-between gap-1.5 pt-1.5 border-t border-border/60 text-xs">
           {ruleBadgeText ? (
-            <span className="px-1.5 py-0.5 rounded-md bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 font-bold text-[10px] border border-indigo-500/20 truncate max-w-[170px]">
-              {ruleBadgeText}
-            </span>
+            <button
+              type="button"
+              onClick={() => onUpdateRule && onUpdateRule(reserve)}
+              title="Clique para atualizar a regra de aporte"
+              className="px-2 py-0.5 rounded-md bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 font-bold text-[10px] border border-indigo-500/20 truncate max-w-[190px] flex items-center gap-1 cursor-pointer transition-colors"
+            >
+              <Sparkles className="w-2.5 h-2.5 shrink-0" />
+              <span className="truncate">{ruleBadgeText}</span>
+            </button>
           ) : (
-            <span className="text-[10px] text-muted-foreground font-medium">
-              Sem regra automática
-            </span>
+            <button
+              type="button"
+              onClick={() => onUpdateRule && onUpdateRule(reserve)}
+              className="text-[10px] text-muted-foreground hover:text-indigo-600 dark:hover:text-indigo-400 font-medium flex items-center gap-1 cursor-pointer transition-colors"
+            >
+              <span>+ Definir regra</span>
+            </button>
           )}
 
           {totalYield > 0 && (

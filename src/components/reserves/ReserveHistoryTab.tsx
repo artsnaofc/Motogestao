@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import { motion } from 'motion/react';
 import { 
   ArrowUpRight, 
   ArrowDownLeft, 
@@ -14,14 +15,20 @@ import {
   AlertCircle,
   Tag,
   DollarSign,
-  Download
+  ChevronDown
 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Reserve, ReserveTransaction } from '../../types';
-import { formatCurrency, formatDateDisplay, iconOptions, parseLocalDate } from './reserveUtils';
+import { 
+  formatCurrency, 
+  formatDateDisplay, 
+  iconOptions, 
+  isTxInPeriod,
+  PERIOD_OPTIONS
+} from './reserveUtils';
 
 interface ReserveHistoryTabProps {
   reserves: Reserve[];
@@ -42,6 +49,13 @@ export function ReserveHistoryTab({
   const [sortOrder, setSortOrder] = useState<'desc' | 'asc'>('desc');
   const [txToDelete, setTxToDelete] = useState<ReserveTransaction | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+
+  // Period filter states (matching Dashboard and History)
+  const [historyPeriod, setHistoryPeriod] = useState<string>('month');
+  const [customDateRange, setCustomDateRange] = useState<{ start: string; end: string } | null>(null);
+
+  // Chunked loading / pagination state (10 items per page/chunk)
+  const [visibleCount, setVisibleCount] = useState<number>(10);
 
   // Map reserves by id for quick lookup
   const reserveMap = useMemo(() => {
@@ -103,10 +117,15 @@ export function ReserveHistoryTab({
     };
   };
 
-  // Filter and sort transactions
+  // Filter and sort transactions (filtered by active period, selected reserve, type, and search term)
   const filteredTransactions = useMemo(() => {
     return (reserveTransactions || [])
       .filter(tx => {
+        // Filter by period
+        if (!isTxInPeriod(tx.date, historyPeriod, customDateRange)) {
+          return false;
+        }
+
         // Filter by reserve
         if (selectedReserveId !== 'all' && tx.reserve_id !== selectedReserveId) {
           return false;
@@ -146,9 +165,9 @@ export function ReserveHistoryTab({
         }
         return dateA.localeCompare(dateB);
       });
-  }, [reserveTransactions, selectedReserveId, selectedType, searchTerm, sortOrder, reserveMap]);
+  }, [reserveTransactions, historyPeriod, customDateRange, selectedReserveId, selectedType, searchTerm, sortOrder, reserveMap]);
 
-  // Aggregate Metrics for filtered view
+  // Aggregate Metrics for filtered view based on selected period and filters
   const summary = useMemo(() => {
     let totalAportesManuais = 0;
     let totalAportesMassa = 0;
@@ -175,17 +194,103 @@ export function ReserveHistoryTab({
     };
   }, [filteredTransactions]);
 
+  // Slice displayed transactions based on visibleCount chunk
+  const visibleTransactions = useMemo(() => {
+    return filteredTransactions.slice(0, visibleCount);
+  }, [filteredTransactions, visibleCount]);
+
   return (
     <div className="space-y-4 text-left">
-      {/* Extrato Summary Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      {/* Period Selection Segmented Pill Bar - Exclusive to Extrato & Movimentações */}
+      <div className="flex flex-col gap-1.5">
+        <div className="flex items-center justify-between">
+          <div className="flex overflow-x-auto scrollbar-none gap-1 p-1 bg-muted/30 border border-border/40 rounded-full w-full max-w-full">
+            {[
+              { id: 'last30Days', label: '30 dias' },
+              { id: 'last90Days', label: '90 dias' },
+              { id: 'month', label: 'Mês Atual' },
+              { id: 'lastMonth', label: 'Mês Passado' },
+              { id: 'thisYear', label: 'Este Ano' },
+              { id: 'lastYear', label: 'Ano Passado' },
+              { id: 'custom', label: 'Personalizado' }
+            ].map((period) => {
+              const isSelected = historyPeriod === period.id;
+              return (
+                <button
+                  key={period.id}
+                  type="button"
+                  onClick={() => {
+                    setHistoryPeriod(period.id);
+                    setVisibleCount(10); // Reset chunk count on period change
+                  }}
+                  className="relative px-3.5 py-1.5 text-xs font-bold rounded-full transition-all whitespace-nowrap focus:outline-none text-center flex-1 sm:flex-initial cursor-pointer active:scale-95"
+                  style={{ WebkitTapHighlightColor: 'transparent' }}
+                >
+                  {isSelected && (
+                    <motion.span
+                      layoutId="reserve-history-active-period"
+                      className="absolute inset-0 bg-background border border-border/60 shadow-2xs rounded-full"
+                      transition={{ type: 'spring', stiffness: 380, damping: 28 }}
+                    />
+                  )}
+                  <span className={`relative z-10 transition-colors duration-200 ${isSelected ? 'text-foreground font-black' : 'text-muted-foreground hover:text-foreground'}`}>
+                    {period.label}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Custom Date Range Picker when 'custom' is active */}
+        {historyPeriod === 'custom' && (
+          <div className="flex items-center gap-2 flex-wrap animate-in fade-in slide-in-from-top-1 bg-card/80 p-2 rounded-xl border border-border/60 mx-0.5">
+            <span className="text-muted-foreground text-xs font-medium flex items-center gap-1">
+              <Calendar className="w-3.5 h-3.5 text-indigo-500" />
+              Intervalo Personalizado:
+            </span>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <input
+                type="date"
+                className="bg-background border border-border/60 rounded-lg px-2.5 py-1 text-xs text-foreground focus:ring-1 focus:ring-indigo-500 outline-none max-w-[130px] font-mono cursor-pointer"
+                value={customDateRange?.start || ''}
+                onChange={(e) => {
+                  const todayStr = new Date().toISOString().split('T')[0];
+                  setCustomDateRange({
+                    start: e.target.value,
+                    end: customDateRange?.end || todayStr
+                  });
+                  setVisibleCount(10);
+                }}
+              />
+              <span className="text-muted-foreground text-xs font-medium">até</span>
+              <input
+                type="date"
+                className="bg-background border border-border/60 rounded-lg px-2.5 py-1 text-xs text-foreground focus:ring-1 focus:ring-indigo-500 outline-none max-w-[130px] font-mono cursor-pointer"
+                value={customDateRange?.end || ''}
+                onChange={(e) => {
+                  const todayStr = new Date().toISOString().split('T')[0];
+                  setCustomDateRange({
+                    start: customDateRange?.start || todayStr,
+                    end: e.target.value
+                  });
+                  setVisibleCount(10);
+                }}
+              />
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Extrato Summary Cards - Dynamic to selected period */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3">
         <div className="p-3.5 rounded-2xl bg-emerald-500/5 border border-emerald-500/20 space-y-1">
           <div className="flex items-center justify-between">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
               📥 Aportes Manuais
             </span>
           </div>
-          <p className="text-lg font-black text-foreground font-mono">
+          <p className="text-lg font-black text-emerald-600 dark:text-emerald-400 font-mono">
             {formatCurrency(summary.totalAportesManuais)}
           </p>
         </div>
@@ -232,7 +337,10 @@ export function ReserveHistoryTab({
           <Input
             placeholder="Buscar por descrição, valor ou categoria..."
             value={searchTerm}
-            onChange={e => setSearchTerm(e.target.value)}
+            onChange={e => {
+              setSearchTerm(e.target.value);
+              setVisibleCount(10);
+            }}
             className="pl-8 h-8 text-xs rounded-xl"
           />
         </div>
@@ -240,7 +348,13 @@ export function ReserveHistoryTab({
         {/* Filter Pills / Selects */}
         <div className="flex flex-wrap items-center gap-2">
           {/* Select Reserve */}
-          <Select value={selectedReserveId} onValueChange={setSelectedReserveId}>
+          <Select 
+            value={selectedReserveId} 
+            onValueChange={v => {
+              setSelectedReserveId(v);
+              setVisibleCount(10);
+            }}
+          >
             <SelectTrigger className="h-8 text-xs font-semibold rounded-xl min-w-[150px]">
               <SelectValue placeholder="Todas as Reservas" />
             </SelectTrigger>
@@ -255,7 +369,13 @@ export function ReserveHistoryTab({
           </Select>
 
           {/* Select Type */}
-          <Select value={selectedType} onValueChange={setSelectedType}>
+          <Select 
+            value={selectedType} 
+            onValueChange={v => {
+              setSelectedType(v);
+              setVisibleCount(10);
+            }}
+          >
             <SelectTrigger className="h-8 text-xs font-semibold rounded-xl min-w-[160px]">
               <SelectValue placeholder="Todos os Tipos" />
             </SelectTrigger>
@@ -267,26 +387,40 @@ export function ReserveHistoryTab({
               <SelectItem value="rendimento">📈 Rendimentos</SelectItem>
             </SelectContent>
           </Select>
+
+          {/* Sort Order */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setSortOrder(prev => (prev === 'desc' ? 'asc' : 'desc'))}
+            className="h-8 px-2.5 text-xs font-bold rounded-xl cursor-pointer"
+          >
+            {sortOrder === 'desc' ? 'Recentes' : 'Antigos'}
+          </Button>
         </div>
       </div>
 
       {/* Transactions List */}
       <div className="space-y-2">
         {filteredTransactions.length === 0 ? (
-          <div className="p-12 text-center bg-card border border-dashed border-border rounded-2xl space-y-2">
-            <PiggyBank className="w-10 h-10 text-muted-foreground mx-auto opacity-50" />
+          <div className="p-12 text-center bg-card border border-dashed border-border rounded-3xl space-y-2">
+            <div className="w-10 h-10 rounded-xl bg-muted text-muted-foreground flex items-center justify-center mx-auto">
+              <Layers className="w-5 h-5" />
+            </div>
             <h4 className="text-sm font-bold text-foreground">Nenhuma movimentação encontrada</h4>
             <p className="text-xs text-muted-foreground">
-              Tente alterar os filtros ou realize um aporte ou resgate em suas reservas.
+              {searchTerm || selectedReserveId !== 'all' || selectedType !== 'all'
+                ? 'Tente ajustar os filtros acima para visualizar registros.'
+                : 'Suas movimentações e aportes aparecerão aqui organizados cronologicamente.'}
             </p>
           </div>
         ) : (
-          filteredTransactions.map(tx => {
+          visibleTransactions.map(tx => {
             const res = reserveMap[tx.reserve_id];
             const info = getTxCategoryInfo(tx);
-            const IconComp = info.icon;
+            const ResIcon = res ? (iconOptions[res.icon] || PiggyBank) : PiggyBank;
             const resColor = res?.color || '#6366f1';
-            const ResIcon = iconOptions[res?.icon || 'PiggyBank'] || PiggyBank;
+            const IconComp = info.icon;
 
             return (
               <div
@@ -362,6 +496,23 @@ export function ReserveHistoryTab({
               </div>
             );
           })
+        )}
+
+        {/* Chunked Loading / Carregar Mais Button */}
+        {filteredTransactions.length > visibleCount && (
+          <div className="flex flex-col items-center justify-center pt-3 pb-6 space-y-2">
+            <Button
+              variant="outline"
+              className="w-full sm:w-auto px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider gap-2 hover:bg-indigo-500/5 hover:text-indigo-600 border border-border/80 shadow-xs transition-all duration-200 cursor-pointer"
+              onClick={() => setVisibleCount(prev => prev + 10)}
+            >
+              <ChevronDown className="w-4 h-4 text-indigo-500 animate-bounce" />
+              Carregar Mais Movimentações ({filteredTransactions.length - visibleCount} restantes)
+            </Button>
+            <p className="text-[10px] text-muted-foreground font-semibold">
+              Exibindo {visibleTransactions.length} de {filteredTransactions.length} movimentações no período
+            </p>
+          </div>
         )}
       </div>
 

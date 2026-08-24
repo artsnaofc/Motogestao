@@ -7,13 +7,11 @@ import {
   Plus, 
   Layers, 
   History as HistIcon,
-  Calendar,
   Zap,
   ArrowUpRight
 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { formatCurrency } from './reserveUtils';
 
 interface ReservesHeaderProps {
@@ -22,8 +20,6 @@ interface ReservesHeaderProps {
   totalPendingSuggestion: number;
   totalYield: number;
   activeCount: number;
-  globalPeriod: string;
-  setGlobalPeriod: (period: any) => void;
   activeTab: 'cards' | 'history';
   setActiveTab: (tab: 'cards' | 'history') => void;
   onOpenCreate: () => void;
@@ -36,8 +32,6 @@ export function ReservesHeader({
   totalPendingSuggestion,
   totalYield,
   activeCount,
-  globalPeriod,
-  setGlobalPeriod,
   activeTab,
   setActiveTab,
   onOpenCreate,
@@ -47,7 +41,7 @@ export function ReservesHeader({
 
   return (
     <div className="space-y-3">
-      {/* Top Bar: Title, Period and Actions */}
+      {/* Top Bar: Title and Actions */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
         <div className="flex items-center gap-2.5">
           <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-gradient-to-br from-indigo-500 to-indigo-700 text-white flex items-center justify-center shadow-xs shrink-0">
@@ -70,24 +64,6 @@ export function ReservesHeader({
 
         {/* Action Buttons */}
         <div className="flex items-center gap-1.5 flex-wrap">
-          {/* Period Filter */}
-          <div className="flex items-center gap-1.5 bg-card border border-border/80 rounded-xl px-2.5 py-1 shadow-2xs">
-            <Calendar className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
-            <Select value={globalPeriod} onValueChange={setGlobalPeriod}>
-              <SelectTrigger className="h-6 text-xs border-0 bg-transparent shadow-none focus:ring-0 px-0.5 font-bold text-foreground w-auto min-w-[105px] sm:min-w-[125px] cursor-pointer">
-                <SelectValue placeholder="Selecionar Período" />
-              </SelectTrigger>
-              <SelectContent align="end" className="text-xs">
-                <SelectItem value="month">Mês Atual</SelectItem>
-                <SelectItem value="last_month">Mês Anterior</SelectItem>
-                <SelectItem value="week">Esta Semana</SelectItem>
-                <SelectItem value="year">Este Ano</SelectItem>
-                <SelectItem value="all">Todo o Histórico</SelectItem>
-                <SelectItem value="custom">Personalizado</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
           {/* Mass Aporte Trigger Button */}
           <Button
             onClick={onOpenMassAporte}
@@ -180,7 +156,7 @@ export function ReservesHeader({
         >
           <div className="flex items-center justify-between">
             <span className="text-[10px] sm:text-[11px] font-bold text-muted-foreground uppercase tracking-wider truncate">
-              Sugerido no Período
+              Sugerido Pendente
             </span>
             <div className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
               <Sparkles className="w-3.5 h-3.5" />
@@ -193,7 +169,7 @@ export function ReservesHeader({
             <p className="text-[10px] text-muted-foreground font-medium mt-0.5 truncate">
               {totalPendingSuggestion > 0 ? (
                 <span className="text-amber-600 dark:text-amber-400 font-semibold">
-                  Aporte pendente
+                  Aporte sugerido pendente
                 </span>
               ) : (
                 <span className="text-emerald-600 dark:text-emerald-400 font-semibold">
@@ -257,3 +233,4 @@ export function ReservesHeader({
     </div>
   );
 }
+

@@ -31,7 +31,21 @@ import {
   BookOpen
 } from 'lucide-react';
 import { Reserve, ReserveTransaction, Transaction } from '../../types';
-import { isWithinInterval } from 'date-fns';
+import { 
+  isWithinInterval, 
+  startOfDay, 
+  endOfDay, 
+  subDays, 
+  startOfMonth, 
+  endOfMonth, 
+  subMonths, 
+  startOfYear, 
+  endOfYear, 
+  subYears, 
+  startOfWeek, 
+  endOfWeek,
+  format
+} from 'date-fns';
 
 export const iconOptions: Record<string, any> = {
   PiggyBank,
@@ -114,6 +128,47 @@ export const formatDateDisplay = (dateStr: string | undefined | null): string =>
   }
 };
 
+export interface PeriodOption {
+  id: string;
+  label: string;
+  shortLabel?: string;
+  description?: string;
+}
+
+export const PERIOD_OPTIONS: PeriodOption[] = [
+  { id: 'last30Days', label: '30 dias', shortLabel: '30d', description: 'Últimos 30 dias' },
+  { id: 'last90Days', label: '90 dias', shortLabel: '90d', description: 'Últimos 90 dias' },
+  { id: 'month', label: 'Mês Atual', shortLabel: 'Mês', description: 'Do dia 1º até o fim do mês' },
+  { id: 'lastMonth', label: 'Mês Passado', shortLabel: 'Mês Ant.', description: 'Mês civil anterior completo' },
+  { id: 'thisYear', label: 'Este Ano', shortLabel: 'Ano', description: 'De 1º de janeiro até hoje' },
+  { id: 'lastYear', label: 'Ano Passado', shortLabel: 'Ano Ant.', description: 'Ano civil anterior completo' },
+  { id: 'week', label: 'Esta Semana', shortLabel: 'Semana', description: 'Segunda-feira até domingo' },
+  { id: 'all', label: 'Todo o Histórico', shortLabel: 'Todos', description: 'Todos os lançamentos gravados' },
+  { id: 'custom', label: 'Personalizado', shortLabel: 'Custom', description: 'Intervalo livre entre datas' }
+];
+
+export const getPeriodDisplayLabel = (
+  globalPeriod: string,
+  customDateRange?: { start: string; end: string } | null
+): string => {
+  if (globalPeriod === 'custom' && customDateRange?.start && customDateRange?.end) {
+    try {
+      const startF = formatDateDisplay(customDateRange.start);
+      const endF = formatDateDisplay(customDateRange.end);
+      return `${startF} - ${endF}`;
+    } catch {
+      return 'Personalizado';
+    }
+  }
+  const match = PERIOD_OPTIONS.find(p => p.id === globalPeriod);
+  if (match) return match.label;
+  if (globalPeriod === 'last_month') return 'Mês Passado';
+  if (globalPeriod === 'year') return 'Este Ano';
+  if (globalPeriod === 'last7Days') return 'Últimos 7 dias';
+  if (globalPeriod === 'today') return 'Hoje';
+  return 'Período Selecionado';
+};
+
 export const isTxInPeriod = (
   dateStr: string | undefined | null,
   globalPeriod: string,
@@ -128,9 +183,41 @@ export const isTxInPeriod = (
 
     if (globalPeriod === 'custom') {
       if (!customDateRange.start || !customDateRange.end) return true;
-      const start = parseLocalDate(customDateRange.start);
-      const end = parseLocalDate(customDateRange.end);
-      end.setHours(23, 59, 59, 999);
+      const start = startOfDay(parseLocalDate(customDateRange.start));
+      const end = endOfDay(parseLocalDate(customDateRange.end));
+      return isWithinInterval(d, { start, end });
+    }
+
+    if (globalPeriod === 'today') {
+      return isWithinInterval(d, { start: startOfDay(now), end: endOfDay(now) });
+    }
+
+    if (globalPeriod === 'yesterday') {
+      const yest = subDays(now, 1);
+      return isWithinInterval(d, { start: startOfDay(yest), end: endOfDay(yest) });
+    }
+
+    if (globalPeriod === 'week') {
+      const start = startOfWeek(now, { weekStartsOn: 1 });
+      const end = endOfWeek(now, { weekStartsOn: 1 });
+      return isWithinInterval(d, { start, end });
+    }
+
+    if (globalPeriod === 'last7Days') {
+      const start = startOfDay(subDays(now, 6));
+      const end = endOfDay(now);
+      return isWithinInterval(d, { start, end });
+    }
+
+    if (globalPeriod === 'last30Days' || globalPeriod === '30days') {
+      const start = startOfDay(subDays(now, 29));
+      const end = endOfDay(now);
+      return isWithinInterval(d, { start, end });
+    }
+
+    if (globalPeriod === 'last90Days' || globalPeriod === '90days') {
+      const start = startOfDay(subDays(now, 89));
+      const end = endOfDay(now);
       return isWithinInterval(d, { start, end });
     }
 
@@ -138,29 +225,28 @@ export const isTxInPeriod = (
       return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
     }
 
-    if (globalPeriod === 'last_month') {
-      const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    if (globalPeriod === 'lastMonth' || globalPeriod === 'last_month') {
+      const lastMonth = subMonths(now, 1);
       return d.getFullYear() === lastMonth.getFullYear() && d.getMonth() === lastMonth.getMonth();
     }
 
-    if (globalPeriod === 'year') {
+    if (globalPeriod === 'last3Months') {
+      const start = startOfDay(subMonths(now, 3));
+      const end = endOfDay(now);
+      return isWithinInterval(d, { start, end });
+    }
+
+    if (globalPeriod === 'thisYear' || globalPeriod === 'year') {
       return d.getFullYear() === now.getFullYear();
     }
 
-    if (globalPeriod === 'week') {
-      const dayOfWeek = now.getDay();
-      const startOfWeek = new Date(now);
-      startOfWeek.setDate(now.getDate() - dayOfWeek);
-      startOfWeek.setHours(0, 0, 0, 0);
-      const endOfWeek = new Date(startOfWeek);
-      endOfWeek.setDate(startOfWeek.getDate() + 6);
-      endOfWeek.setHours(23, 59, 59, 999);
-      return isWithinInterval(d, { start: startOfWeek, end: endOfWeek });
+    if (globalPeriod === 'lastYear') {
+      const lastYear = subYears(now, 1);
+      return d.getFullYear() === lastYear.getFullYear();
     }
 
     // Default fallback to 30 days
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const thirtyDaysAgo = startOfDay(subDays(now, 29));
     return d >= thirtyDaysAgo;
   } catch {
     return false;
@@ -266,9 +352,7 @@ export const calculateSuggestion = (
       const totalExpense = txs
         .filter((t: Transaction) => t.type === 'expense')
         .filter((t: Transaction) => {
-          const isReserveUse = t.is_reserve_use || 
-                               t.description?.includes('[Reserva]') || 
-                               (t as any).isReserveTx === true ||
+          const isReserveUse = (t as any).isReserveTx === true || 
                                t.category === 'Aporte Reserva';
           return !isReserveUse;
         })

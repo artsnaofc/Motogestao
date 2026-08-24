@@ -662,46 +662,6 @@ export function History() {
           description: editDesc || defaultDesc,
         });
 
-        // Keep normal transaction in sync if it is a utilization edit
-        if (oldRt && oldRt.type === 'utilizacao') {
-          // Find the corresponding standard transaction
-          const { data: matchTxs } = await supabase
-            .from('transactions')
-            .select('*')
-            .eq('date', oldRt.date)
-            .eq('amount', oldRt.amount);
-          const matchTx = matchTxs?.find(t => t.is_reserve_use || t.description?.startsWith('[Reserva]'));
-          if (matchTx) {
-            if (editReserveTxType === 'utilizacao') {
-              // Update existing standard transaction
-              await supabase.from('transactions').update({
-                amount: finalAmt,
-                date: editDate,
-                category: finalReserveCat || 'Manutenção',
-                description: editDesc || `Uso da reserva ${reserveName}`,
-                is_reserve_use: true,
-              }).eq('id', matchTx.id);
-            } else {
-              // It became an aporte! Delete standard transaction since aporte doesn't have an entry
-              await supabase.from('transactions').delete().eq('id', matchTx.id);
-            }
-          }
-        } else if (editReserveTxType === 'utilizacao') {
-          // It was an aporte, but now became a utilization! Create standard transaction entry since utilization needs one
-          const { data: userData } = await supabase.auth.getUser();
-          if (userData.user) {
-            await supabase.from('transactions').insert({
-              user_id: userData.user.id,
-              type: 'expense',
-              amount: finalAmt,
-              date: editDate,
-              category: finalReserveCat || 'Manutenção',
-              description: editDesc || `Uso da reserva ${reserveName}`,
-              is_reserve_use: true,
-            });
-          }
-        }
-
         setEditItem(null);
         await refreshData(true);
       } catch (err) {
@@ -775,20 +735,7 @@ export function History() {
     setIsDeleting(true);
     try {
       if (deleteConfirmType === 'transaction') {
-        const txToDelete = transactions.find(t => t.id === deleteConfirmId);
         await deleteTransaction(deleteConfirmId);
-        
-        // If this is a reserve-funded transaction, find and delete the matching reserve_transaction!
-        if (txToDelete && (txToDelete.is_reserve_use || txToDelete.description?.startsWith('[Reserva]'))) {
-          const matchRt = (reserveTransactions || []).find(
-            rt => rt.type === 'utilizacao' && 
-                  rt.date === txToDelete.date && 
-                  Math.abs(Number(rt.amount) - Number(txToDelete.amount)) < 0.01
-          );
-          if (matchRt) {
-            await deleteReserveTransaction(matchRt.id);
-          }
-        }
       } else if (deleteConfirmType === 'investment_transaction') {
         await deleteInvestmentTransaction(deleteConfirmId);
         toast.success('Movimentação de investimento excluída');
@@ -798,20 +745,7 @@ export function History() {
         toast.success('Lançamento de dividendo excluído');
         await refreshData(true);
       } else {
-        const rtToDelete = (reserveTransactions || []).find(rt => rt.id === deleteConfirmId);
         await deleteReserveTransaction(deleteConfirmId);
-        if (rtToDelete && rtToDelete.type === 'utilizacao') {
-          // Find and delete the corresponding transaction in transactions table
-          const { data: matchTxs } = await supabase
-            .from('transactions')
-            .select('*')
-            .eq('date', rtToDelete.date)
-            .eq('amount', rtToDelete.amount);
-          const matchTx = matchTxs?.find(t => t.is_reserve_use || t.description?.startsWith('[Reserva]'));
-          if (matchTx) {
-            await supabase.from('transactions').delete().eq('id', matchTx.id);
-          }
-        }
         toast.success('Movimentação de reserva excluída');
         await refreshData(true);
       }
@@ -948,15 +882,6 @@ export function History() {
         const isLinkedToDividend = (dividends || []).some(d => d.transaction_id === rt.id);
         if (isLinkedToDividend) {
           return false;
-        }
-        if (rt.type === 'utilizacao') {
-          // If there is a standard transaction representing this utilization, filter it out to avoid duplication
-          const isRepresented = (transactions || []).some(t => 
-            (t.is_reserve_use || (t as any).isReserveUseOriginal || t.description?.startsWith('[Reserva]') || (t as any).rawDescription?.startsWith('[Reserva]')) && 
-            t.date === rt.date && 
-            Math.abs(Number(t.amount) - Number(rt.amount)) < 0.01
-          );
-          if (isRepresented) return false;
         }
         return rt.type === 'aporte' || rt.type === 'rendimento' || rt.type === 'utilizacao';
       })
@@ -1099,7 +1024,7 @@ export function History() {
     transactions.forEach(t => {
       const amount = Number(t.amount);
       // Skip internal transfers for patrimonio (Caixa + Reservas)
-      if (t.category === 'Aporte Reserva' || t.category === 'Resgate Reserva' || t.category === 'Resgate de Reserva') {
+      if (t.category === 'Aporte Reserva' || t.category === 'Resgate Reserva' || t.category === 'Resgate de Reserva' || (t as any).isReserveTx || (t as any).isReserveAporte) {
         return;
       }
       if (t.type === 'income') patrimonio += amount;
@@ -1108,6 +1033,7 @@ export function History() {
 
     // Subtract investment buys and add sells from cash balance (outflows/inflows)
     (investmentTransactions || []).forEach(tx => {
+      if (tx.reserve_id) return; // Handled by reserveTransactions
       const amount = (Number(tx.price) * Number(tx.quantity)) + Number(tx.costs || 0);
       if (tx.operation === 'buy') {
         patrimonio -= amount;
@@ -1116,10 +1042,16 @@ export function History() {
       }
     });
 
-    // Include 'rendimento' from reserves directly into total patrimony
+    // Include 'rendimento' and spent 'utilizacao' from reserves into total liquid net
     (reserveTransactions || []).forEach(rt => {
       if (rt.type === 'rendimento') {
         patrimonio += Number(rt.amount);
+      } else if (rt.type === 'utilizacao') {
+        const cat = (rt.category || '').toLowerCase().trim();
+        const isPureResgateToCash = !rt.linked_investment_id && (!cat || cat === 'resgate' || cat === 'resgate reserva' || cat === 'resgate de reserva' || cat === 'outros');
+        if (!isPureResgateToCash) {
+          patrimonio -= Number(rt.amount);
+        }
       }
     });
 
@@ -1150,7 +1082,6 @@ export function History() {
 
       if (isDividend) {
         totalDividendosRecebidos += amount;
-        ganhosBrutos += amount;
         return;
       }
 
@@ -1164,7 +1095,13 @@ export function History() {
       );
 
       if (t.type === 'income') {
-        if (t.category !== 'Resgate Reserva' && (!(t as any).isReserveTx || (t as any).reserveTxType === 'rendimento')) {
+        const isReserveTx = (t as any).isReserveTx === true;
+        const isDividendTx = (t as any).isDividendTx === true;
+        const isInvestmentTx = (t as any).isInvestmentTx === true;
+        const isResgateReserva = t.category === 'Resgate Reserva';
+        const isReserveInternalTransfer = isReserveTx && ((t as any).reserveTxType === 'utilizacao' || (t as any).reserveTxType === 'aporte');
+
+        if (!isInvestmentTx && !isResgateReserva && !isReserveInternalTransfer) {
           ganhosBrutos += amount;
         }
       } else {
@@ -1198,11 +1135,11 @@ export function History() {
     gastosPeriodo = opExpensePuro + perExpense;
     const standardExpense = opExpensePuro + perExpense + reserveAporte;
 
-    // Caixa Líquido (Caixa Liq.): Standard cash profit plus cash received selling investments (cash flows). Asset purchases are not deducted from net cash.
-    const lucroLiquido = (ganhosBrutos - rendimentosReserva) - standardExpense + totalVendaInvestimento;
+    // Caixa Líquido (Caixa Liq.): Faturamento - Gasto Pessoal - Operacional - Aportes
+    const lucroLiquido = ganhosBrutos - standardExpense;
     
-    // Líquido Real (Líq. Real): Asset purchases remain in investment portfolio and do not represent wealth loss.
-    const lucroReal = lucroLiquido + reserveAporte - totalVendaInvestimento + rendimentosReserva;
+    // Líquido Real (Líq. Real): Consenso Patrimonial (lucro líquido + aportes em reserva)
+    const lucroReal = lucroLiquido + reserveAporte;
     
     const transactionCount = periodFiltered.length;
 
@@ -1233,26 +1170,35 @@ export function History() {
         amount: Number(t.amount),
         type: t.type,
         category: t.category,
+        isReserveTx: (t as any).isReserveTx || (t as any).isReserveAporte,
+        reserveTxType: undefined,
         isInvestment: false as const,
         ticker: undefined,
         operation: undefined,
         quantity: undefined,
         price: undefined,
-        costs: undefined
+        costs: undefined,
+        reserve_id: undefined,
+        linked_investment_id: undefined,
+        description: t.description
       })),
       ...(reserveTransactions || [])
-        .filter(rt => rt.type === 'rendimento')
         .map(rt => ({
           date: rt.date,
           amount: Number(rt.amount),
-          type: 'income' as const,
-          category: undefined,
+          type: rt.type === 'rendimento' ? ('income' as const) : (rt.type === 'aporte' ? ('income' as const) : ('expense' as const)),
+          category: rt.category,
+          isReserveTx: true as const,
+          reserveTxType: rt.type,
           isInvestment: false as const,
           ticker: undefined,
           operation: undefined,
           quantity: undefined,
           price: undefined,
-          costs: undefined
+          costs: undefined,
+          reserve_id: rt.reserve_id,
+          linked_investment_id: rt.linked_investment_id,
+          description: rt.description
         })),
       ...(investmentTransactions || []).map(tx => {
         const amount = (Number(tx.price) * Number(tx.quantity)) + Number(tx.costs || 0);
@@ -1261,12 +1207,17 @@ export function History() {
           amount,
           type: tx.operation === 'buy' ? ('expense' as const) : ('income' as const),
           category: undefined,
+          isReserveTx: false as const,
+          reserveTxType: undefined,
           isInvestment: true as const,
           ticker: tx.ticker.toUpperCase(),
           operation: tx.operation,
           quantity: Number(tx.quantity),
           price: Number(tx.price),
-          costs: Number(tx.costs || 0)
+          costs: Number(tx.costs || 0),
+          reserve_id: tx.reserve_id,
+          linked_investment_id: tx.id,
+          description: undefined
         };
       })
     ];
@@ -1283,18 +1234,33 @@ export function History() {
       const dateStr = format(parseLocalDate(evt.date), 'yyyy-MM-dd');
 
       if (evt.isInvestment) {
-        // An investment buy decreases cash; sell increases cash
-        const cashChange = evt.operation === 'buy'
-          ? -(evt.price! * evt.quantity! + evt.costs!)
-          : (evt.price! * evt.quantity! - evt.costs!);
-        
-        currentCash += cashChange;
-
         // Update the portfolio quantities
         const qtyChange = evt.operation === 'buy' ? evt.quantity! : -evt.quantity!;
         portfolio[evt.ticker!] = (portfolio[evt.ticker!] || 0) + qtyChange;
+
+        // If this investment transaction has NO reserve_id, it directly affected liquid cash
+        if (!evt.reserve_id) {
+          const cashChange = evt.operation === 'buy' ? -evt.amount : evt.amount;
+          currentCash += cashChange;
+        }
+      } else if (evt.isReserveTx) {
+        if (evt.reserveTxType === 'rendimento') {
+          currentCash += evt.amount;
+        } else if (evt.reserveTxType === 'utilizacao') {
+          const cat = (evt.category || '').toLowerCase().trim();
+          const isPureResgateToCash = !evt.linked_investment_id && (!cat || cat === 'resgate' || cat === 'resgate reserva' || cat === 'resgate de reserva' || cat === 'outros');
+          if (!isPureResgateToCash) {
+            currentCash -= evt.amount;
+          }
+        } else if (evt.reserveTxType === 'aporte') {
+          const cat = (evt.category || '').toLowerCase().trim();
+          const isFromInvestmentSell = evt.linked_investment_id || cat === 'investimentos' || (evt.description && evt.description.includes('Investimento:'));
+          if (isFromInvestmentSell) {
+            currentCash += evt.amount;
+          }
+        }
       } else {
-        const isInternalTransfer = evt.category === 'Aporte Reserva' || evt.category === 'Resgate Reserva' || evt.category === 'Resgate de Reserva';
+        const isInternalTransfer = evt.category === 'Aporte Reserva' || evt.category === 'Resgate Reserva' || evt.category === 'Resgate de Reserva' || evt.isReserveTx;
         if (!isInternalTransfer) {
           if (evt.type === 'income') {
             currentCash += evt.amount;
@@ -1660,12 +1626,17 @@ export function History() {
 
   // Redesigned Period summaries sub-selectors
   const { avgDailyEarnings, raceCount } = useMemo(() => {
-    const activeDays = new Set(
-      periodFiltered
-        .filter(t => t.type === 'income' && t.category !== 'Resgate Reserva' && (!(t as any).isReserveTx || (t as any).reserveTxType === 'rendimento'))
-        .map(t => t.date.slice(0, 10))
-    ).size;
-    const count = periodFiltered.filter(t => t.type === 'income' && t.category !== 'Resgate Reserva' && (!(t as any).isReserveTx || (t as any).reserveTxType === 'rendimento')).length;
+    const incomeTxs = periodFiltered.filter(t => {
+      if (t.type !== 'income') return false;
+      const isReserveTx = (t as any).isReserveTx === true;
+      const isInvestmentTx = (t as any).isInvestmentTx === true;
+      const isResgateReserva = t.category === 'Resgate Reserva';
+      const isReserveInternalTransfer = isReserveTx && ((t as any).reserveTxType === 'utilizacao' || (t as any).reserveTxType === 'aporte');
+      return !isInvestmentTx && !isResgateReserva && !isReserveInternalTransfer;
+    });
+
+    const activeDays = new Set(incomeTxs.map(t => t.date.slice(0, 10))).size;
+    const count = incomeTxs.length;
     return {
       avgDailyEarnings: activeDays > 0 ? (summaries.ganhosBrutos || 0) / activeDays : 0,
       raceCount: count

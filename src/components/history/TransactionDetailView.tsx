@@ -111,12 +111,7 @@ export function TransactionDetailView({
   const isRendimento = isReserveTx ? ((t as any).reserveTxType === 'rendimento') : false;
   const isUtilizacao = isReserveTx ? ((t as any).reserveTxType === 'utilizacao') : false;
 
-  const isReserveUseEx = !isReserveTx && (
-    t.is_reserve_use || 
-    (t as any).isReserveUseOriginal || 
-    t.description?.startsWith('[Reserva]') || 
-    (t as any).rawDescription?.startsWith('[Reserva]')
-  );
+  const isReserveUseEx = false;
 
   const isIncome = t.type === 'income';
   const displayAmount = (t as any).rawAmount !== undefined ? (t as any).rawAmount : t.amount;

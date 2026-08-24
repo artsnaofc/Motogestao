@@ -674,11 +674,11 @@ export function Dashboard() {
 
   const now = useMemo(() => new Date(), []);
 
-  // Create virtual transaction objects for reserve 'aporte' transactions
+  // Create virtual transaction objects for reserve transactions (aporte, rendimento, utilizacao)
   const reserveAportesAsTxs = useMemo(() => {
     return (reserveTransactions || [])
       .filter(rt => {
-        if (rt.type !== 'aporte' && rt.type !== 'rendimento') return false;
+        if (rt.linked_investment_id) return false;
         // Evita duplicar provento/dividendo gerenciado pela página de investimentos com o lançamento das reservas
         const isLinkedToDividend = (dividends || []).some(d => d.transaction_id === rt.id);
         if (isLinkedToDividend) return false;
@@ -688,20 +688,23 @@ export function Dashboard() {
         const matchedRes = reserves.find(r => r.id === rt.reserve_id);
         const reserveName = matchedRes ? matchedRes.name : 'Reserva';
         const isRendimento = rt.type === 'rendimento';
+        const isUtilizacao = rt.type === 'utilizacao';
         return {
           id: rt.id,
           user_id: rt.user_id,
           type: isRendimento ? 'income' : 'expense' as const,
           amount: Number(rt.amount),
           date: rt.date,
-          category: isRendimento ? 'Rendimentos' : 'Aporte Reserva',
-          description: rt.description || (isRendimento ? `Rendimento da ${reserveName}` : `Aporte para ${reserveName}`),
-          isReserveAporte: true,
+          category: isRendimento ? 'Rendimentos' : (isUtilizacao ? (rt.category || 'Utilização Reserva') : 'Aporte Reserva'),
+          description: rt.description || (isRendimento ? `Rendimento da ${reserveName}` : (isUtilizacao ? `Utilização da ${reserveName}` : `Aporte para ${reserveName}`)),
+          isReserveAporte: rt.type === 'aporte',
+          isReserveTx: true,
           reserveTxType: rt.type,
           reserveName: reserveName,
           reserveColor: matchedRes?.color || '#ec4899',
           reserveIcon: matchedRes?.icon || 'PiggyBank',
           created_at: rt.created_at,
+          originalCategory: rt.category,
         } as unknown as Transaction;
       });
   }, [reserveTransactions, reserves, dividends]);
@@ -961,7 +964,7 @@ export function Dashboard() {
     return { 
       income: incomeNoRendimento, 
       expense: realExpense, 
-      net: incomeNoRendimento + totalVendaInvestimento - standardExpense, 
+      net: incomeNoRendimento - standardExpense, 
       opExp: opExpPuro + rawReserveAporte, 
       opExpPuro,
       opExpReserve,
@@ -1087,7 +1090,7 @@ export function Dashboard() {
     transactions.forEach(t => {
       const amount = Number(t.amount);
       // Skip internal transfers between Caixa and Reservas
-      if (t.category === 'Aporte Reserva' || t.category === 'Resgate Reserva' || t.category === 'Resgate de Reserva') {
+      if (t.category === 'Aporte Reserva' || t.category === 'Resgate Reserva' || t.category === 'Resgate de Reserva' || (t as any).isReserveTx || (t as any).isReserveAporte) {
         return;
       }
       if (t.type === 'income') rawNet += amount;
@@ -1096,6 +1099,7 @@ export function Dashboard() {
 
     // Subtract investment buys and add sells from cash balance (they are outflows/inflows of cash)
     investmentTransactions.forEach(tx => {
+      if (tx.reserve_id) return; // Handled by reserve_transactions
       const amount = (Number(tx.price) * Number(tx.quantity)) + Number(tx.costs || 0);
       if (tx.operation === 'buy') {
         rawNet -= amount;
@@ -1104,10 +1108,16 @@ export function Dashboard() {
       }
     });
 
-    // Include 'rendimento' from reserves directly into total patrimony
+    // Include 'rendimento' and spent 'utilizacao' from reserves into total liquid net
     (reserveTransactions || []).forEach(rt => {
       if (rt.type === 'rendimento') {
         rawNet += Number(rt.amount);
+      } else if (rt.type === 'utilizacao') {
+        const cat = (rt.category || '').toLowerCase().trim();
+        const isPureResgateToCash = !rt.linked_investment_id && (!cat || cat === 'resgate' || cat === 'resgate reserva' || cat === 'resgate de reserva' || cat === 'outros');
+        if (!isPureResgateToCash) {
+          rawNet -= Number(rt.amount);
+        }
       }
     });
     return rawNet;
@@ -2301,7 +2311,7 @@ export function Dashboard() {
         if (tDate > endOfMonthDate) return;
         
         const amount = Number(t.amount);
-        if (t.category === 'Aporte Reserva' || t.category === 'Resgate Reserva' || t.category === 'Resgate de Reserva') {
+        if (t.category === 'Aporte Reserva' || t.category === 'Resgate Reserva' || t.category === 'Resgate de Reserva' || (t as any).isReserveTx || (t as any).isReserveAporte) {
           return;
         }
         if (t.type === 'income') rawNet += amount;
@@ -2310,6 +2320,7 @@ export function Dashboard() {
 
       // Subtract/Add investments up to end of this month
       investmentTransactions.forEach(tx => {
+        if (tx.reserve_id) return; // Handled by reserveTransactions
         const txDate = parseLocalDate(tx.date);
         if (txDate > endOfMonthDate) return;
         
@@ -2321,13 +2332,19 @@ export function Dashboard() {
         }
       });
 
-      // Include 'rendimento' from reserves up to end of this month
+      // Include 'rendimento' and spent 'utilizacao' from reserves up to end of this month
       (reserveTransactions || []).forEach(rt => {
         const rtDate = parseLocalDate(rt.date);
         if (rtDate > endOfMonthDate) return;
         
         if (rt.type === 'rendimento') {
           rawNet += Number(rt.amount);
+        } else if (rt.type === 'utilizacao') {
+          const cat = (rt.category || '').toLowerCase().trim();
+          const isPureResgateToCash = !rt.linked_investment_id && (!cat || cat === 'resgate' || cat === 'resgate reserva' || cat === 'resgate de reserva' || cat === 'outros');
+          if (!isPureResgateToCash) {
+            rawNet -= Number(rt.amount);
+          }
         }
       });
 
@@ -3445,14 +3462,14 @@ export function Dashboard() {
 
         {/* indicator 4: Balanço do Caixa */}
         {(() => {
-          const valEntradas = summary.totalIncome + (summary.totalVendaInvestimento || 0);
-          const valGastos = Math.max(0, summary.totalExpense - (summary.reserveSpending || 0));
-          const valReserva = summary.rawReserveAporte || 0;
+          const valEntradas = summary.totalIncome;
+          const valGastos = summary.opExpensePuro + summary.perExpense;
+          const valReserva = summary.reserveAporte;
 
           const segments = [
             { label: 'Entradas', val: valEntradas, color: 'bg-emerald-500', textColor: 'text-emerald-500', textBoldColor: 'text-emerald-600 dark:text-emerald-400', format: formatCompactValue(valEntradas) },
             { label: 'Gastos', val: valGastos, color: 'bg-rose-500', textColor: 'text-rose-500', textBoldColor: 'text-rose-600 dark:text-rose-400', format: formatCompactValue(valGastos) },
-            { label: 'Reserva', val: valReserva, color: 'bg-indigo-500', textColor: 'text-indigo-500', textBoldColor: 'text-indigo-600 dark:text-indigo-400', format: formatCompactValue(valReserva) }
+            { label: 'Aportes', val: valReserva, color: 'bg-amber-500', textColor: 'text-amber-500', textBoldColor: 'text-amber-600 dark:text-amber-400', format: formatCompactValue(valReserva) }
           ].filter(s => s.val !== 0);
 
           const totalAbs = segments.reduce((sum, s) => sum + Math.abs(s.val), 0);

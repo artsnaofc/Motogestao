@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { 
   Plus, 
   Minus, 
@@ -20,7 +20,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Reserve, ReserveTransaction, Transaction } from '../../types';
+import { Reserve, ReserveTransaction, Transaction, UserSettings } from '../../types';
 import { 
   formatCurrency, 
   formatDateDisplay, 
@@ -278,6 +278,7 @@ interface WithdrawModalProps {
   reserve: Reserve | null;
   isOpen: boolean;
   onClose: () => void;
+  settings?: UserSettings | null;
   onSubmit: (data: {
     amount: number;
     date: string;
@@ -290,22 +291,48 @@ export function WithdrawModal({
   reserve,
   isOpen,
   onClose,
+  settings,
   onSubmit
 }: WithdrawModalProps) {
   const [amount, setAmount] = useState('');
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
-  const [category, setCategory] = useState('Manutenção');
+  const [category, setCategory] = useState('');
   const [description, setDescription] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Expense categories from profile settings
+  const profileExpenseCategories = useMemo(() => {
+    const fromSettings = settings?.expense_categories && settings.expense_categories.length > 0
+      ? settings.expense_categories
+      : [
+          ...(settings?.operational_expense_categories || []),
+          ...(settings?.personal_expense_categories || [])
+        ];
+    if (fromSettings.length > 0) return Array.from(new Set(fromSettings));
+    return ['Combustível', 'Pedágio', 'Manutenção', 'Alimentação', 'Plano de Internet', 'Equipamento', 'Outras Despesas', 'Emergência', 'Outros'];
+  }, [settings]);
+
+  const hasFixedCategory = Boolean(reserve?.require_category_on_use === false && reserve?.default_use_category);
 
   useEffect(() => {
     if (reserve) {
       setDescription(`Resgate / Uso - ${reserve.name}`);
-      setCategory(reserve.name.includes('Manutenção') ? 'Manutenção' : 'Emergência');
       setAmount('');
       setDate(new Date().toISOString().split('T')[0]);
+
+      if (hasFixedCategory && reserve.default_use_category) {
+        setCategory(reserve.default_use_category);
+      } else {
+        // Find best default or first available
+        const defaultCat = profileExpenseCategories.find(c => 
+          reserve.name.toLowerCase().includes(c.toLowerCase()) || 
+          c.toLowerCase().includes('manutenção') || 
+          c.toLowerCase().includes('outros')
+        ) || profileExpenseCategories[0] || 'Outros';
+        setCategory(defaultCat);
+      }
     }
-  }, [reserve, isOpen]);
+  }, [reserve, isOpen, hasFixedCategory, profileExpenseCategories]);
 
   if (!isOpen || !reserve) return null;
 
@@ -323,12 +350,18 @@ export function WithdrawModal({
       return;
     }
 
+    const finalCategory = hasFixedCategory ? (reserve.default_use_category || 'Outros') : (category || 'Outros');
+    if (!finalCategory) {
+      toast.error('Selecione a categoria de despesa correspondente do seu perfil.');
+      return;
+    }
+
     try {
       setIsSubmitting(true);
       await onSubmit({
         amount: val,
         date,
-        category: category || 'Outros',
+        category: finalCategory,
         description: description || `Utilização de reserva: ${reserve.name}`
       });
       onClose();
@@ -341,7 +374,7 @@ export function WithdrawModal({
 
   return (
     <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-      <div className="bg-card w-full max-w-md rounded-3xl border border-border/80 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+      <div className="bg-card w-full max-w-md rounded-3xl border border-border/80 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200 text-left">
         <div className="p-5 bg-gradient-to-r from-rose-500/10 via-rose-500/5 to-transparent border-b border-border/80 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-2xl bg-rose-500 text-white flex items-center justify-center shadow-sm shrink-0">
@@ -354,12 +387,12 @@ export function WithdrawModal({
               </p>
             </div>
           </div>
-          <Button variant="ghost" size="sm" onClick={onClose} className="w-8 h-8 p-0 rounded-full">
+          <Button variant="ghost" size="sm" onClick={onClose} className="w-8 h-8 p-0 rounded-full cursor-pointer">
             <X className="w-4 h-4" />
           </Button>
         </div>
 
-        <form onSubmit={handleSave} className="p-5 space-y-4 text-left">
+        <form onSubmit={handleSave} className="p-5 space-y-4">
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
               <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
@@ -368,7 +401,7 @@ export function WithdrawModal({
               <button
                 type="button"
                 onClick={() => setAmount(String(currentBalance))}
-                className="text-[11px] font-bold text-rose-600 dark:text-rose-400 hover:underline"
+                className="text-[11px] font-bold text-rose-600 dark:text-rose-400 hover:underline cursor-pointer"
               >
                 Usar Total ({formatCurrency(currentBalance)})
               </button>
@@ -389,7 +422,7 @@ export function WithdrawModal({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <label className="text-xs font-bold text-muted-foreground">Data</label>
               <Input
@@ -402,13 +435,32 @@ export function WithdrawModal({
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-xs font-bold text-muted-foreground">Categoria de Gasto</label>
-              <Input
-                placeholder="Ex: Troca de Pneu, IPVA"
-                value={category}
-                onChange={e => setCategory(e.target.value)}
-                className="h-10 text-xs rounded-xl"
-              />
+              <label className="text-xs font-bold text-muted-foreground flex items-center justify-between">
+                <span>Categoria de Despesa</span>
+                {hasFixedCategory && (
+                  <span className="text-[10px] text-indigo-600 dark:text-indigo-400 font-bold">Fixa na Reserva</span>
+                )}
+              </label>
+
+              {hasFixedCategory ? (
+                <div className="h-10 px-3 rounded-xl bg-indigo-500/10 border border-indigo-500/30 flex items-center gap-1.5 text-xs font-bold text-indigo-600 dark:text-indigo-400">
+                  <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
+                  <span className="truncate">{reserve.default_use_category}</span>
+                </div>
+              ) : (
+                <Select value={category} onValueChange={setCategory}>
+                  <SelectTrigger className="h-10 text-xs font-bold rounded-xl bg-card">
+                    <SelectValue placeholder="Selecione a categoria..." />
+                  </SelectTrigger>
+                  <SelectContent className="text-xs">
+                    {profileExpenseCategories.map(cat => (
+                      <SelectItem key={cat} value={cat} className="cursor-pointer">
+                        {cat}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
             </div>
           </div>
 
@@ -423,13 +475,13 @@ export function WithdrawModal({
           </div>
 
           <div className="flex items-center justify-end gap-2 pt-2">
-            <Button type="button" variant="ghost" onClick={onClose} className="h-10 text-xs font-bold">
+            <Button type="button" variant="ghost" onClick={onClose} className="h-10 text-xs font-bold cursor-pointer">
               Cancelar
             </Button>
             <Button
               type="submit"
               disabled={isSubmitting}
-              className="h-10 px-5 text-xs font-bold bg-rose-600 hover:bg-rose-700 text-white rounded-xl shadow-md shadow-rose-500/20"
+              className="h-10 px-5 text-xs font-bold bg-rose-600 hover:bg-rose-700 text-white rounded-xl shadow-md shadow-rose-500/20 cursor-pointer"
             >
               {isSubmitting ? 'Resgatando...' : 'Confirmar Resgate'}
             </Button>

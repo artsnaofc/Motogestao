@@ -182,6 +182,7 @@ export const PatrimonyEvolution: React.FC<PatrimonyEvolutionProps> = ({
 
       // 3. Investments buy/sell up to end of this month
       investmentTransactions.forEach(tx => {
+        if (tx.reserve_id) return; // Handled by reserveTransactions
         if (!tx.date) return;
         const txDate = parseLocalDate(tx.date);
         if (txDate > endOfMonthDate) return;
@@ -194,7 +195,7 @@ export const PatrimonyEvolution: React.FC<PatrimonyEvolutionProps> = ({
         }
       });
 
-      // 4. Reserve Rendimentos up to end of this month
+      // 4. Reserve Rendimentos & Utilizações up to end of this month
       (reserveTransactions || []).forEach(rt => {
         if (!rt.date) return;
         const rtDate = parseLocalDate(rt.date);
@@ -202,6 +203,12 @@ export const PatrimonyEvolution: React.FC<PatrimonyEvolutionProps> = ({
 
         if (rt.type === 'rendimento') {
           rawNet += Number(rt.amount);
+        } else if (rt.type === 'utilizacao') {
+          const cat = (rt.category || '').toLowerCase().trim();
+          const isPureResgateToCash = !rt.linked_investment_id && (!cat || cat === 'resgate' || cat === 'resgate reserva' || cat === 'resgate de reserva' || cat === 'outros');
+          if (!isPureResgateToCash) {
+            rawNet -= Number(rt.amount);
+          }
         }
       });
 

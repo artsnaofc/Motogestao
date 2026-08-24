@@ -218,7 +218,7 @@ export const DailyProductivityHeatmap: React.FC<DailyProductivityHeatmapProps> =
         if ((t as any).isInvestmentTx) return;
 
         const isReserveAporteVal = (t as any).isReserveAporte === true || t.category === 'Aporte Reserva';
-        const isReserveUse = t.is_reserve_use === true || (t as any).isReserveUseOriginal === true || (t as any).isReserveTx === true;
+        const isReserveUse = (t as any).isReserveTx === true && (t as any).reserveTxType === 'utilizacao';
         const rawAmt = (t as any).rawAmount !== undefined ? Number((t as any).rawAmount) : Number(t.amount || 0);
 
         if (isReserveAporteVal) {

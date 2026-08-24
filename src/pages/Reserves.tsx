@@ -23,6 +23,7 @@ import { ReserveCard } from '../components/reserves/ReserveCard';
 import { MassAporteConsolidator } from '../components/reserves/MassAporteConsolidator';
 import { ReserveHistoryTab } from '../components/reserves/ReserveHistoryTab';
 import { ReserveModal } from '../components/reserves/ReserveModal';
+import { UpdateRuleModal } from '../components/reserves/UpdateRuleModal';
 import { 
   AporteManualModal, 
   WithdrawModal, 
@@ -36,6 +37,7 @@ export function Reserves() {
     reserves = [],
     reserveTransactions = [],
     transactions = [],
+    settings,
     addReserve,
     updateReserve,
     deleteReserve,
@@ -44,7 +46,8 @@ export function Reserves() {
     refreshData,
     globalPeriod = 'month',
     setGlobalPeriod,
-    customDateRange = { start: '', end: '' }
+    customDateRange = { start: '', end: '' },
+    setCustomDateRange
   } = useData();
 
   // Active view tab: 'cards' or 'history'
@@ -59,6 +62,9 @@ export function Reserves() {
   const [showCreateEditModal, setShowCreateEditModal] = useState(false);
   const [reserveToEdit, setReserveToEdit] = useState<Reserve | null>(null);
 
+  const [showUpdateRuleModal, setShowUpdateRuleModal] = useState(false);
+  const [reserveToUpdateRule, setReserveToUpdateRule] = useState<Reserve | null>(null);
+
   const [selectedReserveForAction, setSelectedReserveForAction] = useState<Reserve | null>(null);
   const [actionModalType, setActionModalType] = useState<'aporte_manual' | 'withdraw' | 'update_balance' | 'rule_history' | null>(null);
   const [aporteInitialAmount, setAporteInitialAmount] = useState<number | undefined>(undefined);
@@ -71,6 +77,10 @@ export function Reserves() {
   const activeReserves = useMemo(() => {
     return (reserves || []).filter(r => r.status !== 'inactive');
   }, [reserves]);
+
+  // Suggestion calculation uses a fixed standard period ('month') to prevent value divergence
+  const FIXED_SUGGESTION_PERIOD = 'month';
+  const FIXED_CUSTOM_RANGE = { start: '', end: '' };
 
   // Overall consolidated metrics
   const totals = useMemo(() => {
@@ -88,14 +98,14 @@ export function Reserves() {
         r, 
         transactions, 
         reserveTransactions, 
-        globalPeriod, 
-        customDateRange || { start: '', end: '' }
+        FIXED_SUGGESTION_PERIOD, 
+        FIXED_CUSTOM_RANGE
       );
       const effectiveAportes = getEffectiveAportesInPeriod(
         r, 
         reserveTransactions, 
-        globalPeriod, 
-        customDateRange || { start: '', end: '' }
+        FIXED_SUGGESTION_PERIOD, 
+        FIXED_CUSTOM_RANGE
       );
       const pending = Math.max(0, suggested - effectiveAportes);
       totalPendingSuggestion += pending;
@@ -112,7 +122,7 @@ export function Reserves() {
       totalYield,
       activeCount: activeReserves.filter(r => !r.is_paused).length
     };
-  }, [activeReserves, transactions, reserveTransactions, globalPeriod, customDateRange]);
+  }, [activeReserves, transactions, reserveTransactions]);
 
   // Filtered reserves list for cards with suggested amounts first
   const filteredCards = useMemo(() => {
@@ -131,14 +141,14 @@ export function Reserves() {
           r, 
           transactions, 
           reserveTransactions, 
-          globalPeriod, 
-          customDateRange || { start: '', end: '' }
+          FIXED_SUGGESTION_PERIOD, 
+          FIXED_CUSTOM_RANGE
         );
         const eff = getEffectiveAportesInPeriod(
           r, 
           reserveTransactions, 
-          globalPeriod, 
-          customDateRange || { start: '', end: '' }
+          FIXED_SUGGESTION_PERIOD, 
+          FIXED_CUSTOM_RANGE
         );
         return (sugg - eff) > 0;
       }
@@ -157,14 +167,14 @@ export function Reserves() {
         r,
         transactions,
         reserveTransactions,
-        globalPeriod,
-        customDateRange || { start: '', end: '' }
+        FIXED_SUGGESTION_PERIOD,
+        FIXED_CUSTOM_RANGE
       );
       const eff = getEffectiveAportesInPeriod(
         r,
         reserveTransactions,
-        globalPeriod,
-        customDateRange || { start: '', end: '' }
+        FIXED_SUGGESTION_PERIOD,
+        FIXED_CUSTOM_RANGE
       );
       return Math.max(0, Math.round((sugg - eff) * 100) / 100);
     };
@@ -182,7 +192,7 @@ export function Reserves() {
 
       return a.name.localeCompare(b.name);
     });
-  }, [activeReserves, searchTerm, statusFilter, transactions, reserveTransactions, globalPeriod, customDateRange]);
+  }, [activeReserves, searchTerm, statusFilter, transactions, reserveTransactions]);
 
   // ----------------------------------------------------
   // HANDLERS
@@ -344,6 +354,8 @@ export function Reserves() {
         regra_tipo: reserveData.regra_tipo,
         regra_valor: reserveData.regra_valor,
         regra_categorias: reserveData.regra_categorias || [],
+        require_category_on_use: reserveData.require_category_on_use,
+        default_use_category: reserveData.default_use_category,
         status: 'active',
         is_paused: false
       };
@@ -351,6 +363,13 @@ export function Reserves() {
       await addReserve(payload);
       toast.success('Nova reserva criada com sucesso!');
     }
+  };
+
+  // 6b. Update Rule directly
+  const handleSaveRule = async (reserveId: string, ruleData: Partial<Reserve>) => {
+    await updateReserve(reserveId, ruleData);
+    toast.success('Regra da reserva atualizada com sucesso!');
+    if (refreshData) await refreshData(true);
   };
 
   // 7. Toggle Pause/Play automation
@@ -385,8 +404,6 @@ export function Reserves() {
         totalPendingSuggestion={totals.totalPendingSuggestion}
         totalYield={totals.totalYield}
         activeCount={totals.activeCount}
-        globalPeriod={globalPeriod}
-        setGlobalPeriod={setGlobalPeriod}
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         onOpenCreate={() => {
@@ -470,8 +487,8 @@ export function Reserves() {
                   reserve={res}
                   reserveTransactions={reserveTransactions}
                   transactions={transactions}
-                  globalPeriod={globalPeriod}
-                  customDateRange={customDateRange || { start: '', end: '' }}
+                  globalPeriod={FIXED_SUGGESTION_PERIOD}
+                  customDateRange={FIXED_CUSTOM_RANGE}
                   onAporteManual={r => {
                     setSelectedReserveForAction(r);
                     setActionModalType('aporte_manual');
@@ -487,6 +504,10 @@ export function Reserves() {
                   onEdit={r => {
                     setReserveToEdit(r);
                     setShowCreateEditModal(true);
+                  }}
+                  onUpdateRule={r => {
+                    setReserveToUpdateRule(r);
+                    setShowUpdateRuleModal(true);
                   }}
                   onTogglePause={handleTogglePause}
                   onFinalize={handleFinalize}
@@ -522,8 +543,8 @@ export function Reserves() {
               reserves={reserves}
               reserveTransactions={reserveTransactions}
               transactions={transactions}
-              globalPeriod={globalPeriod}
-              customDateRange={customDateRange || { start: '', end: '' }}
+              globalPeriod={FIXED_SUGGESTION_PERIOD}
+              customDateRange={FIXED_CUSTOM_RANGE}
               isSubmitting={isSubmittingBatch}
               onExecuteBatch={handleExecuteBatch}
               onClose={() => setShowMassAporteModal(false)}
@@ -542,7 +563,24 @@ export function Reserves() {
         }}
         reserveToEdit={reserveToEdit}
         transactions={transactions}
+        settings={settings}
         onSave={handleSaveReserve}
+      />
+
+      {/* 2b. Modal Dedicado de Atualização de Regra */}
+      <UpdateRuleModal
+        isOpen={showUpdateRuleModal}
+        onClose={() => {
+          setShowUpdateRuleModal(false);
+          setReserveToUpdateRule(null);
+        }}
+        reserve={reserveToUpdateRule}
+        transactions={transactions}
+        reserveTransactions={reserveTransactions}
+        settings={settings}
+        globalPeriod={FIXED_SUGGESTION_PERIOD}
+        customDateRange={FIXED_CUSTOM_RANGE}
+        onSaveRule={handleSaveRule}
       />
 
       {/* 3. Modal Aporte Manual Individual com Confirmação */}
@@ -566,6 +604,7 @@ export function Reserves() {
       <WithdrawModal
         isOpen={actionModalType === 'withdraw'}
         reserve={selectedReserveForAction}
+        settings={settings}
         onClose={() => {
           setActionModalType(null);
           setSelectedReserveForAction(null);
@@ -594,8 +633,8 @@ export function Reserves() {
         }}
         transactions={transactions}
         reserveTransactions={reserveTransactions}
-        globalPeriod={globalPeriod}
-        customDateRange={customDateRange || { start: '', end: '' }}
+        globalPeriod={FIXED_SUGGESTION_PERIOD}
+        customDateRange={FIXED_CUSTOM_RANGE}
       />
     </div>
   );
