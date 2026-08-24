@@ -1,12 +1,18 @@
 import React from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { Home, List, PlusCircle, User, PiggyBank, TrendingUp, Bike, Sparkles, LogOut, ChevronRight, ShieldCheck } from 'lucide-react';
+import { Home, List, PlusCircle, User, PiggyBank, TrendingUp, Bike, Sparkles, LogOut, ChevronRight, ShieldCheck, Terminal, Cloud, RefreshCw } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { Button } from '@/components/ui/button';
+import { syncQueueManager, SyncTask } from '../lib/syncQueue';
 
 export function MainLayout({ children }: { children: React.ReactNode }) {
   const location = useLocation();
   const navigate = useNavigate();
+  const [syncQueue, setSyncQueue] = React.useState<SyncTask[]>([]);
+
+  React.useEffect(() => {
+    return syncQueueManager.subscribe((q) => setSyncQueue(q));
+  }, []);
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
@@ -26,7 +32,19 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
       <aside className="hidden md:flex flex-col fixed inset-y-0 left-0 w-64 lg:w-72 border-r border-border/70 bg-card/75 backdrop-blur-xl z-40 p-5 justify-between">
         <div className="space-y-6">
           {/* Logo & Brand Badge */}
-          <div className="flex items-center gap-3 px-2 pt-1 pb-2 border-b border-border/40">
+          <div 
+            onClick={() => {
+              const nextCount = (window as any).__logo_clicks = ((window as any).__logo_clicks || 0) + 1;
+              if (nextCount >= 3) {
+                window.dispatchEvent(new CustomEvent('toggle-debug-console'));
+                (window as any).__logo_clicks = 0;
+              } else {
+                setTimeout(() => { (window as any).__logo_clicks = 0; }, 2000);
+              }
+            }}
+            className="flex items-center gap-3 px-2 pt-1 pb-2 border-b border-border/40 cursor-pointer select-none"
+            title="Clique 3 vezes para abrir o console de debug"
+          >
             <div className="h-10 w-10 rounded-2xl bg-gradient-to-tr from-primary to-indigo-500 flex items-center justify-center text-primary-foreground shadow-md shadow-primary/20 shrink-0">
               <Bike className="w-5 h-5" />
             </div>
@@ -97,15 +115,27 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
         {/* Sidebar Footer Card */}
         <div className="pt-4 border-t border-border/40 space-y-3">
           <div className="p-3.5 bg-muted/20 border border-border/50 rounded-2xl flex items-center gap-3">
-            <div className="h-8 w-8 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-500 flex items-center justify-center shrink-0">
-              <ShieldCheck className="w-4 h-4" />
+            <div className={`h-8 w-8 rounded-xl flex items-center justify-center shrink-0 transition-all ${
+              syncQueue.length > 0 
+                ? 'bg-amber-500/10 border border-amber-500/20 text-amber-500' 
+                : 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-500'
+            }`}>
+              {syncQueue.length > 0 ? (
+                <RefreshCw className="w-4 h-4 animate-spin" />
+              ) : (
+                <ShieldCheck className="w-4 h-4" />
+              )}
             </div>
             <div className="overflow-hidden flex-1 leading-none">
               <span className="text-[10px] font-extrabold uppercase text-muted-foreground tracking-wider block">
-                Sistema Ativo
+                {syncQueue.length > 0 ? 'Sincronizando' : 'Sistema Ativo'}
               </span>
-              <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 truncate block mt-0.5">
-                Criptografado & Sincronizado
+              <span className={`text-xs font-bold truncate block mt-1 ${
+                syncQueue.length > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'
+              }`}>
+                {syncQueue.length > 0 
+                  ? `${syncQueue.length} pendente(s)` 
+                  : 'Sincronizado na Nuvem'}
               </span>
             </div>
           </div>
@@ -121,8 +151,49 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
         </div>
       </aside>
 
+      {/* Mobile Top Header (Sticky on Mobile) */}
+      <header className="md:hidden fixed top-0 left-0 right-0 h-14 border-b border-border bg-background/80 backdrop-blur-md z-40 px-4 flex items-center justify-between">
+        <div 
+          onClick={() => {
+            const nextCount = (window as any).__logo_clicks_mobile = ((window as any).__logo_clicks_mobile || 0) + 1;
+            if (nextCount >= 3) {
+              window.dispatchEvent(new CustomEvent('toggle-debug-console'));
+              (window as any).__logo_clicks_mobile = 0;
+            } else {
+              setTimeout(() => { (window as any).__logo_clicks_mobile = 0; }, 2000);
+            }
+          }}
+          className="flex items-center gap-2 select-none cursor-pointer"
+          title="Clique 3 vezes para abrir o console de debug"
+        >
+          <div className="h-8 w-8 rounded-xl bg-gradient-to-tr from-primary to-indigo-500 flex items-center justify-center text-primary-foreground shadow-xs shrink-0">
+            <Bike className="w-4 h-4" />
+          </div>
+          <span className="text-sm font-black tracking-tight text-foreground flex items-center gap-1">
+            Finanças Pro
+            <Sparkles className="w-3 h-3 text-amber-500 fill-amber-500" />
+          </span>
+        </div>
+
+        {syncQueue.length > 0 && (
+          <div className="flex items-center gap-1 text-[10px] font-extrabold text-amber-500 bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/20 shrink-0 select-none animate-pulse">
+            <RefreshCw className="w-2.5 h-2.5 animate-spin" />
+            <span>Sincronizando ({syncQueue.length})</span>
+          </div>
+        )}
+
+        <button 
+          type="button"
+          onClick={() => window.dispatchEvent(new CustomEvent('toggle-debug-console'))}
+          className="p-2 text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded-xl transition-all cursor-pointer min-w-[36px] min-h-[36px] flex items-center justify-center border border-border/40"
+          title="Abrir Painel de Debug"
+        >
+          <Terminal className="w-4 h-4 text-indigo-500" />
+        </button>
+      </header>
+
       {/* Main Content Area */}
-      <main className="flex-1 w-full md:pl-64 lg:pl-72 pb-24 md:pb-12 min-h-screen transition-all">
+      <main className="flex-1 w-full md:pl-64 lg:pl-72 pt-14 md:pt-0 pb-24 md:pb-12 min-h-screen transition-all">
         {children}
       </main>
 

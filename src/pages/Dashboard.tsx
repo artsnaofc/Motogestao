@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect } from 'react';
 import { motion } from 'motion/react';
+import { cacheManager } from '../lib/cacheManager';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { 
   Eye,
@@ -245,23 +246,17 @@ export function Dashboard() {
     idealOp: number;
     idealPer: number;
   }>(() => {
-    try {
-      const saved = localStorage.getItem('margin_thresholds');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        // Ensure backwards compatibility with old keys
-        return {
-          outstanding: parsed.outstanding ?? 70,
-          excellent: parsed.excellent ?? 50,
-          healthy: parsed.healthy ?? 25,
-          moderate: parsed.moderate ?? 10,
-          attention: parsed.attention ?? 0,
-          idealOp: parsed.idealOp ?? 70,
-          idealPer: parsed.idealPer ?? 40
-        };
-      }
-    } catch (e) {
-      console.error('Error parsing margin thresholds:', e);
+    const parsed = cacheManager.get<any>('margin_thresholds');
+    if (parsed) {
+      return {
+        outstanding: parsed.outstanding ?? 70,
+        excellent: parsed.excellent ?? 50,
+        healthy: parsed.healthy ?? 25,
+        moderate: parsed.moderate ?? 10,
+        attention: parsed.attention ?? 0,
+        idealOp: parsed.idealOp ?? 70,
+        idealPer: parsed.idealPer ?? 40
+      };
     }
     return { outstanding: 70, excellent: 50, healthy: 25, moderate: 10, attention: 0, idealOp: 70, idealPer: 40 };
   });
@@ -303,7 +298,7 @@ export function Dashboard() {
       idealPer: parseDecimal(tempIdealPer),
     };
     setMarginThresholds(newThresholds);
-    localStorage.setItem('margin_thresholds', JSON.stringify(newThresholds));
+    cacheManager.set('margin_thresholds', newThresholds, undefined, 'settings');
     setShowMarginConfig(false);
   };
 
@@ -313,18 +308,13 @@ export function Dashboard() {
     targetFatKm: number;
     targetLucroKm: number;
   }>(() => {
-    try {
-      const saved = localStorage.getItem('km_targets');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        return {
-          targetOpKm: parsed.targetOpKm ?? 0.65,
-          targetFatKm: parsed.targetFatKm ?? 2.50,
-          targetLucroKm: parsed.targetLucroKm ?? 1.85,
-        };
-      }
-    } catch (e) {
-      console.error('Error parsing km targets:', e);
+    const parsed = cacheManager.get<any>('km_targets');
+    if (parsed) {
+      return {
+        targetOpKm: parsed.targetOpKm ?? 0.65,
+        targetFatKm: parsed.targetFatKm ?? 2.50,
+        targetLucroKm: parsed.targetLucroKm ?? 1.85,
+      };
     }
     return { targetOpKm: 0.65, targetFatKm: 2.50, targetLucroKm: 1.85 };
   });
@@ -341,7 +331,7 @@ export function Dashboard() {
       targetLucroKm: parseDecimal(tempTargetLucroKm),
     };
     setKmTargets(updated);
-    localStorage.setItem('km_targets', JSON.stringify(updated));
+    cacheManager.set('km_targets', updated, undefined, 'settings');
     setShowKmConfig(false);
   };
 

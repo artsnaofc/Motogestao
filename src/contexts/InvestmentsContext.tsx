@@ -4,6 +4,8 @@ import { InvestmentTransaction, Dividend, UserSettings, ReserveTransaction, Divi
 import { AssetAllocationTarget, RebalanceRulesConfig, DEFAULT_REBALANCE_RULES } from '../lib/rebalanceEngine';
 import { B3AssetHistoryRecord, getAssetTypeForTicker } from '../lib/b3Fundamentals';
 import { toast } from 'sonner';
+import { cacheManager } from '../lib/cacheManager';
+import { syncQueueManager } from '../lib/syncQueue';
 
 export interface InvestmentsContextType {
   investmentTransactions: InvestmentTransaction[];
@@ -65,51 +67,19 @@ export function InvestmentsProvider({
   const [investmentTransactions, setInvestmentTransactions] = useState<InvestmentTransaction[]>(initialInvestmentTransactions);
   const [dividends, setDividends] = useState<Dividend[]>(initialDividends);
   const [valuationTargets, setValuationTargets] = useState<Record<string, ValuationTarget>>(() => {
-    try {
-      const local = localStorage.getItem('valuation_targets_cache');
-      if (local) {
-        return JSON.parse(local);
-      }
-    } catch (e) {
-      console.warn('Error loading local valuation cache in context', e);
-    }
-    return {};
+    return cacheManager.get<Record<string, ValuationTarget>>('valuation_targets_cache') || {};
   });
 
   const [targetAllocations, setTargetAllocations] = useState<Record<string, AssetAllocationTarget>>(() => {
-    try {
-      const local = localStorage.getItem('portfolio_target_allocations_cache');
-      if (local) {
-        return JSON.parse(local);
-      }
-    } catch (e) {
-      console.warn('Error loading local target allocations:', e);
-    }
-    return {};
+    return cacheManager.get<Record<string, AssetAllocationTarget>>('portfolio_target_allocations_cache') || {};
   });
 
   const [rulesConfig, setRulesConfig] = useState<RebalanceRulesConfig>(() => {
-    try {
-      const local = localStorage.getItem('portfolio_rules_config_cache');
-      if (local) {
-        return JSON.parse(local);
-      }
-    } catch (e) {
-      console.warn('Error loading local rules config:', e);
-    }
-    return DEFAULT_REBALANCE_RULES;
+    return cacheManager.get<RebalanceRulesConfig>('portfolio_rules_config_cache') || DEFAULT_REBALANCE_RULES;
   });
 
   const [b3AssetsMetadata, setB3AssetsMetadata] = useState<Record<string, any>>(() => {
-    try {
-      const local = localStorage.getItem('b3_assets_metadata_cache');
-      if (local) {
-        return JSON.parse(local);
-      }
-    } catch (e) {
-      console.warn('Error loading local b3 assets metadata:', e);
-    }
-    return {};
+    return cacheManager.get<Record<string, any>>('b3_assets_metadata_cache') || {};
   });
 
   // Load from Supabase on mount
@@ -131,7 +101,7 @@ export function InvestmentsProvider({
             });
             setB3AssetsMetadata(prev => {
               const merged = { ...prev, ...metaMap };
-              localStorage.setItem('b3_assets_metadata_cache', JSON.stringify(merged));
+              cacheManager.set('b3_assets_metadata_cache', merged, undefined, 'investments');
               return merged;
             });
           }
@@ -161,7 +131,7 @@ export function InvestmentsProvider({
             };
           });
           setTargetAllocations(map);
-          localStorage.setItem('portfolio_target_allocations_cache', JSON.stringify(map));
+          cacheManager.set('portfolio_target_allocations_cache', map, undefined, 'investments');
         }
 
         // 2. Rules Config
@@ -191,7 +161,7 @@ export function InvestmentsProvider({
             allowNewPositions: Boolean(rulesData.allow_new_positions ?? false),
           };
           setRulesConfig(conf);
-          localStorage.setItem('portfolio_rules_config_cache', JSON.stringify(conf));
+          cacheManager.set('portfolio_rules_config_cache', conf, undefined, 'investments');
         }
       } catch (e) {
         console.warn('Silent fallback loading supabase investment tables:', e);
@@ -203,24 +173,16 @@ export function InvestmentsProvider({
 
   // Global Dividend Analysis Mode ('received_only' | 'include_provisioned')
   const [dividendAnalysisMode, setDividendAnalysisModeState] = useState<DividendAnalysisMode>(() => {
-    try {
-      const saved = localStorage.getItem('dividend_analysis_mode');
-      if (saved === 'received_only' || saved === 'include_provisioned') {
-        return saved;
-      }
-    } catch (e) {
-      console.warn('Error loading dividend_analysis_mode:', e);
+    const saved = cacheManager.get<string>('dividend_analysis_mode');
+    if (saved === 'received_only' || saved === 'include_provisioned') {
+      return saved as DividendAnalysisMode;
     }
     return 'received_only';
   });
 
   const setDividendAnalysisMode = useCallback((mode: DividendAnalysisMode) => {
     setDividendAnalysisModeState(mode);
-    try {
-      localStorage.setItem('dividend_analysis_mode', mode);
-    } catch (e) {
-      console.warn('Error saving dividend_analysis_mode:', e);
-    }
+    cacheManager.set('dividend_analysis_mode', mode, undefined, 'investments');
   }, []);
 
   // Synchronize when initial props change
@@ -319,6 +281,7 @@ export function InvestmentsProvider({
     };
 
     try {
+      let rtObj: ReserveTransaction | null = null;
       if (itObj.reserve_id) {
         const rtId = generateUUID();
         itObj.transaction_id = rtId;
@@ -331,7 +294,7 @@ export function InvestmentsProvider({
           ? (isBuy ? itObj.amount + txCosts : Math.max(0, itObj.amount - txCosts))
           : itObj.amount;
 
-        const rtObj: ReserveTransaction = {
+        rtObj = {
           id: rtId,
           user_id: userId,
           reserve_id: itObj.reserve_id,
@@ -340,44 +303,28 @@ export function InvestmentsProvider({
           date: itObj.date,
           category: 'Investimentos',
           description: `Investimento: ${isBuy ? 'Compra' : 'Venda'} ${itObj.ticker}`,
-          linked_investment_id: undefined,
+          linked_investment_id: itObj.id,
           created_at: new Date().toISOString(),
         };
 
-        const { error: rtError } = await supabase
-          .from('reserve_transactions')
-          .insert(rtObj);
-
-        if (rtError) throw rtError;
+        syncQueueManager.enqueue('reserve_transactions', 'insert', rtObj.id, rtObj);
       }
 
-      const { error } = await supabase
-        .from('investment_transactions')
-        .insert(itObj);
+      setInvestmentTransactions(prev => {
+        const existing = [itObj, ...prev];
+        cacheManager.set(`investment_transactions_${userId}`, existing, undefined, 'investments');
+        return existing;
+      });
 
-      if (error) throw error;
-
-      if (itObj.reserve_id && itObj.transaction_id) {
-        await supabase
-          .from('reserve_transactions')
-          .update({ linked_investment_id: itObj.id })
-          .eq('id', itObj.transaction_id);
-      }
-
-      if (onDataChange) await onDataChange();
+      syncQueueManager.enqueue('investment_transactions', 'insert', itObj.id, itObj);
       toast.success('Lançamento de investimento registrado!');
       return itObj.id;
     } catch (err: any) {
-      console.warn('Supabase investment insert failed, adding to localStorage:', err);
-      setInvestmentTransactions(prev => {
-        const existing = [itObj, ...prev];
-        localStorage.setItem(`investment_transactions_${userId}`, JSON.stringify(existing));
-        return existing;
-      });
-      toast.success('Lançamento registrado localmente.');
+      console.warn('Error queuing investment transaction:', err);
+      toast.error('Erro ao salvar lançamento localmente.');
       return itObj.id;
     }
-  }, [onDataChange]);
+  }, []);
 
   const deleteInvestmentTransaction = useCallback(async (id: string) => {
     toast.loading('Processando exclusão...', { id: 'del-inv' });
@@ -389,31 +336,16 @@ export function InvestmentsProvider({
 
     setInvestmentTransactions(prev => {
       const newState = prev.filter(it => it.id !== id);
-      localStorage.setItem(`investment_transactions_${userId}`, JSON.stringify(newState));
+      cacheManager.set(`investment_transactions_${userId}`, newState, undefined, 'investments');
       return newState;
     });
 
-    try {
-      if (targetTx?.transaction_id) {
-        await supabase.from('reserve_transactions').delete().eq('id', targetTx.transaction_id);
-      }
-      await supabase.from('reserve_transactions').delete().eq('linked_investment_id', id);
-
-      const { error } = await supabase
-        .from('investment_transactions')
-        .delete()
-        .eq('id', id)
-        .eq('user_id', userId);
-
-      if (error) throw error;
-
-      if (onDataChange) await onDataChange();
-      toast.success('Lançamento excluído!', { id: 'del-inv' });
-    } catch (err) {
-      console.warn('Supabase investment delete failed, already updated locally:', err);
-      toast.success('Lançamento excluído (localmente)!', { id: 'del-inv' });
+    if (targetTx?.transaction_id) {
+      syncQueueManager.enqueue('reserve_transactions', 'delete', targetTx.transaction_id);
     }
-  }, [investmentTransactions, onDataChange]);
+    syncQueueManager.enqueue('investment_transactions', 'delete', id);
+    toast.success('Lançamento excluído!', { id: 'del-inv' });
+  }, [investmentTransactions]);
 
   const updateInvestmentTransaction = useCallback(async (id: string, updatedFields: Partial<InvestmentTransaction>) => {
     const { data: userData } = await supabase.auth.getUser();
@@ -425,60 +357,29 @@ export function InvestmentsProvider({
 
     setInvestmentTransactions(prev => {
       const newState = prev.map(it => it.id === id ? { ...it, ...updatedFields } : it);
-      localStorage.setItem(`investment_transactions_${userId}`, JSON.stringify(newState));
+      cacheManager.set(`investment_transactions_${userId}`, newState, undefined, 'investments');
       return newState;
     });
 
-    try {
-      const { error } = await supabase
-        .from('investment_transactions')
-        .update(updatedFields)
-        .eq('id', id);
+    syncQueueManager.enqueue('investment_transactions', 'update', id, updatedFields);
 
-      if (error) throw error;
+    // Sync linked reserve transaction
+    if (merged.reserve_id && targetTx?.transaction_id) {
+      const isBuy = merged.operation === 'buy';
+      const rtAmount = isBuy ? (merged.amount + (merged.costs || 0)) : Math.max(0, merged.amount - (merged.costs || 0));
+      const rtPayload = {
+        reserve_id: merged.reserve_id,
+        type: isBuy ? 'utilizacao' as const : 'aporte' as const,
+        amount: rtAmount,
+        date: merged.date,
+        description: `Investimento: ${isBuy ? 'Compra' : 'Venda'} ${merged.ticker}`
+      };
 
-      // Sync linked reserve transaction
-      if (merged.reserve_id) {
-        const isBuy = merged.operation === 'buy';
-        const rtAmount = isBuy ? (merged.amount + (merged.costs || 0)) : Math.max(0, merged.amount - (merged.costs || 0));
-        const rtPayload = {
-          reserve_id: merged.reserve_id,
-          type: isBuy ? 'utilizacao' as const : 'aporte' as const,
-          amount: rtAmount,
-          date: merged.date,
-          description: `Investimento: ${isBuy ? 'Compra' : 'Venda'} ${merged.ticker}`
-        };
-
-        if (targetTx?.transaction_id) {
-          await supabase.from('reserve_transactions').update(rtPayload).eq('id', targetTx.transaction_id);
-        } else {
-          // Check if linked by linked_investment_id
-          const { data: existingRt } = await supabase.from('reserve_transactions').select('id').eq('linked_investment_id', id).maybeSingle();
-          if (existingRt) {
-            await supabase.from('reserve_transactions').update(rtPayload).eq('id', existingRt.id);
-          } else {
-            // Create a new linked reserve transaction if none existed
-            const newRtId = generateUUID();
-            await supabase.from('reserve_transactions').insert({
-              id: newRtId,
-              user_id: userId,
-              linked_investment_id: id,
-              category: 'Investimentos',
-              created_at: new Date().toISOString(),
-              ...rtPayload
-            });
-            await supabase.from('investment_transactions').update({ transaction_id: newRtId }).eq('id', id);
-          }
-        }
-      }
-
-      if (onDataChange) await onDataChange();
-      toast.success('Lançamento atualizado!');
-    } catch (err) {
-      console.warn('Supabase investment update failed, already updated locally:', err);
-      toast.success('Lançamento atualizado (localmente)!');
+      syncQueueManager.enqueue('reserve_transactions', 'update', targetTx.transaction_id, rtPayload);
     }
-  }, [investmentTransactions, onDataChange]);
+
+    toast.success('Lançamento atualizado!');
+  }, [investmentTransactions]);
 
   const deleteInvestmentTransactionsByTicker = useCallback(async (ticker: string) => {
     toast.loading('Limpando posição de ' + ticker + '...', { id: 'del-ticker' });
@@ -492,33 +393,20 @@ export function InvestmentsProvider({
 
     setInvestmentTransactions(prev => {
       const newState = prev.filter(it => it.ticker.toUpperCase() !== ticker.toUpperCase());
-      localStorage.setItem(`investment_transactions_${userId}`, JSON.stringify(newState));
+      cacheManager.set(`investment_transactions_${userId}`, newState, undefined, 'investments');
       return newState;
     });
 
-    try {
-      if (rtIds.length > 0) {
-        await supabase.from('reserve_transactions').delete().in('id', rtIds);
-      }
-      if (txIds.length > 0) {
-        await supabase.from('reserve_transactions').delete().in('linked_investment_id', txIds);
-      }
+    rtIds.forEach(rtId => {
+      syncQueueManager.enqueue('reserve_transactions', 'delete', rtId);
+    });
 
-      const { error } = await supabase
-        .from('investment_transactions')
-        .delete()
-        .eq('ticker', ticker)
-        .eq('user_id', userId);
+    txIds.forEach(txId => {
+      syncQueueManager.enqueue('investment_transactions', 'delete', txId);
+    });
 
-      if (error) throw error;
-
-      if (onDataChange) await onDataChange();
-      toast.success('Lançamentos excluídos!', { id: 'del-ticker' });
-    } catch (err) {
-      console.warn('Supabase investment delete failed, already updated locally:', err);
-      toast.success('Lançamentos excluídos (localmente)!', { id: 'del-ticker' });
-    }
-  }, [investmentTransactions, onDataChange]);
+    toast.success('Lançamentos excluídos!', { id: 'del-ticker' });
+  }, [investmentTransactions]);
 
   const addDividend = useCallback(async (newDiv: Omit<Dividend, 'id' | 'user_id' | 'created_at'>) => {
     const { data: userData } = await supabase.auth.getUser();
@@ -532,21 +420,15 @@ export function InvestmentsProvider({
       created_at: new Date().toISOString(),
     };
 
-    try {
-      const { error } = await supabase.from('dividends').insert(divObj);
-      if (error) throw error;
-      if (onDataChange) await onDataChange();
-      toast.success('Provento registrado!');
-    } catch (err) {
-      console.warn('Supabase dividend insert failed:', err);
-      setDividends(prev => {
-        const existing = [divObj, ...prev];
-        localStorage.setItem(`dividends_${userId}`, JSON.stringify(existing));
-        return existing;
-      });
-      toast.success('Provento registrado localmente.');
-    }
-  }, [onDataChange]);
+    setDividends(prev => {
+      const existing = [divObj, ...prev];
+      cacheManager.set(`dividends_${userId}`, existing, undefined, 'investments');
+      return existing;
+    });
+
+    syncQueueManager.enqueue('dividends', 'insert', divObj.id, divObj);
+    toast.success('Provento registrado!');
+  }, []);
 
   const updateDividend = useCallback(async (id: string, updatedFields: Partial<Dividend>) => {
     const { data: userData } = await supabase.auth.getUser();
@@ -559,31 +441,20 @@ export function InvestmentsProvider({
     // If changing status from received to provisioned, remove linked reserve transaction if existing
     if (currentDiv && currentDiv.status === 'received' && updatedFields.status === 'provisioned') {
       if (currentDiv.transaction_id) {
-        try {
-          await supabase.from('reserve_transactions').delete().eq('id', currentDiv.transaction_id);
-        } catch (rtErr) {
-          console.warn('Error deleting linked reserve transaction:', rtErr);
-        }
+        syncQueueManager.enqueue('reserve_transactions', 'delete', currentDiv.transaction_id);
         finalFields.transaction_id = undefined;
       }
     }
 
     setDividends(prev => {
       const existing = prev.map(d => d.id === id ? { ...d, ...finalFields } : d);
-      localStorage.setItem(`dividends_${userId}`, JSON.stringify(existing));
+      cacheManager.set(`dividends_${userId}`, existing, undefined, 'investments');
       return existing;
     });
 
-    try {
-      const { error } = await supabase.from('dividends').update(finalFields).eq('id', id);
-      if (error) throw error;
-      if (onDataChange) await onDataChange();
-      toast.success('Provento atualizado!');
-    } catch (err) {
-      console.warn('Supabase dividend update failed:', err);
-      toast.success('Provento atualizado localmente.');
-    }
-  }, [dividends, onDataChange]);
+    syncQueueManager.enqueue('dividends', 'update', id, finalFields);
+    toast.success('Provento atualizado!');
+  }, [dividends]);
 
   const deleteDividend = useCallback(async (id: string) => {
     const { data: userData } = await supabase.auth.getUser();
@@ -592,29 +463,18 @@ export function InvestmentsProvider({
 
     const currentDiv = dividends.find(d => d.id === id);
     if (currentDiv?.transaction_id) {
-      try {
-        await supabase.from('reserve_transactions').delete().eq('id', currentDiv.transaction_id);
-      } catch (rtErr) {
-        console.warn('Error deleting linked reserve transaction on delete:', rtErr);
-      }
+      syncQueueManager.enqueue('reserve_transactions', 'delete', currentDiv.transaction_id);
     }
 
     setDividends(prev => {
       const existing = prev.filter(d => d.id !== id);
-      localStorage.setItem(`dividends_${userId}`, JSON.stringify(existing));
+      cacheManager.set(`dividends_${userId}`, existing, undefined, 'investments');
       return existing;
     });
 
-    try {
-      const { error } = await supabase.from('dividends').delete().eq('id', id);
-      if (error) throw error;
-      if (onDataChange) await onDataChange();
-      toast.success('Provento removido!');
-    } catch (err) {
-      console.warn('Supabase dividend delete failed:', err);
-      toast.success('Provento removido localmente.');
-    }
-  }, [dividends, onDataChange]);
+    syncQueueManager.enqueue('dividends', 'delete', id);
+    toast.success('Provento removido!');
+  }, [dividends]);
 
   const updateAssetCnpj = useCallback(async (ticker: string, cnpj: string) => {
     const tk = ticker.toUpperCase().trim();
@@ -656,23 +516,18 @@ export function InvestmentsProvider({
       } catch (err) {
         console.warn('Error saving asset_cnpjs:', err);
       }
-      localStorage.setItem(`asset_cnpjs_${userId}`, JSON.stringify(newAssetCnpjs));
+      cacheManager.set(`asset_cnpjs_${userId}`, newAssetCnpjs, undefined, 'settings');
     }
     toast.success(`CNPJ de ${tk} atualizado com sucesso!`);
   }, [settings, onUpdateSettings]);
 
-  // Load Saved Valuations from Supabase & LocalStorage on Mount
+  // Load Saved Valuations from Supabase & Cache on Mount
   useEffect(() => {
     const loadValuations = async () => {
-      // 1. Check local cache first
-      try {
-        const local = localStorage.getItem('valuation_targets_cache');
-        if (local) {
-          const parsed = JSON.parse(local);
-          setValuationTargets(parsed);
-        }
-      } catch (e) {
-        console.warn('Error loading local valuation cache:', e);
+      // 1. Check cache first
+      const local = cacheManager.get<Record<string, ValuationTarget>>('valuation_targets_cache');
+      if (local) {
+        setValuationTargets(local);
       }
 
       // 2. Fetch from Supabase
@@ -690,7 +545,7 @@ export function InvestmentsProvider({
               valMap[item.ticker.toUpperCase()] = item;
             });
             setValuationTargets(prev => ({ ...prev, ...valMap }));
-            localStorage.setItem('valuation_targets_cache', JSON.stringify(valMap));
+            cacheManager.set('valuation_targets_cache', valMap, undefined, 'investments');
           }
         }
       } catch (err) {
@@ -714,11 +569,7 @@ export function InvestmentsProvider({
 
     setValuationTargets(prev => {
       const next = { ...prev, [tk]: normalizedTarget };
-      try {
-        localStorage.setItem('valuation_targets_cache', JSON.stringify(next));
-      } catch (e) {
-        console.warn('Error saving local valuation targets:', e);
-      }
+      cacheManager.set('valuation_targets_cache', next, undefined, 'investments');
       return next;
     });
 
@@ -755,11 +606,7 @@ export function InvestmentsProvider({
     setValuationTargets(prev => {
       const next = { ...prev };
       delete next[tk];
-      try {
-        localStorage.setItem('valuation_targets_cache', JSON.stringify(next));
-      } catch (e) {
-        console.warn('Error saving local valuation targets:', e);
-      }
+      cacheManager.set('valuation_targets_cache', next, undefined, 'investments');
       return next;
     });
 
@@ -782,11 +629,7 @@ export function InvestmentsProvider({
   // Save Target Allocations
   const saveTargetAllocations = useCallback(async (newTargets: Record<string, AssetAllocationTarget>) => {
     setTargetAllocations(newTargets);
-    try {
-      localStorage.setItem('portfolio_target_allocations_cache', JSON.stringify(newTargets));
-    } catch (e) {
-      console.warn('Error saving local target allocations cache:', e);
-    }
+    cacheManager.set('portfolio_target_allocations_cache', newTargets, undefined, 'investments');
 
     try {
       const { data: { user } } = await supabase.auth.getUser();
@@ -818,11 +661,7 @@ export function InvestmentsProvider({
   // Save Rules Config
   const saveRulesConfig = useCallback(async (newConfig: RebalanceRulesConfig) => {
     setRulesConfig(newConfig);
-    try {
-      localStorage.setItem('portfolio_rules_config_cache', JSON.stringify(newConfig));
-    } catch (e) {
-      console.warn('Error saving local rules config cache:', e);
-    }
+    cacheManager.set('portfolio_rules_config_cache', newConfig, undefined, 'investments');
 
     try {
       const { data: { user } } = await supabase.auth.getUser();
@@ -942,7 +781,7 @@ export function InvestmentsProvider({
     // Update state & cache
     setB3AssetsMetadata(prev => {
       const next = { ...prev, [ticker]: row };
-      localStorage.setItem('b3_assets_metadata_cache', JSON.stringify(next));
+      cacheManager.set('b3_assets_metadata_cache', next, undefined, 'investments');
       return next;
     });
 
@@ -1091,10 +930,10 @@ export function InvestmentsProvider({
       });
     });
 
-    // Update state and local storage immediately
+    // Update state and cache immediately
     setB3AssetsMetadata(prev => {
       const merged = { ...prev, ...newMetaMap };
-      localStorage.setItem('b3_assets_metadata_cache', JSON.stringify(merged));
+      cacheManager.set('b3_assets_metadata_cache', merged, undefined, 'investments');
       return merged;
     });
 
@@ -1143,7 +982,7 @@ export function InvestmentsProvider({
     setB3AssetsMetadata(prev => {
       const next = { ...prev };
       delete next[clean];
-      localStorage.setItem('b3_assets_metadata_cache', JSON.stringify(next));
+      cacheManager.set('b3_assets_metadata_cache', next, undefined, 'investments');
       return next;
     });
 

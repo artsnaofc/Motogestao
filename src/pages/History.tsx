@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { cacheManager } from '../lib/cacheManager';
 import { motion } from 'motion/react';
 import { supabase } from '../lib/supabase';
 import { Transaction } from '../types';
@@ -64,13 +65,7 @@ import { TransactionDetailView } from '../components/history/TransactionDetailVi
 const HISTORY_FILTERS_KEY = 'motogestao_history_filters_v2';
 
 const loadSavedFilters = () => {
-  try {
-    const saved = localStorage.getItem(HISTORY_FILTERS_KEY);
-    if (saved) return JSON.parse(saved);
-  } catch (e) {
-    console.error('Failed to parse saved filters', e);
-  }
-  return null;
+  return cacheManager.get<any>(HISTORY_FILTERS_KEY) || null;
 };
 
 const iconOptions = {
@@ -453,29 +448,25 @@ export function History() {
     }
   }, [searchParams, setSearchParams]);
 
-  // Persistent filters: Auto-save state to localStorage
+  // Persistent filters: Auto-save state to cache
   React.useEffect(() => {
-    try {
-      const filterState = {
-        searchTerm,
-        filterType,
-        filterCategory,
-        filterStatus,
-        minAmount,
-        maxAmount,
-        sortBy,
-        showAdvanced,
-        includeCash,
-        includeReserves,
-        includeInvestments,
-        filterReserveId,
-        filterTicker,
-        activeQuickChip,
-      };
-      localStorage.setItem(HISTORY_FILTERS_KEY, JSON.stringify(filterState));
-    } catch (e) {
-      // Ignore write errors
-    }
+    const filterState = {
+      searchTerm,
+      filterType,
+      filterCategory,
+      filterStatus,
+      minAmount,
+      maxAmount,
+      sortBy,
+      showAdvanced,
+      includeCash,
+      includeReserves,
+      includeInvestments,
+      filterReserveId,
+      filterTicker,
+      activeQuickChip,
+    };
+    cacheManager.set(HISTORY_FILTERS_KEY, filterState, undefined, 'settings');
   }, [
     searchTerm, filterType, filterCategory, filterStatus, minAmount, maxAmount,
     sortBy, showAdvanced, includeCash, includeReserves, includeInvestments,
@@ -1795,17 +1786,21 @@ export function History() {
     try {
       const ids = Array.from(selectedIds);
       const stdIds = ids.filter(id => transactions.some(t => t.id === id));
-      if (stdIds.length > 0) {
-        await supabase.from('transactions').delete().in('id', stdIds);
-      }
       const rtIds = ids.filter(id => (reserveTransactions || []).some(rt => rt.id === id));
-      if (rtIds.length > 0) {
-        await supabase.from('reserve_transactions').delete().in('id', rtIds);
+
+      // Optimistically delete standard transactions instantly and queue
+      for (const id of stdIds) {
+        await deleteTransaction(id);
       }
+
+      // Optimistically delete reserve transactions instantly and queue
+      for (const id of rtIds) {
+        await deleteReserveTransaction(id);
+      }
+
       toast.success(`${selectedIds.size} lançamento(s) excluído(s) com sucesso!`);
       setSelectedIds(new Set());
       setSelectMode(false);
-      await refreshData(true);
     } catch (err) {
       toast.error('Erro ao excluir lançamentos selecionados.');
     } finally {
@@ -1879,7 +1874,7 @@ export function History() {
     const isAporteTx = isAporte || t.category === 'Aporte Reserva' || ((t as any).isInvestmentTx && ((t as any).investmentTxType === 'buy' || t.type === 'expense'));
     const isProventoTx = (t as any).isDividendTx || t.category === 'Proventos' || t.category === 'Dividendos';
     const isRendimentoTx = isRendimento || (isReserveTx && (t as any).reserveTxType === 'rendimento');
-    const isNoDescTx = isAporteTx || isProventoTx || isRendimentoTx;
+    const isNoDescTx = isAporteTx || isRendimentoTx;
     
     const isInvestmentReserveUse = isReserveTx && isUtilizacao && (
       (t as any).originalCategory === 'Investimentos' || 
@@ -1905,7 +1900,7 @@ export function History() {
       return null;
     })() : null;
 
-    const catMeta = isReserveTx
+    let catMeta = isReserveTx
       ? { 
           icon: PiggyBank, 
           color: isAporte 
@@ -1913,6 +1908,16 @@ export function History() {
             : 'text-blue-500 bg-blue-500/10 border-blue-500/20' 
         }
       : getCategoryMeta(t.category, t.type);
+
+    if (isProventoTx) {
+      const isProvisioned = (t as any).dividendStatus === 'provisioned';
+      catMeta = {
+        icon: isProvisioned ? Clock : Coins,
+        color: isProvisioned
+          ? 'text-amber-500 bg-amber-500/10 border-amber-500/20'
+          : 'text-emerald-500 bg-emerald-500/10 border-emerald-500/20'
+      };
+    }
 
     const SelectedIcon = isReserveTx
       ? (iconOptions[(t as any).reserveIcon as keyof typeof iconOptions] || PiggyBank)
@@ -1984,9 +1989,11 @@ export function History() {
             ? { borderLeft: `4px ${isRendimento || isUtilizacao ? 'dashed' : 'solid'} ${(t as any).reserveColor}` } 
             : isReserveUseEx 
               ? { borderLeft: `3px dashed ${matchedReserveInfo?.reserve?.color || '#ef4444'}` } 
-              : (isRendimentoTx || isProventoTx)
-                ? { borderLeft: `3px dashed ${isProventoTx ? '#f59e0b' : '#10b981'}` }
-                : {}
+              : isProventoTx
+                ? { borderLeft: (t as any).dividendStatus === 'provisioned' ? '3px dashed #f59e0b' : '3px solid #10b981' }
+                : isRendimentoTx
+                  ? { borderLeft: '3px dashed #10b981' }
+                  : {}
         }
       >
         {/* Transaction Bar Row */}
@@ -2027,7 +2034,11 @@ export function History() {
                 <span className="font-extrabold text-xs sm:text-sm text-foreground truncate tracking-tight">
                   {isReserveTx 
                     ? (t as any).reserveName 
-                    : (isReserveUseEx ? (matchedReserveInfo?.reserve?.name || 'Reserva') : t.category)}
+                    : isReserveUseEx 
+                      ? (matchedReserveInfo?.reserve?.name || 'Reserva') 
+                      : isProventoTx 
+                        ? `${(t as any).ticker || ''} (${(t as any).dividendType || 'Provento'})`
+                        : t.category}
                 </span>
 
                 {/* Badges / Pill Tags */}

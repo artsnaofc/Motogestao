@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useDeferredValue } from 'react';
+import { cacheManager } from '../../lib/cacheManager';
 import { 
   Search, 
   Filter, 
@@ -86,15 +87,9 @@ export const FundamentalAnalysisView: React.FC<FundamentalAnalysisViewProps> = (
     return positions.map(p => p.ticker);
   }, [explicitTickers, positions]);
 
-  // Saved Filters from LocalStorage
+  // Saved Filters from Cache
   const savedFilters = useMemo(() => {
-    try {
-      const saved = localStorage.getItem('b3_fundamental_filters_v2');
-      if (saved) return JSON.parse(saved);
-    } catch (e) {
-      console.error('Failed to load saved fundamental filters:', e);
-    }
-    return null;
+    return cacheManager.get<any>('b3_fundamental_filters_v2') || null;
   }, []);
 
   // Strategy & View State
@@ -139,34 +134,30 @@ export const FundamentalAnalysisView: React.FC<FundamentalAnalysisViewProps> = (
   const [minLiquidity, setMinLiquidity] = useState<number>(savedFilters?.minLiquidity ?? 0); // in Millions
   const [minFfoYield, setMinFfoYield] = useState<number>(savedFilters?.minFfoYield ?? 0);
 
-  // Persist filter states to LocalStorage on changes
+  // Persist filter states to cache on changes
   React.useEffect(() => {
-    try {
-      const stateToSave = {
-        rankingMethod,
-        activeTypeTab,
-        selectedSector,
-        onlyPortfolio,
-        minRoe,
-        minRoic,
-        maxPl,
-        maxDebtEbitda,
-        minDy,
-        maxDy,
-        maxVacancy,
-        maxPvpFii,
-        minNetMargin,
-        minLiquidity,
-        minFfoYield,
-        sortField,
-        sortOrder,
-        stockWeights,
-        fiiWeights
-      };
-      localStorage.setItem('b3_fundamental_filters_v2', JSON.stringify(stateToSave));
-    } catch (e) {
-      console.error('Failed to save fundamental filters:', e);
-    }
+    const stateToSave = {
+      rankingMethod,
+      activeTypeTab,
+      selectedSector,
+      onlyPortfolio,
+      minRoe,
+      minRoic,
+      maxPl,
+      maxDebtEbitda,
+      minDy,
+      maxDy,
+      maxVacancy,
+      maxPvpFii,
+      minNetMargin,
+      minLiquidity,
+      minFfoYield,
+      sortField,
+      sortOrder,
+      stockWeights,
+      fiiWeights
+    };
+    cacheManager.set('b3_fundamental_filters_v2', stateToSave, undefined, 'investments');
   }, [
     rankingMethod, activeTypeTab, selectedSector, onlyPortfolio,
     minRoe, minRoic, maxPl, maxDebtEbitda, minDy, maxDy,
@@ -176,11 +167,7 @@ export const FundamentalAnalysisView: React.FC<FundamentalAnalysisViewProps> = (
 
   // Reset all filters & sorting
   const handleResetFilters = () => {
-    try {
-      localStorage.removeItem('b3_fundamental_filters_v2');
-    } catch (e) {
-      console.error(e);
-    }
+    cacheManager.remove('b3_fundamental_filters_v2');
     setMinRoe(0);
     setMinRoic(0);
     setMaxPl(100);

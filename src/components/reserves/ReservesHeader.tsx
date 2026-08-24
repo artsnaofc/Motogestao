@@ -8,7 +8,9 @@ import {
   Layers, 
   History as HistIcon,
   Zap,
-  ArrowUpRight
+  ArrowUpRight,
+  Eye,
+  EyeOff
 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -24,6 +26,8 @@ interface ReservesHeaderProps {
   setActiveTab: (tab: 'cards' | 'history') => void;
   onOpenCreate: () => void;
   onOpenMassAporte: () => void;
+  hideValues?: boolean;
+  setHideValues?: (hide: boolean) => void;
 }
 
 export function ReservesHeader({
@@ -35,7 +39,9 @@ export function ReservesHeader({
   activeTab,
   setActiveTab,
   onOpenCreate,
-  onOpenMassAporte
+  onOpenMassAporte,
+  hideValues,
+  setHideValues
 }: ReservesHeaderProps) {
   const goalProgress = totalGoal > 0 ? Math.min(100, Math.round((totalBalance / totalGoal) * 100)) : 0;
 
@@ -64,6 +70,18 @@ export function ReservesHeader({
 
         {/* Action Buttons */}
         <div className="flex items-center gap-1.5 flex-wrap">
+          {/* Privacy Toggle */}
+          {setHideValues && (
+            <button
+              onClick={() => setHideValues(!hideValues)}
+              className="p-2 sm:px-3 sm:py-2 text-xs font-bold rounded-xl border border-border/60 bg-card text-muted-foreground hover:text-foreground hover:border-border transition-all flex items-center gap-1.5 cursor-pointer"
+              title={hideValues ? "Mostrar Valores" : "Ocultar Valores"}
+            >
+              {hideValues ? <EyeOff className="w-4 h-4 text-amber-500" /> : <Eye className="w-4 h-4 text-primary" />}
+              <span className="hidden sm:inline">{hideValues ? 'Oculto' : 'Visível'}</span>
+            </button>
+          )}
+
           {/* Mass Aporte Trigger Button */}
           <Button
             onClick={onOpenMassAporte}
@@ -74,7 +92,7 @@ export function ReservesHeader({
             <span>Aporte em Massa</span>
             {totalPendingSuggestion > 0 && (
               <span className="hidden xs:inline-block ml-0.5 px-1.5 py-0.2 text-[9px] font-black rounded-full bg-white/20 text-white font-mono">
-                {formatCurrency(totalPendingSuggestion)}
+                {hideValues ? 'R$ •••' : formatCurrency(totalPendingSuggestion)}
               </span>
             )}
           </Button>
@@ -106,7 +124,7 @@ export function ReservesHeader({
           </div>
           <div className="mt-1">
             <h3 className="text-base sm:text-xl font-black text-foreground tracking-tight font-mono">
-              {formatCurrency(totalBalance)}
+              {hideValues ? 'R$ •••••' : formatCurrency(totalBalance)}
             </h3>
             <p className="text-[10px] text-muted-foreground font-medium mt-0.5 truncate">
               <span className="text-indigo-600 dark:text-indigo-400 font-semibold">{activeCount} reservas</span>
@@ -127,7 +145,7 @@ export function ReservesHeader({
           <div className="mt-1">
             <div className="flex items-baseline justify-between">
               <h3 className="text-base sm:text-xl font-black text-foreground tracking-tight font-mono truncate">
-                {formatCurrency(totalGoal)}
+                {hideValues ? 'R$ •••••' : formatCurrency(totalGoal)}
               </h3>
               <span className="text-[10px] sm:text-xs font-black text-emerald-600 dark:text-emerald-400 font-mono ml-1">
                 {goalProgress}%
@@ -164,7 +182,7 @@ export function ReservesHeader({
           </div>
           <div className="mt-1">
             <h3 className="text-base sm:text-xl font-black text-foreground tracking-tight font-mono">
-              {formatCurrency(totalPendingSuggestion)}
+              {hideValues ? 'R$ •••••' : formatCurrency(totalPendingSuggestion)}
             </h3>
             <p className="text-[10px] text-muted-foreground font-medium mt-0.5 truncate">
               {totalPendingSuggestion > 0 ? (
@@ -192,7 +210,7 @@ export function ReservesHeader({
           </div>
           <div className="mt-1">
             <h3 className="text-base sm:text-xl font-black text-blue-600 dark:text-blue-400 tracking-tight font-mono">
-              +{formatCurrency(totalYield)}
+              {hideValues ? 'R$ •••••' : `+${formatCurrency(totalYield)}`}
             </h3>
             <p className="text-[10px] text-muted-foreground font-medium mt-0.5 truncate flex items-center gap-0.5">
               <ArrowUpRight className="w-3 h-3 text-blue-600 shrink-0" />

@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, ReactNode, useCa
 import { supabase } from '../lib/supabase';
 import { executeQuoteFetch, QuoteProvider, QuoteFetchResult } from '../lib/quoteService';
 import { UserSettings } from '../types';
+import { cacheManager } from '../lib/cacheManager';
 
 export interface QuotesContextType {
   quotes: Record<string, number>;
@@ -20,12 +21,46 @@ export interface QuotesContextType {
 const QuotesContext = createContext<QuotesContextType | undefined>(undefined);
 
 export function QuotesProvider({ children }: { children: ReactNode }) {
-  const [quotes, setQuotes] = useState<Record<string, number>>({});
+  const [quotes, setQuotes] = useState<Record<string, number>>(() => {
+    return cacheManager.get<Record<string, number>>('cached_quotes') || {};
+  });
   const [isFetchingQuotes, setIsFetchingQuotes] = useState(false);
   const [lastQuoteFetchResult, setLastQuoteFetchResult] = useState<QuoteFetchResult | null>(null);
 
+  // Sync quotes cached in Supabase on load
+  useEffect(() => {
+    const syncQuotesFromDb = async () => {
+      try {
+        const { data: userData } = await supabase.auth.getUser();
+        if (userData?.user) {
+          const { data: settingsData } = await supabase
+            .from('user_settings')
+            .select('cached_quotes')
+            .eq('user_id', userData.user.id)
+            .maybeSingle();
+
+          if (settingsData?.cached_quotes && Object.keys(settingsData.cached_quotes).length > 0) {
+            setQuotes(prev => {
+              const merged = { ...settingsData.cached_quotes, ...prev };
+              cacheManager.set('cached_quotes', merged, undefined, 'quotes');
+              return merged;
+            });
+          }
+        }
+      } catch (err) {
+        console.warn('[QuotesContext] Erro ao carregar cotações salvas na nuvem:', err);
+      }
+    };
+
+    syncQuotesFromDb();
+  }, []);
+
   const updateQuoteCache = useCallback(async (newQuotes: Record<string, number>) => {
-    setQuotes(prev => ({ ...prev, ...newQuotes }));
+    setQuotes(prev => {
+      const merged = { ...prev, ...newQuotes };
+      cacheManager.set('cached_quotes', merged, undefined, 'quotes');
+      return merged;
+    });
     try {
       const { data: userData } = await supabase.auth.getUser();
       if (userData?.user) {

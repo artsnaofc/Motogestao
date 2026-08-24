@@ -48,6 +48,7 @@ interface ReserveCardProps {
   onDelete: (reserve: Reserve) => void;
   onViewRuleHistory: (reserve: Reserve) => void;
   onApplyDirectSuggestion: (reserve: Reserve, amount: number) => void;
+  hideValues?: boolean;
 }
 
 export function ReserveCard({
@@ -65,7 +66,8 @@ export function ReserveCard({
   onFinalize,
   onDelete,
   onViewRuleHistory,
-  onApplyDirectSuggestion
+  onApplyDirectSuggestion,
+  hideValues
 }: ReserveCardProps) {
   const [showMenu, setShowMenu] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -278,14 +280,14 @@ export function ReserveCard({
             </span>
             {hasGoal && (
               <span className="text-[10px] font-bold text-muted-foreground font-mono">
-                Meta: {formatCurrency(goal)}
+                Meta: {hideValues ? 'R$ •••••' : formatCurrency(goal)}
               </span>
             )}
           </div>
 
           <div className="flex items-baseline justify-between gap-2">
             <h2 className="text-xl sm:text-2xl font-black text-foreground tracking-tight font-mono">
-              {formatCurrency(currentBalance)}
+              {hideValues ? 'R$ •••••' : formatCurrency(currentBalance)}
             </h2>
             {hasGoal && (
               <span className="text-[11px] font-black text-emerald-600 dark:text-emerald-400 font-mono">
@@ -336,7 +338,7 @@ export function ReserveCard({
 
           {totalYield > 0 && (
             <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-0.5 font-mono">
-              <TrendingUp className="w-2.5 h-2.5" /> +{formatCurrency(totalYield)}
+              <TrendingUp className="w-2.5 h-2.5" /> {hideValues ? '+R$ •••••' : `+${formatCurrency(totalYield)}`}
             </span>
           )}
         </div>
@@ -352,7 +354,7 @@ export function ReserveCard({
                 </span>
               </div>
               <p className="text-xs font-black text-amber-600 dark:text-amber-400 font-mono">
-                {formatCurrency(pendingSuggestion)}
+                {hideValues ? 'R$ •••••' : formatCurrency(pendingSuggestion)}
               </p>
             </div>
 

@@ -2,6 +2,20 @@ import React from 'react';
 import { Bike, Sparkles, ShieldCheck, Loader2 } from 'lucide-react';
 
 export function PageLoadingFallback() {
+  const [clickCount, setClickCount] = React.useState(0);
+
+  const handleLogoClick = () => {
+    const nextCount = clickCount + 1;
+    if (nextCount >= 3) {
+      window.dispatchEvent(new CustomEvent('toggle-debug-console'));
+      setClickCount(0);
+    } else {
+      setClickCount(nextCount);
+      const timer = setTimeout(() => setClickCount(0), 2000);
+      return () => clearTimeout(timer);
+    }
+  };
+
   return (
     <div className="min-h-[70vh] w-full flex flex-col items-center justify-center p-4 sm:p-6 transition-all duration-300">
       {/* Central Glassmorphic Executive Card */}
@@ -12,7 +26,7 @@ export function PageLoadingFallback() {
         <div className="absolute -bottom-12 -right-12 w-32 h-32 bg-indigo-500/15 rounded-full blur-2xl pointer-events-none animate-pulse" />
 
         {/* Brand Animated Logo Badge */}
-        <div className="relative">
+        <div className="relative cursor-pointer select-none" onClick={handleLogoClick} title="Clique 3 vezes para abrir o Debug">
           <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-primary via-indigo-600 to-indigo-700 flex items-center justify-center text-primary-foreground shadow-lg shadow-primary/30 relative z-10 animate-pulse">
             <Bike className="w-8 h-8" />
           </div>

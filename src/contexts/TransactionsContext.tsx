@@ -2,6 +2,8 @@ import React, { createContext, useContext, useState, useEffect, ReactNode, useCa
 import { supabase } from '../lib/supabase';
 import { Transaction, UserSettings } from '../types';
 import { toast } from 'sonner';
+import { cacheManager } from '../lib/cacheManager';
+import { syncQueueManager } from '../lib/syncQueue';
 
 export interface TransactionsContextType {
   transactions: Transaction[];
@@ -39,7 +41,7 @@ export function TransactionsProvider({
   const [settings, setSettings] = useState<UserSettings | null>(initialSettings);
   const [loading, setLoading] = useState(initialLoading);
   const [globalPeriod, setGlobalPeriod] = useState('last30Days');
-  const [hideValues, setHideValues] = useState(() => localStorage.getItem('privacyMode') === 'true');
+  const [hideValues, setHideValues] = useState(() => cacheManager.get<boolean>('privacyMode') === true);
   const [customDateRange, setCustomDateRange] = useState<{ start: string, end: string } | null>(() => {
     try {
       const now = new Date();
@@ -64,7 +66,7 @@ export function TransactionsProvider({
   }, [initialLoading]);
 
   useEffect(() => {
-    localStorage.setItem('privacyMode', String(hideValues));
+    cacheManager.set('privacyMode', hideValues, undefined, 'settings');
   }, [hideValues]);
 
   const refreshData = useCallback(async (silent = false) => {
@@ -82,33 +84,18 @@ export function TransactionsProvider({
     setTransactions(prev => {
       const newState = prev.map(t => t.id === id ? { ...t, ...updatedFields } : t);
       if (userId) {
-        localStorage.setItem(`transactions_${userId}`, JSON.stringify(newState));
+        cacheManager.set(`transactions_${userId}`, newState, undefined, 'transactions');
       }
       return newState;
     });
 
-    if (userId) {
-      try {
-        const { error } = await supabase
-          .from('transactions')
-          .update(cleanPayload)
-          .eq('id', id);
+    toast.success('Lançamento atualizado!');
 
-        if (error) {
-          console.warn('Supabase transaction update failed, updated locally:', error);
-          toast.success('Lançamento atualizado (salvo localmente)!');
-        } else {
-          toast.success('Lançamento atualizado com sucesso!');
-        }
-        if (onRefresh) await onRefresh(true);
-      } catch (err) {
-        console.warn('Supabase transaction update failed:', err);
-        toast.success('Lançamento atualizado (localmente)!');
-      }
-    } else {
-      toast.success('Lançamento atualizado!');
+    if (userId) {
+      // Push operation to background sync queue
+      syncQueueManager.enqueue('transactions', 'update', id, cleanPayload);
     }
-  }, [onRefresh]);
+  }, []);
 
   const deleteTransaction = useCallback(async (id: string) => {
     const { data: userData } = await supabase.auth.getUser();
@@ -117,33 +104,18 @@ export function TransactionsProvider({
     setTransactions(prev => {
       const newState = prev.filter(t => t.id !== id);
       if (userId) {
-        localStorage.setItem(`transactions_${userId}`, JSON.stringify(newState));
+        cacheManager.set(`transactions_${userId}`, newState, undefined, 'transactions');
       }
       return newState;
     });
 
-    if (userId) {
-      try {
-        const { error } = await supabase
-          .from('transactions')
-          .delete()
-          .eq('id', id);
+    toast.success('Lançamento excluído!');
 
-        if (error) {
-          console.warn('Supabase transaction delete failed, deleted locally:', error);
-          toast.success('Lançamento excluído (localmente)!');
-        } else {
-          toast.success('Lançamento excluído com sucesso!');
-        }
-        if (onRefresh) await onRefresh(true);
-      } catch (err) {
-        console.warn('Supabase transaction delete failed:', err);
-        toast.success('Lançamento excluído (localmente)!');
-      }
-    } else {
-      toast.success('Lançamento excluído!');
+    if (userId) {
+      // Push operation to background sync queue
+      syncQueueManager.enqueue('transactions', 'delete', id);
     }
-  }, [onRefresh]);
+  }, []);
 
   const value = useMemo<TransactionsContextType>(() => ({
     transactions,

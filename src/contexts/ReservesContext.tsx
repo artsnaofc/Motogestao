@@ -2,6 +2,8 @@ import React, { createContext, useContext, useState, useEffect, ReactNode, useCa
 import { supabase } from '../lib/supabase';
 import { Reserve, ReserveTransaction } from '../types';
 import { toast } from 'sonner';
+import { cacheManager } from '../lib/cacheManager';
+import { syncQueueManager } from '../lib/syncQueue';
 
 export interface ReservesContextType {
   reserves: Reserve[];
@@ -66,33 +68,17 @@ export function ReservesProvider({
       updated_at: new Date().toISOString(),
     };
 
-    try {
-      const { saldo_atual, ...supabasePayload } = resObj;
-      const { error } = await supabase
-        .from('reserves')
-        .insert(supabasePayload)
-        .select();
+    const { saldo_atual, ...supabasePayload } = resObj;
+    
+    setReserves(prev => {
+      const existing = [...prev, resObj];
+      cacheManager.set(`reserves_${userId}`, existing, undefined, 'reserves');
+      return existing;
+    });
 
-      if (error) throw error;
-
-      setReserves(prev => {
-        const existing = [...prev, resObj];
-        localStorage.setItem(`reserves_${userId}`, JSON.stringify(existing));
-        return existing;
-      });
-
-      if (onDataChange) await onDataChange();
-      toast.success('Reserva criada com sucesso!');
-    } catch (err) {
-      console.warn('Supabase insert failed, adding reserve to localStorage:', err);
-      setReserves(prev => {
-        const existing = [...prev, resObj];
-        localStorage.setItem(`reserves_${userId}`, JSON.stringify(existing));
-        return existing;
-      });
-      toast.success('Reserva criada com sucesso (salva localmente)!');
-    }
-  }, [onDataChange]);
+    syncQueueManager.enqueue('reserves', 'insert', resObj.id, supabasePayload);
+    toast.success('Reserva criada com sucesso!');
+  }, []);
 
   const updateReserve = useCallback(async (id: string, updatedFields: Partial<Reserve>) => {
     const { data: userData } = await supabase.auth.getUser();
@@ -100,33 +86,17 @@ export function ReservesProvider({
 
     const userId = userData.user.id;
 
-    try {
-      const { saldo_atual, ...supabasePayload } = updatedFields;
-      const { error } = await supabase
-        .from('reserves')
-        .update({ ...supabasePayload, updated_at: new Date().toISOString() })
-        .eq('id', id);
+    const { saldo_atual, ...supabasePayload } = updatedFields;
+    
+    setReserves(prev => {
+      const existing = prev.map(r => r.id === id ? { ...r, ...updatedFields, updated_at: new Date().toISOString() } : r);
+      cacheManager.set(`reserves_${userId}`, existing, undefined, 'reserves');
+      return existing;
+    });
 
-      if (error) throw error;
-
-      setReserves(prev => {
-        const existing = prev.map(r => r.id === id ? { ...r, ...updatedFields, updated_at: new Date().toISOString() } : r);
-        localStorage.setItem(`reserves_${userId}`, JSON.stringify(existing));
-        return existing;
-      });
-
-      if (onDataChange) await onDataChange();
-      toast.success('Reserva atualizada com sucesso!');
-    } catch (err) {
-      console.warn('Supabase update failed, updating reserve in localStorage:', err);
-      setReserves(prev => {
-        const existing = prev.map(r => r.id === id ? { ...r, ...updatedFields, updated_at: new Date().toISOString() } : r);
-        localStorage.setItem(`reserves_${userId}`, JSON.stringify(existing));
-        return existing;
-      });
-      toast.success('Reserva atualizada com sucesso (salva localmente)!');
-    }
-  }, [onDataChange]);
+    syncQueueManager.enqueue('reserves', 'update', id, { ...supabasePayload, updated_at: new Date().toISOString() });
+    toast.success('Reserva atualizada com sucesso!');
+  }, []);
 
   const deleteReserve = useCallback(async (id: string) => {
     const { data: userData } = await supabase.auth.getUser();
@@ -134,44 +104,27 @@ export function ReservesProvider({
 
     const userId = userData.user.id;
 
-    try {
-      // First try to delete related transactions
-      const { error: rtError } = await supabase
-        .from('reserve_transactions')
-        .delete()
-        .eq('reserve_id', id);
-        
-      if (rtError && rtError.code !== 'PGRST116' && rtError.code !== '42P01') {
-        console.warn('Failed to delete reserve_transactions:', rtError);
-      }
+    const rtsToDelete = reserveTransactions.filter(rt => rt.reserve_id === id);
 
-      // Then delete the reserve
-      const { error } = await supabase
-        .from('reserves')
-        .delete()
-        .eq('id', id);
+    setReserves(prev => {
+      const existing = prev.filter(r => r.id !== id);
+      cacheManager.set(`reserves_${userId}`, existing, undefined, 'reserves');
+      return existing;
+    });
+    
+    setReserveTransactions(prev => {
+      const existingRts = prev.filter(rt => rt.reserve_id !== id);
+      cacheManager.set(`reserve_transactions_${userId}`, existingRts, undefined, 'reserves');
+      return existingRts;
+    });
 
-      if (error) throw error;
-
-      if (onDataChange) await onDataChange();
-      toast.success('Reserva excluída com sucesso!');
-    } catch (err) {
-      console.warn('Supabase delete failed, removing reserve from localStorage:', err);
-      setReserves(prev => {
-        const existing = prev.filter(r => r.id !== id);
-        localStorage.setItem(`reserves_${userId}`, JSON.stringify(existing));
-        return existing;
-      });
-      
-      setReserveTransactions(prev => {
-        const existingRts = prev.filter(rt => rt.reserve_id !== id);
-        localStorage.setItem(`reserve_transactions_${userId}`, JSON.stringify(existingRts));
-        return existingRts;
-      });
-
-      toast.success('Reserva excluída com sucesso (localmente)!');
-    }
-  }, [onDataChange]);
+    rtsToDelete.forEach(rt => {
+      syncQueueManager.enqueue('reserve_transactions', 'delete', rt.id);
+    });
+    
+    syncQueueManager.enqueue('reserves', 'delete', id);
+    toast.success('Reserva excluída com sucesso!');
+  }, [reserveTransactions]);
 
   const addReserveTransaction = useCallback(async (
     newRt: Omit<ReserveTransaction, 'id' | 'user_id' | 'created_at'>,
@@ -204,38 +157,17 @@ export function ReservesProvider({
     if (rtObj.linked_investment_id) supabasePayload.linked_investment_id = rtObj.linked_investment_id;
     if (rtObj.transaction_id) supabasePayload.transaction_id = rtObj.transaction_id;
 
-    try {
-      const { error } = await supabase
-        .from('reserve_transactions')
-        .insert(supabasePayload);
+    setReserveTransactions(prev => {
+      const filtered = prev.filter(item => item.id !== rtObj.id);
+      const existing = [rtObj, ...filtered];
+      cacheManager.set(`reserve_transactions_${userId}`, existing, undefined, 'reserves');
+      return existing;
+    });
 
-      if (error) {
-        console.warn('Supabase transaction insert error:', error);
-        throw error;
-      }
-
-      setReserveTransactions(prev => {
-        const filtered = prev.filter(item => item.id !== rtObj.id);
-        const existing = [rtObj, ...filtered];
-        localStorage.setItem(`reserve_transactions_${userId}`, JSON.stringify(existing));
-        return existing;
-      });
-
-      if (onDataChange) await onDataChange();
-      if (!options?.silent) toast.success('Movimentação registrada com sucesso!');
-      return rtObj.id;
-    } catch (err) {
-      console.warn('Supabase transaction insert failed, adding to localStorage:', err);
-      setReserveTransactions(prev => {
-        const filtered = prev.filter(item => item.id !== rtObj.id);
-        const existing = [rtObj, ...filtered];
-        localStorage.setItem(`reserve_transactions_${userId}`, JSON.stringify(existing));
-        return existing;
-      });
-      if (!options?.silent) toast.success('Movimentação registrada com sucesso (localmente)!');
-      return rtObj.id;
-    }
-  }, [onDataChange]);
+    syncQueueManager.enqueue('reserve_transactions', 'insert', rtObj.id, supabasePayload);
+    if (!options?.silent) toast.success('Movimentação registrada com sucesso!');
+    return rtObj.id;
+  }, []);
 
   const deleteReserveTransaction = useCallback(async (id: string) => {
     const { data: userData } = await supabase.auth.getUser();
@@ -244,46 +176,24 @@ export function ReservesProvider({
     const userId = userData.user.id;
     const rtToDelete = reserveTransactions.find(rt => rt.id === id);
 
-    // 1. Optimistically update local state & localStorage immediately
+    // 1. Optimistically update local state & cache immediately
     setReserveTransactions(prev => {
       const existing = prev.filter(rt => rt.id !== id);
-      localStorage.setItem(`reserve_transactions_${userId}`, JSON.stringify(existing));
+      cacheManager.set(`reserve_transactions_${userId}`, existing, undefined, 'reserves');
       return existing;
     });
 
-    try {
-      if (rtToDelete?.linked_investment_id) {
-        try {
-          await supabase.from('investment_transactions').delete().eq('id', rtToDelete.linked_investment_id);
-        } catch (e) {
-          console.warn('Could not delete linked investment transaction:', e);
-        }
-      }
-
-      if (rtToDelete?.transaction_id) {
-        try {
-          await supabase.from('transactions').delete().eq('id', rtToDelete.transaction_id);
-        } catch (e) {
-          console.warn('Could not delete linked transaction:', e);
-        }
-      }
-
-      const { error } = await supabase
-        .from('reserve_transactions')
-        .delete()
-        .eq('id', id);
-
-      if (error) {
-        console.warn('Supabase rt delete returned error, but local state was updated:', error);
-      }
-
-      if (onDataChange) await onDataChange();
-      toast.success('Movimentação excluída com sucesso!');
-    } catch (err) {
-      console.warn('Supabase transaction delete failed, local state updated:', err);
-      toast.success('Movimentação excluída com sucesso!');
+    if (rtToDelete?.linked_investment_id) {
+      syncQueueManager.enqueue('investment_transactions', 'delete', rtToDelete.linked_investment_id);
     }
-  }, [reserveTransactions, onDataChange]);
+
+    if (rtToDelete?.transaction_id) {
+      syncQueueManager.enqueue('transactions', 'delete', rtToDelete.transaction_id);
+    }
+
+    syncQueueManager.enqueue('reserve_transactions', 'delete', id);
+    toast.success('Movimentação excluída com sucesso!');
+  }, [reserveTransactions]);
 
   const updateReserveTransaction = useCallback(async (id: string, updatedFields: Partial<ReserveTransaction>) => {
     const { data: userData } = await supabase.auth.getUser();
@@ -294,28 +204,16 @@ export function ReservesProvider({
     // Optimistically update local state
     setReserveTransactions(prev => {
       const existing = prev.map(rt => rt.id === id ? { ...rt, ...updatedFields } : rt);
-      localStorage.setItem(`reserve_transactions_${userId}`, JSON.stringify(existing));
+      cacheManager.set(`reserve_transactions_${userId}`, existing, undefined, 'reserves');
       return existing;
     });
 
     // Sanitize payload for Supabase
     const { source, batch_id, ...supabasePayload } = updatedFields as any;
 
-    try {
-      const { error } = await supabase
-        .from('reserve_transactions')
-        .update(supabasePayload)
-        .eq('id', id);
-
-      if (error) throw error;
-
-      if (onDataChange) await onDataChange();
-      toast.success('Movimentação de reserva atualizada!');
-    } catch (err) {
-      console.warn('Supabase rt update failed, preserved in localStorage:', err);
-      toast.success('Movimentação de reserva atualizada (localmente)!');
-    }
-  }, [onDataChange]);
+    syncQueueManager.enqueue('reserve_transactions', 'update', id, supabasePayload);
+    toast.success('Movimentação de reserva atualizada!');
+  }, []);
 
   // Dynamically calculate computed balances for reserves
   const computedReserves = useMemo(() => {

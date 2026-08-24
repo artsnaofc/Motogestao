@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { cacheManager } from '../../lib/cacheManager';
 import { 
   Scale, 
   Sparkles, 
@@ -125,22 +126,17 @@ export const ProfessionalRebalanceEngineView: React.FC<ProfessionalRebalanceEngi
   
   // Load initial rules from ranking cache if available
   React.useEffect(() => {
-    try {
-      const saved = localStorage.getItem('b3_fundamental_filters_v2');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        setRulesConfig(prev => ({
-          ...prev,
-          minDailyLiquidity: parsed.minLiquidity ? parsed.minLiquidity * 1000000 : prev.minDailyLiquidity,
-          maxDebtEbitdaAllowed: parsed.maxDebtEbitda ?? prev.maxDebtEbitdaAllowed,
-          maxFiiPvpAllowed: parsed.maxPvpFii ?? prev.maxFiiPvpAllowed,
-          maxFiiPhysicalVacancyAllowed: parsed.maxVacancy ?? prev.maxFiiPhysicalVacancyAllowed,
-        }));
-        if (parsed.stockWeights) setStockWeights(parsed.stockWeights);
-        if (parsed.fiiWeights) setFiiWeights(parsed.fiiWeights);
-      }
-    } catch (e) {
-      console.warn('Failed to load ranking filters for rebalance engine:', e);
+    const parsed = cacheManager.get<any>('b3_fundamental_filters_v2');
+    if (parsed) {
+      setRulesConfig(prev => ({
+        ...prev,
+        minDailyLiquidity: parsed.minLiquidity ? parsed.minLiquidity * 1000000 : prev.minDailyLiquidity,
+        maxDebtEbitdaAllowed: parsed.maxDebtEbitda ?? prev.maxDebtEbitdaAllowed,
+        maxFiiPvpAllowed: parsed.maxPvpFii ?? prev.maxFiiPvpAllowed,
+        maxFiiPhysicalVacancyAllowed: parsed.maxVacancy ?? prev.maxFiiPhysicalVacancyAllowed,
+      }));
+      if (parsed.stockWeights) setStockWeights(parsed.stockWeights);
+      if (parsed.fiiWeights) setFiiWeights(parsed.fiiWeights);
     }
   }, []);
 

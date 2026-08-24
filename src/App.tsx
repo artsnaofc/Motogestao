@@ -9,6 +9,7 @@ import { MainLayout } from './components/MainLayout';
 import { PageLoadingFallback } from './components/PageLoadingFallback';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ScrollManager } from './components/ScrollManager';
+import { DebugConsoleModal } from './components/DebugConsoleModal';
 
 // Helper function for lazy loading with detailed error logging and auto-retry on dynamic chunk failures
 const lazyWithLogging = (importFn: () => Promise<any>, moduleExportName: string) =>
@@ -56,6 +57,7 @@ const PrivateRoute = ({ session, children }: { session: Session | null; children
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
+  const [showDebugModal, setShowDebugModal] = useState(false);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session }, error }) => {
@@ -86,12 +88,43 @@ export default function App() {
     return () => subscription.unsubscribe();
   }, []);
 
-  if (loading) {
-    return <PageLoadingFallback />;
-  }
+  // Keyboard shortcut listener for devtools and debug console
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const isDKey = e.key === 'd' || e.key === 'D';
+      const isPeriodKey = e.key === '.';
+      
+      const matchShortcut = 
+        ((e.ctrlKey || e.metaKey) && e.shiftKey && isDKey) || 
+        (e.altKey && e.shiftKey && isDKey) ||
+        ((e.ctrlKey || e.metaKey) && isPeriodKey);
 
-  return (
-    <ErrorBoundary>
+      if (matchShortcut) {
+        e.preventDefault();
+        setShowDebugModal(prev => !prev);
+        console.log('[Finanças Pro] Central de Debug ativada por atalho.');
+      }
+    };
+
+    const handleCustomToggle = () => {
+      setShowDebugModal(prev => !prev);
+      console.log('[Finanças Pro] Central de Debug ativada por evento customizado.');
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('toggle-debug-console', handleCustomToggle);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('toggle-debug-console', handleCustomToggle);
+    };
+  }, []);
+
+  const renderContent = () => {
+    if (loading) {
+      return <PageLoadingFallback />;
+    }
+
+    return (
       <BrowserRouter>
         <ScrollManager />
         <Routes>
@@ -122,6 +155,13 @@ export default function App() {
         </Routes>
         <Toaster position="top-center" richColors />
       </BrowserRouter>
+    );
+  };
+
+  return (
+    <ErrorBoundary>
+      {renderContent()}
+      <DebugConsoleModal open={showDebugModal} onOpenChange={setShowDebugModal} />
     </ErrorBoundary>
   );
 }

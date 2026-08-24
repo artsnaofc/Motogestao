@@ -35,13 +35,15 @@ interface ReserveHistoryTabProps {
   reserveTransactions: ReserveTransaction[];
   onDeleteTransaction: (id: string) => Promise<void>;
   onEditTransaction?: (tx: ReserveTransaction) => void;
+  hideValues?: boolean;
 }
 
 export function ReserveHistoryTab({
   reserves,
   reserveTransactions,
   onDeleteTransaction,
-  onEditTransaction
+  onEditTransaction,
+  hideValues
 }: ReserveHistoryTabProps) {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedReserveId, setSelectedReserveId] = useState<string>('all');
@@ -291,7 +293,7 @@ export function ReserveHistoryTab({
             </span>
           </div>
           <p className="text-lg font-black text-emerald-600 dark:text-emerald-400 font-mono">
-            {formatCurrency(summary.totalAportesManuais)}
+            {hideValues ? 'R$ •••••' : formatCurrency(summary.totalAportesManuais)}
           </p>
         </div>
 
@@ -302,7 +304,7 @@ export function ReserveHistoryTab({
             </span>
           </div>
           <p className="text-lg font-black text-indigo-600 dark:text-indigo-400 font-mono">
-            {formatCurrency(summary.totalAportesMassa)}
+            {hideValues ? 'R$ •••••' : formatCurrency(summary.totalAportesMassa)}
           </p>
         </div>
 
@@ -313,7 +315,7 @@ export function ReserveHistoryTab({
             </span>
           </div>
           <p className="text-lg font-black text-rose-600 dark:text-rose-400 font-mono">
-            {formatCurrency(summary.totalUtilizacoes)}
+            {hideValues ? 'R$ •••••' : formatCurrency(summary.totalUtilizacoes)}
           </p>
         </div>
 
@@ -324,7 +326,7 @@ export function ReserveHistoryTab({
             </span>
           </div>
           <p className="text-lg font-black text-blue-600 dark:text-blue-400 font-mono">
-            +{formatCurrency(summary.totalRendimentos)}
+            {hideValues ? 'R$ •••••' : `+${formatCurrency(summary.totalRendimentos)}`}
           </p>
         </div>
       </div>
@@ -478,7 +480,7 @@ export function ReserveHistoryTab({
                         : 'text-emerald-600 dark:text-emerald-400'
                     }`}>
                       {tx.type === 'utilizacao' ? '-' : '+'}
-                      {formatCurrency(tx.amount)}
+                      {hideValues ? 'R$ •••••' : formatCurrency(tx.amount)}
                     </div>
                   </div>
 
@@ -546,7 +548,7 @@ export function ReserveHistoryTab({
               <div className="flex justify-between border-t border-border/60 pt-1.5">
                 <span className="font-bold text-foreground">Valor:</span>
                 <span className="font-mono font-black text-sm text-foreground">
-                  {formatCurrency(txToDelete.amount)}
+                  {hideValues ? 'R$ •••••' : formatCurrency(txToDelete.amount)}
                 </span>
               </div>
               {txToDelete.description && (

@@ -63,8 +63,11 @@ import {
 } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useData } from '../contexts/DataContext';
+import { TransactionType } from '../types';
 import { FreightCalculatorModal } from '../components/FreightCalculatorModal';
 import { startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth, subMonths, isWithinInterval, parseISO } from 'date-fns';
+import { syncQueueManager } from '../lib/syncQueue';
+import { cacheManager } from '../lib/cacheManager';
 
 export function AddTransaction() {
   const navigate = useNavigate();
@@ -77,7 +80,7 @@ export function AddTransaction() {
   const parsedAmount = Number(paramAmountRaw);
   const paramAmount = (!isNaN(parsedAmount) && paramAmountRaw !== '') ? String(Number(parsedAmount.toFixed(2))) : '';
 
-  const { transactions, settings, refreshData, globalPeriod, reserves, addReserveTransaction, hideValues } = useData();
+  const { transactions, setTransactions, settings, refreshData, globalPeriod, reserves, addReserveTransaction, hideValues } = useData();
 
   // Find active maintenance reserve rule rate
   const maintenanceReserve = reserves?.find(r => 
@@ -370,9 +373,17 @@ export function AddTransaction() {
         return;
       }
 
-      const { data: insertedTxs, error } = await supabase.from('transactions').insert({
+      // Generate a client-side UUID so that updates/deletes in queue can match
+      const newTxId = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+        const r = (Math.random() * 16) | 0;
+        const v = c === 'x' ? r : (r & 0x3) | 0x8;
+        return v.toString(16);
+      });
+
+      const newTxPayload = {
+        id: newTxId,
         user_id: userData.user.id,
-        type: finalType,
+        type: finalType as TransactionType,
         amount: finalAmount,
         date: date,
         category: finalCategory,
@@ -381,34 +392,55 @@ export function AddTransaction() {
         end_km: endKm ? Number(endKm) : null,
         deliveries: finalCategory === 'Pizzaria' && deliveries ? Number(deliveries) : null,
         out_of_neighborhood: finalCategory === 'Pizzaria' && outOfNeighborhood ? Number(outOfNeighborhood) : null,
-      }).select();
+        created_at: new Date().toISOString()
+      };
 
-      if (error) throw error;
+      // Optimistic state and cache update
+      setTransactions(prev => {
+        const newState = [newTxPayload, ...prev];
+        cacheManager.set(`transactions_${userData.user.id}`, newState, undefined, 'transactions');
+        return newState;
+      });
 
-      let targetHighlightId = insertedTxs && insertedTxs.length > 0 ? insertedTxs[0].id : '';
+      // Enqueue the primary transaction insertion
+      syncQueueManager.enqueue('transactions', 'insert', newTxId, newTxPayload);
 
+      // Handle optional toll expense (Pedágio) for freight
       if (activeTab === 'frete' && tollExpense) {
         const tollVal = Number(tollExpense);
         if (!isNaN(tollVal) && tollVal > 0) {
-          const { error: tollError } = await supabase.from('transactions').insert({
+          const tollId = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+            const r = (Math.random() * 16) | 0;
+            const v = c === 'x' ? r : (r & 0x3) | 0x8;
+            return v.toString(16);
+          });
+
+          const tollPayload = {
+            id: tollId,
             user_id: userData.user.id,
-            type: 'expense',
+            type: 'expense' as TransactionType,
             amount: tollVal,
             date: date,
             category: 'Pedágio',
             description: description ? `[Pedágio] ${description}` : 'Pedágio (Viagem/Frete)',
+            created_at: new Date().toISOString()
+          };
+
+          setTransactions(prev => {
+            const newState = [tollPayload, ...prev];
+            cacheManager.set(`transactions_${userData.user.id}`, newState, undefined, 'transactions');
+            return newState;
           });
-          if (tollError) {
-            console.error('Erro ao salvar pedágio:', tollError);
-          }
+
+          // Enqueue toll insertion
+          syncQueueManager.enqueue('transactions', 'insert', tollId, tollPayload);
         }
       }
 
       toast.success('Lançamento salvo com sucesso!');
       resetForm();
-      await refreshData(true);
-      if (targetHighlightId) {
-        navigate(`/history?highlight=${targetHighlightId}`);
+      if (newTxId) {
+        navigate(`/history?highlight=${newTxId}`);
       } else {
         navigate('/history');
       }

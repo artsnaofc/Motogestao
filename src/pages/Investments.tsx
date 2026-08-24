@@ -180,6 +180,20 @@ export function Investments() {
     }
   }, [settings?.default_investment_reserve_id]);
 
+  // Fetch quotes only when entering the Investments page (on component mount)
+  useEffect(() => {
+    if (investmentTransactions.length > 0) {
+      const tickers = Array.from(new Set(investmentTransactions.map(it => it.ticker.toUpperCase().trim()))).filter(Boolean);
+      if (tickers.length > 0) {
+        toast.promise(fetchQuotes(undefined, undefined, tickers), {
+          loading: 'Atualizando cotações do portfólio de investimentos...',
+          success: 'Cotações de investimento atualizadas!',
+          error: 'Falha ao atualizar cotações de investimento.'
+        });
+      }
+    }
+  }, []);
+
   // Helper to fetch live quote for modal
   const handleFetchQuoteForTicker = async (targetTicker: string, force = false) => {
     const clean = targetTicker.toUpperCase().trim();

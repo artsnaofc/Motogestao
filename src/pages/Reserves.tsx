@@ -47,7 +47,9 @@ export function Reserves() {
     globalPeriod = 'month',
     setGlobalPeriod,
     customDateRange = { start: '', end: '' },
-    setCustomDateRange
+    setCustomDateRange,
+    hideValues,
+    setHideValues
   } = useData();
 
   // Active view tab: 'cards' or 'history'
@@ -411,6 +413,8 @@ export function Reserves() {
           setShowCreateEditModal(true);
         }}
         onOpenMassAporte={() => setShowMassAporteModal(true)}
+        hideValues={hideValues}
+        setHideValues={setHideValues}
       />
 
       {/* Main Tab Content */}
@@ -517,6 +521,7 @@ export function Reserves() {
                     setActionModalType('rule_history');
                   }}
                   onApplyDirectSuggestion={handleApplyDirectSuggestion}
+                  hideValues={hideValues}
                 />
               ))}
             </div>
@@ -528,6 +533,7 @@ export function Reserves() {
           reserves={reserves}
           reserveTransactions={reserveTransactions}
           onDeleteTransaction={deleteReserveTransaction}
+          hideValues={hideValues}
         />
       )}
 

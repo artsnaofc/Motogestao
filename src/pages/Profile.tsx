@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { UserSettings } from '../types';
 import { toast } from 'sonner';
+import { cacheManager } from '../lib/cacheManager';
 import { 
   LogOut, 
   Save, 
@@ -65,6 +66,7 @@ import {
   Filter,
   ChevronDown,
   ChevronUp,
+  ChevronRight,
   Sliders,
   Check,
   Sparkles,
@@ -529,13 +531,9 @@ export function Profile() {
         console.warn('[Profile] Supabase save warning (saving locally):', error.message);
       }
       
-      // Update local storage
+      // Update cache
       const localKey = `user_settings_${userData.user.id}`;
-      try {
-        localStorage.setItem(localKey, JSON.stringify(payload));
-      } catch (err) {
-        console.warn('LocalStorage error:', err);
-      }
+      cacheManager.set(localKey, payload, undefined, 'settings');
 
       // Update snapshot
       setInitialSnapshot({
@@ -625,24 +623,25 @@ export function Profile() {
   return (
     <div className="flex-1 w-full max-w-5xl mx-auto p-3 sm:p-6 lg:p-8 space-y-6 pb-36 md:pb-32">
       
-      {/* PROFILE HERO HEADER CARD (REDESIGNED FOR MODERN HIERARCHY) */}
-      <div className="relative overflow-hidden bg-gradient-to-br from-indigo-950 via-slate-900 to-slate-950 text-white rounded-3xl p-5 sm:p-7 shadow-xl border border-indigo-500/20">
-        <div className="absolute top-0 right-0 -mt-10 -mr-10 w-56 h-56 bg-indigo-600/15 rounded-full blur-3xl pointer-events-none" />
-        <div className="absolute bottom-0 left-1/3 -mb-12 w-64 h-32 bg-cyan-500/10 rounded-full blur-3xl pointer-events-none" />
+      {/* PROFILE HERO HEADER CARD - PREMIUM ARCHETYPE */}
+      <div className="relative overflow-hidden bg-gradient-to-tr from-slate-900 via-slate-950 to-slate-900 text-white rounded-2xl p-6 sm:p-8 shadow-xl border border-slate-800/80">
+        {/* Subtle, premium organic blurs */}
+        <div className="absolute top-0 right-0 -mt-16 -mr-16 w-64 h-64 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
+        <div className="absolute bottom-0 left-10 -mb-16 w-64 h-32 bg-emerald-500/5 rounded-full blur-3xl pointer-events-none" />
 
         <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
           
           {/* User Info Avatar & Title */}
-          <div className="flex items-center gap-4 sm:gap-5 min-w-0">
+          <div className="flex items-center gap-5 min-w-0">
             <div className="relative shrink-0">
-              <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl bg-gradient-to-tr from-indigo-500 via-purple-500 to-amber-400 p-0.5 shadow-xl">
-                <div className="w-full h-full bg-slate-950 rounded-[14px] flex items-center justify-center text-white font-black text-xl sm:text-2xl font-mono tracking-tight">
+              <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl bg-gradient-to-tr from-indigo-500 via-purple-500 to-emerald-400 p-[2px] shadow-lg">
+                <div className="w-full h-full bg-slate-950 rounded-[14px] flex items-center justify-center text-white font-mono font-black text-xl sm:text-2xl tracking-wider">
                   {userInitials || <User className="w-8 h-8 text-indigo-300" />}
                 </div>
               </div>
-              <div className="absolute -bottom-1 -right-1 bg-emerald-500 text-white p-1 rounded-full border-2 border-slate-950 shadow-md">
-                <Check className="w-3 h-3 stroke-[3]" />
-              </div>
+              <span className="absolute -bottom-1 -right-1 bg-emerald-500 text-white p-1 rounded-full border-2 border-slate-950 shadow-md flex items-center justify-center">
+                <Check className="w-3.5 h-3.5 stroke-[3]" />
+              </span>
             </div>
 
             <div className="space-y-1.5 min-w-0">
@@ -650,25 +649,25 @@ export function Profile() {
                 <h1 className="text-xl sm:text-2xl font-black tracking-tight text-white truncate">
                   {settings.full_name || 'Motorista'}
                 </h1>
-                <span className="bg-indigo-500/20 text-indigo-200 border border-indigo-400/30 text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full shrink-0 flex items-center gap-1 shadow-xs">
+                <span className="bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full shrink-0 flex items-center gap-1">
                   <Sparkles className="w-3 h-3 text-amber-300" /> Pro Gestão
                 </span>
               </div>
 
-              <p className="text-xs sm:text-sm text-slate-300 font-medium truncate flex items-center gap-1.5">
+              <p className="text-xs sm:text-sm text-slate-300 font-medium truncate flex items-center gap-2">
                 <Mail className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
                 {email || 'Não informado'}
               </p>
 
               {/* Stats badges */}
-              <div className="flex items-center gap-2 pt-1 flex-wrap">
-                <span className="text-[10px] bg-slate-800/90 text-slate-200 border border-slate-700/80 px-2.5 py-0.5 rounded-lg font-bold">
+              <div className="flex flex-wrap items-center gap-2 pt-1.5">
+                <span className="text-[10px] font-bold bg-slate-800/80 text-slate-200 border border-slate-700/60 px-2.5 py-1 rounded-lg">
                   {totalCategoriesCount} Categorias
                 </span>
-                <span className="text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2.5 py-0.5 rounded-lg font-bold">
+                <span className="text-[10px] font-bold bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 px-2.5 py-1 rounded-lg">
                   {reserves?.length || 0} Reservas
                 </span>
-                <span className="text-[10px] bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 px-2.5 py-0.5 rounded-lg font-bold">
+                <span className="text-[10px] font-bold bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 px-2.5 py-1 rounded-lg">
                   Consumo: {settings.vehicle_km_per_liter} km/L
                 </span>
               </div>
@@ -676,16 +675,16 @@ export function Profile() {
           </div>
 
           {/* Quick Actions & Version */}
-          <div className="flex md:flex-col items-center md:items-end justify-between md:justify-center border-t md:border-t-0 border-slate-800 pt-3 md:pt-0 gap-2.5 shrink-0">
+          <div className="flex md:flex-col items-center md:items-end justify-between md:justify-center border-t md:border-t-0 border-slate-800/80 pt-4 md:pt-0 gap-3 shrink-0">
             <Button 
               variant="destructive" 
               onClick={handleSignOut}
-              className="h-10 px-4 rounded-xl font-extrabold text-xs bg-rose-500/20 hover:bg-rose-600 text-rose-200 border border-rose-500/30 transition-all cursor-pointer flex items-center gap-2 shadow-xs"
+              className="h-10 px-4 rounded-xl font-extrabold text-xs uppercase tracking-wider bg-rose-500/10 hover:bg-rose-600/30 text-rose-300 border border-rose-500/20 transition-all cursor-pointer flex items-center gap-2 shadow-sm"
             >
               <LogOut className="w-4 h-4" />
               Sair da Conta
             </Button>
-            <span className="text-[10px] font-mono text-slate-400">
+            <span className="text-[10px] font-mono font-bold text-slate-400 uppercase tracking-widest">
               MotoGestão • v1.2.0
             </span>
           </div>
@@ -693,171 +692,292 @@ export function Profile() {
         </div>
       </div>
 
-      {/* NAVIGATION TABS (SMOOTH RESPONSIVE PILLS) */}
-      <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none snap-x">
-        <button
-          type="button"
-          onClick={() => setActiveTab('all')}
-          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer flex items-center gap-1.5 ${
-            activeTab === 'all'
-              ? 'bg-indigo-600 text-white shadow-md font-extrabold'
-              : 'bg-card border border-border text-muted-foreground hover:bg-muted hover:text-foreground'
-          }`}
-        >
-          <Layers className="w-3.5 h-3.5" />
-          Ver Tudo
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab('account')}
-          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer flex items-center gap-1.5 ${
-            activeTab === 'account'
-              ? 'bg-indigo-600 text-white shadow-md font-extrabold'
-              : 'bg-card border border-border text-muted-foreground hover:bg-muted hover:text-foreground'
-          }`}
-        >
-          <User className="w-3.5 h-3.5" />
-          Conta & Acesso
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab('categories')}
-          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer flex items-center gap-1.5 ${
-            activeTab === 'categories'
-              ? 'bg-indigo-600 text-white shadow-md font-extrabold'
-              : 'bg-card border border-border text-muted-foreground hover:bg-muted hover:text-foreground'
-          }`}
-        >
-          <Sliders className="w-3.5 h-3.5" />
-          Categorias ({totalCategoriesCount})
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab('vehicle')}
-          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer flex items-center gap-1.5 ${
-            activeTab === 'vehicle'
-              ? 'bg-indigo-600 text-white shadow-md font-extrabold'
-              : 'bg-card border border-border text-muted-foreground hover:bg-muted hover:text-foreground'
-          }`}
-        >
-          <Bike className="w-3.5 h-3.5" />
-          Veículo & Fretes
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab('pizzaria')}
-          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer flex items-center gap-1.5 ${
-            activeTab === 'pizzaria'
-              ? 'bg-indigo-600 text-white shadow-md font-extrabold'
-              : 'bg-card border border-border text-muted-foreground hover:bg-muted hover:text-foreground'
-          }`}
-        >
-          <Pizza className="w-3.5 h-3.5" />
-          Pizzaria & Diárias
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab('financial')}
-          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer flex items-center gap-1.5 ${
-            activeTab === 'financial'
-              ? 'bg-indigo-600 text-white shadow-md font-extrabold'
-              : 'bg-card border border-border text-muted-foreground hover:bg-muted hover:text-foreground'
-          }`}
-        >
-          <Landmark className="w-3.5 h-3.5" />
-          Banca & Investimentos
-        </button>
+      {/* NAVIGATION TABS (PREMIUM AND TACTILE RESPONSIVE ROW) */}
+      <div className="flex items-center gap-2 overflow-x-auto pb-2 -mx-3 px-3 scrollbar-none snap-x">
+        {[
+          { id: 'all', label: 'Visão Geral', icon: Layers },
+          { id: 'account', label: 'Conta & Login', icon: User },
+          { id: 'categories', label: 'Categorias', icon: Sliders },
+          { id: 'vehicle', label: 'Veículo & Combustível', icon: Bike },
+          { id: 'pizzaria', label: 'Pizzaria & Diárias', icon: Pizza },
+          { id: 'financial', label: 'Banca & Mercado', icon: Landmark }
+        ].map((tab) => {
+          const IconComponent = tab.icon;
+          const isActive = activeTab === tab.id;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setActiveTab(tab.id as any)}
+              className={`px-4 py-2.5 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer flex items-center gap-2 snap-center border ${
+                isActive
+                  ? 'bg-indigo-600 text-white border-indigo-600 shadow-md shadow-indigo-600/10 font-extrabold'
+                  : 'bg-card border-border/80 text-muted-foreground hover:bg-muted hover:text-foreground'
+              }`}
+            >
+              <IconComponent className={`w-4 h-4 ${isActive ? 'text-white' : 'text-muted-foreground group-hover:text-foreground'}`} />
+              {tab.label}
+              {tab.id === 'categories' && (
+                <span className={`text-[10px] px-1.5 py-0.5 rounded-md font-bold ${isActive ? 'bg-indigo-500 text-white' : 'bg-muted text-muted-foreground'}`}>
+                  {totalCategoriesCount}
+                </span>
+              )}
+            </button>
+          );
+        })}
       </div>
 
       {/* MAIN FORM SECTIONS */}
       <div className="space-y-6">
+
+        {/* SECTION 0: VISÃO GERAL DASHBOARD */}
+        {activeTab === 'all' && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5 animate-in fade-in duration-300">
+            
+            {/* CARD 1: CONTA & LOGIN */}
+            <div 
+              onClick={() => setActiveTab('account')}
+              className="group p-5 rounded-2xl border border-border/80 bg-card hover:border-indigo-500/40 hover:shadow-md transition-all cursor-pointer flex flex-col justify-between gap-4"
+            >
+              <div className="flex items-start justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 rounded-xl bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 group-hover:bg-indigo-500/20 transition-colors">
+                    <User className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-black text-foreground">Conta & Credenciais</h3>
+                    <p className="text-[11px] text-muted-foreground">Nome, email e senha de acesso</p>
+                  </div>
+                </div>
+                <ChevronRight className="w-4 h-4 text-muted-foreground group-hover:text-foreground transition-colors" />
+              </div>
+              <div className="pt-2 border-t border-border/50 text-xs text-muted-foreground space-y-1">
+                <div>Nome: <strong className="text-foreground">{settings.full_name || 'Não informado'}</strong></div>
+                <div>Email: <strong className="text-foreground">{email}</strong></div>
+              </div>
+            </div>
+
+            {/* CARD 2: CATEGORIAS */}
+            <div 
+              onClick={() => setActiveTab('categories')}
+              className="group p-5 rounded-2xl border border-border/80 bg-card hover:border-indigo-500/40 hover:shadow-md transition-all cursor-pointer flex flex-col justify-between gap-4"
+            >
+              <div className="flex items-start justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 rounded-xl bg-violet-500/10 text-violet-600 dark:text-violet-400 group-hover:bg-violet-500/20 transition-colors">
+                    <Sliders className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-black text-foreground">Categorias de Lançamentos</h3>
+                    <p className="text-[11px] text-muted-foreground">Personalização e regras de KM</p>
+                  </div>
+                </div>
+                <ChevronRight className="w-4 h-4 text-muted-foreground group-hover:text-foreground transition-colors" />
+              </div>
+              <div className="pt-2 border-t border-border/50 grid grid-cols-3 gap-2 text-center text-[10px]">
+                <div className="bg-emerald-500/5 p-1.5 rounded-lg border border-emerald-500/10">
+                  <span className="text-emerald-600 dark:text-emerald-400 font-extrabold block">Ganhos</span>
+                  <strong className="text-foreground text-sm">{incomeCategories.length}</strong>
+                </div>
+                <div className="bg-amber-500/5 p-1.5 rounded-lg border border-amber-500/10">
+                  <span className="text-amber-600 dark:text-amber-400 font-extrabold block">Operac.</span>
+                  <strong className="text-foreground text-sm">{operationalCategories.length}</strong>
+                </div>
+                <div className="bg-rose-500/5 p-1.5 rounded-lg border border-rose-500/10">
+                  <span className="text-rose-600 dark:text-rose-400 font-extrabold block">Pessoais</span>
+                  <strong className="text-foreground text-sm">{personalCategories.length}</strong>
+                </div>
+              </div>
+            </div>
+
+            {/* CARD 3: VEÍCULO & COMBUSTÍVEL */}
+            <div 
+              onClick={() => setActiveTab('vehicle')}
+              className="group p-5 rounded-2xl border border-border/80 bg-card hover:border-indigo-500/40 hover:shadow-md transition-all cursor-pointer flex flex-col justify-between gap-4"
+            >
+              <div className="flex items-start justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400 group-hover:bg-amber-500/20 transition-colors">
+                    <Bike className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-black text-foreground">Veículo & Autonomia</h3>
+                    <p className="text-[11px] text-muted-foreground">Consumo de combustível e custos por KM</p>
+                  </div>
+                </div>
+                <ChevronRight className="w-4 h-4 text-muted-foreground group-hover:text-foreground transition-colors" />
+              </div>
+              <div className="pt-2 border-t border-border/50 flex items-center justify-between text-xs text-muted-foreground">
+                <div>Consumo: <strong className="text-foreground">{settings.vehicle_km_per_liter} km/L</strong></div>
+                <div className="text-right">R$ / 100 KM: <strong className="text-amber-600 dark:text-amber-400 font-bold">R$ {costPer100Km.toFixed(2)}</strong></div>
+              </div>
+            </div>
+
+            {/* CARD 4: PIZZARIA & DIÁRIAS */}
+            <div 
+              onClick={() => setActiveTab('pizzaria')}
+              className="group p-5 rounded-2xl border border-border/80 bg-card hover:border-indigo-500/40 hover:shadow-md transition-all cursor-pointer flex flex-col justify-between gap-4"
+            >
+              <div className="flex items-start justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 rounded-xl bg-rose-500/10 text-rose-600 dark:text-rose-400 group-hover:bg-rose-500/20 transition-colors">
+                    <Pizza className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-black text-foreground">Diárias & Pizzarias</h3>
+                    <p className="text-[11px] text-muted-foreground">Acerto de taxas de entrega e diárias bases</p>
+                  </div>
+                </div>
+                <ChevronRight className="w-4 h-4 text-muted-foreground group-hover:text-foreground transition-colors" />
+              </div>
+              <div className="pt-2 border-t border-border/50 flex items-center justify-between text-xs text-muted-foreground">
+                <div>Entregas Base: <strong className="text-foreground">{settings.pizzaria_base_deliveries}</strong></div>
+                <div className="text-right">Diária Base: <strong className="text-foreground">R$ {Number(settings.pizzaria_base_rate).toFixed(2)}</strong></div>
+              </div>
+            </div>
+
+            {/* CARD 5: BANCA & MERCADO */}
+            <div 
+              onClick={() => setActiveTab('financial')}
+              className="group p-5 rounded-2xl border border-border/80 bg-card hover:border-indigo-500/40 hover:shadow-md transition-all cursor-pointer flex flex-col justify-between gap-4"
+            >
+              <div className="flex items-start justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400 group-hover:bg-blue-500/20 transition-colors">
+                    <Landmark className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-black text-foreground">Banca & Provedor de Mercado</h3>
+                    <p className="text-[11px] text-muted-foreground">Saldo inicial, reservas e cotações B3</p>
+                  </div>
+                </div>
+                <ChevronRight className="w-4 h-4 text-muted-foreground group-hover:text-foreground transition-colors" />
+              </div>
+              <div className="pt-2 border-t border-border/50 flex items-center justify-between text-xs text-muted-foreground">
+                <div>Saldo Inicial: <strong className="text-foreground">R$ {Number(settings.initial_balance || 0).toFixed(2)}</strong></div>
+                <div className="text-right">Cotações: <strong className="text-cyan-600 dark:text-cyan-400 uppercase font-bold">{settings.quote_provider || 'auto'}</strong></div>
+              </div>
+            </div>
+
+            {/* CARD 6: DEV TOOLS / DEBUG QUICK CARD */}
+            <div 
+              onClick={() => setIsDebugModalOpen(true)}
+              className="group p-5 rounded-2xl border border-indigo-500/20 bg-gradient-to-tr from-card to-indigo-500/5 hover:border-indigo-500/40 hover:shadow-md transition-all cursor-pointer flex flex-col justify-between gap-4"
+            >
+              <div className="flex items-start justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 rounded-xl bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 group-hover:bg-indigo-500/20 transition-colors">
+                    <Bug className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-black text-foreground">Console Developer & Debug</h3>
+                    <p className="text-[11px] text-muted-foreground">Diagnóstico, latência de banco e cache</p>
+                  </div>
+                </div>
+                <ChevronRight className="w-4 h-4 text-muted-foreground group-hover:text-foreground transition-colors" />
+              </div>
+              <div className="pt-2 border-t border-indigo-500/10 text-[10px] text-indigo-500 dark:text-indigo-400 font-bold flex items-center gap-1.5">
+                <Terminal className="w-3.5 h-3.5" /> Clique para abrir ferramentas avançadas
+              </div>
+            </div>
+
+          </div>
+        )}
         
-        {/* SECTION 1: ACCOUNT & CREDENTIALS */}
-        {(activeTab === 'all' || activeTab === 'account') && (
-          <Card className="border border-border/80 shadow-md rounded-3xl overflow-hidden transition-all hover:border-indigo-500/30">
-            <CardHeader className="bg-gradient-to-r from-card via-card to-muted/30 border-b border-border/60 p-5 sm:p-6">
+        {/* SECTION 1: ACCOUNT & CREDENTIALS - CLEAN INTUITIVE CARD */}
+        {activeTab === 'account' && (
+          <Card className="border border-border/80 shadow-sm rounded-2xl overflow-hidden transition-all hover:border-indigo-500/20 bg-card">
+            <CardHeader className="border-b border-border/50 p-5 sm:p-6">
               <div className="flex items-center gap-3.5">
-                <div className="p-3 rounded-2xl bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20">
+                <div className="p-2.5 rounded-xl bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/10">
                   <User className="w-5 h-5" />
                 </div>
                 <div>
-                  <CardTitle className="text-base sm:text-lg font-black tracking-tight">Dados da Conta & Credenciais</CardTitle>
-                  <CardDescription className="text-xs">
-                    Atualize seu nome completo, email de login e credenciais com segurança.
+                  <CardTitle className="text-base font-black tracking-tight text-foreground">Dados da Conta & Credenciais</CardTitle>
+                  <CardDescription className="text-xs text-muted-foreground">
+                    Gerencie suas credenciais de acesso e informações básicas de identificação.
                   </CardDescription>
                 </div>
               </div>
             </CardHeader>
-            <CardContent className="p-5 sm:p-6 space-y-5">
-              <form onSubmit={handleUpdateAuth} className="space-y-5">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-5">
+            <CardContent className="p-5 sm:p-6 space-y-6">
+              <form onSubmit={handleUpdateAuth} className="space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                   
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-extrabold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                      <User className="w-3.5 h-3.5 text-indigo-500" /> Nome Completo
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
+                      Nome Completo
                     </label>
-                    <Input
-                      type="text"
-                      name="full_name"
-                      placeholder="Seu nome completo"
-                      value={settings.full_name || ''}
-                      onChange={handleChange}
-                      className="h-11 rounded-xl font-semibold border-border bg-background focus-visible:ring-indigo-500"
-                    />
+                    <div className="relative flex items-center">
+                      <div className="absolute left-3.5 text-muted-foreground/80">
+                        <User className="w-4 h-4" />
+                      </div>
+                      <Input
+                        type="text"
+                        name="full_name"
+                        placeholder="Ex: Arthur Sena"
+                        value={settings.full_name || ''}
+                        onChange={handleChange}
+                        className="h-11 pl-10 rounded-xl font-semibold border-border/80 bg-background focus-visible:ring-indigo-500"
+                      />
+                    </div>
                   </div>
 
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-extrabold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                      <Mail className="w-3.5 h-3.5 text-indigo-500" /> Email de Acesso
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
+                      Email de Acesso
                     </label>
-                    <Input
-                      type="email"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      placeholder="seuemail@exemplo.com"
-                      required
-                      className="h-11 rounded-xl font-semibold border-border bg-background focus-visible:ring-indigo-500"
-                    />
+                    <div className="relative flex items-center">
+                      <div className="absolute left-3.5 text-muted-foreground/80">
+                        <Mail className="w-4 h-4" />
+                      </div>
+                      <Input
+                        type="email"
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                        placeholder="seuemail@exemplo.com"
+                        required
+                        className="h-11 pl-10 rounded-xl font-semibold border-border/80 bg-background focus-visible:ring-indigo-500"
+                      />
+                    </div>
                   </div>
 
                 </div>
 
-                <div className="space-y-1.5">
-                  <label className="text-xs font-extrabold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                    <KeyRound className="w-3.5 h-3.5 text-amber-500" /> Nova Senha de Acesso
+                <div className="space-y-2">
+                  <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
+                    Nova Senha de Acesso
                   </label>
-                  <div className="relative">
+                  <div className="relative flex items-center">
+                    <div className="absolute left-3.5 text-muted-foreground/80">
+                      <KeyRound className="w-4 h-4" />
+                    </div>
                     <Input
                       type={showPassword ? 'text' : 'password'}
                       value={newPassword}
                       onChange={(e) => setNewPassword(e.target.value)}
-                      placeholder="Preencha apenas se quiser alterar sua senha atual"
-                      className="h-11 rounded-xl font-semibold border-border pr-11 bg-background focus-visible:ring-indigo-500"
+                      placeholder="Preencha apenas se desejar redefinir sua senha"
+                      className="h-11 pl-10 pr-11 rounded-xl font-semibold border-border/80 bg-background focus-visible:ring-indigo-500"
                     />
                     <button
                       type="button"
                       onClick={() => setShowPassword(!showPassword)}
-                      className="absolute right-3 top-3 text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                      className="absolute right-3.5 text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
                     >
-                      {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                     </button>
                   </div>
-                  <p className="text-[11px] text-muted-foreground">Mantenha em branco para preservar a senha atual cadastrada.</p>
+                  <p className="text-[11px] text-muted-foreground">Mantenha este campo em branco se não desejar alterar sua senha atual.</p>
                 </div>
 
                 <div className="pt-2 flex justify-end">
                   <Button 
                     type="submit" 
                     disabled={savingAuth}
-                    className="h-11 px-6 rounded-xl font-extrabold text-xs uppercase tracking-wider bg-indigo-600 hover:bg-indigo-700 text-white shadow-md transition-all cursor-pointer flex items-center gap-2"
+                    className="h-10 px-5 rounded-xl font-extrabold text-xs uppercase tracking-wider bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm transition-all cursor-pointer flex items-center gap-2"
                   >
                     {savingAuth ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                    {savingAuth ? 'Atualizando...' : 'Atualizar Dados de Acesso'}
+                    {savingAuth ? 'Atualizando...' : 'Atualizar Credenciais'}
                   </Button>
                 </div>
               </form>
@@ -865,49 +985,49 @@ export function Profile() {
           </Card>
         )}
 
-        {/* SECTION 2: CATEGORIES & ODOMETER */}
-        {(activeTab === 'all' || activeTab === 'categories') && (
-          <Card className="border border-border/80 shadow-md rounded-3xl overflow-hidden transition-all hover:border-indigo-500/30">
-            <CardHeader className="bg-gradient-to-r from-card via-card to-muted/30 border-b border-border/60 p-5 sm:p-6">
+        {/* SECTION 2: CATEGORIES & ODOMETER - STELLAR MANAGEMENT CARD */}
+        {activeTab === 'categories' && (
+          <Card className="border border-border/80 shadow-sm rounded-2xl overflow-hidden transition-all hover:border-indigo-500/20 bg-card">
+            <CardHeader className="border-b border-border/50 p-5 sm:p-6">
               <div className="flex items-center gap-3.5">
-                <div className="p-3 rounded-2xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                <div className="p-2.5 rounded-xl bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/10">
                   <Sliders className="w-5 h-5" />
                 </div>
                 <div>
-                  <CardTitle className="text-base sm:text-lg font-black tracking-tight">Gerenciamento de Categorias & Odômetro</CardTitle>
-                  <CardDescription className="text-xs">
-                    Personalize os nomes, ícones, posições e integração com o cálculo de KM rodado.
+                  <CardTitle className="text-base font-black tracking-tight text-foreground">Gerenciamento de Categorias & Odômetro</CardTitle>
+                  <CardDescription className="text-xs text-muted-foreground">
+                    Personalize os nomes, ícones, ordem de exibição e controle quais categorias exigem campos de quilometragem.
                   </CardDescription>
                 </div>
               </div>
             </CardHeader>
             
-            <CardContent className="p-5 sm:p-6 space-y-6">
+            <CardContent className="p-5 sm:p-6 space-y-8">
               
               {/* CATEGORIAS DE GANHOS */}
-              <div className="space-y-3.5">
+              <div className="space-y-4">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-black uppercase tracking-wider text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5">
-                    <TrendingUp className="w-4 h-4" /> Categorias de Ganhos / Faturamento ({incomeCategories.length})
+                  <span className="text-xs font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400 flex items-center gap-2">
+                    <TrendingUp className="w-4 h-4" /> Ganhos / Entradas ({incomeCategories.length})
                   </span>
-                  <span className="text-[10px] bg-emerald-500/10 text-emerald-600 dark:text-emerald-300 px-2.5 py-0.5 rounded-full font-extrabold">
-                    Entradas
+                  <span className="text-[10px] bg-emerald-500/10 text-emerald-600 dark:text-emerald-300 px-2.5 py-1 rounded-full font-black uppercase tracking-wider">
+                    Faturamento
                   </span>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   {incomeCategories.map((cat, index) => {
                     const Icon = getIconByName(categoryIcons[cat]);
                     const isProtected = ['Pizzaria', 'Frete do Dia'].includes(cat);
                     return (
-                      <div key={cat} className="flex items-center justify-between p-3 rounded-2xl bg-card border border-border/80 shadow-2xs hover:border-emerald-500/40 transition-all">
+                      <div key={cat} className="flex items-center justify-between p-3.5 rounded-xl bg-muted/30 border border-border/60 hover:bg-muted/50 hover:border-emerald-500/25 transition-all">
                         <div className="flex items-center gap-3 min-w-0">
                           <Popover>
-                            <PopoverTrigger className="w-9 h-9 rounded-xl bg-emerald-500/10 text-emerald-600 flex items-center justify-center shrink-0 hover:bg-emerald-500/20 transition-colors cursor-pointer border border-emerald-500/20">
-                              <Icon className="w-4 h-4" />
+                            <PopoverTrigger className="w-10 h-10 rounded-xl bg-emerald-500/10 text-emerald-600 flex items-center justify-center shrink-0 hover:bg-emerald-500/20 transition-colors cursor-pointer border border-emerald-500/10" title="Alterar ícone">
+                              <Icon className="w-4.5 h-4.5" />
                             </PopoverTrigger>
-                            <PopoverContent className="w-64 p-3 bg-popover border-border rounded-2xl shadow-xl" align="start">
-                              <span className="text-[10px] font-extrabold uppercase text-muted-foreground block mb-2">Escolher Ícone para {cat}</span>
+                            <PopoverContent className="w-64 p-3 bg-popover border-border rounded-xl shadow-xl" align="start">
+                              <span className="text-[10px] font-black uppercase text-muted-foreground block mb-2 tracking-wider">Escolher Ícone</span>
                               <div className="grid grid-cols-5 gap-1.5 max-h-48 overflow-y-auto pr-1">
                                 {AVAILABLE_ICONS.map(i => {
                                   const IComp = i.icon;
@@ -916,7 +1036,7 @@ export function Profile() {
                                       key={i.name}
                                       type="button"
                                       onClick={() => handleUpdateIcon(cat, i.name)}
-                                      className={`p-2 rounded-lg flex items-center justify-center hover:bg-muted font-bold cursor-pointer transition-colors ${categoryIcons[cat] === i.name ? 'bg-emerald-500 text-white' : 'text-muted-foreground'}`}
+                                      className={`p-2.5 rounded-lg flex items-center justify-center hover:bg-muted font-bold cursor-pointer transition-colors ${categoryIcons[cat] === i.name ? 'bg-emerald-500 text-white' : 'text-muted-foreground'}`}
                                     >
                                       <IComp className="w-4 h-4" />
                                     </button>
@@ -925,34 +1045,56 @@ export function Profile() {
                               </div>
                             </PopoverContent>
                           </Popover>
-
+ 
                           <div className="min-w-0">
-                            <span className="text-xs font-extrabold text-foreground block truncate">{cat}</span>
+                            <span className="text-xs font-black text-foreground block truncate">{cat}</span>
                             {isProtected && (
-                              <span className="text-[9px] font-bold text-emerald-600 dark:text-emerald-400">Protegida do Sistema</span>
+                              <span className="text-[9px] font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-widest">Sistema</span>
                             )}
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-1 shrink-0">
-                          <div className="flex flex-col border-r pr-1 mr-1 border-border/50">
-                            <button type="button" onClick={() => moveCategory('income', index, 'up')} disabled={index === 0} className="text-muted-foreground hover:text-foreground disabled:opacity-20 p-0.5 cursor-pointer">
-                              <ChevronUp className="w-3.5 h-3.5" />
+                        <div className="flex items-center gap-2 shrink-0">
+                          <div className="flex items-center border-r pr-2 border-border/80 gap-1">
+                            <button 
+                              type="button" 
+                              onClick={() => moveCategory('income', index, 'up')} 
+                              disabled={index === 0} 
+                              className="text-muted-foreground hover:text-foreground disabled:opacity-20 p-2 hover:bg-background rounded-lg cursor-pointer transition-all min-w-[32px] min-h-[32px] flex items-center justify-center"
+                              title="Mover para cima"
+                            >
+                              <ChevronUp className="w-4 h-4" />
                             </button>
-                            <button type="button" onClick={() => moveCategory('income', index, 'down')} disabled={index === incomeCategories.length - 1} className="text-muted-foreground hover:text-foreground disabled:opacity-20 p-0.5 cursor-pointer">
-                              <ChevronDown className="w-3.5 h-3.5" />
+                            <button 
+                              type="button" 
+                              onClick={() => moveCategory('income', index, 'down')} 
+                              disabled={index === incomeCategories.length - 1} 
+                              className="text-muted-foreground hover:text-foreground disabled:opacity-20 p-2 hover:bg-background rounded-lg cursor-pointer transition-all min-w-[32px] min-h-[32px] flex items-center justify-center"
+                              title="Mover para baixo"
+                            >
+                              <ChevronDown className="w-4 h-4" />
                             </button>
                           </div>
                           
                           {!isProtected && (
-                            <>
-                              <button type="button" onClick={() => confirmEditCategory('income', cat)} className="p-1.5 text-muted-foreground hover:text-primary hover:bg-primary/10 rounded-lg transition-colors cursor-pointer" title="Renomear Categoria">
-                                <Settings className="w-3.5 h-3.5" />
+                            <div className="flex items-center gap-1">
+                              <button 
+                                type="button" 
+                                onClick={() => confirmEditCategory('income', cat)} 
+                                className="p-2 text-muted-foreground hover:text-primary hover:bg-background rounded-lg transition-colors cursor-pointer min-w-[32px] min-h-[32px] flex items-center justify-center" 
+                                title="Renomear Categoria"
+                              >
+                                <Settings className="w-4 h-4" />
                               </button>
-                              <button type="button" onClick={() => confirmRemoveCategory('income', cat)} className="p-1.5 text-muted-foreground hover:text-rose-500 hover:bg-rose-500/10 rounded-lg transition-colors cursor-pointer" title="Excluir Categoria">
-                                <X className="w-3.5 h-3.5" />
+                              <button 
+                                type="button" 
+                                onClick={() => confirmRemoveCategory('income', cat)} 
+                                className="p-2 text-muted-foreground hover:text-rose-500 hover:bg-rose-500/10 rounded-lg transition-colors cursor-pointer min-w-[32px] min-h-[32px] flex items-center justify-center" 
+                                title="Excluir Categoria"
+                              >
+                                <X className="w-4 h-4" />
                               </button>
-                            </>
+                            </div>
                           )}
                         </div>
                       </div>
@@ -960,45 +1102,45 @@ export function Profile() {
                   })}
                 </div>
 
-                <div className="flex gap-2 pt-1">
+                <div className="flex gap-2 pt-1.5 max-w-md">
                   <Input
                     type="text"
-                    className="h-11 rounded-xl text-xs font-semibold bg-background"
+                    className="h-10 rounded-xl text-xs font-semibold bg-background border-border/80 focus-visible:ring-emerald-500"
                     value={newIncomeCat}
                     onChange={(e) => setNewIncomeCat(e.target.value)}
-                    placeholder="Adicionar nova categoria de ganho..."
+                    placeholder="Nova categoria de ganho..."
                     onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), addCategory('income'))}
                   />
-                  <Button type="button" variant="secondary" className="h-11 rounded-xl px-5 cursor-pointer font-bold text-xs" onClick={() => addCategory('income')}>
-                    <Plus className="w-4 h-4 mr-1" /> Adicionar
+                  <Button type="button" variant="secondary" className="h-10 rounded-xl px-4 cursor-pointer font-extrabold text-xs flex items-center gap-1.5 bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20 border-0" onClick={() => addCategory('income')}>
+                    <Plus className="w-3.5 h-3.5" /> Adicionar
                   </Button>
                 </div>
               </div>
 
               {/* CATEGORIAS OPERACIONAIS */}
-              <div className="space-y-3.5 pt-4 border-t border-border/60">
+              <div className="space-y-4 pt-6 border-t border-border/50">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-black uppercase tracking-wider text-amber-600 dark:text-amber-400 flex items-center gap-1.5">
+                  <span className="text-xs font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400 flex items-center gap-2">
                     <Bike className="w-4 h-4" /> Despesas Operacionais / Veículo ({operationalCategories.length})
                   </span>
-                  <span className="text-[10px] bg-amber-500/10 text-amber-600 dark:text-amber-300 px-2.5 py-0.5 rounded-full font-extrabold">
-                    Custos de Trabalho
+                  <span className="text-[10px] bg-amber-500/10 text-amber-600 dark:text-amber-300 px-2.5 py-1 rounded-full font-black uppercase tracking-wider">
+                    Trabalho
                   </span>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   {operationalCategories.map((cat, index) => {
                     const Icon = getIconByName(categoryIcons[cat]);
                     const isProtected = ['Combustível', 'Manutenção', 'Pedágio'].includes(cat);
                     return (
-                      <div key={cat} className="flex items-center justify-between p-3 rounded-2xl bg-card border border-border/80 shadow-2xs hover:border-amber-500/40 transition-all">
+                      <div key={cat} className="flex items-center justify-between p-3.5 rounded-xl bg-muted/30 border border-border/60 hover:bg-muted/50 hover:border-amber-500/25 transition-all">
                         <div className="flex items-center gap-3 min-w-0">
                           <Popover>
-                            <PopoverTrigger className="w-9 h-9 rounded-xl bg-amber-500/10 text-amber-600 flex items-center justify-center shrink-0 hover:bg-amber-500/20 transition-colors cursor-pointer border border-amber-500/20">
-                              <Icon className="w-4 h-4" />
+                            <PopoverTrigger className="w-10 h-10 rounded-xl bg-amber-500/10 text-amber-600 flex items-center justify-center shrink-0 hover:bg-amber-500/20 transition-colors cursor-pointer border border-amber-500/10" title="Alterar ícone">
+                              <Icon className="w-4.5 h-4.5" />
                             </PopoverTrigger>
-                            <PopoverContent className="w-64 p-3 bg-popover border-border rounded-2xl shadow-xl" align="start">
-                              <span className="text-[10px] font-extrabold uppercase text-muted-foreground block mb-2">Escolher Ícone para {cat}</span>
+                            <PopoverContent className="w-64 p-3 bg-popover border-border rounded-xl shadow-xl" align="start">
+                              <span className="text-[10px] font-black uppercase text-muted-foreground block mb-2 tracking-wider">Escolher Ícone</span>
                               <div className="grid grid-cols-5 gap-1.5 max-h-48 overflow-y-auto pr-1">
                                 {AVAILABLE_ICONS.map(i => {
                                   const IComp = i.icon;
@@ -1007,7 +1149,7 @@ export function Profile() {
                                       key={i.name}
                                       type="button"
                                       onClick={() => handleUpdateIcon(cat, i.name)}
-                                      className={`p-2 rounded-lg flex items-center justify-center hover:bg-muted font-bold cursor-pointer transition-colors ${categoryIcons[cat] === i.name ? 'bg-amber-500 text-white' : 'text-muted-foreground'}`}
+                                      className={`p-2.5 rounded-lg flex items-center justify-center hover:bg-muted font-bold cursor-pointer transition-colors ${categoryIcons[cat] === i.name ? 'bg-amber-500 text-white' : 'text-muted-foreground'}`}
                                     >
                                       <IComp className="w-4 h-4" />
                                     </button>
@@ -1016,34 +1158,56 @@ export function Profile() {
                               </div>
                             </PopoverContent>
                           </Popover>
-
+ 
                           <div className="min-w-0">
-                            <span className="text-xs font-extrabold text-foreground block truncate">{cat}</span>
+                            <span className="text-xs font-black text-foreground block truncate">{cat}</span>
                             {isProtected && (
-                              <span className="text-[9px] font-bold text-amber-600 dark:text-amber-400">Protegida do Sistema</span>
+                              <span className="text-[9px] font-bold text-amber-600 dark:text-amber-400 uppercase tracking-widest">Sistema</span>
                             )}
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-1 shrink-0">
-                          <div className="flex flex-col border-r pr-1 mr-1 border-border/50">
-                            <button type="button" onClick={() => moveCategory('operational', index, 'up')} disabled={index === 0} className="text-muted-foreground hover:text-foreground disabled:opacity-20 p-0.5 cursor-pointer">
-                              <ChevronUp className="w-3.5 h-3.5" />
+                        <div className="flex items-center gap-2 shrink-0">
+                          <div className="flex items-center border-r pr-2 border-border/80 gap-1">
+                            <button 
+                              type="button" 
+                              onClick={() => moveCategory('operational', index, 'up')} 
+                              disabled={index === 0} 
+                              className="text-muted-foreground hover:text-foreground disabled:opacity-20 p-2 hover:bg-background rounded-lg cursor-pointer transition-all min-w-[32px] min-h-[32px] flex items-center justify-center"
+                              title="Mover para cima"
+                            >
+                              <ChevronUp className="w-4 h-4" />
                             </button>
-                            <button type="button" onClick={() => moveCategory('operational', index, 'down')} disabled={index === operationalCategories.length - 1} className="text-muted-foreground hover:text-foreground disabled:opacity-20 p-0.5 cursor-pointer">
-                              <ChevronDown className="w-3.5 h-3.5" />
+                            <button 
+                              type="button" 
+                              onClick={() => moveCategory('operational', index, 'down')} 
+                              disabled={index === operationalCategories.length - 1} 
+                              className="text-muted-foreground hover:text-foreground disabled:opacity-20 p-2 hover:bg-background rounded-lg cursor-pointer transition-all min-w-[32px] min-h-[32px] flex items-center justify-center"
+                              title="Mover para baixo"
+                            >
+                              <ChevronDown className="w-4 h-4" />
                             </button>
                           </div>
                           
                           {!isProtected && (
-                            <>
-                              <button type="button" onClick={() => confirmEditCategory('operational', cat)} className="p-1.5 text-muted-foreground hover:text-primary hover:bg-primary/10 rounded-lg transition-colors cursor-pointer" title="Renomear Categoria">
-                                <Settings className="w-3.5 h-3.5" />
+                            <div className="flex items-center gap-1">
+                              <button 
+                                type="button" 
+                                onClick={() => confirmEditCategory('operational', cat)} 
+                                className="p-2 text-muted-foreground hover:text-primary hover:bg-background rounded-lg transition-colors cursor-pointer min-w-[32px] min-h-[32px] flex items-center justify-center" 
+                                title="Renomear Categoria"
+                              >
+                                <Settings className="w-4 h-4" />
                               </button>
-                              <button type="button" onClick={() => confirmRemoveCategory('operational', cat)} className="p-1.5 text-muted-foreground hover:text-rose-500 hover:bg-rose-500/10 rounded-lg transition-colors cursor-pointer" title="Excluir Categoria">
-                                <X className="w-3.5 h-3.5" />
+                              <button 
+                                type="button" 
+                                onClick={() => confirmRemoveCategory('operational', cat)} 
+                                className="p-2 text-muted-foreground hover:text-rose-500 hover:bg-rose-500/10 rounded-lg transition-colors cursor-pointer min-w-[32px] min-h-[32px] flex items-center justify-center" 
+                                title="Excluir Categoria"
+                              >
+                                <X className="w-4 h-4" />
                               </button>
-                            </>
+                            </div>
                           )}
                         </div>
                       </div>
@@ -1051,44 +1215,44 @@ export function Profile() {
                   })}
                 </div>
 
-                <div className="flex gap-2 pt-1">
+                <div className="flex gap-2 pt-1.5 max-w-md">
                   <Input
                     type="text"
-                    className="h-11 rounded-xl text-xs font-semibold bg-background focus-visible:ring-amber-500"
+                    className="h-10 rounded-xl text-xs font-semibold bg-background border-border/80 focus-visible:ring-amber-500"
                     value={newOperationalCat}
                     onChange={(e) => setNewOperationalCat(e.target.value)}
-                    placeholder="Adicionar nova categoria operacional..."
+                    placeholder="Nova categoria operacional..."
                     onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), addCategory('operational'))}
                   />
-                  <Button type="button" variant="secondary" className="h-11 rounded-xl px-5 text-amber-600 hover:bg-amber-500/10 cursor-pointer font-bold text-xs" onClick={() => addCategory('operational')}>
-                    <Plus className="w-4 h-4 mr-1" /> Adicionar
+                  <Button type="button" variant="secondary" className="h-10 rounded-xl px-4 cursor-pointer font-extrabold text-xs flex items-center gap-1.5 bg-amber-500/10 text-amber-600 hover:bg-amber-500/20 border-0" onClick={() => addCategory('operational')}>
+                    <Plus className="w-3.5 h-3.5" /> Adicionar
                   </Button>
                 </div>
               </div>
 
               {/* CATEGORIAS PESSOAIS */}
-              <div className="space-y-3.5 pt-4 border-t border-border/60">
+              <div className="space-y-4 pt-6 border-t border-border/50">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-black uppercase tracking-wider text-rose-500 flex items-center gap-1.5">
+                  <span className="text-xs font-bold uppercase tracking-wider text-rose-500 flex items-center gap-2">
                     <Heart className="w-4 h-4" /> Despesas Pessoais ({personalCategories.length})
                   </span>
-                  <span className="text-[10px] bg-rose-500/10 text-rose-600 dark:text-rose-300 px-2.5 py-0.5 rounded-full font-extrabold">
-                    Gastos Pessoais
+                  <span className="text-[10px] bg-rose-500/10 text-rose-600 dark:text-rose-300 px-2.5 py-1 rounded-full font-black uppercase tracking-wider">
+                    Vida Pessoal
                   </span>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   {personalCategories.map((cat, index) => {
                     const Icon = getIconByName(categoryIcons[cat]);
                     return (
-                      <div key={cat} className="flex items-center justify-between p-3 rounded-2xl bg-card border border-border/80 shadow-2xs hover:border-rose-500/40 transition-all">
+                      <div key={cat} className="flex items-center justify-between p-3.5 rounded-xl bg-muted/30 border border-border/60 hover:bg-muted/50 hover:border-rose-500/25 transition-all">
                         <div className="flex items-center gap-3 min-w-0">
                           <Popover>
-                            <PopoverTrigger className="w-9 h-9 rounded-xl bg-rose-500/10 text-rose-600 flex items-center justify-center shrink-0 hover:bg-rose-500/20 transition-colors cursor-pointer border border-rose-500/20">
-                              <Icon className="w-4 h-4" />
+                            <PopoverTrigger className="w-10 h-10 rounded-xl bg-rose-500/10 text-rose-600 flex items-center justify-center shrink-0 hover:bg-rose-500/20 transition-colors cursor-pointer border border-rose-500/10" title="Alterar ícone">
+                              <Icon className="w-4.5 h-4.5" />
                             </PopoverTrigger>
-                            <PopoverContent className="w-64 p-3 bg-popover border-border rounded-2xl shadow-xl" align="start">
-                              <span className="text-[10px] font-extrabold uppercase text-muted-foreground block mb-2">Escolher Ícone para {cat}</span>
+                            <PopoverContent className="w-64 p-3 bg-popover border-border rounded-xl shadow-xl" align="start">
+                              <span className="text-[10px] font-black uppercase text-muted-foreground block mb-2 tracking-wider">Escolher Ícone</span>
                               <div className="grid grid-cols-5 gap-1.5 max-h-48 overflow-y-auto pr-1">
                                 {AVAILABLE_ICONS.map(i => {
                                   const IComp = i.icon;
@@ -1097,7 +1261,7 @@ export function Profile() {
                                       key={i.name}
                                       type="button"
                                       onClick={() => handleUpdateIcon(cat, i.name)}
-                                      className={`p-2 rounded-lg flex items-center justify-center hover:bg-muted font-bold cursor-pointer transition-colors ${categoryIcons[cat] === i.name ? 'bg-rose-500 text-white' : 'text-muted-foreground'}`}
+                                      className={`p-2.5 rounded-lg flex items-center justify-center hover:bg-muted font-bold cursor-pointer transition-colors ${categoryIcons[cat] === i.name ? 'bg-rose-500 text-white' : 'text-muted-foreground'}`}
                                     >
                                       <IComp className="w-4 h-4" />
                                     </button>
@@ -1106,51 +1270,75 @@ export function Profile() {
                               </div>
                             </PopoverContent>
                           </Popover>
-
+ 
                           <div className="min-w-0">
-                            <span className="text-xs font-extrabold text-foreground block truncate">{cat}</span>
+                            <span className="text-xs font-black text-foreground block truncate">{cat}</span>
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-1 shrink-0">
-                          <div className="flex flex-col border-r pr-1 mr-1 border-border/50">
-                            <button type="button" onClick={() => moveCategory('personal', index, 'up')} disabled={index === 0} className="text-muted-foreground hover:text-foreground disabled:opacity-20 p-0.5 cursor-pointer">
-                              <ChevronUp className="w-3.5 h-3.5" />
+                        <div className="flex items-center gap-2 shrink-0">
+                          <div className="flex items-center border-r pr-2 border-border/80 gap-1">
+                            <button 
+                              type="button" 
+                              onClick={() => moveCategory('personal', index, 'up')} 
+                              disabled={index === 0} 
+                              className="text-muted-foreground hover:text-foreground disabled:opacity-20 p-2 hover:bg-background rounded-lg cursor-pointer transition-all min-w-[32px] min-h-[32px] flex items-center justify-center"
+                              title="Mover para cima"
+                            >
+                              <ChevronUp className="w-4 h-4" />
                             </button>
-                            <button type="button" onClick={() => moveCategory('personal', index, 'down')} disabled={index === personalCategories.length - 1} className="text-muted-foreground hover:text-foreground disabled:opacity-20 p-0.5 cursor-pointer">
-                              <ChevronDown className="w-3.5 h-3.5" />
+                            <button 
+                              type="button" 
+                              onClick={() => moveCategory('personal', index, 'down')} 
+                              disabled={index === personalCategories.length - 1} 
+                              className="text-muted-foreground hover:text-foreground disabled:opacity-20 p-2 hover:bg-background rounded-lg cursor-pointer transition-all min-w-[32px] min-h-[32px] flex items-center justify-center"
+                              title="Mover para baixo"
+                            >
+                              <ChevronDown className="w-4 h-4" />
                             </button>
                           </div>
                           
-                          <button type="button" onClick={() => confirmEditCategory('personal', cat)} className="p-1.5 text-muted-foreground hover:text-primary hover:bg-primary/10 rounded-lg transition-colors cursor-pointer" title="Renomear Categoria">
-                            <Settings className="w-3.5 h-3.5" />
-                          </button>
-                          <button type="button" onClick={() => confirmRemoveCategory('personal', cat)} className="p-1.5 text-muted-foreground hover:text-rose-500 hover:bg-rose-500/10 rounded-lg transition-colors cursor-pointer" title="Excluir Categoria">
-                            <X className="w-3.5 h-3.5" />
-                          </button>
+                          <div className="flex items-center gap-1">
+                            <button 
+                              type="button" 
+                              onClick={() => confirmEditCategory('personal', cat)} 
+                              className="p-2 text-muted-foreground hover:text-primary hover:bg-background rounded-lg transition-colors cursor-pointer min-w-[32px] min-h-[32px] flex items-center justify-center" 
+                              title="Renomear Categoria"
+                            >
+                              <Settings className="w-4 h-4" />
+                            </button>
+                            <button 
+                              type="button" 
+                              onClick={() => confirmRemoveCategory('personal', cat)} 
+                              className="p-2 text-muted-foreground hover:text-rose-500 hover:bg-rose-500/10 rounded-lg transition-colors cursor-pointer min-w-[32px] min-h-[32px] flex items-center justify-center" 
+                              title="Excluir Categoria"
+                            >
+                              <X className="w-4 h-4" />
+                            </button>
+                          </div>
                         </div>
                       </div>
                     );
                   })}
                 </div>
 
-                <div className="flex gap-2 pt-1">
+                <div className="flex gap-2 pt-1.5 max-w-md">
                   <Input
                     type="text"
-                    className="h-11 rounded-xl text-xs font-semibold bg-background focus-visible:ring-rose-500"
+                    className="h-10 rounded-xl text-xs font-semibold bg-background border-border/80 focus-visible:ring-rose-500"
                     value={newPersonalCat}
                     onChange={(e) => setNewPersonalCat(e.target.value)}
-                    placeholder="Adicionar nova categoria pessoal..."
+                    placeholder="Nova categoria pessoal..."
                     onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), addCategory('personal'))}
                   />
-                  <Button type="button" variant="secondary" className="h-11 rounded-xl px-5 text-rose-600 hover:bg-rose-500/10 cursor-pointer font-bold text-xs" onClick={() => addCategory('personal')}>
-                    <Plus className="w-4 h-4 mr-1" /> Adicionar
+                  <Button type="button" variant="secondary" className="h-10 rounded-xl px-4 cursor-pointer font-extrabold text-xs flex items-center gap-1.5 bg-rose-500/10 text-rose-600 hover:bg-rose-500/20 border-0" onClick={() => addCategory('personal')}>
+                    <Plus className="w-3.5 h-3.5" /> Adicionar
                   </Button>
                 </div>
               </div>
 
               {/* SEÇÃO ODÔMETRO (KM INICIAL E FINAL) */}
-              <div className="space-y-3 pt-4 border-t border-border/60 bg-muted/30 -mx-5 -mb-5 p-5 rounded-b-3xl">
+              <div className="space-y-4 pt-6 border-t border-border/50 bg-muted/20 -mx-5 -mb-5 p-5 rounded-b-2xl">
                 <div className="flex items-center justify-between">
                   <div>
                     <span className="text-xs font-black uppercase tracking-wider text-foreground block">
@@ -1162,7 +1350,7 @@ export function Profile() {
                   </div>
                 </div>
 
-                <div className="flex flex-wrap gap-2 pt-2">
+                <div className="flex flex-wrap gap-2 pt-1">
                   {incomeCategories.map(cat => {
                     const isActive = categoriesWithKm.includes(cat);
                     return (
@@ -1170,9 +1358,9 @@ export function Profile() {
                         key={cat}
                         type="button"
                         onClick={() => toggleCategoryKm(cat)}
-                        className={`px-3.5 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer flex items-center gap-1.5 ${
+                        className={`px-4 py-2.5 rounded-xl text-xs font-bold border transition-all cursor-pointer flex items-center gap-1.5 ${
                           isActive
-                            ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs font-extrabold'
+                            ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm font-extrabold'
                             : 'bg-card text-muted-foreground border-border hover:bg-muted hover:text-foreground'
                         }`}
                       >
@@ -1188,46 +1376,60 @@ export function Profile() {
           </Card>
         )}
 
-        {/* SECTION 3: VEHICLE & FREIGHT SETTINGS */}
-        {(activeTab === 'all' || activeTab === 'vehicle') && (
-          <Card className="border border-border/80 shadow-md rounded-3xl overflow-hidden transition-all hover:border-indigo-500/30">
-            <CardHeader className="bg-gradient-to-r from-card via-card to-muted/30 border-b border-border/60 p-5 sm:p-6">
+        {/* SECTION 3: VEHICLE & FREIGHT SETTINGS - SLEEK DASHBOARD ARCHETYPE */}
+        {activeTab === 'vehicle' && (
+          <Card className="border border-border/80 shadow-sm rounded-2xl overflow-hidden transition-all hover:border-indigo-500/20 bg-card">
+            <CardHeader className="border-b border-border/50 p-5 sm:p-6">
               <div className="flex items-center gap-3.5">
-                <div className="p-3 rounded-2xl bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
+                <div className="p-2.5 rounded-xl bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/10">
                   <Bike className="w-5 h-5" />
                 </div>
                 <div>
-                  <CardTitle className="text-base sm:text-lg font-black tracking-tight">Veículo & Parâmetros do Frete</CardTitle>
-                  <CardDescription className="text-xs">
-                    Configure média de consumo por litro, valor do combustível e diária padrão do motorista.
+                  <CardTitle className="text-base font-black tracking-tight text-foreground">Veículo & Parâmetros do Frete</CardTitle>
+                  <CardDescription className="text-xs text-muted-foreground">
+                    Gerencie o consumo de combustível, preço do litro e valores diários para orçamentos de frete precisos.
                   </CardDescription>
                 </div>
               </div>
             </CardHeader>
             <CardContent className="p-5 sm:p-6 space-y-6">
               
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-5">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
                 
                 {/* Consumo */}
-                <div className="space-y-1.5">
-                  <label className="text-xs font-extrabold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                    <Fuel className="w-3.5 h-3.5 text-amber-500" /> Consumo (KM por Litro)
+                <div className="space-y-2">
+                  <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                    Consumo Médio
                   </label>
-                  <Input
-                    type="number"
-                    step="0.1"
-                    name="vehicle_km_per_liter"
-                    value={settings.vehicle_km_per_liter}
-                    onChange={handleChange}
-                    className="h-11 rounded-xl font-bold border-border bg-background"
-                  />
-                  <div className="flex gap-1 pt-1">
+                  <div className="relative flex items-center">
+                    <div className="absolute left-3.5 text-muted-foreground">
+                      <Fuel className="w-4 h-4 text-amber-500/90" />
+                    </div>
+                    <Input
+                      type="number"
+                      step="0.1"
+                      name="vehicle_km_per_liter"
+                      value={settings.vehicle_km_per_liter}
+                      onChange={handleChange}
+                      className="h-11 pl-10 pr-16 rounded-xl font-mono font-bold border-border/80 bg-background focus-visible:ring-indigo-500"
+                    />
+                    <div className="absolute right-3 text-[10px] font-black uppercase text-muted-foreground tracking-wider">
+                      KM / L
+                    </div>
+                  </div>
+                  
+                  {/* Convenient presets */}
+                  <div className="flex gap-1.5 pt-1 flex-wrap">
                     {[25, 30, 35, 40].map(val => (
                       <button
                         key={val}
                         type="button"
                         onClick={() => setSettings({ ...settings, vehicle_km_per_liter: val })}
-                        className={`text-[10px] font-bold px-2.5 py-1 rounded-lg border transition-colors cursor-pointer ${settings.vehicle_km_per_liter === val ? 'bg-amber-500 text-white border-amber-500 shadow-2xs font-black' : 'bg-card border-border text-muted-foreground hover:bg-muted'}`}
+                        className={`text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-lg border transition-all cursor-pointer ${
+                          settings.vehicle_km_per_liter === val 
+                            ? 'bg-amber-500 text-white border-amber-500 shadow-sm shadow-amber-500/10' 
+                            : 'bg-card border-border/80 text-muted-foreground hover:bg-muted'
+                        }`}
                       >
                         {val} km/L
                       </button>
@@ -1236,54 +1438,70 @@ export function Profile() {
                 </div>
 
                 {/* Preço do Litro */}
-                <div className="space-y-1.5">
-                  <label className="text-xs font-extrabold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                    <DollarSign className="w-3.5 h-3.5 text-emerald-500" /> Preço do Combustível (R$/L)
+                <div className="space-y-2">
+                  <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                    Preço do Combustível
                   </label>
-                  <Input
-                    type="number"
-                    step="0.01"
-                    name="fuel_price"
-                    value={settings.fuel_price}
-                    onChange={handleChange}
-                    className="h-11 rounded-xl font-bold border-border bg-background"
-                  />
-                  <span className="text-[11px] text-muted-foreground block">Utilizado na calculadora de combustível</span>
+                  <div className="relative flex items-center">
+                    <div className="absolute left-3.5 text-xs font-black text-muted-foreground">
+                      R$
+                    </div>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      name="fuel_price"
+                      value={settings.fuel_price}
+                      onChange={handleChange}
+                      className="h-11 pl-10 pr-12 rounded-xl font-mono font-bold border-border/80 bg-background focus-visible:ring-indigo-500"
+                    />
+                    <div className="absolute right-3.5 text-xs font-bold text-muted-foreground">
+                      / L
+                    </div>
+                  </div>
+                  <span className="text-[10px] text-muted-foreground block">Utilizado na calculadora de combustível interna</span>
                 </div>
 
                 {/* Diária do Motorista */}
-                <div className="space-y-1.5">
-                  <label className="text-xs font-extrabold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                    <User className="w-3.5 h-3.5 text-indigo-500" /> Diária do Motorista (R$)
+                <div className="space-y-2">
+                  <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                    Diária do Motorista
                   </label>
-                  <Input
-                    type="number"
-                    step="0.01"
-                    name="default_driver_labor"
-                    value={settings.default_driver_labor ?? 100}
-                    onChange={handleChange}
-                    className="h-11 rounded-xl font-bold border-border bg-background"
-                  />
-                  <span className="text-[11px] text-muted-foreground block">Valor base para orçamentos de frete</span>
+                  <div className="relative flex items-center">
+                    <div className="absolute left-3.5 text-xs font-black text-muted-foreground">
+                      R$
+                    </div>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      name="default_driver_labor"
+                      value={settings.default_driver_labor ?? 100}
+                      onChange={handleChange}
+                      className="h-11 pl-10 pr-12 rounded-xl font-mono font-bold border-border/80 bg-background focus-visible:ring-indigo-500"
+                    />
+                    <div className="absolute right-3.5 text-[10px] font-black uppercase text-muted-foreground">
+                      Base
+                    </div>
+                  </div>
+                  <span className="text-[10px] text-muted-foreground block">Custo de mão de obra para orçar fretes</span>
                 </div>
 
               </div>
 
-              {/* Vehicle Cost Preview Banner */}
-              <div className="bg-gradient-to-r from-amber-500/10 via-amber-500/5 to-transparent border border-amber-500/20 rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3.5">
-                <div className="flex items-center gap-3.5">
-                  <div className="p-2.5 bg-amber-500/20 text-amber-600 dark:text-amber-400 rounded-xl shrink-0">
+              {/* Vehicle Cost Preview Banner - Aesthetic and Clean */}
+              <div className="bg-gradient-to-r from-amber-500/10 via-amber-500/5 to-transparent border border-amber-500/20 rounded-xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-amber-500/15 text-amber-600 dark:text-amber-400 rounded-lg shrink-0">
                     <Gauge className="w-5 h-5" />
                   </div>
                   <div>
-                    <span className="text-xs font-black uppercase text-amber-700 dark:text-amber-300 block">Estimativa de Custo por 100 KM</span>
-                    <span className="text-[11px] text-muted-foreground">Com base na média de {settings.vehicle_km_per_liter} km/L e combustível a R$ {Number(settings.fuel_price || 0).toFixed(2)}/L</span>
+                    <span className="text-xs font-black uppercase text-amber-700 dark:text-amber-300 block tracking-wider">Custo Estimado por 100 KM</span>
+                    <span className="text-[11px] text-muted-foreground font-medium">Consumo: {settings.vehicle_km_per_liter} km/L • Combustível: R$ {Number(settings.fuel_price || 0).toFixed(2)}/L</span>
                   </div>
                 </div>
 
-                <div className="text-right self-end sm:self-auto">
-                  <span className="text-lg sm:text-xl font-black font-mono text-amber-600 dark:text-amber-400">
-                    R$ {costPer100Km.toFixed(2)} / 100km
+                <div className="text-right self-end sm:self-auto shrink-0">
+                  <span className="text-lg font-black font-mono text-amber-600 dark:text-amber-400 bg-amber-500/10 px-3.5 py-1.5 rounded-xl border border-amber-500/20">
+                    R$ {costPer100Km.toFixed(2)}
                   </span>
                 </div>
               </div>
@@ -1292,115 +1510,143 @@ export function Profile() {
           </Card>
         )}
 
-        {/* SECTION 4: PIZZARIA RULES */}
-        {(activeTab === 'all' || activeTab === 'pizzaria') && (
-          <Card className="border border-border/80 shadow-md rounded-3xl overflow-hidden transition-all hover:border-indigo-500/30">
-            <CardHeader className="bg-gradient-to-r from-card via-card to-muted/30 border-b border-border/60 p-5 sm:p-6">
+        {/* SECTION 4: PIZZARIA RULES - PROFESSIONAL DRIVER SETTINGS */}
+        {activeTab === 'pizzaria' && (
+          <Card className="border border-border/80 shadow-sm rounded-2xl overflow-hidden transition-all hover:border-indigo-500/20 bg-card">
+            <CardHeader className="border-b border-border-50 p-5 sm:p-6">
               <div className="flex items-center gap-3.5">
-                <div className="p-3 rounded-2xl bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20">
+                <div className="p-2.5 rounded-xl bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/10">
                   <Pizza className="w-5 h-5" />
                 </div>
                 <div>
-                  <CardTitle className="text-base sm:text-lg font-black tracking-tight">Regras do Pagamento de Pizzaria & Diárias</CardTitle>
-                  <CardDescription className="text-xs">
-                    Defina o valor da diária base, limite de entregas inclusas e taxas adicionais para acerto automático.
+                  <CardTitle className="text-base font-black tracking-tight text-foreground">Acerto de Diárias & Pizzarias</CardTitle>
+                  <CardDescription className="text-xs text-muted-foreground">
+                    Defina taxas básicas, quantidade mínima de entregas cobertas e valores adicionais por entrega extra.
                   </CardDescription>
                 </div>
               </div>
             </CardHeader>
             <CardContent className="p-5 sm:p-6 space-y-6">
               
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-5">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                 
-                <div className="space-y-1.5">
-                  <label className="text-xs font-extrabold uppercase tracking-wider text-muted-foreground">
+                <div className="space-y-2">
+                  <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground block">
                     Entregas na Diária Base (Mínimo)
                   </label>
-                  <Input
-                    type="number"
-                    name="pizzaria_base_deliveries"
-                    value={settings.pizzaria_base_deliveries}
-                    onChange={handleChange}
-                    className="h-11 rounded-xl font-bold border-border bg-background"
-                  />
-                  <span className="text-[11px] text-muted-foreground">Quantidade de entregas cobertas pela diária base</span>
+                  <div className="relative flex items-center">
+                    <Input
+                      type="number"
+                      name="pizzaria_base_deliveries"
+                      value={settings.pizzaria_base_deliveries}
+                      onChange={handleChange}
+                      className="h-11 pr-24 rounded-xl font-mono font-bold border-border/80 bg-background focus-visible:ring-indigo-500"
+                    />
+                    <div className="absolute right-3.5 text-[10px] font-black uppercase text-muted-foreground">
+                      Entregas
+                    </div>
+                  </div>
+                  <span className="text-[10px] text-muted-foreground block">Quantidade mínima inclusa no valor da diária básica</span>
                 </div>
 
-                <div className="space-y-1.5">
-                  <label className="text-xs font-extrabold uppercase tracking-wider text-muted-foreground">
-                    Valor da Diária Base (R$)
+                <div className="space-y-2">
+                  <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground block">
+                    Valor da Diária Base
                   </label>
-                  <Input
-                    type="number"
-                    step="0.01"
-                    name="pizzaria_base_rate"
-                    value={settings.pizzaria_base_rate}
-                    onChange={handleChange}
-                    className="h-11 rounded-xl font-bold border-border bg-background"
-                  />
-                  <span className="text-[11px] text-muted-foreground">Pago ao realizar até o limite de entregas base</span>
+                  <div className="relative flex items-center">
+                    <div className="absolute left-3.5 text-xs font-black text-muted-foreground">
+                      R$
+                    </div>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      name="pizzaria_base_rate"
+                      value={settings.pizzaria_base_rate}
+                      onChange={handleChange}
+                      className="h-11 pl-10 rounded-xl font-mono font-bold border-border/80 bg-background focus-visible:ring-indigo-500"
+                    />
+                  </div>
+                  <span className="text-[10px] text-muted-foreground block">Valor fixo pago por fazer até o número mínimo de entregas</span>
                 </div>
 
-                <div className="space-y-1.5">
-                  <label className="text-xs font-extrabold uppercase tracking-wider text-muted-foreground">
-                    Valor da Diária Acima da Base (R$)
+                <div className="space-y-2">
+                  <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground block">
+                    Valor da Diária Acima da Base
                   </label>
-                  <Input
-                    type="number"
-                    step="0.01"
-                    name="pizzaria_daily_rate_above_base"
-                    value={settings.pizzaria_daily_rate_above_base}
-                    onChange={handleChange}
-                    className="h-11 rounded-xl font-bold border-border bg-background"
-                  />
-                  <span className="text-[11px] text-muted-foreground">Diária garantida ao ultrapassar a quantidade base</span>
+                  <div className="relative flex items-center">
+                    <div className="absolute left-3.5 text-xs font-black text-muted-foreground">
+                      R$
+                    </div>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      name="pizzaria_daily_rate_above_base"
+                      value={settings.pizzaria_daily_rate_above_base}
+                      onChange={handleChange}
+                      className="h-11 pl-10 rounded-xl font-mono font-bold border-border/80 bg-background focus-visible:ring-indigo-500"
+                    />
+                  </div>
+                  <span className="text-[10px] text-muted-foreground block">Diária mínima garantida caso ultrapasse as entregas base</span>
                 </div>
 
-                <div className="space-y-1.5">
-                  <label className="text-xs font-extrabold uppercase tracking-wider text-muted-foreground">
-                    Valor Adicional por Entrega Extra (R$)
+                <div className="space-y-2">
+                  <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground block">
+                    Adicional por Entrega Extra
                   </label>
-                  <Input
-                    type="number"
-                    step="0.01"
-                    name="pizzaria_delivery_rate"
-                    value={settings.pizzaria_delivery_rate}
-                    onChange={handleChange}
-                    className="h-11 rounded-xl font-bold border-border bg-background"
-                  />
-                  <span className="text-[11px] text-muted-foreground">Valor pago por cada entrega excedente</span>
+                  <div className="relative flex items-center">
+                    <div className="absolute left-3.5 text-xs font-black text-muted-foreground">
+                      R$
+                    </div>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      name="pizzaria_delivery_rate"
+                      value={settings.pizzaria_delivery_rate}
+                      onChange={handleChange}
+                      className="h-11 pl-10 pr-16 rounded-xl font-mono font-bold border-border/80 bg-background focus-visible:ring-indigo-500"
+                    />
+                    <div className="absolute right-3.5 text-[10px] font-black uppercase text-muted-foreground">
+                      / Extra
+                    </div>
+                  </div>
+                  <span className="text-[10px] text-muted-foreground block">Valor pago a cada entrega excedente realizada</span>
                 </div>
 
-                <div className="space-y-1.5 md:col-span-2">
-                  <label className="text-xs font-extrabold uppercase tracking-wider text-muted-foreground">
-                    Taxa Adicional para Entrega Fora do Bairro / Bairro Distante (R$)
+                <div className="space-y-2 md:col-span-2">
+                  <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground block">
+                    Adicional por Entrega Fora do Bairro (Bairro Distante)
                   </label>
-                  <Input
-                    type="number"
-                    step="0.01"
-                    name="pizzaria_out_of_neighborhood_rate"
-                    value={settings.pizzaria_out_of_neighborhood_rate}
-                    onChange={handleChange}
-                    className="h-11 rounded-xl font-bold border-border bg-background"
-                  />
+                  <div className="relative flex items-center">
+                    <div className="absolute left-3.5 text-xs font-black text-muted-foreground">
+                      R$
+                    </div>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      name="pizzaria_out_of_neighborhood_rate"
+                      value={settings.pizzaria_out_of_neighborhood_rate}
+                      onChange={handleChange}
+                      className="h-11 pl-10 rounded-xl font-mono font-bold border-border/80 bg-background focus-visible:ring-indigo-500"
+                    />
+                  </div>
                 </div>
 
               </div>
 
-              {/* Pizzaria Simulation Banner */}
-              <div className="bg-gradient-to-r from-rose-500/10 via-rose-500/5 to-transparent border border-rose-500/20 rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3.5">
-                <div className="flex items-center gap-3.5">
-                  <div className="p-2.5 bg-rose-500/20 text-rose-600 dark:text-rose-400 rounded-xl shrink-0">
+              {/* Pizzaria Simulation Banner - Aesthetic and Clean */}
+              <div className="bg-gradient-to-r from-rose-500/10 via-rose-500/5 to-transparent border border-rose-500/20 rounded-xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-rose-500/15 text-rose-600 dark:text-rose-400 rounded-lg shrink-0">
                     <Pizza className="w-5 h-5" />
                   </div>
                   <div>
-                    <span className="text-xs font-black uppercase text-rose-700 dark:text-rose-300 block">Simulação de Acerto ({pizzariaSimulatedDeliveries} entregas)</span>
-                    <span className="text-[11px] text-muted-foreground">Diária base (R$ {settings.pizzaria_daily_rate_above_base}) + {pizzariaExtraCount} extras × R$ {settings.pizzaria_delivery_rate}</span>
+                    <span className="text-xs font-black uppercase text-rose-700 dark:text-rose-300 block tracking-wider">Simulação do Acerto da Pizzaria</span>
+                    <span className="text-[11px] text-muted-foreground font-medium">Considerando {pizzariaSimulatedDeliveries} entregas ({pizzariaExtraCount} extras) • Taxa Base: R$ {Number(settings.pizzaria_daily_rate_above_base || 0).toFixed(2)}</span>
                   </div>
                 </div>
 
-                <div className="text-right self-end sm:self-auto">
-                  <span className="text-lg sm:text-xl font-black font-mono text-rose-600 dark:text-rose-400">
+                <div className="text-right self-end sm:self-auto shrink-0">
+                  <span className="text-lg font-black font-mono text-rose-600 dark:text-rose-400 bg-rose-500/10 px-3.5 py-1.5 rounded-xl border border-rose-500/20">
                     R$ {pizzariaTotalSimulated.toFixed(2)}
                   </span>
                 </div>
@@ -1410,128 +1656,143 @@ export function Profile() {
           </Card>
         )}
 
-        {/* SECTION 5: FINANCIAL & INVESTMENT DEFAULT RESERVE */}
-        {(activeTab === 'all' || activeTab === 'financial') && (
-          <Card className="border border-border/80 shadow-md rounded-3xl overflow-hidden transition-all hover:border-indigo-500/30">
-            <CardHeader className="bg-gradient-to-r from-card via-card to-muted/30 border-b border-border/60 p-5 sm:p-6">
+        {/* SECTION 5: FINANCIAL & INVESTMENT DEFAULT RESERVE - WEALTH MANAGEMENT */}
+        {activeTab === 'financial' && (
+          <Card className="border border-border/80 shadow-sm rounded-2xl overflow-hidden transition-all hover:border-indigo-500/20 bg-card">
+            <CardHeader className="border-b border-border/50 p-5 sm:p-6">
               <div className="flex items-center gap-3.5">
-                <div className="p-3 rounded-2xl bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20">
+                <div className="p-2.5 rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/10">
                   <Landmark className="w-5 h-5" />
                 </div>
                 <div>
-                  <CardTitle className="text-base sm:text-lg font-black tracking-tight">Banca Inicial & Reservas de Investimento</CardTitle>
-                  <CardDescription className="text-xs">
-                    Ajuste seu saldo inicial e vincule sua reserva preferida para aportes e proventos.
+                  <CardTitle className="text-base font-black tracking-tight text-foreground">Banca & Reservas de Investimento</CardTitle>
+                  <CardDescription className="text-xs text-muted-foreground">
+                    Ajuste o seu saldo inicial principal e configure a integração com reservas de investimento e provedores de cotações B3.
                   </CardDescription>
                 </div>
               </div>
             </CardHeader>
             <CardContent className="p-5 sm:p-6 space-y-6">
               
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-5">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                 
-                <div className="space-y-1.5">
-                  <label className="text-xs font-extrabold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                    <Coins className="w-3.5 h-3.5 text-emerald-500" /> Saldo Inicial (Banca Principal)
+                {/* Saldo Inicial */}
+                <div className="space-y-2">
+                  <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                    Saldo Inicial (Banca Principal)
                   </label>
-                  <Input
-                    type="number"
-                    step="0.01"
-                    name="initial_balance"
-                    placeholder="0.00"
-                    value={settings.initial_balance || ''}
-                    onChange={handleChange}
-                    className="h-11 rounded-xl font-bold border-border bg-background"
-                  />
-                  <span className="text-[11px] text-muted-foreground">Valor de partida da sua banca para relatórios globais de caixa</span>
+                  <div className="relative flex items-center">
+                    <div className="absolute left-3.5 text-xs font-black text-muted-foreground">
+                      R$
+                    </div>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      name="initial_balance"
+                      placeholder="0.00"
+                      value={settings.initial_balance || ''}
+                      onChange={handleChange}
+                      className="h-11 pl-10 rounded-xl font-mono font-bold border-border/80 bg-background focus-visible:ring-indigo-500"
+                    />
+                  </div>
+                  <span className="text-[10px] text-muted-foreground block">Balanço de partida para relatórios globais de caixa</span>
                 </div>
 
-                <div className="space-y-1.5">
-                  <label className="text-xs font-extrabold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                    <PiggyBank className="w-3.5 h-3.5 text-blue-500" /> Reserva Padrão para Investimentos
+                {/* Reserva Padrão */}
+                <div className="space-y-2">
+                  <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                    Reserva de Ativos Padrão
                   </label>
-                  <select
-                    name="default_investment_reserve_id"
-                    value={settings.default_investment_reserve_id || ''}
-                    onChange={(e) => setSettings({ ...settings, default_investment_reserve_id: e.target.value })}
-                    className="w-full bg-background border border-border rounded-xl h-11 px-3 py-2 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  >
-                    <option value="">Nenhuma (Usar Saldo da Banca Principal)</option>
-                    {(reserves || []).map(r => (
-                      <option key={r.id} value={r.id}>
-                        {r.name} (Saldo: R$ {Number(r.saldo_atual || 0).toFixed(2)})
-                      </option>
-                    ))}
-                  </select>
-                  <span className="text-[11px] text-muted-foreground">De onde saem os aportes de FIIs e Ações</span>
+                  <div className="relative flex items-center">
+                    <select
+                      name="default_investment_reserve_id"
+                      value={settings.default_investment_reserve_id || ''}
+                      onChange={(e) => setSettings({ ...settings, default_investment_reserve_id: e.target.value })}
+                      className="w-full bg-background border border-border/80 rounded-xl h-11 px-3 py-2 text-xs font-extrabold text-foreground focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer appearance-none"
+                    >
+                      <option value="">Nenhuma (Usar Saldo da Banca Principal)</option>
+                      {(reserves || []).map(r => (
+                        <option key={r.id} value={r.id}>
+                          {r.name} (Saldo: R$ {Number(r.saldo_atual || 0).toFixed(2)})
+                        </option>
+                      ))}
+                    </select>
+                    <div className="absolute right-3.5 pointer-events-none text-muted-foreground">
+                      <PiggyBank className="w-4 h-4 text-blue-500" />
+                    </div>
+                  </div>
+                  <span className="text-[10px] text-muted-foreground block">Origem de recursos automática para aportes e proventos de investimentos</span>
                 </div>
 
               </div>
 
               {/* SEÇÃO PROVEDOR DE COTAÇÕES (AÇÕES & FIIS) */}
-              <div className="pt-4 border-t border-border/60 space-y-4">
-                <div className="flex items-center justify-between">
-                  <div className="space-y-0.5">
-                    <span className="text-xs font-black uppercase tracking-wider text-foreground flex items-center gap-1.5">
-                      <Zap className="w-3.5 h-3.5 text-cyan-500" /> Provedor de Cotações da B3 (Ações, FIIs, BDRs, ETFs)
-                    </span>
-                    <span className="text-[11px] text-muted-foreground block">
-                      Arquitetura híbrida e tolerante a falhas com suporte nativo e em tempo real para Ações e Fundos Imobiliários.
-                    </span>
-                  </div>
+              <div className="pt-6 border-t border-border/50 space-y-5">
+                <div className="space-y-1">
+                  <span className="text-xs font-black uppercase tracking-wider text-foreground flex items-center gap-1.5">
+                    <Zap className="w-3.5 h-3.5 text-cyan-500" /> Provedor de Cotações da B3
+                  </span>
+                  <span className="text-[11px] text-muted-foreground block">
+                    Arquitetura tolerante a falhas com suporte em tempo real para ações, fundos imobiliários, BDRs e ETFs brasileiras.
+                  </span>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-extrabold uppercase tracking-wider text-muted-foreground">
-                      Provedor de Dados do Mercado
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground block">
+                      Provedor Ativo
                     </label>
-                    <select
-                      value={settings.quote_provider || 'auto'}
-                      onChange={(e) => setSettings({ ...settings, quote_provider: e.target.value as any })}
-                      className="w-full bg-background border border-border rounded-xl h-11 px-3 py-2 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    >
-                      <option value="auto">⚡ Multi-Fonte Automático (Recomendado - Ações & FIIs)</option>
-                      <option value="yahoo">Yahoo Finance B3 (Nativo Completo)</option>
-                      <option value="mfinance">mFinance (Especialista em FIIs & Ações)</option>
-                      <option value="brapi">Brapi API (Requer Token para FIIs)</option>
-                      <option value="hgbrasil">HG Brasil Finance</option>
-                    </select>
-                    <span className="text-[10px] text-muted-foreground">
+                    <div className="relative flex items-center">
+                      <select
+                        value={settings.quote_provider || 'auto'}
+                        onChange={(e) => setSettings({ ...settings, quote_provider: e.target.value as any })}
+                        className="w-full bg-background border border-border/80 rounded-xl h-11 px-3 py-2 text-xs font-extrabold text-foreground focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer appearance-none"
+                      >
+                        <option value="auto">⚡ Multi-Fonte Automático (Recomendado)</option>
+                        <option value="yahoo">Yahoo Finance B3 (Nativo Completo)</option>
+                        <option value="mfinance">mFinance (Ações & FIIs)</option>
+                        <option value="brapi">Brapi API (Requer Token para FIIs)</option>
+                        <option value="hgbrasil">HG Brasil Finance</option>
+                      </select>
+                    </div>
+                    <span className="text-[10px] text-muted-foreground block">
                       O modo <strong>Multi-Fonte</strong> busca dados sem bloqueio de CORS pelo servidor e alterna fontes automaticamente se alguma estiver fora do ar.
                     </span>
                   </div>
 
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-extrabold uppercase tracking-wider text-muted-foreground flex items-center justify-between">
-                      <span className="flex items-center gap-1.5">
-                        <Key className="w-3.5 h-3.5 text-amber-500" /> Token Brapi.dev (Opcional)
-                      </span>
-                      <span className="text-[10px] text-muted-foreground">Opcional</span>
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center justify-between">
+                      <span>Token Brapi.dev</span>
+                      <span className="text-[10px] text-muted-foreground font-normal lowercase tracking-normal">Opcional</span>
                     </label>
-                    <Input
-                      type="text"
-                      name="brapi_token"
-                      placeholder="Ex: token_exemplo_brapi..."
-                      value={settings.brapi_token || ''}
-                      onChange={handleChange}
-                      className="h-11 rounded-xl font-mono text-xs border-border bg-background"
-                    />
-                    <span className="text-[10px] text-muted-foreground">
-                      Caso possua chave da Brapi, insira aqui para limites maiores.
+                    <div className="relative flex items-center">
+                      <div className="absolute left-3.5 text-muted-foreground">
+                        <Key className="w-4 h-4 text-amber-500" />
+                      </div>
+                      <Input
+                        type="text"
+                        name="brapi_token"
+                        placeholder="Ex: token_exemplo_brapi..."
+                        value={settings.brapi_token || ''}
+                        onChange={handleChange}
+                        className="h-11 pl-10 rounded-xl font-mono text-xs border-border/80 bg-background focus-visible:ring-indigo-500"
+                      />
+                    </div>
+                    <span className="text-[10px] text-muted-foreground block">
+                      Caso possua chave da Brapi, insira aqui para limites maiores de requisições.
                     </span>
                   </div>
                 </div>
 
                 {/* Instant Quote Tester in Profile */}
-                <div className="bg-muted/40 p-4 rounded-2xl border border-border/80 space-y-3">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div className="bg-muted/40 p-4.5 rounded-xl border border-border/60 space-y-3.5">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                     <div>
                       <span className="text-xs font-black text-foreground block">
-                        Teste Rápido de Cotações (Ações & FIIs)
+                        Teste Rápido de Conectividade
                       </span>
-                      <span className="text-[11px] text-muted-foreground">
-                        Verifique em tempo real a resposta das cotações para ativos como PETR4, MXRF11, HGLG11 e VALE3.
+                      <span className="text-[11px] text-muted-foreground block">
+                        Verifique em tempo real as respostas das cotações de ativos simulados (PETR4, MXRF11, HGLG11, VALE3).
                       </span>
                     </div>
 
@@ -1540,24 +1801,24 @@ export function Profile() {
                       variant="outline"
                       onClick={() => handleTestQuotesInProfile()}
                       disabled={testingProfileQuote}
-                      className="h-9 px-4 rounded-xl text-xs font-bold bg-background border-border text-foreground hover:bg-muted cursor-pointer shrink-0"
+                      className="h-10 px-4 rounded-xl text-xs font-bold bg-background border-border text-foreground hover:bg-muted cursor-pointer shrink-0 flex items-center gap-1.5"
                     >
                       {testingProfileQuote ? (
-                        <RefreshCw className="w-3.5 h-3.5 animate-spin mr-1.5" />
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin text-indigo-500" />
                       ) : (
-                        <Sparkles className="w-3.5 h-3.5 text-indigo-500 mr-1.5" />
+                        <Sparkles className="w-3.5 h-3.5 text-indigo-500" />
                       )}
-                      {testingProfileQuote ? 'Testando...' : 'Testar Cotação Agora'}
+                      {testingProfileQuote ? 'Testando...' : 'Testar Agora'}
                     </Button>
                   </div>
 
                   {/* Results preview */}
                   {profileQuoteTestResult && (
-                    <div className="pt-2 border-t border-border/60 flex flex-wrap items-center gap-2 text-xs">
+                    <div className="pt-3 border-t border-border/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
                       <span className="text-[11px] font-bold text-muted-foreground">
-                        Fonte: <strong className="text-foreground">{profileQuoteTestResult.providerUsed}</strong> ({profileQuoteTestResult.durationMs}ms)
+                        Fonte utilizada: <strong className="text-foreground">{profileQuoteTestResult.providerUsed}</strong> ({profileQuoteTestResult.durationMs}ms)
                       </span>
-                      <div className="flex flex-wrap gap-1.5 ml-auto">
+                      <div className="flex flex-wrap gap-1.5 sm:ml-auto">
                         {profileQuoteTestResult.details.map((d) => (
                           <span
                             key={d.ticker}
@@ -1613,26 +1874,24 @@ export function Profile() {
       </div>
 
       {/* GLOBAL STICKY SAVE BAR (FIXED POSITIONING, Z-INDEX & DIRTY FORM CHECK) */}
-      <div className="fixed bottom-20 md:bottom-6 left-1/2 -translate-x-1/2 z-50 w-[94%] max-w-2xl bg-slate-950/95 dark:bg-slate-900/95 text-white backdrop-blur-xl border border-indigo-500/30 rounded-2xl p-3 sm:p-3.5 shadow-2xl flex items-center justify-between gap-3 transition-all animate-in slide-in-from-bottom duration-300">
-        
-        {/* Status indicator */}
-        <div className="flex items-center gap-2.5 pl-2 min-w-0">
-          <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${
-            isDirty ? 'bg-amber-400 animate-pulse ring-4 ring-amber-400/20' : 'bg-emerald-400'
-          }`} />
-          <div className="min-w-0">
-            <span className="text-xs font-black text-white block truncate">
-              {isDirty ? 'Alterações não salvas' : 'Tudo salvo'}
-            </span>
-            <span className="text-[10px] text-slate-400 hidden sm:block truncate">
-              {isDirty ? 'Clique em salvar para persistir os novos ajustes' : 'Configurações sincronizadas com a nuvem'}
-            </span>
+      {isDirty && (
+        <div className="fixed bottom-20 md:bottom-6 left-1/2 -translate-x-1/2 z-50 w-[94%] max-w-2xl bg-slate-950/95 dark:bg-slate-900/95 text-white backdrop-blur-xl border border-indigo-500/30 rounded-2xl p-3 sm:p-3.5 shadow-2xl flex items-center justify-between gap-3 transition-all animate-in slide-in-from-bottom duration-300">
+          
+          {/* Status indicator */}
+          <div className="flex items-center gap-2.5 pl-2 min-w-0">
+            <div className="w-2.5 h-2.5 rounded-full shrink-0 bg-amber-400 animate-pulse ring-4 ring-amber-400/20" />
+            <div className="min-w-0">
+              <span className="text-xs font-black text-white block truncate">
+                Alterações não salvas
+              </span>
+              <span className="text-[10px] text-slate-400 hidden sm:block truncate">
+                Clique em salvar para persistir os novos ajustes
+              </span>
+            </div>
           </div>
-        </div>
 
-        {/* Buttons Group */}
-        <div className="flex items-center gap-2 shrink-0">
-          {isDirty && (
+          {/* Buttons Group */}
+          <div className="flex items-center gap-2 shrink-0">
             <Button
               type="button"
               variant="outline"
@@ -1644,29 +1903,23 @@ export function Profile() {
               <RotateCcw className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">Descartar</span>
             </Button>
-          )}
 
-          <Button 
-            onClick={handleSaveSettings} 
-            disabled={!isDirty || savingSettings}
-            className={`h-10 px-5 rounded-xl font-extrabold text-xs uppercase tracking-wider shadow-lg transition-all cursor-pointer flex items-center gap-2 ${
-              isDirty 
-                ? 'bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 text-white ring-2 ring-indigo-400/30'
-                : 'bg-slate-800/80 text-slate-400 cursor-not-allowed opacity-75'
-            }`}
-          >
-            {savingSettings ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : isDirty ? (
-              <Save className="w-4 h-4" />
-            ) : (
-              <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-            )}
-            {savingSettings ? 'Salvando...' : isDirty ? 'Salvar Alterações' : 'Tudo Salvo'}
-          </Button>
+            <Button 
+              onClick={handleSaveSettings} 
+              disabled={savingSettings}
+              className="h-10 px-5 rounded-xl font-extrabold text-xs uppercase tracking-wider shadow-lg transition-all cursor-pointer flex items-center gap-2 bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 text-white ring-2 ring-indigo-400/30"
+            >
+              {savingSettings ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Save className="w-4 h-4" />
+              )}
+              {savingSettings ? 'Salvando...' : 'Salvar Alterações'}
+            </Button>
+          </div>
+
         </div>
-
-      </div>
+      )}
 
       {/* MODALS FOR CATEGORY ACTIONS */}
       <Dialog open={!!deleteCategoryConfirm} onOpenChange={(val) => !val && setDeleteCategoryConfirm(null)}>

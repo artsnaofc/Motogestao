@@ -4,6 +4,7 @@ import { CurrencyInput } from '../CurrencyInput';
 import { useData } from '../../contexts/DataContext';
 import { supabase } from '../../lib/supabase';
 import { toast } from 'sonner';
+import { cacheManager } from '../../lib/cacheManager';
 import { 
   Scale, 
   PlusCircle, 
@@ -77,13 +78,7 @@ export function RebalanceWizard({
 
   // Custom / Planned assets state (not yet in real portfolio positions)
   const [customAssets, setCustomAssets] = useState<CustomRebalanceAsset[]>(() => {
-    try {
-      const raw = localStorage.getItem('rebalance_custom_assets');
-      if (raw) return JSON.parse(raw);
-    } catch (err) {
-      console.warn('Error reading rebalance_custom_assets from localStorage:', err);
-    }
-    return [];
+    return cacheManager.get<CustomRebalanceAsset[]>('rebalance_custom_assets') || [];
   });
 
   // Modals state
@@ -140,13 +135,9 @@ export function RebalanceWizard({
     }
   }, [reserveBalance]);
 
-  // Persist custom assets to localStorage
+  // Persist custom assets to cache
   useEffect(() => {
-    try {
-      localStorage.setItem('rebalance_custom_assets', JSON.stringify(customAssets));
-    } catch (err) {
-      console.warn('Error saving rebalance_custom_assets to localStorage:', err);
-    }
+    cacheManager.set('rebalance_custom_assets', customAssets, undefined, 'investments');
   }, [customAssets]);
 
   // Combined asset universe: Existing portfolio positions + Custom planned assets
@@ -183,13 +174,7 @@ export function RebalanceWizard({
 
   // Targets state
   const [targets, setTargets] = useState<Record<string, number>>(() => {
-    let saved: Record<string, number> | null = null;
-    try {
-      const raw = localStorage.getItem('rebalance_asset_targets');
-      if (raw) saved = JSON.parse(raw);
-    } catch (err) {
-      console.warn('Error reading rebalance_asset_targets from localStorage:', err);
-    }
+    let saved = cacheManager.get<Record<string, number>>('rebalance_asset_targets');
     if (!saved && settings?.rebalance_targets) {
       saved = settings.rebalance_targets;
     }
@@ -225,10 +210,10 @@ export function RebalanceWizard({
     });
   }, [combinedAssets, customAssets]);
 
-  // Save targets to localStorage and Supabase user_settings
+  // Save targets to cache and Supabase user_settings
   const persistTargets = async (newTargets: Record<string, number>, showToast = false) => {
     try {
-      localStorage.setItem('rebalance_asset_targets', JSON.stringify(newTargets));
+      cacheManager.set('rebalance_asset_targets', newTargets, undefined, 'investments');
       if (settings?.user_id && settings.user_id !== 'local') {
         const { error } = await supabase
           .from('user_settings')
@@ -248,10 +233,10 @@ export function RebalanceWizard({
     }
   };
 
-  // Auto-save to localStorage whenever targets state changes
+  // Auto-save to cache whenever targets state changes
   useEffect(() => {
     if (Object.keys(targets).length > 0) {
-      localStorage.setItem('rebalance_asset_targets', JSON.stringify(targets));
+      cacheManager.set('rebalance_asset_targets', targets, undefined, 'investments');
     }
   }, [targets]);
 

@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, ReactNode, useCa
 import { supabase } from '../lib/supabase';
 import { Transaction, UserSettings, Reserve, ReserveTransaction, InvestmentTransaction, Dividend, DividendAnalysisMode, ValuationTarget } from '../types';
 import { QuoteProvider, QuoteFetchResult } from '../lib/quoteService';
+import { cacheManager } from '../lib/cacheManager';
 
 // Segregated Contexts & Hooks
 import { QuotesProvider, useQuotes } from './QuotesContext';
@@ -17,6 +18,7 @@ export { useTransactions } from './TransactionsContext';
 export interface DataContextType {
   // Operational Transactions & Settings
   transactions: Transaction[];
+  setTransactions: React.Dispatch<React.SetStateAction<Transaction[]>>;
   updateTransaction: (id: string, transaction: Partial<Transaction>) => Promise<void>;
   deleteTransaction: (id: string) => Promise<void>;
   settings: UserSettings | null;
@@ -67,7 +69,7 @@ export interface DataContextType {
   ) => Promise<QuoteFetchResult | undefined>;
 }
 
-const DataContext = createContext<DataContextType | undefined>(undefined);
+export const DataContext = createContext<DataContextType | undefined>(undefined);
 
 const getDefaultReserves = (userId: string): Reserve[] => [
   {
@@ -127,17 +129,16 @@ function DataContextBridge({ children }: { children: ReactNode }) {
     return quotesCtx.fetchQuotes(tickersToUse, overrideProvider, transCtx.settings, overrideToken);
   }, [invCtx.investmentTransactions, quotesCtx, transCtx.settings]);
 
-  // Auto-fetch quotes when investment transactions change
+  // Auto-fetch quotes on load has been removed to respect user request and save API calls.
+  // Quotes will only be fetched when explicitly visiting the Investments page.
   useEffect(() => {
-    if (invCtx.investmentTransactions.length > 0) {
-      const tickers = invCtx.investmentTransactions.map(it => it.ticker);
-      quotesCtx.fetchQuotes(tickers, undefined, transCtx.settings);
-    }
-  }, [invCtx.investmentTransactions.length, transCtx.settings?.quote_provider]);
+    // No-op to avoid automatic network requests on app load
+  }, []);
 
   const unifiedValue = useMemo<DataContextType>(() => ({
     // Transactions
     transactions: transCtx.transactions,
+    setTransactions: transCtx.setTransactions,
     updateTransaction: transCtx.updateTransaction,
     deleteTransaction: transCtx.deleteTransaction,
     settings: transCtx.settings,
@@ -238,7 +239,12 @@ export function DataProvider({ children }: { children: ReactNode }) {
             expense_categories: expCats,
           };
           setSettings(finalSettings);
-          localStorage.setItem(`user_settings_${userId}`, JSON.stringify(finalSettings));
+          cacheManager.set(`user_settings_${userId}`, finalSettings, undefined, 'settings');
+
+          // Sync database cached quotes to local cache manager
+          if (settingsData.cached_quotes && Object.keys(settingsData.cached_quotes).length > 0) {
+            cacheManager.set('cached_quotes', settingsData.cached_quotes, undefined, 'quotes');
+          }
         } else {
           const defaultSettings: UserSettings = {
             user_id: userId,
@@ -259,12 +265,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
           setSettings(defaultSettings);
         }
       } catch (errSettings) {
-        console.warn('Could not load settings from Supabase, loading from localStorage:', errSettings);
-        const localSettings = localStorage.getItem(`user_settings_${userId}`);
+        console.warn('Could not load settings from Supabase, loading from cache:', errSettings);
+        const localSettings = cacheManager.get<UserSettings>(`user_settings_${userId}`);
         if (localSettings) {
-          try {
-            setSettings(JSON.parse(localSettings));
-          } catch {}
+          setSettings(localSettings);
         }
       }
 
@@ -280,15 +284,13 @@ export function DataProvider({ children }: { children: ReactNode }) {
         if (txError) throw txError;
         if (txData) {
           setTransactions(txData);
-          localStorage.setItem(`transactions_${userId}`, JSON.stringify(txData));
+          cacheManager.set(`transactions_${userId}`, txData, undefined, 'transactions');
         }
       } catch (errTx) {
-        console.warn('Could not load transactions from Supabase, loading from localStorage:', errTx);
-        const localTxs = localStorage.getItem(`transactions_${userId}`);
+        console.warn('Could not load transactions from Supabase, loading from cache:', errTx);
+        const localTxs = cacheManager.get<Transaction[]>(`transactions_${userId}`);
         if (localTxs) {
-          try {
-            setTransactions(JSON.parse(localTxs));
-          } catch {}
+          setTransactions(localTxs);
         }
       }
 
@@ -303,13 +305,13 @@ export function DataProvider({ children }: { children: ReactNode }) {
         if (rSupaerror) throw rSupaerror;
 
         const hasSeededKey = `has_seeded_reserves_${userId}`;
-        const hasSeeded = localStorage.getItem(hasSeededKey) === 'true';
+        const hasSeeded = cacheManager.get<boolean>(hasSeededKey) === true;
 
         if (rSupadata && rSupadata.length > 0) {
           const finalReserves = rSupadata as Reserve[];
           setReserves(finalReserves);
-          localStorage.setItem(`reserves_${userId}`, JSON.stringify(finalReserves));
-          if (!hasSeeded) localStorage.setItem(hasSeededKey, 'true');
+          cacheManager.set(`reserves_${userId}`, finalReserves, undefined, 'reserves');
+          if (!hasSeeded) cacheManager.set(hasSeededKey, true, undefined, 'reserves');
         } else if (!hasSeeded) {
           const defaults = getDefaultReserves(userId);
           const sanitizedDefaults = defaults.map(({ saldo_atual, ...rest }) => rest);
@@ -320,31 +322,26 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
           if (!rInsertError && rInserted && rInserted.length > 0) {
             setReserves(rInserted);
-            localStorage.setItem(`reserves_${userId}`, JSON.stringify(rInserted));
-            localStorage.setItem(hasSeededKey, 'true');
+            cacheManager.set(`reserves_${userId}`, rInserted, undefined, 'reserves');
+            cacheManager.set(hasSeededKey, true, undefined, 'reserves');
           } else {
             setReserves(defaults);
-            localStorage.setItem(`reserves_${userId}`, JSON.stringify(defaults));
-            localStorage.setItem(hasSeededKey, 'true');
+            cacheManager.set(`reserves_${userId}`, defaults, undefined, 'reserves');
+            cacheManager.set(hasSeededKey, true, undefined, 'reserves');
           }
         } else {
           setReserves([]);
-          localStorage.setItem(`reserves_${userId}`, JSON.stringify([]));
+          cacheManager.set(`reserves_${userId}`, [], undefined, 'reserves');
         }
       } catch (errRes) {
-        console.warn('Could not load reserves from Supabase, loading from localStorage:', errRes);
-        const localRes = localStorage.getItem(`reserves_${userId}`);
+        console.warn('Could not load reserves from Supabase, loading from cache:', errRes);
+        const localRes = cacheManager.get<Reserve[]>(`reserves_${userId}`);
         if (localRes) {
-          try {
-            setReserves(JSON.parse(localRes));
-          } catch {
-            const defaults = getDefaultReserves(userId);
-            setReserves(defaults);
-          }
+          setReserves(localRes);
         } else {
           const defaults = getDefaultReserves(userId);
           setReserves(defaults);
-          localStorage.setItem(`reserves_${userId}`, JSON.stringify(defaults));
+          cacheManager.set(`reserves_${userId}`, defaults, undefined, 'reserves');
         }
       }
 
@@ -359,28 +356,21 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
         if (rtSupaerror) throw rtSupaerror;
         if (rtSupadata) {
-          const localRtsRaw = localStorage.getItem(`reserve_transactions_${userId}`);
+          const localRts = cacheManager.get<ReserveTransaction[]>(`reserve_transactions_${userId}`);
           let mergedRts = rtSupadata;
-          if (localRtsRaw) {
-            try {
-              const localRts = JSON.parse(localRtsRaw);
-              if (Array.isArray(localRts)) {
-                const supaIds = new Set(rtSupadata.map(item => item.id));
-                const localOnly = localRts.filter((item: any) => item && item.id && !supaIds.has(item.id));
-                mergedRts = [...rtSupadata, ...localOnly];
-              }
-            } catch {}
+          if (localRts && Array.isArray(localRts)) {
+            const supaIds = new Set(rtSupadata.map(item => item.id));
+            const localOnly = localRts.filter((item: any) => item && item.id && !supaIds.has(item.id));
+            mergedRts = [...rtSupadata, ...localOnly];
           }
           setReserveTransactions(mergedRts);
-          localStorage.setItem(`reserve_transactions_${userId}`, JSON.stringify(mergedRts));
+          cacheManager.set(`reserve_transactions_${userId}`, mergedRts, undefined, 'reserves');
         }
       } catch (errRt) {
-        console.warn('Could not load reserve transactions from Supabase, loading from localStorage:', errRt);
-        const localRts = localStorage.getItem(`reserve_transactions_${userId}`);
+        console.warn('Could not load reserve transactions from Supabase, loading from cache:', errRt);
+        const localRts = cacheManager.get<ReserveTransaction[]>(`reserve_transactions_${userId}`);
         if (localRts) {
-          try {
-            setReserveTransactions(JSON.parse(localRts));
-          } catch {}
+          setReserveTransactions(localRts);
         }
       }
 
@@ -396,15 +386,13 @@ export function DataProvider({ children }: { children: ReactNode }) {
         if (itSupaerror) throw itSupaerror;
         if (itSupadata) {
           setInvestmentTransactions(itSupadata);
-          localStorage.setItem(`investment_transactions_${userId}`, JSON.stringify(itSupadata));
+          cacheManager.set(`investment_transactions_${userId}`, itSupadata, undefined, 'investments');
         }
       } catch (errIt) {
-        console.warn('Supabase investment loading error:', errIt);
-        const localIts = localStorage.getItem(`investment_transactions_${userId}`);
+        console.warn('Supabase investment loading error, using cache:', errIt);
+        const localIts = cacheManager.get<InvestmentTransaction[]>(`investment_transactions_${userId}`);
         if (localIts) {
-          try {
-            setInvestmentTransactions(JSON.parse(localIts));
-          } catch {}
+          setInvestmentTransactions(localIts);
         }
       }
 
@@ -419,15 +407,13 @@ export function DataProvider({ children }: { children: ReactNode }) {
         if (divError) throw divError;
         if (divData) {
           setDividends(divData);
-          localStorage.setItem(`dividends_${userId}`, JSON.stringify(divData));
+          cacheManager.set(`dividends_${userId}`, divData, undefined, 'investments');
         }
       } catch (errDiv) {
-        console.warn('Supabase dividends loading error:', errDiv);
-        const localDivs = localStorage.getItem(`dividends_${userId}`);
+        console.warn('Supabase dividends loading error, using cache:', errDiv);
+        const localDivs = cacheManager.get<Dividend[]>(`dividends_${userId}`);
         if (localDivs) {
-          try {
-            setDividends(JSON.parse(localDivs));
-          } catch {}
+          setDividends(localDivs);
         }
       }
 

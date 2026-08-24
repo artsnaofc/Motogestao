@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import { cacheManager } from '../../lib/cacheManager';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -164,15 +165,10 @@ export function QuoteProviderSelectorModal({ open, onOpenChange }: QuoteProvider
           console.warn('[QuoteProviderModal] Supabase save warning (fallback to local):', error.message);
         }
 
-        // 2. Unconditionally update LocalStorage for reliable client persistence
+        // 2. Unconditionally update cache for reliable client persistence
         const localKey = `user_settings_${userId}`;
-        try {
-          const existing = localStorage.getItem(localKey);
-          const parsed = existing ? JSON.parse(existing) : {};
-          localStorage.setItem(localKey, JSON.stringify({ ...parsed, ...newSettingsPayload }));
-        } catch (err) {
-          console.warn('[QuoteProviderModal] LocalStorage error:', err);
-        }
+        const parsed = cacheManager.get<any>(localKey) || {};
+        cacheManager.set(localKey, { ...parsed, ...newSettingsPayload }, undefined, 'settings');
 
         // 3. Refresh React Context settings state
         await refreshData(true);
