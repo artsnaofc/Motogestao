@@ -4,11 +4,13 @@ import { Home, List, PlusCircle, User, PiggyBank, TrendingUp, Bike, Sparkles, Lo
 import { supabase } from '../lib/supabase';
 import { Button } from '@/components/ui/button';
 import { syncQueueManager, SyncTask } from '../lib/syncQueue';
+import { useData } from '../contexts/DataContext';
 
 export function MainLayout({ children }: { children: React.ReactNode }) {
   const location = useLocation();
   const navigate = useNavigate();
   const [syncQueue, setSyncQueue] = React.useState<SyncTask[]>([]);
+  const { settings } = useData();
 
   React.useEffect(() => {
     return syncQueueManager.subscribe((q) => setSyncQueue(q));
@@ -23,6 +25,7 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
     { path: '/history', label: 'Extrato & Histórico', icon: List, desc: 'Corridas, fretes e despesas' },
     { path: '/reserves', label: 'Reservas Financeiras', icon: PiggyBank, desc: 'Fundos de emergência' },
     { path: '/investments', label: 'Carteira de Ativos', icon: TrendingUp, desc: 'Ações e FIIs' },
+    ...(settings?.is_admin ? [{ path: '/admin', label: 'Modo Admin', icon: ShieldCheck, desc: 'Gestão e configurações' }] : []),
     { path: '/profile', label: 'Perfil & Ajustes', icon: User, desc: 'Categorias e parâmetros' },
   ];
 
@@ -182,14 +185,15 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
           </div>
         )}
 
-        <button 
-          type="button"
-          onClick={() => window.dispatchEvent(new CustomEvent('toggle-debug-console'))}
-          className="p-2 text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded-xl transition-all cursor-pointer min-w-[36px] min-h-[36px] flex items-center justify-center border border-border/40"
-          title="Abrir Painel de Debug"
-        >
-          <Terminal className="w-4 h-4 text-indigo-500" />
-        </button>
+        {settings?.is_admin && (
+          <Link 
+            to="/admin"
+            className="p-2 text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded-xl transition-all cursor-pointer min-w-[36px] min-h-[36px] flex items-center justify-center border border-border/40"
+            title="Painel Administrativo"
+          >
+            <ShieldCheck className="w-4 h-4 text-primary" />
+          </Link>
+        )}
       </header>
 
       {/* Main Content Area */}

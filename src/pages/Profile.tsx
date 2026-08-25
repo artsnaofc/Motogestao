@@ -134,6 +134,8 @@ export function Profile() {
     fuel_price: 6,
     default_driver_labor: 100,
     initial_balance: 0,
+    brapi_token: '',
+    quote_provider: 'auto',
   });
 
   const [personalCategories, setPersonalCategories] = useState<string[]>([]);
@@ -515,6 +517,19 @@ export function Profile() {
       const payload = {
         user_id: userData.user.id,
         ...settings,
+        pizzaria_base_deliveries: Number(settings.pizzaria_base_deliveries) || 0,
+        pizzaria_base_rate: Number(settings.pizzaria_base_rate) || 0,
+        pizzaria_daily_rate_above_base: Number(settings.pizzaria_daily_rate_above_base) || 0,
+        pizzaria_delivery_rate: Number(settings.pizzaria_delivery_rate) || 0,
+        pizzaria_out_of_neighborhood_rate: Number(settings.pizzaria_out_of_neighborhood_rate) || 0,
+        vehicle_km_per_liter: Number(settings.vehicle_km_per_liter) || 0,
+        fuel_price: Number(settings.fuel_price) || 0,
+        weekly_goal: Number(settings.weekly_goal) || 0,
+        weekly_net_goal: Number(settings.weekly_net_goal) || 0,
+        default_driver_labor: Number(settings.default_driver_labor) || 0,
+        initial_balance: Number(settings.initial_balance) || 0,
+        brapi_token: settings.brapi_token || '',
+        quote_provider: settings.quote_provider || 'auto',
         default_investment_reserve_id: settings.default_investment_reserve_id || null,
         operational_expense_categories: operationalCategories,
         personal_expense_categories: personalCategories,
@@ -522,6 +537,8 @@ export function Profile() {
         income_categories: incomeCategories,
         categories_with_km: categoriesWithKm,
         category_icons: categoryIcons,
+        asset_cnpjs: settings.asset_cnpjs || {},
+        rebalance_targets: settings.rebalance_targets || {},
         updated_at: new Date().toISOString(),
       };
 
@@ -860,26 +877,28 @@ export function Profile() {
             </div>
 
             {/* CARD 6: DEV TOOLS / DEBUG QUICK CARD */}
-            <div 
-              onClick={() => setIsDebugModalOpen(true)}
-              className="group p-5 rounded-2xl border border-indigo-500/20 bg-gradient-to-tr from-card to-indigo-500/5 hover:border-indigo-500/40 hover:shadow-md transition-all cursor-pointer flex flex-col justify-between gap-4"
-            >
-              <div className="flex items-start justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="p-2.5 rounded-xl bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 group-hover:bg-indigo-500/20 transition-colors">
-                    <Bug className="w-5 h-5" />
+            {globalSettings?.is_admin && (
+              <div 
+                onClick={() => setIsDebugModalOpen(true)}
+                className="group p-5 rounded-2xl border border-indigo-500/20 bg-gradient-to-tr from-card to-indigo-500/5 hover:border-indigo-500/40 hover:shadow-md transition-all cursor-pointer flex flex-col justify-between gap-4"
+              >
+                <div className="flex items-start justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2.5 rounded-xl bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 group-hover:bg-indigo-500/20 transition-colors">
+                      <Bug className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-black text-foreground">Console Developer & Debug</h3>
+                      <p className="text-[11px] text-muted-foreground">Diagnóstico, latência de banco e cache</p>
+                    </div>
                   </div>
-                  <div>
-                    <h3 className="text-sm font-black text-foreground">Console Developer & Debug</h3>
-                    <p className="text-[11px] text-muted-foreground">Diagnóstico, latência de banco e cache</p>
-                  </div>
+                  <ChevronRight className="w-4 h-4 text-muted-foreground group-hover:text-foreground transition-colors" />
                 </div>
-                <ChevronRight className="w-4 h-4 text-muted-foreground group-hover:text-foreground transition-colors" />
+                <div className="pt-2 border-t border-indigo-500/10 text-[10px] text-indigo-500 dark:text-indigo-400 font-bold flex items-center gap-1.5">
+                  <Terminal className="w-3.5 h-3.5" /> Clique para abrir ferramentas avançadas
+                </div>
               </div>
-              <div className="pt-2 border-t border-indigo-500/10 text-[10px] text-indigo-500 dark:text-indigo-400 font-bold flex items-center gap-1.5">
-                <Terminal className="w-3.5 h-3.5" /> Clique para abrir ferramentas avançadas
-              </div>
-            </div>
+            )}
 
           </div>
         )}
@@ -1690,7 +1709,7 @@ export function Profile() {
                       step="0.01"
                       name="initial_balance"
                       placeholder="0.00"
-                      value={settings.initial_balance || ''}
+                      value={settings.initial_balance ?? ''}
                       onChange={handleChange}
                       className="h-11 pl-10 rounded-xl font-mono font-bold border-border/80 bg-background focus-visible:ring-indigo-500"
                     />
@@ -1844,32 +1863,34 @@ export function Profile() {
         )}
 
         {/* SECTION 6: DEBUG & DIAGNOSTICS */}
-        <Card className="border border-indigo-500/25 bg-gradient-to-br from-card via-card to-indigo-500/5 shadow-md rounded-3xl overflow-hidden transition-all hover:border-indigo-500/40">
-          <CardHeader className="p-5 sm:p-6 border-b border-border/60">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div className="flex items-center gap-3.5">
-                <div className="p-3 rounded-2xl bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20 shrink-0">
-                  <Bug className="w-5 h-5" />
+        {globalSettings?.is_admin && (
+          <Card className="border border-indigo-500/25 bg-gradient-to-br from-card via-card to-indigo-500/5 shadow-md rounded-3xl overflow-hidden transition-all hover:border-indigo-500/40">
+            <CardHeader className="p-5 sm:p-6 border-b border-border/60">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="flex items-center gap-3.5">
+                  <div className="p-3 rounded-2xl bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20 shrink-0">
+                    <Bug className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <CardTitle className="text-base sm:text-lg font-black tracking-tight">Ferramentas de Desenvolvedor & Debug</CardTitle>
+                    <CardDescription className="text-xs">
+                      Inspecione logs do console em tempo real, erros de rede, testes de cotações e diagnóstico do banco de dados.
+                    </CardDescription>
+                  </div>
                 </div>
-                <div>
-                  <CardTitle className="text-base sm:text-lg font-black tracking-tight">Ferramentas de Desenvolvedor & Debug</CardTitle>
-                  <CardDescription className="text-xs">
-                    Inspecione logs do console em tempo real, erros de rede, testes de cotações e diagnóstico do banco de dados.
-                  </CardDescription>
-                </div>
-              </div>
 
-              <Button
-                type="button"
-                onClick={() => setIsDebugModalOpen(true)}
-                className="h-11 px-5 rounded-2xl font-extrabold text-xs uppercase tracking-wider bg-slate-900 hover:bg-slate-800 dark:bg-indigo-600 dark:hover:bg-indigo-500 text-white shadow-md transition-all cursor-pointer flex items-center gap-2 shrink-0"
-              >
-                <Terminal className="w-4 h-4 text-emerald-400" />
-                Abrir Console de Debug
-              </Button>
-            </div>
-          </CardHeader>
-        </Card>
+                <Button
+                  type="button"
+                  onClick={() => setIsDebugModalOpen(true)}
+                  className="h-11 px-5 rounded-2xl font-extrabold text-xs uppercase tracking-wider bg-slate-900 hover:bg-slate-800 dark:bg-indigo-600 dark:hover:bg-indigo-500 text-white shadow-md transition-all cursor-pointer flex items-center gap-2 shrink-0"
+                >
+                  <Terminal className="w-4 h-4 text-emerald-400" />
+                  Abrir Console de Debug
+                </Button>
+              </div>
+            </CardHeader>
+          </Card>
+        )}
 
       </div>
 

@@ -24,6 +24,7 @@ export interface Transaction {
 export interface UserSettings {
   user_id: string;
   full_name?: string;
+  is_admin?: boolean;
   pizzaria_base_deliveries: number;
   pizzaria_base_rate: number;
   pizzaria_daily_rate_above_base: number;

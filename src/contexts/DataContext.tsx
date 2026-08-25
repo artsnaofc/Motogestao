@@ -233,10 +233,27 @@ export function DataProvider({ children }: { children: ReactNode }) {
           const expCats = settingsData.expense_categories ? [...settingsData.expense_categories] : [];
           if (!expCats.includes('Manutenção')) expCats.push('Manutenção');
 
-          const finalSettings = {
+          const finalSettings: UserSettings = {
             ...settingsData,
+            pizzaria_base_deliveries: Number(settingsData.pizzaria_base_deliveries) || 8,
+            pizzaria_base_rate: Number(settingsData.pizzaria_base_rate) || 90,
+            pizzaria_daily_rate_above_base: Number(settingsData.pizzaria_daily_rate_above_base) || 50,
+            pizzaria_delivery_rate: Number(settingsData.pizzaria_delivery_rate) || 5,
+            pizzaria_out_of_neighborhood_rate: Number(settingsData.pizzaria_out_of_neighborhood_rate) || 4,
+            vehicle_km_per_liter: Number(settingsData.vehicle_km_per_liter) || 30,
+            fuel_price: Number(settingsData.fuel_price) || 6,
+            initial_balance: Number(settingsData.initial_balance) || 0,
+            weekly_goal: Number(settingsData.weekly_goal) || 0,
+            weekly_net_goal: Number(settingsData.weekly_net_goal) || 0,
+            default_driver_labor: Number(settingsData.default_driver_labor) || 100,
+            brapi_token: settingsData.brapi_token || '',
+            quote_provider: settingsData.quote_provider || 'auto',
             operational_expense_categories: opCats,
             expense_categories: expCats,
+            asset_cnpjs: settingsData.asset_cnpjs || {},
+            rebalance_targets: settingsData.rebalance_targets || {},
+            category_icons: settingsData.category_icons || {},
+            cached_quotes: settingsData.cached_quotes || {},
           };
           setSettings(finalSettings);
           cacheManager.set(`user_settings_${userId}`, finalSettings, undefined, 'settings');
@@ -260,7 +277,16 @@ export function DataProvider({ children }: { children: ReactNode }) {
             vehicle_km_per_liter: 30,
             fuel_price: 6,
             initial_balance: 0,
+            weekly_goal: 0,
+            weekly_net_goal: 0,
+            default_driver_labor: 100,
+            brapi_token: '',
+            quote_provider: 'auto',
             categories_with_km: ['iFood', 'Uber', '99Moto', 'Pizzaria', 'Frete do Dia'],
+            asset_cnpjs: {},
+            rebalance_targets: {},
+            category_icons: {},
+            cached_quotes: {},
           };
           setSettings(defaultSettings);
         }
