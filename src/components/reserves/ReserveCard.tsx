@@ -46,7 +46,7 @@ interface ReserveCardProps {
   onTogglePause: (reserve: Reserve) => void;
   onFinalize: (reserve: Reserve) => void;
   onDelete: (reserve: Reserve) => void;
-  onViewRuleHistory: (reserve: Reserve) => void;
+  onViewRuleHistory?: (reserve: Reserve) => void;
   onApplyDirectSuggestion: (reserve: Reserve, amount: number) => void;
   hideValues?: boolean;
 }
@@ -212,17 +212,6 @@ export function ReserveCard({
                   className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left text-foreground hover:bg-muted transition-colors cursor-pointer"
                 >
                   <Edit3 className="w-3.5 h-3.5 text-muted-foreground" /> Editar Reserva
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowMenu(false);
-                    onViewRuleHistory(reserve);
-                  }}
-                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left text-foreground hover:bg-muted transition-colors cursor-pointer"
-                >
-                  <HistIcon className="w-3.5 h-3.5 text-muted-foreground" /> Histórico de Regras
                 </button>
 
                 <button

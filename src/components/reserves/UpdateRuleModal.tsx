@@ -96,6 +96,7 @@ export function UpdateRuleModal({
   const [regraTipo, setRegraTipo] = useState<Reserve['regra_tipo'] | ''>('km');
   const [regraValor, setRegraValor] = useState('');
   const [regraCategorias, setRegraCategorias] = useState<string[]>([]);
+  const [effectiveDate, setEffectiveDate] = useState<string>(new Date().toISOString().split('T')[0]);
   const [requireCategoryOnUse, setRequireCategoryOnUse] = useState<boolean>(true);
   const [defaultUseCategory, setDefaultUseCategory] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -104,6 +105,7 @@ export function UpdateRuleModal({
     if (reserve) {
       setRegraAtiva(Boolean(reserve.regra_ativa));
       setRegraTipo(reserve.regra_tipo || 'km');
+      setEffectiveDate(new Date().toISOString().split('T')[0]);
       setRegraValor(
         reserve.regra_valor !== undefined && reserve.regra_valor !== null
           ? String(Math.round(reserve.regra_valor * 100) / 100)
@@ -237,9 +239,10 @@ export function UpdateRuleModal({
         regra_tipo: regraAtiva ? (regraTipo as any) : undefined,
         regra_valor: regraAtiva ? parsedVal : undefined,
         regra_categorias: regraAtiva ? regraCategorias : [],
+        regra_inicio_validade: effectiveDate,
         require_category_on_use: requireCategoryOnUse,
         default_use_category: !requireCategoryOnUse ? defaultUseCategory : undefined
-      });
+      } as any);
 
       toast.success(`Regra de aporte de ${reserve.name} atualizada com sucesso!`);
       onClose();
@@ -468,6 +471,29 @@ export function UpdateRuleModal({
                   </div>
                 </div>
               )}
+
+              {/* Data de Início da Validade da Nova Regra */}
+              <div className="p-3 bg-muted/40 rounded-2xl border border-border/80 space-y-1.5 text-left">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                    <Calendar className="w-3.5 h-3.5 text-indigo-500" />
+                    Início da Validade Temporal da Nova Regra
+                  </label>
+                  <span className="text-[10px] text-muted-foreground font-medium">
+                    A partir desta data
+                  </span>
+                </div>
+                <Input
+                  type="date"
+                  required
+                  value={effectiveDate}
+                  onChange={e => setEffectiveDate(e.target.value)}
+                  className="h-10 text-xs rounded-xl bg-card"
+                />
+                <p className="text-[10px] text-muted-foreground">
+                  Transações e aportes anteriores a esta data serão calculados com base na regra que estava ativa na época.
+                </p>
+              </div>
 
               {/* Simulação em Tempo Real */}
               <div className="p-3 bg-gradient-to-r from-emerald-500/10 via-emerald-500/5 to-transparent rounded-2xl border border-emerald-500/20 flex items-center justify-between">

@@ -679,13 +679,18 @@ export function Dashboard() {
         const reserveName = matchedRes ? matchedRes.name : 'Reserva';
         const isRendimento = rt.type === 'rendimento';
         const isUtilizacao = rt.type === 'utilizacao';
+        const effectiveCategory = isRendimento 
+          ? 'Rendimentos' 
+          : (isUtilizacao 
+              ? (rt.category || matchedRes?.default_use_category || 'Manutenção') 
+              : 'Aporte Reserva');
         return {
           id: rt.id,
           user_id: rt.user_id,
           type: isRendimento ? 'income' : 'expense' as const,
           amount: Number(rt.amount),
           date: rt.date,
-          category: isRendimento ? 'Rendimentos' : (isUtilizacao ? (rt.category || 'Utilização Reserva') : 'Aporte Reserva'),
+          category: effectiveCategory,
           description: rt.description || (isRendimento ? `Rendimento da ${reserveName}` : (isUtilizacao ? `Utilização da ${reserveName}` : `Aporte para ${reserveName}`)),
           isReserveAporte: rt.type === 'aporte',
           isReserveTx: true,

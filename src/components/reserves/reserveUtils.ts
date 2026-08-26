@@ -169,10 +169,95 @@ export const getPeriodDisplayLabel = (
   return 'Período Selecionado';
 };
 
+export const isOperationalCategory = (category?: string | null, customOpList?: string[]): boolean => {
+  if (!category) return false;
+  const lower = category.trim().toLowerCase();
+  
+  if (customOpList && customOpList.length > 0) {
+    if (customOpList.some(c => c.toLowerCase() === lower)) return true;
+  }
+
+  // Standard operational defaults and keywords
+  const standardOperational = [
+    'combustível',
+    'combustivel',
+    'gasolina',
+    'etanol',
+    'gnv',
+    'abastecimento',
+    'pedágio',
+    'pedagio',
+    'manutenção',
+    'manutencao',
+    'oficina',
+    'mecânica',
+    'mecanica',
+    'troca de óleo',
+    'troca de oleo',
+    'pneu',
+    'pneus',
+    'lava jato',
+    'lavagem',
+    'ipva',
+    'licenciamento',
+    'seguro',
+    'seguro auto',
+    'revisão',
+    'revisao',
+    'peças',
+    'pecas',
+    'aluguel de moto',
+    'aluguel de carro',
+    'depreciação',
+    'depreciacao'
+  ];
+
+  return standardOperational.includes(lower);
+};
+
+export const getActiveRuleForDate = (res: Reserve, dateStr: string) => {
+  const historyRules = res.rule_history || [];
+  const cleanDate = dateStr.split('T')[0];
+
+  // Check if historical rule applies to this date
+  for (let i = 0; i < historyRules.length; i++) {
+    const hist = historyRules[i];
+    const end = hist.end_date ? hist.end_date.split('T')[0] : null;
+    const start = hist.start_date ? hist.start_date.split('T')[0] : null;
+
+    if (end && cleanDate < end) {
+      if (!start || cleanDate >= start) {
+        return {
+          source: 'history' as const,
+          index: i,
+          regra_ativa: Boolean(hist.regra_ativa),
+          regra_tipo: hist.regra_tipo,
+          regra_valor: hist.regra_valor,
+          regra_categorias: hist.regra_categorias || [],
+          start_date: hist.start_date,
+          end_date: hist.end_date,
+        };
+      }
+    }
+  }
+
+  // Default to current rule in effect
+  return {
+    source: 'current' as const,
+    index: -1,
+    regra_ativa: Boolean(res.regra_ativa),
+    regra_tipo: res.regra_tipo,
+    regra_valor: res.regra_valor,
+    regra_categorias: res.regra_categorias || [],
+    start_date: res.regra_inicio_validade || res.created_at?.split('T')[0] || cleanDate,
+    end_date: null,
+  };
+};
+
 export const isTxInPeriod = (
   dateStr: string | undefined | null,
   globalPeriod: string,
-  customDateRange: { start: string; end: string }
+  customDateRange?: { start: string; end: string } | null
 ): boolean => {
   if (!dateStr) return false;
   try {
@@ -182,7 +267,7 @@ export const isTxInPeriod = (
     if (globalPeriod === 'all') return true;
 
     if (globalPeriod === 'custom') {
-      if (!customDateRange.start || !customDateRange.end) return true;
+      if (!customDateRange || !customDateRange.start || !customDateRange.end) return true;
       const start = startOfDay(parseLocalDate(customDateRange.start));
       const end = endOfDay(parseLocalDate(customDateRange.end));
       return isWithinInterval(d, { start, end });
@@ -295,28 +380,15 @@ export const calculateSuggestion = (
   });
   
   let totalSuggestion = 0;
-  const historyRules = res.rule_history || [];
   
   const buckets = periodTxs.reduce((acc, t) => {
-    const tTime = new Date(`${t.date}T12:00:00.000Z`).getTime();
-    let matchedRuleObj: any = null;
-    let matchedIdx = -1;
-
-    for (let i = 0; i < historyRules.length; i++) {
-      const histEndDate = new Date(historyRules[i].end_date);
-      if (tTime < histEndDate.getTime()) {
-        matchedRuleObj = historyRules[i];
-        matchedIdx = i;
-        break;
-      }
-    }
-
-    const ruleKey = matchedIdx !== -1 ? `hist_${matchedIdx}` : 'current';
-    const activeRule = matchedRuleObj || {
-      regra_ativa: res.regra_ativa && !isPaused && !isGoalReached,
-      regra_tipo: res.regra_tipo,
-      regra_valor: res.regra_valor,
-      regra_categorias: res.regra_categorias,
+    const ruleInfo = getActiveRuleForDate(res, t.date);
+    const ruleKey = ruleInfo.source === 'history' ? `hist_${ruleInfo.index}` : 'current';
+    const activeRule = {
+      regra_ativa: ruleInfo.regra_ativa && !isPaused && !isGoalReached,
+      regra_tipo: ruleInfo.regra_tipo,
+      regra_valor: ruleInfo.regra_valor,
+      regra_categorias: ruleInfo.regra_categorias,
     };
 
     if (!acc[ruleKey]) {

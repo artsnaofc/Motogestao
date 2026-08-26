@@ -61,6 +61,7 @@ import {
 } from 'lucide-react';
 import { ExecutiveReportModal } from '../components/ExecutiveReportModal';
 import { TransactionDetailView } from '../components/history/TransactionDetailView';
+import { isOperationalCategory, getActiveRuleForDate } from '../components/reserves/reserveUtils';
 
 const HISTORY_FILTERS_KEY = 'motogestao_history_filters_v2';
 
@@ -783,23 +784,12 @@ export function History() {
         }
 
         // Temporal rule resolution
-        const historyRules = r.rule_history || [];
-        const tTime = new Date(`${t.date}T12:00:00.000Z`).getTime();
-        let matchedRuleObj: any = null;
-
-        for (let i = 0; i < historyRules.length; i++) {
-          const histEndDate = new Date(historyRules[i].end_date);
-          if (tTime < histEndDate.getTime()) {
-            matchedRuleObj = historyRules[i];
-            break;
-          }
-        }
-
-        const activeRule = matchedRuleObj || {
-          regra_ativa: r.regra_ativa,
-          regra_tipo: r.regra_tipo,
-          regra_valor: r.regra_valor,
-          regra_categorias: r.regra_categorias || [],
+        const ruleInfo = getActiveRuleForDate(r, t.date);
+        const activeRule = {
+          regra_ativa: ruleInfo.regra_ativa,
+          regra_tipo: ruleInfo.regra_tipo,
+          regra_valor: ruleInfo.regra_valor,
+          regra_categorias: ruleInfo.regra_categorias || [],
         };
 
         if (!activeRule.regra_ativa || !activeRule.regra_tipo) return { reserve: r, amount: 0 };
@@ -881,13 +871,18 @@ export function History() {
         const reserveName = matchedRes ? matchedRes.name : 'Reserva';
         const isRendimento = rt.type === 'rendimento';
         const isUtilizacao = rt.type === 'utilizacao';
+        const effectiveCategory = isRendimento
+          ? 'Rendimentos'
+          : (isUtilizacao
+              ? (rt.category || matchedRes?.default_use_category || 'Manutenção')
+              : 'Aporte Reserva');
         return {
           id: rt.id,
           user_id: rt.user_id,
           type: isRendimento ? 'income' : 'expense' as const,
           amount: Number(rt.amount),
           date: rt.date,
-          category: isRendimento ? 'Rendimentos' : (isUtilizacao ? 'Utilização Reserva' : 'Aporte Reserva'),
+          category: effectiveCategory,
           description: rt.description || (isRendimento ? `Rendimento da ${reserveName}` : (isUtilizacao ? `Utilização da ${reserveName}` : `Aporte para ${reserveName}`)),
           isReserveTx: true,
           reserveTxType: rt.type,
@@ -1110,14 +1105,15 @@ export function History() {
           const rawAmt = (t as any).rawAmount !== undefined ? Number((t as any).rawAmount) : amount;
           reserveExpense += rawAmt;
           
-          if (opCats.includes(t.category) || t.category === 'Pedágio') {
+          const effectiveCat = (t as any).originalCategory || t.category;
+          if (isOperationalCategory(effectiveCat, opCats)) {
             opExpensePuro += amount;
           } else {
             perExpense += amount;
           }
         } else {
           // Regular expenses
-          if (opCats.includes(t.category) || t.category === 'Pedágio') {
+          if (isOperationalCategory(t.category, opCats)) {
             opExpensePuro += amount;
           } else {
             perExpense += amount;
@@ -1448,9 +1444,11 @@ export function History() {
       } else if (filterType === 'expense') {
         matchesType = t.type === 'expense';
       } else if (filterType === 'opExpense') {
-        matchesType = t.type === 'expense' && !isReserveUse && (opCats.includes(t.category) || t.category === 'Pedágio' || t.category === 'Aporte Reserva' || (t as any).reserveTxType === 'aporte');
+        const effectiveCat = (t as any).originalCategory || t.category;
+        matchesType = t.type === 'expense' && !isReserveUse && (isOperationalCategory(effectiveCat, opCats) || t.category === 'Aporte Reserva' || (t as any).reserveTxType === 'aporte');
       } else if (filterType === 'perExpense') {
-        matchesType = t.type === 'expense' && !isReserveUse && !(opCats.includes(t.category) || t.category === 'Pedágio' || t.category === 'Aporte Reserva' || (t as any).reserveTxType === 'aporte');
+        const effectiveCat = (t as any).originalCategory || t.category;
+        matchesType = t.type === 'expense' && !isReserveUse && !(isOperationalCategory(effectiveCat, opCats) || t.category === 'Aporte Reserva' || (t as any).reserveTxType === 'aporte');
       } else if (filterType === 'reserveExpense') {
         matchesType = t.type === 'expense' && isReserveUse;
       }
@@ -1553,14 +1551,15 @@ export function History() {
           const rawAmt = (t as any).rawAmount !== undefined ? Number((t as any).rawAmount) : Number(t.amount);
           groups[dateKey].reserveExpense += rawAmt;
           
-          if (opCats.includes(t.category) || t.category === 'Pedágio') {
+          const effectiveCat = (t as any).originalCategory || t.category;
+          if (isOperationalCategory(effectiveCat, opCats)) {
             groups[dateKey].opExpense += Number(t.amount);
             groups[dateKey].opExpensePuro += Number(t.amount);
           } else {
             groups[dateKey].perExpense += Number(t.amount);
           }
         } else {
-          if (opCats.includes(t.category) || t.category === 'Pedágio') {
+          if (isOperationalCategory(t.category, opCats)) {
             groups[dateKey].opExpense += Number(t.amount);
             groups[dateKey].opExpensePuro += Number(t.amount);
           } else {
@@ -2934,13 +2933,14 @@ export function History() {
                 const rawAmt = (t as any).rawAmount !== undefined ? Number((t as any).rawAmount) : amt;
                 reserveSpending += rawAmt;
                 
-                if (opCats.includes(t.category) || t.category === 'Pedágio') {
+                const effectiveCat = (t as any).originalCategory || t.category;
+                if (isOperationalCategory(effectiveCat, opCats)) {
                   opExpPuro += amt;
                 } else {
                   perExpPuro += amt;
                 }
               } else {
-                if (opCats.includes(t.category) || t.category === 'Pedágio') {
+                if (isOperationalCategory(t.category, opCats)) {
                   opExpPuro += amt;
                 } else {
                   perExpPuro += amt;
@@ -3190,7 +3190,8 @@ export function History() {
                       groupKey = 'investments';
                     } else if (isReserveUseEx || isReserveUtilizacao) {
                       // Uso de reserva agrupa conforme a categoria (despesa operacional ou pessoal)
-                      if (opCats.includes(t.category) || t.category === 'Pedágio') {
+                      const effectiveCat = (t as any).originalCategory || t.category;
+                      if (isOperationalCategory(effectiveCat, opCats)) {
                         groupKey = 'op_expense';
                       } else {
                         groupKey = 'personal_expense';
@@ -3199,7 +3200,7 @@ export function History() {
                       groupKey = 'reserves';
                     } else if (t.type === 'income') {
                       groupKey = 'income';
-                    } else if (opCats.includes(t.category) || t.category === 'Pedágio') {
+                    } else if (isOperationalCategory(t.category, opCats)) {
                       groupKey = 'op_expense';
                     } else {
                       groupKey = 'personal_expense';

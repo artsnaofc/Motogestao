@@ -43,6 +43,7 @@ export function Reserves() {
     deleteReserve,
     addReserveTransaction,
     deleteReserveTransaction,
+    updateReserveTransaction,
     refreshData,
     globalPeriod = 'month',
     setGlobalPeriod,
@@ -367,9 +368,47 @@ export function Reserves() {
     }
   };
 
-  // 6b. Update Rule directly
+  // 6b. Update Rule directly with temporal rule archiving
   const handleSaveRule = async (reserveId: string, ruleData: Partial<Reserve>) => {
-    await updateReserve(reserveId, ruleData);
+    const currentRes = reserves.find(r => r.id === reserveId);
+    if (!currentRes) {
+      await updateReserve(reserveId, ruleData);
+      return;
+    }
+
+    const effectiveDate = ruleData.regra_inicio_validade || new Date().toISOString().split('T')[0];
+    const hadPrevRule = Boolean(currentRes.regra_tipo && currentRes.regra_valor);
+    let updatedHistory = [...(currentRes.rule_history || [])];
+
+    if (hadPrevRule && (currentRes.regra_tipo !== ruleData.regra_tipo || currentRes.regra_valor !== ruleData.regra_valor || currentRes.regra_ativa !== ruleData.regra_ativa)) {
+      const prevStartDate = currentRes.regra_inicio_validade || currentRes.created_at?.split('T')[0] || effectiveDate;
+      const typeLabel = currentRes.regra_tipo === 'km' 
+        ? `R$ ${currentRes.regra_valor}/km` 
+        : currentRes.regra_tipo === 'bruto' 
+        ? `${currentRes.regra_valor}% Faturamento Bruto` 
+        : currentRes.regra_tipo === 'liquido' 
+        ? `${currentRes.regra_valor}% Lucro Líquido` 
+        : `R$ ${currentRes.regra_valor}/dia`;
+
+      updatedHistory.push({
+        start_date: prevStartDate,
+        end_date: effectiveDate,
+        regra_tipo: currentRes.regra_tipo,
+        regra_valor: currentRes.regra_valor,
+        regra_categorias: currentRes.regra_categorias || [],
+        regra_ativa: currentRes.regra_ativa,
+        updated_at: new Date().toISOString(),
+        description: `Regra anterior: ${typeLabel}`
+      });
+    }
+
+    const payload: Partial<Reserve> = {
+      ...ruleData,
+      regra_inicio_validade: effectiveDate,
+      rule_history: updatedHistory
+    };
+
+    await updateReserve(reserveId, payload);
     toast.success('Regra da reserva atualizada com sucesso!');
     if (refreshData) await refreshData(true);
   };
@@ -516,10 +555,6 @@ export function Reserves() {
                   onTogglePause={handleTogglePause}
                   onFinalize={handleFinalize}
                   onDelete={handleDeleteReserve}
-                  onViewRuleHistory={r => {
-                    setSelectedReserveForAction(r);
-                    setActionModalType('rule_history');
-                  }}
                   onApplyDirectSuggestion={handleApplyDirectSuggestion}
                   hideValues={hideValues}
                 />
@@ -531,8 +566,12 @@ export function Reserves() {
         /* History & Extrato Tab */
         <ReserveHistoryTab
           reserves={reserves}
+          transactions={transactions}
           reserveTransactions={reserveTransactions}
+          settings={settings}
           onDeleteTransaction={deleteReserveTransaction}
+          onEditTransaction={updateReserveTransaction}
+          onUpdateReserve={updateReserve}
           hideValues={hideValues}
         />
       )}
