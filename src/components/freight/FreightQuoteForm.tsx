@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -12,7 +12,6 @@ import {
   MapPin, 
   Plus, 
   Trash2, 
-  RotateCcw, 
   DollarSign, 
   Fuel, 
   TrendingUp, 
@@ -30,12 +29,38 @@ import {
   Check,
   User,
   Users,
-  Search
+  Search,
+  Settings,
+  ArrowUpDown,
+  Navigation,
+  Sparkles,
+  Zap,
+  Percent,
+  Weight,
+  Phone,
+  Building,
+  CreditCard,
+  QrCode,
+  Banknote,
+  Sliders,
+  AlertCircle
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { FreightQuote, VehicleType, ServiceType, PaymentMethod, RouteStop, DriverFreightPreset, FreightClient, VehicleConfigItem } from '../../types/freight';
-import { freightStorage } from '../../lib/freightStorage';
+import { 
+  FreightQuote, 
+  VehicleType, 
+  ServiceType, 
+  PaymentMethod, 
+  RouteStop, 
+  DriverFreightPreset, 
+  FreightClient, 
+  VehicleConfigItem 
+} from '../../types/freight';
+import { freightStorage, DEFAULT_VEHICLES, DEFAULT_PRESET } from '../../lib/freightStorage';
 import { useData } from '../../contexts/DataContext';
+import { AddressAutocompleteInput } from './AddressAutocompleteInput';
+import { ClientAutocompleteInput } from './ClientAutocompleteInput';
+import { maskPhone, maskCpfCnpj } from '@/lib/brazilianFormatters';
 
 interface FreightQuoteFormProps {
   initialQuote?: FreightQuote | null;
@@ -43,8 +68,22 @@ interface FreightQuoteFormProps {
   onOpenWhatsApp: (quote: FreightQuote) => void;
   onOpenProposal: (quote: FreightQuote) => void;
   onCancelEdit?: () => void;
+  onOpenSettings?: () => void;
   userId?: string;
 }
+
+const CARGO_PRESETS = [
+  'Documentos / Envelopes',
+  'Pacotes / Caixas Médias',
+  'Peças Automotivas / Ferramentas',
+  'Móveis / Eletrodomésticos',
+  'Materiais de Construção / Tintas',
+  'Equipamentos / Eletrônicos',
+  'Alimentos / Bebidas',
+  'Mudança Residencial / Comercial',
+];
+
+const DISTANCE_PRESETS = [3, 5, 10, 15, 25, 40, 60, 100];
 
 export function FreightQuoteForm({
   initialQuote,
@@ -52,6 +91,7 @@ export function FreightQuoteForm({
   onOpenWhatsApp,
   onOpenProposal,
   onCancelEdit,
+  onOpenSettings,
   userId = 'default',
 }: FreightQuoteFormProps) {
   const { settings } = useData();
@@ -59,45 +99,71 @@ export function FreightQuoteForm({
   // Load driver preset & sync from database
   const [preset, setPreset] = useState<DriverFreightPreset>(() => freightStorage.getPreset(userId));
 
-  useEffect(() => {
-    freightStorage.syncPresetFromDatabase(userId).then(loadedPreset => {
-      setPreset(loadedPreset);
-      if (!initialQuote) {
-        setBaseFee(loadedPreset.default_base_fee ?? 12);
-        setPricePerKm(loadedPreset.default_price_per_km ?? 2.8);
-        setPaymentMethod(loadedPreset.default_payment_method || 'pix');
-        setPixKey(loadedPreset.pix_key || '');
-        setPixKeyType(loadedPreset.pix_key_type || 'phone');
-        setDriverName(loadedPreset.driver_name || settings?.full_name || '');
-        setDriverPhone(loadedPreset.driver_phone || '');
-        setDriverCompany(loadedPreset.driver_company || '');
-        setDriverDocument(loadedPreset.driver_document || '');
-        setTermsAndConditions(loadedPreset.default_terms || '');
-      }
-    });
-  }, [userId, initialQuote, settings?.full_name]);
+  // Available Vehicles from Preset
+  const availableVehicles: VehicleConfigItem[] = useMemo(() => {
+    return preset.vehicles && preset.vehicles.length > 0 ? preset.vehicles : DEFAULT_VEHICLES;
+  }, [preset.vehicles]);
 
-  // Load saved clients for autocomplete
-  const [savedClients, setSavedClients] = useState<FreightClient[]>(() => freightStorage.getClients(userId));
+  // Form State - Selected Vehicle Type
+  const [vehicleType, setVehicleType] = useState<string>(
+    initialQuote?.vehicle_type || preset.default_vehicle || availableVehicles[0]?.id || 'moto'
+  );
 
-  useEffect(() => {
-    freightStorage.syncClientsFromDatabase(userId).then(clients => {
-      setSavedClients(clients);
-    });
-  }, [userId]);
+  const selectedVehicle = useMemo(() => {
+    return availableVehicles.find(v => v.id === vehicleType) || availableVehicles[0] || DEFAULT_VEHICLES[0];
+  }, [availableVehicles, vehicleType]);
 
-  // Form State (Vehicle is strictly Motocicleta)
-  const vehicleType: VehicleType = 'moto';
+  const vehicleInfo = useMemo(() => {
+    return freightStorage.getVehicleInfo(initialQuote || selectedVehicle.id, userId);
+  }, [initialQuote, selectedVehicle.id, userId]);
+
+  // Service Type & Status
   const [serviceType, setServiceType] = useState<ServiceType>(initialQuote?.service_type || 'express');
   const [status, setStatus] = useState<FreightQuote['status']>(initialQuote?.status || 'pending');
 
   // Client Info
+  const [savedClients, setSavedClients] = useState<FreightClient[]>(() => freightStorage.getClients(userId));
   const [selectedClientId, setSelectedClientId] = useState<string>('');
   const [clientName, setClientName] = useState(initialQuote?.client_name || '');
-  const [clientPhone, setClientPhone] = useState(initialQuote?.client_phone || '');
+  const [clientPhone, setClientPhone] = useState(initialQuote?.client_phone ? maskPhone(initialQuote.client_phone) : '');
   const [clientCompany, setClientCompany] = useState(initialQuote?.client_company || '');
-  const [clientDocument, setClientDocument] = useState(initialQuote?.client_document || '');
+  const [clientDocument, setClientDocument] = useState(initialQuote?.client_document ? maskCpfCnpj(initialQuote.client_document) : '');
   const [clientEmail, setClientEmail] = useState(initialQuote?.client_email || '');
+
+  // History Addresses from previous quotes for instant autocomplete
+  const historyAddresses = useMemo(() => {
+    try {
+      const quotes = freightStorage.getQuotes(userId);
+      const map = new Map<string, { address: string; neighborhood?: string }>();
+      quotes.forEach((q) => {
+        if (q.origin_address && q.origin_address.trim().length > 2) {
+          map.set(q.origin_address.trim().toLowerCase(), {
+            address: q.origin_address.trim(),
+            neighborhood: q.origin_neighborhood?.trim(),
+          });
+        }
+        if (q.destination_address && q.destination_address.trim().length > 2) {
+          map.set(q.destination_address.trim().toLowerCase(), {
+            address: q.destination_address.trim(),
+            neighborhood: q.destination_neighborhood?.trim(),
+          });
+        }
+        if (Array.isArray(q.additional_stops)) {
+          q.additional_stops.forEach((s) => {
+            if (s.address && s.address.trim().length > 2) {
+              map.set(s.address.trim().toLowerCase(), {
+                address: s.address.trim(),
+                neighborhood: s.neighborhood?.trim(),
+              });
+            }
+          });
+        }
+      });
+      return Array.from(map.values());
+    } catch (e) {
+      return [];
+    }
+  }, [userId]);
 
   // Route & Stops
   const [originAddress, setOriginAddress] = useState(initialQuote?.origin_address || '');
@@ -105,7 +171,7 @@ export function FreightQuoteForm({
   const [destinationAddress, setDestinationAddress] = useState(initialQuote?.destination_address || '');
   const [destinationNeighborhood, setDestinationNeighborhood] = useState(initialQuote?.destination_neighborhood || '');
   const [additionalStops, setAdditionalStops] = useState<RouteStop[]>(initialQuote?.additional_stops || []);
-  const [distanceKm, setDistanceKm] = useState<number>(initialQuote?.distance_km || 10);
+  const [distanceKm, setDistanceKm] = useState<number>(initialQuote?.distance_km ?? 10);
   const [isRoundTrip, setIsRoundTrip] = useState<boolean>(initialQuote?.is_round_trip || false);
 
   // Cargo & Scheduling
@@ -113,12 +179,20 @@ export function FreightQuoteForm({
   const [cargoWeightKg, setCargoWeightKg] = useState<number | undefined>(initialQuote?.cargo_weight_kg);
   const [cargoValue, setCargoValue] = useState<number | undefined>(initialQuote?.cargo_value);
   const [scheduledDate, setScheduledDate] = useState(initialQuote?.scheduled_date || new Date().toISOString().split('T')[0]);
-  const [scheduledTime, setScheduledTime] = useState(initialQuote?.scheduled_time || ''); // Horário do frete (Opcional)
+  const [scheduledTime, setScheduledTime] = useState(initialQuote?.scheduled_time || '');
 
-  // Pricing & Fees (Loads preset defaults properly)
-  const [baseFee, setBaseFee] = useState<number>(initialQuote?.base_fee ?? preset.default_base_fee ?? 12);
-  const [pricePerKm, setPricePerKm] = useState<number>(initialQuote?.price_per_km ?? preset.default_price_per_km ?? 2.8);
-  const [extraStopsFee, setExtraStopsFee] = useState<number>(initialQuote?.extra_stops_fee || 0);
+  // Pricing & Fees
+  const [baseFee, setBaseFee] = useState<number>(
+    initialQuote?.base_fee ?? selectedVehicle?.defaultBase ?? preset.default_base_fee ?? 12.00
+  );
+  const [pricePerKm, setPricePerKm] = useState<number>(
+    initialQuote?.price_per_km ?? selectedVehicle?.defaultPriceKm ?? preset.default_price_per_km ?? 2.80
+  );
+  const [extraStopsFee, setExtraStopsFee] = useState<number>(
+    initialQuote?.extra_stops_fee ?? (selectedVehicle?.stopFee ? selectedVehicle.stopFee * (initialQuote?.additional_stops?.length || 0) : 0)
+  );
+
+  // Extra Surcharges (Quick add-ons)
   const [heavyCargoFee, setHeavyCargoFee] = useState<number>(initialQuote?.heavy_cargo_fee || 0);
   const [stairsFloorFee, setStairsFloorFee] = useState<number>(initialQuote?.stairs_floor_fee || 0);
   const [urgentOrRainFee, setUrgentOrRainFee] = useState<number>(initialQuote?.urgent_or_rain_fee || 0);
@@ -126,75 +200,194 @@ export function FreightQuoteForm({
   const [tollsFee, setTollsFee] = useState<number>(initialQuote?.tolls_fee || 0);
   const [waitingHoursFee, setWaitingHoursFee] = useState<number>(initialQuote?.waiting_hours_fee || 0);
 
-  // Price Adjustment State: Valor Fixo (R$), Porcentagem (%), ou Total Fixo (Preço Fechado)
-  const [discountType, setDiscountType] = useState<'fixed' | 'percent' | 'total_fixed'>(initialQuote?.discount_type || 'fixed');
-  const [discountValue, setDiscountValue] = useState<number>(initialQuote?.discount_value ?? initialQuote?.discount ?? 0);
+  // Discounts
+  const [discountType, setDiscountType] = useState<'fixed' | 'percent' | 'total_fixed'>(
+    initialQuote?.discount_type || 'fixed'
+  );
+  const [discountValue, setDiscountValue] = useState<number>(initialQuote?.discount_value || 0);
 
-  // Driver Cost & Fuel Params (From Settings / Presets)
-  const fuelPrice = settings?.fuel_price || 5.89;
-  const kmPerLiter = settings?.vehicle_km_per_liter || 35;
-  const maintenanceCostPerKm = preset.default_maintenance_per_km || 0.25;
+  // Operational Fuel & Vehicle Wear
+  const [fuelPrice, setFuelPrice] = useState<number>(initialQuote?.fuel_price || 5.89);
+  const [kmPerLiter, setKmPerLiter] = useState<number>(
+    initialQuote?.km_per_liter ?? selectedVehicle?.kmPerLiter ?? preset.default_km_per_liter ?? 35
+  );
+  const [maintenanceCostPerKm, setMaintenanceCostPerKm] = useState<number>(
+    initialQuote?.maintenance_cost_per_km ?? selectedVehicle?.maintenancePerKm ?? preset.default_maintenance_per_km ?? 0.25
+  );
 
-  // Payment & Terms
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(initialQuote?.payment_method || preset.default_payment_method || 'pix');
-  const [pixKey, setPixKey] = useState(initialQuote?.pix_key || preset.pix_key || '');
-  const [pixKeyType, setPixKeyType] = useState(initialQuote?.pix_key_type || preset.pix_key_type || 'phone');
+  // Driver & Payment Info
   const [driverName, setDriverName] = useState(initialQuote?.driver_name || preset.driver_name || settings?.full_name || '');
   const [driverPhone, setDriverPhone] = useState(initialQuote?.driver_phone || preset.driver_phone || '');
   const [driverCompany, setDriverCompany] = useState(initialQuote?.driver_company || preset.driver_company || '');
   const [driverDocument, setDriverDocument] = useState(initialQuote?.driver_document || preset.driver_document || '');
+  const [pixKey, setPixKey] = useState(initialQuote?.pix_key || preset.pix_key || '');
+  const [pixKeyType, setPixKeyType] = useState<string>(initialQuote?.pix_key_type || preset.pix_key_type || 'phone');
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(initialQuote?.payment_method || preset.default_payment_method || 'pix');
+
+  // Terms & Validity
   const [observations, setObservations] = useState(initialQuote?.observations || '');
   const [termsAndConditions, setTermsAndConditions] = useState(initialQuote?.terms_and_conditions || preset.default_terms || '');
   const [validDays, setValidDays] = useState<number>(2);
 
-  // Accordion for advanced fees
-  const [showAdvancedFees, setShowAdvancedFees] = useState(false);
+  // UI state for accordion sections
+  const [showAdvancedPricing, setShowAdvancedPricing] = useState(false);
+  const [showDriverDetails, setShowDriverDetails] = useState(false);
 
-  // Client Autocomplete selection handler
+  // 1. Reactive Sync on Preset Update (From Settings Modal or CustomEvent)
+  const applyPresetData = useCallback((p: DriverFreightPreset, forceRates: boolean = false) => {
+    setPreset(p);
+    const available = p.vehicles && p.vehicles.length > 0 ? p.vehicles : DEFAULT_VEHICLES;
+    
+    if (!initialQuote || forceRates) {
+      const currentOrDefId = p.default_vehicle || available[0]?.id || 'moto';
+      const targetVeh = available.find(v => v.id === vehicleType) || available.find(v => v.id === currentOrDefId) || available[0];
+      
+      if (!initialQuote) {
+        setVehicleType(targetVeh.id);
+        setBaseFee(targetVeh.defaultBase ?? p.default_base_fee ?? 12);
+        setPricePerKm(targetVeh.defaultPriceKm ?? p.default_price_per_km ?? 2.8);
+        setKmPerLiter(targetVeh.kmPerLiter ?? p.default_km_per_liter ?? 35);
+        setMaintenanceCostPerKm(targetVeh.maintenancePerKm ?? p.default_maintenance_per_km ?? 0.25);
+        setPaymentMethod(p.default_payment_method || 'pix');
+        setPixKey(p.pix_key || '');
+        setPixKeyType(p.pix_key_type || 'phone');
+        setDriverName(p.driver_name || settings?.full_name || '');
+        setDriverPhone(p.driver_phone || '');
+        setDriverCompany(p.driver_company || '');
+        setDriverDocument(p.driver_document || '');
+        setTermsAndConditions(p.default_terms || '');
+      } else {
+        // If editing, update rates of the current vehicle if user updated them
+        const matchingVeh = available.find(v => v.id === vehicleType);
+        if (matchingVeh) {
+          setBaseFee(matchingVeh.defaultBase);
+          setPricePerKm(matchingVeh.defaultPriceKm);
+          setKmPerLiter(matchingVeh.kmPerLiter);
+          setMaintenanceCostPerKm(matchingVeh.maintenancePerKm);
+        }
+      }
+    }
+  }, [initialQuote, vehicleType, settings?.full_name]);
+
+  // Listen to preset updates dispatched across the app
+  useEffect(() => {
+    const handlePresetUpdated = (e: Event) => {
+      const customEvent = e as CustomEvent<DriverFreightPreset>;
+      if (customEvent.detail) {
+        applyPresetData(customEvent.detail, !initialQuote);
+      }
+    };
+
+    window.addEventListener('freight_preset_updated', handlePresetUpdated);
+    return () => {
+      window.removeEventListener('freight_preset_updated', handlePresetUpdated);
+    };
+  }, [applyPresetData, initialQuote]);
+
+  // Initial load & database sync
+  useEffect(() => {
+    freightStorage.syncPresetFromDatabase(userId).then(loadedPreset => {
+      applyPresetData(loadedPreset, false);
+    });
+    freightStorage.syncClientsFromDatabase(userId).then(clients => {
+      setSavedClients(clients);
+    });
+  }, [userId, applyPresetData]);
+
+  // When user switches vehicle tab: automatically adopt that vehicle's rates
+  const handleSelectVehicle = (vehId: string) => {
+    setVehicleType(vehId);
+    const veh = availableVehicles.find(v => v.id === vehId);
+    if (veh) {
+      setBaseFee(veh.defaultBase);
+      setPricePerKm(veh.defaultPriceKm);
+      setKmPerLiter(veh.kmPerLiter);
+      setMaintenanceCostPerKm(veh.maintenancePerKm);
+      if (additionalStops.length > 0 && veh.stopFee) {
+        setExtraStopsFee(veh.stopFee * additionalStops.length);
+      }
+      toast.info(`Veículo alterado para "${veh.label}"`, {
+        description: `Tarifa ajustada: Base R$ ${veh.defaultBase.toFixed(2)} + R$ ${veh.defaultPriceKm.toFixed(2)}/km`,
+      });
+    }
+  };
+
+  // Client Selection Handler
   const handleSelectClient = (clientId: string) => {
     setSelectedClientId(clientId);
     if (!clientId) return;
-    const client = savedClients.find(c => c.id === clientId);
-    if (client) {
-      setClientName(client.name || '');
-      setClientPhone(client.phone || '');
-      setClientCompany(client.company || '');
-      setClientDocument(client.document || '');
-      setClientEmail(client.email || '');
-      toast.success(`Cliente "${client.name}" selecionado!`);
+    const found = savedClients.find(c => c.id === clientId);
+    if (found) {
+      setClientName(found.name);
+      setClientPhone(maskPhone(found.phone || ''));
+      setClientCompany(found.company || '');
+      setClientDocument(maskCpfCnpj(found.document || ''));
+      setClientEmail(found.email || '');
+      toast.success(`Cliente ${found.name} carregado.`);
     }
   };
 
-  // Re-apply preset rates handler
-  const handleApplyPresetRates = () => {
-    const currentPreset = freightStorage.getPreset(userId);
-    setBaseFee(currentPreset.default_base_fee ?? 12);
-    setPricePerKm(currentPreset.default_price_per_km ?? 2.8);
-    setExtraStopsFee(additionalStops.length * (currentPreset.default_stop_fee ?? 6));
-    toast.success('Tarifas padrão aplicadas no orçamento!', {
-      description: `Taxa Saída: R$ ${(currentPreset.default_base_fee ?? 12).toFixed(2)} | KM: R$ ${(currentPreset.default_price_per_km ?? 2.8).toFixed(2)}/km`,
-    });
+  const handleSelectClientFromAutocomplete = (client: FreightClient) => {
+    setSelectedClientId(client.id);
+    setClientName(client.name);
+    setClientPhone(maskPhone(client.phone || ''));
+    setClientCompany(client.company || '');
+    setClientDocument(maskCpfCnpj(client.document || ''));
+    setClientEmail(client.email || '');
+    toast.success(`Cliente ${client.name} selecionado.`);
   };
 
-  // Auto-calculate extra stops fee if count changes
-  useEffect(() => {
-    if (additionalStops.length > 0 && extraStopsFee === 0) {
-      setExtraStopsFee(additionalStops.length * (preset.default_stop_fee || 6));
-    }
-  }, [additionalStops.length]);
+  // Invert Origin and Destination
+  const handleSwapAddresses = () => {
+    const tempAddr = originAddress;
+    const tempNeigh = originNeighborhood;
+    setOriginAddress(destinationAddress);
+    setOriginNeighborhood(destinationNeighborhood);
+    setDestinationAddress(tempAddr);
+    setDestinationNeighborhood(tempNeigh);
+    toast.info('Origem e destino invertidos com sucesso.');
+  };
 
-  // Real-time calculations
+  // Manage Multiple Stops
+  const handleAddStop = () => {
+    const stopFeeUnit = selectedVehicle?.stopFee || preset.default_stop_fee || 6.00;
+    const newStop: RouteStop = {
+      id: `stop_${Date.now()}`,
+      address: '',
+      neighborhood: '',
+      notes: '',
+    };
+    const updatedStops = [...additionalStops, newStop];
+    setAdditionalStops(updatedStops);
+    setExtraStopsFee(updatedStops.length * stopFeeUnit);
+    toast.info(`Parada ${updatedStops.length} adicionada (+R$ ${stopFeeUnit.toFixed(2)}/parada).`);
+  };
+
+  const handleRemoveStop = (index: number) => {
+    const stopFeeUnit = selectedVehicle?.stopFee || preset.default_stop_fee || 6.00;
+    const updated = additionalStops.filter((_, i) => i !== index);
+    setAdditionalStops(updated);
+    setExtraStopsFee(updated.length * stopFeeUnit);
+  };
+
+  const handleUpdateStop = (index: number, field: keyof RouteStop, value: string) => {
+    const updated = [...additionalStops];
+    updated[index] = { ...updated[index], [field]: value };
+    setAdditionalStops(updated);
+  };
+
+  // Total Calculated KM
   const totalCalculatedKm = useMemo(() => {
     const base = Number(distanceKm) || 0;
     return isRoundTrip ? base * 2 : base;
   }, [distanceKm, isRoundTrip]);
 
+  // Financial Calculations & Profit Margins (Reactive Cockpit)
   const financialCalculations = useMemo(() => {
-    const km = totalCalculatedKm;
-    const kmTotalRevenue = km * (Number(pricePerKm) || 0);
+    const distanceCost = totalCalculatedKm * (Number(pricePerKm) || 0);
     const subtotal = 
       (Number(baseFee) || 0) +
-      kmTotalRevenue +
+      distanceCost +
       (Number(extraStopsFee) || 0) +
       (Number(heavyCargoFee) || 0) +
       (Number(stairsFloorFee) || 0) +
@@ -203,40 +396,47 @@ export function FreightQuoteForm({
       (Number(tollsFee) || 0) +
       (Number(waitingHoursFee) || 0);
 
-    let finalTotalPrice = 0;
     let calculatedDiscount = 0;
+    let finalTotalPrice = subtotal;
 
     if (discountType === 'total_fixed') {
-      // PREÇO TOTAL FECHADO (Determine final total directly)
-      finalTotalPrice = Math.max(0, Number(discountValue) || 0);
-      calculatedDiscount = Math.max(0, subtotal - finalTotalPrice);
+      // Preço Fechado: o usuário define diretamente o valor final do frete
+      const fixedFinal = Number(discountValue) || 0;
+      if (fixedFinal > 0) {
+        finalTotalPrice = fixedFinal;
+        calculatedDiscount = Math.max(0, subtotal - fixedFinal);
+      } else {
+        finalTotalPrice = subtotal;
+        calculatedDiscount = 0;
+      }
     } else if (discountType === 'percent') {
-      // DESCONTO EM %
       calculatedDiscount = (subtotal * (Number(discountValue) || 0)) / 100;
       finalTotalPrice = Math.max(0, subtotal - calculatedDiscount);
     } else {
-      // DESCONTO FIXO EM R$
       calculatedDiscount = Number(discountValue) || 0;
       finalTotalPrice = Math.max(0, subtotal - calculatedDiscount);
     }
 
-    // Real Driver Costs
-    const fuelCost = kmPerLiter > 0 ? (km / kmPerLiter) * fuelPrice : 0;
-    const maintenanceCost = km * maintenanceCostPerKm;
+    // Direct Operating Costs
+    const effectiveKmPerLiter = Number(kmPerLiter) > 0 ? Number(kmPerLiter) : 35;
+    const litersNeeded = totalCalculatedKm / effectiveKmPerLiter;
+    const fuelCost = litersNeeded * (Number(fuelPrice) || 0);
+    const maintenanceCost = totalCalculatedKm * (Number(maintenanceCostPerKm) || 0);
     const directDriverCosts = fuelCost + maintenanceCost + (Number(tollsFee) || 0);
-    const netProfit = Math.max(0, finalTotalPrice - directDriverCosts);
+
+    const netProfit = finalTotalPrice - directDriverCosts;
     const marginPercent = finalTotalPrice > 0 ? (netProfit / finalTotalPrice) * 100 : 0;
 
     return {
       subtotal,
       calculatedDiscount,
       finalTotalPrice,
+      litersNeeded,
       fuelCost,
       maintenanceCost,
       directDriverCosts,
       netProfit,
       marginPercent,
-      kmTotalRevenue,
     };
   }, [
     totalCalculatedKm,
@@ -255,28 +455,6 @@ export function FreightQuoteForm({
     fuelPrice,
     maintenanceCostPerKm,
   ]);
-
-  const handleClearDiscount = () => {
-    setDiscountValue(0);
-    toast.info('Ajuste de preço resetado.');
-  };
-
-  // Add stop
-  const handleAddStop = () => {
-    const newStop: RouteStop = {
-      id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : String(Date.now()),
-      address: '',
-    };
-    setAdditionalStops([...additionalStops, newStop]);
-  };
-
-  const handleUpdateStop = (id: string, address: string) => {
-    setAdditionalStops(additionalStops.map(s => s.id === id ? { ...s, address } : s));
-  };
-
-  const handleRemoveStop = (id: string) => {
-    setAdditionalStops(additionalStops.filter(s => s.id !== id));
-  };
 
   // Build Quote Object
   const buildQuoteObject = (): FreightQuote => {
@@ -308,6 +486,8 @@ export function FreightQuoteForm({
       pix_key_type: pixKeyType as any,
 
       vehicle_type: vehicleType,
+      vehicle_label: vehicleInfo.label,
+      vehicle_capacity: vehicleInfo.maxWeight,
       service_type: serviceType,
       origin_address: originAddress.trim() || 'Ponto de Coleta',
       origin_neighborhood: originNeighborhood.trim(),
@@ -369,7 +549,7 @@ export function FreightQuoteForm({
 
   const handleQuickWhatsApp = () => {
     if (!originAddress || !destinationAddress) {
-      toast.error('Preencha ao menos a rota para gerar a mensagem de WhatsApp.');
+      toast.error('Preencha ao menos os endereços de coleta e entrega.');
       return;
     }
     const quote = buildQuoteObject();
@@ -379,7 +559,7 @@ export function FreightQuoteForm({
 
   const handleQuickProposal = () => {
     if (!originAddress || !destinationAddress) {
-      toast.error('Preencha ao menos a rota para visualizar a proposta formal.');
+      toast.error('Preencha ao menos os endereços de coleta e entrega.');
       return;
     }
     const quote = buildQuoteObject();
@@ -391,693 +571,1128 @@ export function FreightQuoteForm({
     new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val || 0);
 
   return (
-    <form onSubmit={handleFormSubmit} className="space-y-6">
-      {/* VEHICLE INFO BANNER (MOTOCICLETA EXCLUSIVA) */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between p-3.5 sm:p-4 rounded-3xl bg-card border border-border/80 shadow-xs gap-3">
-        <div className="flex items-center gap-3">
-          <div className="p-2.5 rounded-2xl bg-primary/10 text-primary border border-primary/20 shrink-0">
-            <Bike className="w-5 h-5" />
+    <form onSubmit={handleFormSubmit} className="space-y-6 pb-36 sm:pb-24">
+      {/* 1. FLEET VEHICLE PICKER & SERVICE TYPE BAR */}
+      <div className="bg-card border border-border/80 rounded-3xl p-4 sm:p-5 shadow-xs space-y-4">
+        <div className="flex items-center gap-2.5 border-b border-border/40 pb-3">
+          <div className="p-2 rounded-xl bg-primary/10 text-primary">
+            <Zap className="w-5 h-5" />
           </div>
           <div>
-            <div className="flex items-center gap-2">
-              <span className="font-black text-sm text-foreground">
-                Modalidade: Motocicleta (Frete Express)
-              </span>
-              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
-                Ativo
-              </span>
-            </div>
-            <span className="text-xs text-muted-foreground block mt-0.5">
-              Ideal para documentos, pequenos/médios pacotes e transporte ágil.
-            </span>
+            <h2 className="text-sm sm:text-base font-black tracking-tight text-foreground">
+              1. Seleção de Veículo & Modalidade
+            </h2>
+            <p className="text-[11px] text-muted-foreground">
+              Escolha o veículo para carregar automaticamente a capacidade de carga e tarifas cadastradas.
+            </p>
           </div>
         </div>
-        
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={handleApplyPresetRates}
-          className="rounded-2xl h-9 text-xs font-extrabold gap-1.5 cursor-pointer text-primary border-primary/30 hover:bg-primary/10 shrink-0"
-        >
-          <RotateCcw className="w-3.5 h-3.5" />
-          Recarregar Tarifas Padrão
-        </Button>
+
+        {/* Vehicles Grid / Carousel */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+          {availableVehicles.map((v) => {
+            const isSelected = v.id === vehicleType;
+            return (
+              <button
+                key={v.id}
+                type="button"
+                onClick={() => handleSelectVehicle(v.id)}
+                className={`relative p-3.5 rounded-2xl text-left transition-all border cursor-pointer flex flex-col justify-between gap-2.5 group ${
+                  isSelected
+                    ? 'bg-primary/10 border-primary shadow-sm shadow-primary/10 ring-2 ring-primary/20'
+                    : 'bg-muted/30 hover:bg-muted/60 border-border/70 hover:border-border text-foreground'
+                }`}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex items-center gap-2.5">
+                    <div className={`p-2 rounded-xl shrink-0 transition-colors ${
+                      isSelected ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground group-hover:text-foreground'
+                    }`}>
+                      {v.iconName === 'Car' ? (
+                        <Car className="w-4 h-4" />
+                      ) : v.iconName === 'Truck' ? (
+                        <Truck className="w-4 h-4" />
+                      ) : (
+                        <Bike className="w-4 h-4" />
+                      )}
+                    </div>
+                    <div>
+                      <h4 className="font-extrabold text-xs text-foreground leading-tight line-clamp-1">
+                        {v.label}
+                      </h4>
+                      <span className="text-[10px] font-semibold text-muted-foreground line-clamp-1">
+                        {v.maxWeight}
+                      </span>
+                    </div>
+                  </div>
+                  {isSelected && (
+                    <span className="h-5 w-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-[10px] shrink-0">
+                      <Check className="w-3 h-3" />
+                    </span>
+                  )}
+                </div>
+
+                {/* Rates snippet */}
+                <div className="flex items-center justify-between text-[11px] pt-1 border-t border-border/30">
+                  <span className="text-muted-foreground font-medium">Saída: {formatBRL(v.defaultBase)}</span>
+                  <span className="font-black text-primary">{formatBRL(v.defaultPriceKm)}/km</span>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Service Type Pills */}
+        <div className="flex items-center gap-2 pt-1 overflow-x-auto pb-1">
+          <span className="text-[11px] font-bold text-muted-foreground shrink-0 flex items-center gap-1 mr-1">
+            <Sliders className="w-3 h-3" /> Modalidade:
+          </span>
+          {[
+            { id: 'express', label: '⚡ Expresso (Direto)' },
+            { id: 'scheduled', label: '🕒 Programado' },
+            { id: 'return_trip', label: '📦 Retorno / Fracionado' },
+            { id: 'corporate', label: '🏢 Corporativo / B2B' },
+          ].map((srv) => (
+            <button
+              key={srv.id}
+              type="button"
+              onClick={() => setServiceType(srv.id as ServiceType)}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer transition-all shrink-0 border ${
+                serviceType === srv.id
+                  ? 'bg-foreground text-background border-foreground shadow-xs'
+                  : 'bg-muted/40 hover:bg-muted text-muted-foreground border-border/60'
+              }`}
+            >
+              {srv.label}
+            </button>
+          ))}
+        </div>
       </div>
 
-      {/* FORM BODY GRID */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* LEFT COLUMN: CLIENT & ROUTE & CARGO (7 cols) */}
-        <div className="lg:col-span-7 space-y-6">
-          {/* CLIENT INFO CARD WITH AUTOCOMPLETE */}
-          <Card className="border-border/60 bg-card/75 shadow-xs rounded-3xl overflow-hidden">
-            <CardHeader className="p-4 sm:p-5 border-b border-border/50 bg-muted/20 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-              <CardTitle className="text-sm font-black flex items-center gap-2">
-                <ShieldCheck className="w-4 h-4 text-primary" />
-                Dados do Cliente
-              </CardTitle>
+      {/* 2. CLIENT & SCHEDULING (AGILE & SMART) */}
+      <div className="bg-card border border-border/80 rounded-3xl p-4 sm:p-5 shadow-xs space-y-4">
+        <div className="flex items-center justify-between border-b border-border/40 pb-3">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 rounded-xl bg-primary/10 text-primary">
+              <User className="w-5 h-5" />
+            </div>
+            <div>
+              <h2 className="text-sm sm:text-base font-black tracking-tight text-foreground">
+                2. Cliente & Agendamento
+              </h2>
+              <p className="text-[11px] text-muted-foreground">
+                Digite para buscar clientes cadastrados ou preencha rapidamente os dados para a proposta.
+              </p>
+            </div>
+          </div>
 
-              {/* AUTOCOMPLETE CLIENT SELECTOR */}
-              {savedClients.length > 0 && (
-                <div className="flex items-center gap-2 w-full sm:w-auto">
-                  <Users className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                  <Select value={selectedClientId} onValueChange={handleSelectClient}>
-                    <SelectTrigger className="h-8 text-xs rounded-xl bg-background border-border/80 w-full sm:w-48">
-                      <SelectValue placeholder="Autocompletar Cliente..." />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none_clear">Nenhum (Limpar)</SelectItem>
-                      {savedClients.map(c => (
-                        <SelectItem key={c.id} value={c.id}>
-                          {c.name} {c.company ? `(${c.company})` : ''}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              )}
-            </CardHeader>
+          {savedClients.length > 0 && (
+            <div className="w-48 sm:w-60">
+              <Select value={selectedClientId} onValueChange={handleSelectClient}>
+                <SelectTrigger className="h-8 rounded-xl text-xs bg-muted/30 border-border/60">
+                  <Users className="w-3.5 h-3.5 mr-1.5 text-muted-foreground" />
+                  <SelectValue placeholder="Clientes Salvos..." />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="">-- Novo Cliente --</SelectItem>
+                  {savedClients.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.name} {c.company ? `• ${c.company}` : ''}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+        </div>
 
-            <CardContent className="p-4 sm:p-5 space-y-3.5 text-xs">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="space-y-1 sm:col-span-2">
-                  <label className="font-bold text-foreground flex items-center justify-between">
-                    <span>Nome do Cliente / Contato *</span>
-                    <span className="text-[10px] text-muted-foreground font-normal">Salvo automaticamente</span>
-                  </label>
-                  <Input
-                    required
-                    value={clientName}
-                    onChange={(e) => setClientName(e.target.value)}
-                    placeholder="Ex: Carlos Silva ou Empresa ABC"
-                    className="rounded-xl h-10 text-xs"
-                  />
-                </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="space-y-1 sm:col-span-2 lg:col-span-1">
+            <label className="text-xs font-bold text-foreground flex items-center gap-1">
+              <User className="w-3 h-3 text-muted-foreground" /> Nome do Cliente *
+            </label>
+            <ClientAutocompleteInput
+              value={clientName}
+              onChange={setClientName}
+              clients={savedClients}
+              onSelectClient={handleSelectClientFromAutocomplete}
+              placeholder="Ex: Carlos Silva / Loja Central"
+              className="rounded-xl h-9.5 text-xs bg-background border-border/70 font-semibold"
+              required
+            />
+          </div>
 
-                <div className="space-y-1">
-                  <label className="font-bold text-foreground">WhatsApp / Telefone:</label>
-                  <Input
-                    value={clientPhone}
-                    onChange={(e) => setClientPhone(e.target.value)}
-                    placeholder="(11) 98888-8888"
-                    className="rounded-xl h-10 text-xs"
-                  />
-                </div>
+          <div className="space-y-1">
+            <label className="text-xs font-bold text-foreground flex items-center gap-1">
+              <Phone className="w-3 h-3 text-muted-foreground" /> WhatsApp / Telefone
+            </label>
+            <Input
+              value={clientPhone}
+              onChange={(e) => setClientPhone(maskPhone(e.target.value))}
+              placeholder="(00) 90000-0000"
+              className="rounded-xl h-9.5 text-xs bg-background border-border/70 font-mono"
+            />
+          </div>
 
-                <div className="space-y-1">
-                  <label className="font-bold text-foreground">Empresa (opcional):</label>
-                  <Input
-                    value={clientCompany}
-                    onChange={(e) => setClientCompany(e.target.value)}
-                    placeholder="Razão Social"
-                    className="rounded-xl h-10 text-xs"
-                  />
-                </div>
+          <div className="space-y-1">
+            <label className="text-xs font-bold text-foreground flex items-center gap-1">
+              <Building className="w-3 h-3 text-muted-foreground" /> Empresa / Fantasia (Opcional)
+            </label>
+            <Input
+              value={clientCompany}
+              onChange={(e) => setClientCompany(e.target.value)}
+              placeholder="Ex: Mercado Central Ltda"
+              className="rounded-xl h-9.5 text-xs bg-background border-border/70"
+            />
+          </div>
 
-                <div className="space-y-1">
-                  <label className="font-bold text-foreground">CPF ou CNPJ (opcional):</label>
-                  <Input
-                    value={clientDocument}
-                    onChange={(e) => setClientDocument(e.target.value)}
-                    placeholder="000.000.000-00"
-                    className="rounded-xl h-10 text-xs"
-                  />
-                </div>
+          <div className="space-y-1">
+            <label className="text-xs font-bold text-foreground flex items-center gap-1">
+              <ShieldCheck className="w-3 h-3 text-muted-foreground" /> CPF ou CNPJ (Opcional)
+            </label>
+            <Input
+              value={clientDocument}
+              onChange={(e) => setClientDocument(maskCpfCnpj(e.target.value))}
+              placeholder="000.000.000-00 ou CNPJ"
+              className="rounded-xl h-9.5 text-xs bg-background border-border/70 font-mono"
+            />
+          </div>
+        </div>
 
-                <div className="space-y-1">
-                  <label className="font-bold text-foreground">E-mail (opcional):</label>
-                  <Input
-                    type="email"
-                    value={clientEmail}
-                    onChange={(e) => setClientEmail(e.target.value)}
-                    placeholder="cliente@email.com"
-                    className="rounded-xl h-10 text-xs"
-                  />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* ROUTE & ITINERARY CARD */}
-          <Card className="border-border/60 bg-card/75 shadow-xs rounded-3xl overflow-hidden">
-            <CardHeader className="p-4 sm:p-5 border-b border-border/50 bg-muted/20 flex flex-row items-center justify-between">
-              <div>
-                <CardTitle className="text-sm font-black flex items-center gap-2">
-                  <MapPin className="w-4 h-4 text-primary" />
-                  Itinerário & Rota
-                </CardTitle>
-                <CardDescription className="text-[11px]">
-                  Endereço de coleta, entrega e paradas adicionais
-                </CardDescription>
-              </div>
-
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1 border-t border-border/40">
+          <div className="space-y-1">
+            <label className="text-xs font-bold text-foreground flex items-center gap-1">
+              <Calendar className="w-3 h-3 text-muted-foreground" /> Data da Coleta
+            </label>
+            <div className="flex gap-1.5">
+              <Input
+                type="date"
+                value={scheduledDate}
+                onChange={(e) => setScheduledDate(e.target.value)}
+                className="rounded-xl h-9.5 text-xs bg-background border-border/70 flex-1"
+              />
               <Button
                 type="button"
                 variant="outline"
                 size="sm"
-                onClick={handleAddStop}
-                className="rounded-xl h-8 text-[11px] font-bold border-border/80 gap-1.5 cursor-pointer"
+                onClick={() => setScheduledDate(new Date().toISOString().split('T')[0])}
+                className="h-9.5 px-2.5 text-[10px] font-bold rounded-xl border-border/60"
               >
-                <Plus className="w-3.5 h-3.5 text-primary" />
-                Add Parada
-              </Button>
-            </CardHeader>
-
-            <CardContent className="p-4 sm:p-5 space-y-4 text-xs">
-              {/* Coleta */}
-              <div className="p-3.5 rounded-2xl bg-emerald-500/5 border border-emerald-500/20 space-y-2">
-                <div className="flex items-center gap-2">
-                  <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 ring-4 ring-emerald-500/20" />
-                  <span className="font-black text-emerald-600 dark:text-emerald-400 text-[11px] uppercase tracking-wider">
-                    Ponto de Coleta (Origem) *
-                  </span>
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                  <div className="sm:col-span-2">
-                    <Input
-                      required
-                      value={originAddress}
-                      onChange={(e) => setOriginAddress(e.target.value)}
-                      placeholder="Rua, Número, Bairro, Cidade"
-                      className="rounded-xl h-9 text-xs bg-background"
-                    />
-                  </div>
-                  <div>
-                    <Input
-                      value={originNeighborhood}
-                      onChange={(e) => setOriginNeighborhood(e.target.value)}
-                      placeholder="Bairro / Referência"
-                      className="rounded-xl h-9 text-xs bg-background"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Paradas Adicionais */}
-              {additionalStops.map((stop, idx) => (
-                <div key={stop.id} className="p-3 rounded-2xl bg-amber-500/5 border border-amber-500/20 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <div className="w-2.5 h-2.5 rounded-full bg-amber-500" />
-                      <span className="font-bold text-amber-600 dark:text-amber-400 text-[11px] uppercase">
-                        Parada Intermediária #{idx + 1}
-                      </span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveStop(stop.id)}
-                      className="text-muted-foreground hover:text-rose-500 p-1 cursor-pointer"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                  <Input
-                    value={stop.address}
-                    onChange={(e) => handleUpdateStop(stop.id, e.target.value)}
-                    placeholder="Endereço da parada intermediária"
-                    className="rounded-xl h-9 text-xs bg-background"
-                  />
-                </div>
-              ))}
-
-              {/* Entrega */}
-              <div className="p-3.5 rounded-2xl bg-rose-500/5 border border-rose-500/20 space-y-2">
-                <div className="flex items-center gap-2">
-                  <div className="w-2.5 h-2.5 rounded-full bg-rose-500 ring-4 ring-rose-500/20" />
-                  <span className="font-black text-rose-600 dark:text-rose-400 text-[11px] uppercase tracking-wider">
-                    Ponto de Entrega (Destino Final) *
-                  </span>
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                  <div className="sm:col-span-2">
-                    <Input
-                      required
-                      value={destinationAddress}
-                      onChange={(e) => setDestinationAddress(e.target.value)}
-                      placeholder="Rua, Número, Bairro, Cidade"
-                      className="rounded-xl h-9 text-xs bg-background"
-                    />
-                  </div>
-                  <div>
-                    <Input
-                      value={destinationNeighborhood}
-                      onChange={(e) => setDestinationNeighborhood(e.target.value)}
-                      placeholder="Bairro / Referência"
-                      className="rounded-xl h-9 text-xs bg-background"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Distância e Opção Ida e Volta */}
-              <div className="pt-2 grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <label className="font-bold text-foreground flex items-center justify-between">
-                    <span>Distância Estimada (KM):</span>
-                    <span className="text-[10px] text-muted-foreground font-normal">Ex: 12,5</span>
-                  </label>
-                  <DecimalInput
-                    value={distanceKm}
-                    onChange={(val) => setDistanceKm(val)}
-                    suffix="KM"
-                    className="rounded-xl h-10 text-xs font-black text-primary"
-                  />
-                </div>
-
-                <div className="flex items-center justify-between p-3 rounded-2xl bg-muted/20 border border-border/60">
-                  <div>
-                    <span className="font-bold text-foreground block text-xs">Cobrar Retorno (Ida e Volta)</span>
-                    <span className="text-[10px] text-muted-foreground">
-                      Total: {totalCalculatedKm.toFixed(1)} km rodados
-                    </span>
-                  </div>
-                  <input
-                    type="checkbox"
-                    checked={isRoundTrip}
-                    onChange={(e) => setIsRoundTrip(e.target.checked)}
-                    className="h-5 w-5 rounded-md border-border text-primary cursor-pointer accent-primary"
-                  />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* CARGO & SCHEDULE CARD */}
-          <Card className="border-border/60 bg-card/75 shadow-xs rounded-3xl overflow-hidden">
-            <CardHeader className="p-4 sm:p-5 border-b border-border/50 bg-muted/20">
-              <CardTitle className="text-sm font-black flex items-center gap-2">
-                <Package className="w-4 h-4 text-primary" />
-                Carga & Agendamento
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="p-4 sm:p-5 space-y-4 text-xs">
-              <div className="space-y-1.5">
-                <label className="font-bold text-foreground flex items-center gap-1.5">
-                  <Package className="w-3.5 h-3.5 text-muted-foreground" />
-                  <span>Descrição da Mercadoria / Volumes:</span>
-                </label>
-                <Input
-                  value={cargoDescription}
-                  onChange={(e) => setCargoDescription(e.target.value)}
-                  placeholder="Ex: 3 Caixas de calçados (peso total aprox 15kg)"
-                  className="rounded-xl h-10 text-xs"
-                />
-              </div>
-
-              <div className="grid grid-cols-1 min-[440px]:grid-cols-2 md:grid-cols-4 gap-3.5 sm:gap-4">
-                <div className="space-y-1.5">
-                  <label className="font-bold text-foreground block truncate">
-                    Peso (kg):
-                  </label>
-                  <DecimalInput
-                    value={cargoWeightKg}
-                    onChange={(val) => setCargoWeightKg(val > 0 ? val : undefined)}
-                    suffix="kg"
-                    placeholder="Ex: 12,5"
-                    className="rounded-xl h-10 text-xs w-full"
-                  />
-                </div>
-
-                <div className="space-y-1.5">
-                  <label className="font-bold text-foreground block truncate">
-                    Valor Declarado (R$):
-                  </label>
-                  <DecimalInput
-                    value={cargoValue}
-                    onChange={(val) => setCargoValue(val > 0 ? val : undefined)}
-                    prefix="R$"
-                    placeholder="Ex: 500,00"
-                    className="rounded-xl h-10 text-xs w-full"
-                  />
-                </div>
-
-                <div className="space-y-1.5">
-                  <label className="font-bold text-foreground flex items-center gap-1 block truncate">
-                    <Calendar className="w-3.5 h-3.5 text-primary shrink-0" />
-                    <span>Data do Frete:</span>
-                  </label>
-                  <Input
-                    type="date"
-                    value={scheduledDate}
-                    onChange={(e) => setScheduledDate(e.target.value)}
-                    className="rounded-xl h-10 text-xs w-full"
-                  />
-                </div>
-
-                <div className="space-y-1.5">
-                  <label className="font-bold text-foreground flex items-center gap-1 block truncate">
-                    <Clock className="w-3.5 h-3.5 text-primary shrink-0" />
-                    <span>Horário (Opcional):</span>
-                  </label>
-                  <Input
-                    type="time"
-                    value={scheduledTime}
-                    onChange={(e) => setScheduledTime(e.target.value)}
-                    className="rounded-xl h-10 text-xs w-full"
-                  />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* RIGHT COLUMN: PRICING & PRICE ADJUSTMENT MODES (5 cols) */}
-        <div className="lg:col-span-5 space-y-6">
-          {/* PRICING BREAKDOWN CARD */}
-          <Card className="border-border/80 bg-card shadow-sm rounded-3xl overflow-hidden">
-            <CardHeader className="p-4 sm:p-5 border-b border-border/50 bg-gradient-to-r from-primary/10 via-primary/5 to-transparent">
-              <CardTitle className="text-sm font-black flex items-center justify-between">
-                <span>Composição de Preço & Tarifas</span>
-                <span className="text-[11px] font-bold text-primary px-2.5 py-0.5 rounded-full bg-primary/10 border border-primary/20">
-                  {formatBRL(financialCalculations.finalTotalPrice)}
-                </span>
-              </CardTitle>
-            </CardHeader>
-
-            <CardContent className="p-4 sm:p-5 space-y-4 text-xs">
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <label className="font-bold text-foreground">Taxa Base / Saída (R$):</label>
-                  <DecimalInput
-                    value={baseFee}
-                    onChange={(val) => setBaseFee(val)}
-                    prefix="R$"
-                    className="rounded-xl h-10 text-xs font-bold"
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <label className="font-bold text-foreground">Preço por KM (R$):</label>
-                  <DecimalInput
-                    value={pricePerKm}
-                    onChange={(val) => setPricePerKm(val)}
-                    prefix="R$"
-                    suffix="/km"
-                    className="rounded-xl h-10 text-xs font-bold text-primary"
-                  />
-                </div>
-              </div>
-
-              {/* Subtotal da KM */}
-              <div className="p-3 rounded-2xl bg-muted/30 border border-border/50 flex items-center justify-between text-xs">
-                <span className="text-muted-foreground">
-                  Deslocamento ({totalCalculatedKm.toFixed(1)} km × {formatBRL(pricePerKm)}):
-                </span>
-                <span className="font-black text-foreground">
-                  {formatBRL(financialCalculations.kmTotalRevenue)}
-                </span>
-              </div>
-
-              {/* TOGGLE ADVANCED FEES */}
-              <div>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  onClick={() => setShowAdvancedFees(!showAdvancedFees)}
-                  className="w-full justify-between h-9 px-2 text-xs font-bold text-muted-foreground hover:text-foreground cursor-pointer"
-                >
-                  <span className="flex items-center gap-1.5">
-                    <Layers className="w-3.5 h-3.5 text-primary" />
-                    Taxas Adicionais & Paradas {showAdvancedFees ? '(Ocultar)' : '(Expandir)'}
-                  </span>
-                  {showAdvancedFees ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-                </Button>
-
-                {showAdvancedFees && (
-                  <div className="mt-3 p-3.5 rounded-2xl bg-muted/20 border border-border/60 space-y-3">
-                    <div className="grid grid-cols-2 gap-2.5">
-                      <div className="space-y-1">
-                        <label className="text-[11px] font-semibold text-muted-foreground">Paradas Extras (R$):</label>
-                        <DecimalInput
-                          value={extraStopsFee}
-                          onChange={(val) => setExtraStopsFee(val)}
-                          prefix="R$"
-                          className="rounded-xl h-8 text-xs bg-background"
-                        />
-                      </div>
-
-                      <div className="space-y-1">
-                        <label className="text-[11px] font-semibold text-muted-foreground">Ajudante / Peso (R$):</label>
-                        <DecimalInput
-                          value={heavyCargoFee}
-                          onChange={(val) => setHeavyCargoFee(val)}
-                          prefix="R$"
-                          className="rounded-xl h-8 text-xs bg-background"
-                        />
-                      </div>
-
-                      <div className="space-y-1">
-                        <label className="text-[11px] font-semibold text-muted-foreground">Escadas / Andares (R$):</label>
-                        <DecimalInput
-                          value={stairsFloorFee}
-                          onChange={(val) => setStairsFloorFee(val)}
-                          prefix="R$"
-                          className="rounded-xl h-8 text-xs bg-background"
-                        />
-                      </div>
-
-                      <div className="space-y-1">
-                        <label className="text-[11px] font-semibold text-muted-foreground">Urgência / Chuva (R$):</label>
-                        <DecimalInput
-                          value={urgentOrRainFee}
-                          onChange={(val) => setUrgentOrRainFee(val)}
-                          prefix="R$"
-                          className="rounded-xl h-8 text-xs bg-background"
-                        />
-                      </div>
-
-                      <div className="space-y-1">
-                        <label className="text-[11px] font-semibold text-muted-foreground">Adicional Noturno (R$):</label>
-                        <DecimalInput
-                          value={nightFee}
-                          onChange={(val) => setNightFee(val)}
-                          prefix="R$"
-                          className="rounded-xl h-8 text-xs bg-background"
-                        />
-                      </div>
-
-                      <div className="space-y-1">
-                        <label className="text-[11px] font-semibold text-muted-foreground">Pedágios (R$):</label>
-                        <DecimalInput
-                          value={tollsFee}
-                          onChange={(val) => setTollsFee(val)}
-                          prefix="R$"
-                          className="rounded-xl h-8 text-xs bg-background"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="pt-2 border-t border-border/40">
-                      <div className="space-y-1">
-                        <label className="text-[11px] font-semibold text-muted-foreground">Hora Parada / Espera (R$):</label>
-                        <DecimalInput
-                          value={waitingHoursFee}
-                          onChange={(val) => setWaitingHoursFee(val)}
-                          prefix="R$"
-                          className="rounded-xl h-8 text-xs bg-background"
-                        />
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* PRICE ADJUSTMENT MODES: VALOR FIXO (R$), PORCENTAGEM (%), OU VALOR TOTAL FECHADO */}
-              <div className="p-3.5 rounded-2xl bg-emerald-500/5 border border-emerald-500/20 space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="font-extrabold text-emerald-600 dark:text-emerald-400 text-xs flex items-center gap-1.5">
-                    <Tag className="w-3.5 h-3.5" />
-                    Ajuste de Preço & Desconto
-                  </span>
-                  {(discountValue > 0 || discountType === 'total_fixed') && (
-                    <button
-                      type="button"
-                      onClick={handleClearDiscount}
-                      className="text-[10px] text-rose-500 font-bold hover:underline cursor-pointer"
-                    >
-                      Resetar
-                    </button>
-                  )}
-                </div>
-
-                <div className="grid grid-cols-12 gap-2">
-                  <div className="col-span-5 sm:col-span-5">
-                    <Select value={discountType} onValueChange={(val: any) => setDiscountType(val)}>
-                      <SelectTrigger className="rounded-xl h-9 text-[11px] bg-background font-semibold">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="fixed">Desconto R$</SelectItem>
-                        <SelectItem value="percent">Desconto %</SelectItem>
-                        <SelectItem value="total_fixed">Preço Fechado</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div className="col-span-7 sm:col-span-7">
-                    <DecimalInput
-                      value={discountValue}
-                      onChange={(val) => setDiscountValue(val)}
-                      prefix={discountType === 'percent' ? '%' : 'R$'}
-                      placeholder={discountType === 'total_fixed' ? 'Valor Final R$' : 'Desconto'}
-                      className="rounded-xl h-9 text-xs bg-background text-emerald-600 font-bold"
-                    />
-                  </div>
-                </div>
-
-                {/* Explanatory helper badge */}
-                <div className="text-[10px] text-muted-foreground">
-                  {discountType === 'total_fixed' && (
-                    <span className="text-emerald-600 dark:text-emerald-400 font-bold block">
-                      🎯 Preço Fechado Ativo: O orçamento custará exatamente {formatBRL(financialCalculations.finalTotalPrice)}.
-                    </span>
-                  )}
-                  {discountType === 'percent' && (
-                    <span>Aplica um desconto percentual sobre o subtotal ({formatBRL(financialCalculations.subtotal)}).</span>
-                  )}
-                  {discountType === 'fixed' && (
-                    <span>Subtrai um valor em dinheiro (R$) diretamente do subtotal.</span>
-                  )}
-                </div>
-
-                {/* Summary banner */}
-                {financialCalculations.calculatedDiscount > 0 && (
-                  <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-xs flex items-center justify-between">
-                    <span className="text-emerald-700 dark:text-emerald-300 font-semibold text-[11px]">
-                      {discountType === 'total_fixed' ? 'Diferença / Ajuste:' : 'Desconto Concedido:'}
-                    </span>
-                    <span className="font-black text-emerald-600 dark:text-emerald-400">
-                      -{formatBRL(financialCalculations.calculatedDiscount)}
-                    </span>
-                  </div>
-                )}
-              </div>
-
-              {/* PAYMENT METHOD & VALIDADE */}
-              <div className="grid grid-cols-2 gap-3 pt-1 border-t border-border/40">
-                <div className="space-y-1">
-                  <label className="font-bold text-foreground">Forma de Pagamento:</label>
-                  <Select value={paymentMethod} onValueChange={(val: any) => setPaymentMethod(val)}>
-                    <SelectTrigger className="rounded-xl h-10 text-xs">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="pix">PIX (À Vista)</SelectItem>
-                      <SelectItem value="dinheiro">Dinheiro na Entrega</SelectItem>
-                      <SelectItem value="cartao_credito">Cartão de Crédito</SelectItem>
-                      <SelectItem value="cartao_debito">Cartão de Débito</SelectItem>
-                      <SelectItem value="50_50">50% Saída + 50% Chegada</SelectItem>
-                      <SelectItem value="faturado_15d">Faturado 15 Dias</SelectItem>
-                      <SelectItem value="faturado_30d">Faturado 30 Dias</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="space-y-1">
-                  <label className="font-bold text-foreground">Validade da Proposta:</label>
-                  <Select value={String(validDays)} onValueChange={(val) => setValidDays(parseInt(val))}>
-                    <SelectTrigger className="rounded-xl h-10 text-xs">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="1">24 Horas (1 dia)</SelectItem>
-                      <SelectItem value="2">48 Horas (2 dias)</SelectItem>
-                      <SelectItem value="5">5 Dias</SelectItem>
-                      <SelectItem value="7">7 Dias (1 semana)</SelectItem>
-                      <SelectItem value="15">15 Dias</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* DRIVER VIABILITY & PROFIT SIMULATOR (EXCLUSIVE PRIVACY VIEW) */}
-          <Card className="border-emerald-500/30 bg-gradient-to-br from-card via-card to-emerald-500/5 shadow-xs rounded-3xl overflow-hidden">
-            <CardHeader className="p-4 sm:p-5 border-b border-border/50 bg-emerald-500/10">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-sm font-black text-foreground flex items-center gap-2">
-                  <TrendingUp className="w-4 h-4 text-emerald-500" />
-                  Simulador de Viabilidade & Lucro
-                </CardTitle>
-                <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-600 dark:text-emerald-400">
-                  Visão Privada
-                </span>
-              </div>
-            </CardHeader>
-
-            <CardContent className="p-4 sm:p-5 space-y-4 text-xs">
-              <div className="grid grid-cols-2 gap-3">
-                <div className="p-3 rounded-2xl bg-muted/30 border border-border/60">
-                  <span className="text-[11px] font-medium text-muted-foreground block">Combustível Estimado</span>
-                  <span className="text-sm font-black text-foreground block mt-0.5">
-                    {formatBRL(financialCalculations.fuelCost)}
-                  </span>
-                  <span className="text-[10px] text-muted-foreground block mt-0.5">
-                    ({kmPerLiter} km/L @ R$ {fuelPrice.toFixed(2)})
-                  </span>
-                </div>
-
-                <div className="p-3 rounded-2xl bg-muted/30 border border-border/60">
-                  <span className="text-[11px] font-medium text-muted-foreground block">Manutenção & Pneus</span>
-                  <span className="text-sm font-black text-foreground block mt-0.5">
-                    {formatBRL(financialCalculations.maintenanceCost)}
-                  </span>
-                  <span className="text-[10px] text-muted-foreground block mt-0.5">
-                    (R$ {maintenanceCostPerKm.toFixed(2)}/km)
-                  </span>
-                </div>
-              </div>
-
-              {/* LUCRO LÍQUIDO FINAL */}
-              <div className="p-4 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-between">
-                <div>
-                  <span className="text-xs font-bold text-emerald-800 dark:text-emerald-200 block">
-                    Lucro Líquido no Bolso
-                  </span>
-                  <span className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 block mt-0.5">
-                    Margem de Lucro: {financialCalculations.marginPercent.toFixed(1)}%
-                  </span>
-                </div>
-                <div className="text-right">
-                  <span className="text-xl font-black text-emerald-600 dark:text-emerald-400 block">
-                    {formatBRL(financialCalculations.netProfit)}
-                  </span>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* ACTION BUTTONS BAR */}
-          <div className="space-y-2.5 pt-2">
-            <Button
-              type="submit"
-              className="w-full h-12 rounded-2xl font-black text-xs bg-primary hover:bg-primary/90 text-primary-foreground shadow-md gap-2 cursor-pointer"
-            >
-              <Save className="w-4 h-4" />
-              Salvar Orçamento Comercial
-            </Button>
-
-            <div className="grid grid-cols-2 gap-2.5">
-              <Button
-                type="button"
-                onClick={handleQuickWhatsApp}
-                className="h-11 rounded-2xl font-bold text-xs bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs gap-1.5 cursor-pointer"
-              >
-                <MessageSquare className="w-4 h-4" />
-                Gerar WhatsApp
-              </Button>
-
-              <Button
-                type="button"
-                variant="outline"
-                onClick={handleQuickProposal}
-                className="h-11 rounded-2xl font-bold text-xs border-border/80 hover:bg-muted gap-1.5 cursor-pointer"
-              >
-                <FileText className="w-4 h-4 text-primary" />
-                Proposta PDF
+                Hoje
               </Button>
             </div>
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-xs font-bold text-foreground flex items-center gap-1">
+              <Clock className="w-3 h-3 text-muted-foreground" /> Horário / Janela de Entrega
+            </label>
+            <Input
+              value={scheduledTime}
+              onChange={(e) => setScheduledTime(e.target.value)}
+              placeholder="Ex: 09:30, Manhã, Imediato..."
+              className="rounded-xl h-9.5 text-xs bg-background border-border/70"
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* 3. ROUTE, DISTANCE & STOPS (FAST DISPATCH COCKPIT) */}
+      <div className="bg-card border border-border/80 rounded-3xl p-4 sm:p-5 shadow-xs space-y-4">
+        <div className="flex items-center justify-between border-b border-border/40 pb-3">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 rounded-xl bg-primary/10 text-primary">
+              <Navigation className="w-5 h-5" />
+            </div>
+            <div>
+              <h2 className="text-sm sm:text-base font-black tracking-tight text-foreground">
+                3. Rota, Distância & Paradas
+              </h2>
+              <p className="text-[11px] text-muted-foreground">
+                Autocomplete integrado de endereços, CEPs e histórico de rotas anteriores.
+              </p>
+            </div>
+          </div>
+
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={handleSwapAddresses}
+            className="rounded-xl h-8 text-xs font-bold gap-1.5 border-border hover:bg-muted cursor-pointer"
+          >
+            <ArrowUpDown className="w-3.5 h-3.5" />
+            Inverter Rota
+          </Button>
+        </div>
+
+        {/* Origin & Destination */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+          {/* Origin */}
+          <div className="p-3.5 rounded-2xl bg-muted/20 border border-border/60 space-y-2">
+            <div className="flex items-center gap-2 text-xs font-extrabold text-emerald-600 dark:text-emerald-400">
+              <div className="h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-emerald-500/20" />
+              PONTO A (COLETA / ORIGEM)
+            </div>
+            <AddressAutocompleteInput
+              value={originAddress}
+              onChange={setOriginAddress}
+              neighborhoodValue={originNeighborhood}
+              onNeighborhoodChange={setOriginNeighborhood}
+              historyAddresses={historyAddresses}
+              placeholder="Digite rua, avenida, número ou CEP..."
+              className="rounded-xl h-9.5 text-xs bg-background border-border/70 font-medium"
+              required
+            />
+            <Input
+              value={originNeighborhood}
+              onChange={(e) => setOriginNeighborhood(e.target.value)}
+              placeholder="Bairro / Cidade de Coleta"
+              className="rounded-xl h-8.5 text-xs bg-background border-border/70"
+            />
+          </div>
+
+          {/* Destination */}
+          <div className="p-3.5 rounded-2xl bg-muted/20 border border-border/60 space-y-2">
+            <div className="flex items-center gap-2 text-xs font-extrabold text-rose-600 dark:text-rose-400">
+              <div className="h-2.5 w-2.5 rounded-full bg-rose-500 ring-2 ring-rose-500/20" />
+              PONTO B (ENTREGA / DESTINO)
+            </div>
+            <AddressAutocompleteInput
+              value={destinationAddress}
+              onChange={setDestinationAddress}
+              neighborhoodValue={destinationNeighborhood}
+              onNeighborhoodChange={setDestinationNeighborhood}
+              historyAddresses={historyAddresses}
+              placeholder="Digite rua, avenida, número ou CEP..."
+              className="rounded-xl h-9.5 text-xs bg-background border-border/70 font-medium"
+              required
+            />
+            <Input
+              value={destinationNeighborhood}
+              onChange={(e) => setDestinationNeighborhood(e.target.value)}
+              placeholder="Bairro / Cidade de Entrega"
+              className="rounded-xl h-8.5 text-xs bg-background border-border/70"
+            />
+          </div>
+        </div>
+
+        {/* Distance Controls & Quick Presets */}
+        <div className="p-3.5 rounded-2xl bg-primary/5 border border-primary/15 space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-extrabold text-foreground">Distância do Trajeto:</span>
+              <div className="flex items-center gap-1.5">
+                <Input
+                  type="number"
+                  step="0.1"
+                  min="0.1"
+                  value={distanceKm || ''}
+                  onChange={(e) => setDistanceKm(parseFloat(e.target.value) || 0)}
+                  className="w-24 h-9 rounded-xl text-center font-black text-sm bg-background border-primary/40 focus-visible:ring-primary"
+                />
+                <span className="text-xs font-bold text-primary">KM</span>
+              </div>
+            </div>
+
+            {/* Round Trip Toggle */}
+            <button
+              type="button"
+              onClick={() => setIsRoundTrip(!isRoundTrip)}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 border transition-all cursor-pointer ${
+                isRoundTrip
+                  ? 'bg-primary text-primary-foreground border-primary shadow-xs'
+                  : 'bg-background hover:bg-muted text-muted-foreground border-border/70'
+              }`}
+            >
+              <ArrowUpDown className="w-3.5 h-3.5" />
+              Ida e Volta ({isRoundTrip ? 'Ativo 2x' : 'Somente Ida'})
+            </button>
+          </div>
+
+          {/* Quick Distance Chips */}
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+            <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider shrink-0 mr-1">
+              Atalhos KM:
+            </span>
+            {DISTANCE_PRESETS.map((km) => (
+              <button
+                key={km}
+                type="button"
+                onClick={() => setDistanceKm(km)}
+                className={`px-2.5 py-1 rounded-lg text-xs font-bold shrink-0 transition-colors border cursor-pointer ${
+                  distanceKm === km
+                    ? 'bg-primary text-primary-foreground border-primary'
+                    : 'bg-background hover:bg-muted text-foreground border-border/60'
+                }`}
+              >
+                {km} km
+              </button>
+            ))}
+          </div>
+
+          {/* Total calculated km tag */}
+          <div className="flex items-center justify-between text-xs pt-1 border-t border-primary/10">
+            <span className="text-muted-foreground">
+              Total Faturado: <strong className="text-foreground">{totalCalculatedKm.toFixed(1)} km</strong>
+              {isRoundTrip && ' (Ida + Retorno)'}
+            </span>
+            <span className="text-muted-foreground font-medium">
+              Tarifa KM: <strong className="text-primary">{formatBRL(pricePerKm * totalCalculatedKm)}</strong>
+            </span>
+          </div>
+        </div>
+
+        {/* Additional Stops (Multi-Entregas) */}
+        <div className="space-y-2.5">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-foreground flex items-center gap-1.5">
+              <Layers className="w-3.5 h-3.5 text-muted-foreground" />
+              Paradas Extras / Entregas Fracionadas ({additionalStops.length})
+            </span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleAddStop}
+              className="rounded-xl h-7.5 px-2.5 text-xs font-bold gap-1 border-border/80 hover:bg-muted cursor-pointer"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              Adicionar Parada
+            </Button>
+          </div>
+
+          {additionalStops.map((stop, idx) => (
+            <div key={stop.id || idx} className="p-3 rounded-2xl bg-muted/20 border border-border/60 flex items-start gap-2.5">
+              <div className="h-6 w-6 rounded-lg bg-primary/10 text-primary flex items-center justify-center text-xs font-black shrink-0 mt-1">
+                {idx + 1}
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 flex-1">
+                <div className="sm:col-span-2">
+                  <AddressAutocompleteInput
+                    value={stop.address}
+                    onChange={(val) => handleUpdateStop(idx, 'address', val)}
+                    neighborhoodValue={stop.neighborhood}
+                    onNeighborhoodChange={(val) => handleUpdateStop(idx, 'neighborhood', val)}
+                    historyAddresses={historyAddresses}
+                    placeholder="Endereço da parada / CEP..."
+                    className="rounded-xl h-8.5 text-xs bg-background border-border/70"
+                  />
+                </div>
+                <Input
+                  value={stop.neighborhood || ''}
+                  onChange={(e) => handleUpdateStop(idx, 'neighborhood', e.target.value)}
+                  placeholder="Bairro / Observação"
+                  className="rounded-xl h-8.5 text-xs bg-background border-border/70"
+                />
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={() => handleRemoveStop(idx)}
+                className="h-8 w-8 text-rose-500 hover:text-rose-600 hover:bg-rose-500/10 rounded-xl shrink-0 cursor-pointer"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </Button>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* 4. CARGO DETAILS & QUICK SPECIFICATIONS */}
+      <div className="bg-card border border-border/80 rounded-3xl p-4 sm:p-5 shadow-xs space-y-4">
+        <div className="flex items-center gap-2.5 border-b border-border/40 pb-3">
+          <div className="p-2 rounded-xl bg-primary/10 text-primary">
+            <Package className="w-5 h-5" />
+          </div>
+          <div>
+            <h2 className="text-sm sm:text-base font-black tracking-tight text-foreground">
+              4. Descrição da Carga & Mercadoria
+            </h2>
+            <p className="text-[11px] text-muted-foreground">
+              Descreva os itens ou utilize as tags rápidas para preenchimento ágil.
+            </p>
+          </div>
+        </div>
+
+        {/* Quick Cargo Tags */}
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+          <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider shrink-0 mr-1">
+            Tags Rápidas:
+          </span>
+          {CARGO_PRESETS.map((presetItem) => (
+            <button
+              key={presetItem}
+              type="button"
+              onClick={() => setCargoDescription(presetItem)}
+              className={`px-2.5 py-1 rounded-lg text-xs font-semibold shrink-0 transition-colors border cursor-pointer ${
+                cargoDescription === presetItem
+                  ? 'bg-foreground text-background border-foreground'
+                  : 'bg-muted/30 hover:bg-muted text-foreground border-border/60'
+              }`}
+            >
+              {presetItem}
+            </button>
+          ))}
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="sm:col-span-2 space-y-1">
+            <label className="text-xs font-bold text-foreground">Descrição Detalhada dos Itens:</label>
+            <Input
+              value={cargoDescription}
+              onChange={(e) => setCargoDescription(e.target.value)}
+              placeholder="Ex: 3 caixas de ferramentas pesando 15kg total"
+              className="rounded-xl h-9.5 text-xs bg-background border-border/70"
+            />
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-xs font-bold text-foreground flex items-center gap-1">
+              <Weight className="w-3 h-3 text-muted-foreground" /> Peso Estimado (kg):
+            </label>
+            <Input
+              type="number"
+              step="1"
+              value={cargoWeightKg || ''}
+              onChange={(e) => setCargoWeightKg(parseFloat(e.target.value) || undefined)}
+              placeholder="Ex: 25"
+              className="rounded-xl h-9.5 text-xs bg-background border-border/70"
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* 5. QUICK ADD-ONS & EXTRA FEES GRID (1-CLICK TOTAL ADJUSTERS) */}
+      <div className="bg-card border border-border/80 rounded-3xl p-4 sm:p-5 shadow-xs space-y-4">
+        <div className="flex items-center justify-between border-b border-border/40 pb-3">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 rounded-xl bg-primary/10 text-primary">
+              <Sparkles className="w-5 h-5" />
+            </div>
+            <div>
+              <h2 className="text-sm sm:text-base font-black tracking-tight text-foreground">
+                5. Adicionais & Taxas Extras
+              </h2>
+              <p className="text-[11px] text-muted-foreground">
+                Adicione serviços complementares com valores pré-calculados ou personalizados.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {/* Ajudante / Carga Pesada */}
+          <div className="p-3 rounded-2xl bg-muted/20 border border-border/60 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                📦 Carga Pesada / Ajudante
+              </span>
+              <DecimalInput
+                value={heavyCargoFee}
+                onChange={setHeavyCargoFee}
+                className="w-24 h-8 text-xs text-right font-black rounded-xl bg-background"
+              />
+            </div>
+            <div className="flex gap-1">
+              {[0, 30, 50, 80].map((v) => (
+                <button
+                  key={v}
+                  type="button"
+                  onClick={() => setHeavyCargoFee(v)}
+                  className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border transition-colors cursor-pointer ${
+                    heavyCargoFee === v ? 'bg-primary text-primary-foreground border-primary' : 'bg-background text-muted-foreground border-border/60 hover:bg-muted'
+                  }`}
+                >
+                  {v === 0 ? 'Sem' : `R$${v}`}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Subida de Escadas */}
+          <div className="p-3 rounded-2xl bg-muted/20 border border-border/60 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                🪜 Escadas / Sem Elevador
+              </span>
+              <DecimalInput
+                value={stairsFloorFee}
+                onChange={setStairsFloorFee}
+                className="w-24 h-8 text-xs text-right font-black rounded-xl bg-background"
+              />
+            </div>
+            <div className="flex gap-1">
+              {[0, 15, 30, 50].map((v) => (
+                <button
+                  key={v}
+                  type="button"
+                  onClick={() => setStairsFloorFee(v)}
+                  className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border transition-colors cursor-pointer ${
+                    stairsFloorFee === v ? 'bg-primary text-primary-foreground border-primary' : 'bg-background text-muted-foreground border-border/60 hover:bg-muted'
+                  }`}
+                >
+                  {v === 0 ? 'Sem' : `R$${v}`}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Urgência / Chuva */}
+          <div className="p-3 rounded-2xl bg-muted/20 border border-border/60 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                ⚡ Taxa de Urgência
+              </span>
+              <DecimalInput
+                value={urgentOrRainFee}
+                onChange={setUrgentOrRainFee}
+                className="w-24 h-8 text-xs text-right font-black rounded-xl bg-background"
+              />
+            </div>
+            <div className="flex gap-1">
+              {[0, 15, 25, 40].map((v) => (
+                <button
+                  key={v}
+                  type="button"
+                  onClick={() => setUrgentOrRainFee(v)}
+                  className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border transition-colors cursor-pointer ${
+                    urgentOrRainFee === v ? 'bg-primary text-primary-foreground border-primary' : 'bg-background text-muted-foreground border-border/60 hover:bg-muted'
+                  }`}
+                >
+                  {v === 0 ? 'Sem' : `R$${v}`}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Noturno / Fim de Semana */}
+          <div className="p-3 rounded-2xl bg-muted/20 border border-border/60 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                🌙 Noturno / Domingo
+              </span>
+              <DecimalInput
+                value={nightFee}
+                onChange={setNightFee}
+                className="w-24 h-8 text-xs text-right font-black rounded-xl bg-background"
+              />
+            </div>
+            <div className="flex gap-1">
+              {[0, 20, 35, 50].map((v) => (
+                <button
+                  key={v}
+                  type="button"
+                  onClick={() => setNightFee(v)}
+                  className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border transition-colors cursor-pointer ${
+                    nightFee === v ? 'bg-primary text-primary-foreground border-primary' : 'bg-background text-muted-foreground border-border/60 hover:bg-muted'
+                  }`}
+                >
+                  {v === 0 ? 'Sem' : `R$${v}`}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Pedágio / Balsas */}
+          <div className="p-3 rounded-2xl bg-muted/20 border border-border/60 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                🛣️ Pedágio / Balsa
+              </span>
+              <DecimalInput
+                value={tollsFee}
+                onChange={setTollsFee}
+                className="w-24 h-8 text-xs text-right font-black rounded-xl bg-background"
+              />
+            </div>
+            <div className="flex gap-1 flex-wrap">
+              {[
+                { label: 'Sem', val: 0 },
+                { label: 'R$ 3,30', val: 3.30 },
+                { label: 'R$ 9,20', val: 9.20 },
+                { label: 'R$ 18,40', val: 18.40 },
+              ].map((item) => (
+                <button
+                  key={item.label}
+                  type="button"
+                  onClick={() => setTollsFee(item.val)}
+                  className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border transition-colors cursor-pointer ${
+                    tollsFee === item.val
+                      ? 'bg-primary text-primary-foreground border-primary'
+                      : 'bg-background text-muted-foreground border-border/60 hover:bg-muted'
+                  }`}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Advanced Pricing Accordion Toggle */}
+        <div className="pt-2">
+          <button
+            type="button"
+            onClick={() => setShowAdvancedPricing(!showAdvancedPricing)}
+            className="text-xs font-bold text-muted-foreground hover:text-foreground flex items-center gap-1.5 cursor-pointer py-1"
+          >
+            {showAdvancedPricing ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+            {showAdvancedPricing ? 'Ocultar Detalhes das Tarifas Base' : 'Ajustar Tarifas Base deste Orçamento (Taxa Saída, R$/KM, Consumo)'}
+          </button>
+
+          {showAdvancedPricing && (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-3 p-3.5 rounded-2xl bg-muted/30 border border-border/60 text-xs">
+              <div className="space-y-1">
+                <label className="text-[11px] font-bold text-foreground">Taxa Base de Saída:</label>
+                <DecimalInput
+                  value={baseFee}
+                  onChange={setBaseFee}
+                  className="h-8.5 rounded-xl bg-background font-bold text-xs"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[11px] font-bold text-foreground">Preço por KM:</label>
+                <DecimalInput
+                  value={pricePerKm}
+                  onChange={setPricePerKm}
+                  className="h-8.5 rounded-xl bg-background font-bold text-xs"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[11px] font-bold text-foreground">Consumo (KM/L):</label>
+                <Input
+                  type="number"
+                  step="0.5"
+                  value={kmPerLiter}
+                  onChange={(e) => setKmPerLiter(parseFloat(e.target.value) || 35)}
+                  className="h-8.5 rounded-xl bg-background font-bold text-xs"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[11px] font-bold text-foreground">Preço Gasolina/Litro:</label>
+                <DecimalInput
+                  value={fuelPrice}
+                  onChange={setFuelPrice}
+                  className="h-8.5 rounded-xl bg-background font-bold text-xs"
+                />
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* 6. DEDICATED DISCOUNT & CLOSED PRICE (AJUSTE COMERCIAL) */}
+      <div className="bg-card border border-border/80 rounded-3xl p-4 sm:p-5 shadow-xs space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border/40 pb-3">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+              <Tag className="w-5 h-5" />
+            </div>
+            <div>
+              <h2 className="text-sm sm:text-base font-black tracking-tight text-foreground">
+                6. Desconto Comercial & Preço Fechado
+              </h2>
+              <p className="text-[11px] text-muted-foreground">
+                Aplique desconto percentual, abatimento em reais ou defina um preço final fechado.
+              </p>
+            </div>
+          </div>
+
+          {/* Mode Selector Tabs */}
+          <div className="flex items-center bg-muted/50 p-1 rounded-2xl border border-border/60 shrink-0">
+            <button
+              type="button"
+              onClick={() => {
+                setDiscountType('percent');
+                if (discountType === 'total_fixed') setDiscountValue(0);
+              }}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                discountType === 'percent'
+                  ? 'bg-background text-foreground shadow-xs'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              Porcentagem (%)
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setDiscountType('fixed');
+                if (discountType === 'total_fixed') setDiscountValue(0);
+              }}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                discountType === 'fixed'
+                  ? 'bg-background text-foreground shadow-xs'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              Valor Fixo (R$)
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setDiscountType('total_fixed');
+                if (!discountValue || discountValue === 0) {
+                  setDiscountValue(financialCalculations.subtotal);
+                }
+              }}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                discountType === 'total_fixed'
+                  ? 'bg-emerald-600 text-white shadow-xs'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              🔒 Preço Fechado
+            </button>
+          </div>
+        </div>
+
+        {/* Discount Input Area according to Mode */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5 items-center">
+          <div className="md:col-span-2 space-y-2">
+            {discountType === 'percent' && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-foreground">
+                    Desconto em Porcentagem (% sobre o subtotal de {formatBRL(financialCalculations.subtotal)}):
+                  </label>
+                  <div className="flex items-center gap-1.5">
+                    <Input
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="1"
+                      value={discountValue || ''}
+                      onChange={(e) => setDiscountValue(parseFloat(e.target.value) || 0)}
+                      placeholder="0"
+                      className="w-24 h-9 rounded-xl text-center font-black text-sm bg-background border-border/80"
+                    />
+                    <span className="text-xs font-bold text-muted-foreground">%</span>
+                  </div>
+                </div>
+
+                {/* Shortcuts */}
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-[10px] font-bold text-muted-foreground uppercase mr-1">Atalhos:</span>
+                  {[0, 5, 10, 15, 20].map((pct) => (
+                    <button
+                      key={pct}
+                      type="button"
+                      onClick={() => setDiscountValue(pct)}
+                      className={`px-3 py-1 rounded-xl text-xs font-bold border transition-colors cursor-pointer ${
+                        discountValue === pct
+                          ? 'bg-emerald-600 text-white border-emerald-600'
+                          : 'bg-muted/40 hover:bg-muted text-muted-foreground border-border/60'
+                      }`}
+                    >
+                      {pct === 0 ? 'Sem Desconto' : `${pct}%`}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {discountType === 'fixed' && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-foreground">
+                    Abatimento Fixo em Reais (R$):
+                  </label>
+                  <div className="flex items-center gap-1.5">
+                    <DecimalInput
+                      value={discountValue}
+                      onChange={setDiscountValue}
+                      className="w-32 h-9 rounded-xl text-right font-black text-sm bg-background border-border/80"
+                    />
+                  </div>
+                </div>
+
+                {/* Shortcuts */}
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-[10px] font-bold text-muted-foreground uppercase mr-1">Atalhos:</span>
+                  {[0, 5, 10, 20, 50].map((val) => (
+                    <button
+                      key={val}
+                      type="button"
+                      onClick={() => setDiscountValue(val)}
+                      className={`px-3 py-1 rounded-xl text-xs font-bold border transition-colors cursor-pointer ${
+                        discountValue === val
+                          ? 'bg-emerald-600 text-white border-emerald-600'
+                          : 'bg-muted/40 hover:bg-muted text-muted-foreground border-border/60'
+                      }`}
+                    >
+                      {val === 0 ? 'Sem Desconto' : `- R$ ${val}`}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {discountType === 'total_fixed' && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <label className="text-xs font-bold text-foreground block">
+                      Valor Final Fechado (Acordo Comercial):
+                    </label>
+                    <span className="text-[10px] text-muted-foreground">
+                      Subtotal calculado: {formatBRL(financialCalculations.subtotal)}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <DecimalInput
+                      value={discountValue}
+                      onChange={setDiscountValue}
+                      placeholder={financialCalculations.subtotal.toFixed(2)}
+                      className="w-36 h-9 rounded-xl text-right font-black text-base bg-background text-emerald-600 dark:text-emerald-400 border-emerald-500/50 focus-visible:ring-emerald-500"
+                    />
+                  </div>
+                </div>
+
+                {/* Shortcuts */}
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-[10px] font-bold text-muted-foreground uppercase mr-1">Arredondar:</span>
+                  {[
+                    Math.floor(financialCalculations.subtotal),
+                    Math.round(financialCalculations.subtotal / 10) * 10,
+                    Math.ceil(financialCalculations.subtotal / 50) * 50,
+                  ].filter((v, idx, arr) => v > 0 && arr.indexOf(v) === idx).map((rnd) => (
+                    <button
+                      key={rnd}
+                      type="button"
+                      onClick={() => setDiscountValue(rnd)}
+                      className={`px-3 py-1 rounded-xl text-xs font-bold border transition-colors cursor-pointer ${
+                        discountValue === rnd
+                          ? 'bg-emerald-600 text-white border-emerald-600'
+                          : 'bg-muted/40 hover:bg-muted text-muted-foreground border-border/60'
+                      }`}
+                    >
+                      {formatBRL(rnd)}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDiscountType('fixed');
+                      setDiscountValue(0);
+                    }}
+                    className="px-2.5 py-1 rounded-xl text-xs font-semibold text-rose-500 hover:bg-rose-500/10 border border-border/60 cursor-pointer ml-auto"
+                  >
+                    Remover Fechado
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Summary Box */}
+          <div className="p-3.5 rounded-2xl bg-muted/30 border border-border/60 text-xs space-y-1.5">
+            <div className="flex justify-between text-muted-foreground">
+              <span>Subtotal Inicial:</span>
+              <span className="font-semibold text-foreground">{formatBRL(financialCalculations.subtotal)}</span>
+            </div>
+            <div className="flex justify-between text-emerald-600 dark:text-emerald-400 font-bold">
+              <span>Desconto Aplicado:</span>
+              <span>- {formatBRL(financialCalculations.calculatedDiscount)}</span>
+            </div>
+            <div className="flex justify-between font-black text-sm text-foreground pt-1.5 border-t border-border/40">
+              <span>Valor Faturado:</span>
+              <span className="text-primary">{formatBRL(financialCalculations.finalTotalPrice)}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* 7. FINANCIAL TELEMETRY COCKPIT & PROFITABILITY HUD */}
+      <div className="bg-gradient-to-br from-card via-card to-muted/20 border border-border/80 rounded-3xl p-5 sm:p-6 shadow-sm space-y-4">
+        <div className="flex items-center justify-between border-b border-border/40 pb-3">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+              <TrendingUp className="w-5 h-5" />
+            </div>
+            <div>
+              <h2 className="text-sm sm:text-base font-black tracking-tight text-foreground">
+                7. Demonstração Financeira & Lucratividade Real
+              </h2>
+              <p className="text-[11px] text-muted-foreground">
+                Cálculo instantâneo de faturamento, consumo de combustível, desgaste e margem líquida.
+              </p>
+            </div>
+          </div>
+
+          {/* Profit Margin Pill */}
+          <div className={`px-3 py-1 rounded-full text-xs font-black flex items-center gap-1 border ${
+            financialCalculations.marginPercent >= 60
+              ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30'
+              : financialCalculations.marginPercent >= 35
+              ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30'
+              : 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/30'
+          }`}>
+            <Percent className="w-3.5 h-3.5" />
+            {financialCalculations.marginPercent.toFixed(0)}% Margem Líquida
+          </div>
+        </div>
+
+        {/* Financial KPIs 4-Card Grid */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
+            <span className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground block">
+              Valor Bruto do Frete
+            </span>
+            <p className="text-xl sm:text-2xl font-black text-primary">
+              {formatBRL(financialCalculations.finalTotalPrice)}
+            </p>
+            <span className="text-[10px] text-muted-foreground">Preço final ao cliente</span>
+          </div>
+
+          <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
+            <span className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground block">
+              Combustível Estimado
+            </span>
+            <p className="text-xl sm:text-2xl font-black text-foreground">
+              {formatBRL(financialCalculations.fuelCost)}
+            </p>
+            <span className="text-[10px] text-muted-foreground">
+              {financialCalculations.litersNeeded.toFixed(1)} L ({kmPerLiter} km/l)
+            </span>
+          </div>
+
+          <div className="p-3.5 rounded-2xl bg-card border border-border/60 space-y-1">
+            <span className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground block">
+              Desgaste / Manutenção
+            </span>
+            <p className="text-xl sm:text-2xl font-black text-muted-foreground">
+              {formatBRL(financialCalculations.maintenanceCost)}
+            </p>
+            <span className="text-[10px] text-muted-foreground">Pneus, óleo e revisão</span>
+          </div>
+
+          <div className="p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 space-y-1">
+            <span className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-700 dark:text-emerald-300 block">
+              Lucro Líquido Real
+            </span>
+            <p className="text-xl sm:text-2xl font-black text-emerald-600 dark:text-emerald-400">
+              {formatBRL(financialCalculations.netProfit)}
+            </p>
+            <span className="text-[10px] text-emerald-700/80 dark:text-emerald-300/80 font-semibold">
+              Fica no seu bolso
+            </span>
+          </div>
+        </div>
+
+        {/* Payment and Terms */}
+        <div className="pt-2 grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+          <div className="space-y-1">
+            <label className="font-bold text-foreground flex items-center gap-1">
+              <CreditCard className="w-3.5 h-3.5 text-muted-foreground" /> Forma de Pagamento Sugerida:
+            </label>
+            <Select value={paymentMethod} onValueChange={(v) => setPaymentMethod(v as PaymentMethod)}>
+              <SelectTrigger className="h-9.5 rounded-xl bg-background border-border/70 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="pix">PIX (Chave Cadastrada)</SelectItem>
+                <SelectItem value="cash">Dinheiro na Entrega</SelectItem>
+                <SelectItem value="credit_card">Cartão de Crédito</SelectItem>
+                <SelectItem value="debit_card">Cartão de Débito</SelectItem>
+                <SelectItem value="invoice_15">Faturado 15 Dias (B2B)</SelectItem>
+                <SelectItem value="invoice_30">Faturado 30 Dias (B2B)</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-1">
+            <label className="font-bold text-foreground flex items-center gap-1">
+              <ShieldCheck className="w-3.5 h-3.5 text-muted-foreground" /> Validade do Orçamento:
+            </label>
+            <Select value={String(validDays)} onValueChange={(v) => setValidDays(parseInt(v) || 2)}>
+              <SelectTrigger className="h-9.5 rounded-xl bg-background border-border/70 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="1">Válido por 24 horas</SelectItem>
+                <SelectItem value="2">Válido por 48 horas (Padrão)</SelectItem>
+                <SelectItem value="7">Válido por 7 dias</SelectItem>
+                <SelectItem value="15">Válido por 15 dias</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+      </div>
+
+      {/* 7. FLOATING / STICKY HIGH-CONVERSION ACTIONS COCKPIT */}
+      <div className="fixed bottom-14 md:bottom-0 left-0 right-0 md:left-64 lg:left-72 z-30 bg-background/95 backdrop-blur-md border-t border-border/80 px-3 py-2 sm:px-4 sm:py-2.5 shadow-xl transition-all">
+        <div className="max-w-7xl mx-auto flex items-center justify-between gap-2.5 sm:gap-3">
+          {/* Left Price preview */}
+          <div className="flex items-center gap-3 shrink-0">
+            <div>
+              <span className="text-[9px] sm:text-[10px] text-muted-foreground font-bold uppercase tracking-wider block leading-none">
+                Total do Frete
+              </span>
+              <div className="flex items-baseline gap-1.5 sm:gap-2">
+                <span className="text-xl sm:text-2xl font-black text-primary tracking-tight">
+                  {formatBRL(financialCalculations.finalTotalPrice)}
+                </span>
+                <span className="text-[10px] sm:text-xs font-semibold text-muted-foreground">
+                  ({totalCalculatedKm.toFixed(1)} km)
+                </span>
+              </div>
+            </div>
+
+            <div className="hidden lg:block border-l border-border/60 pl-3">
+              <span className="text-[9px] text-muted-foreground block font-medium">Lucro Líquido</span>
+              <span className="text-xs font-extrabold text-emerald-600 dark:text-emerald-400">
+                {formatBRL(financialCalculations.netProfit)} ({financialCalculations.marginPercent.toFixed(0)}%)
+              </span>
+            </div>
+          </div>
+
+          {/* Right Actions */}
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+            {onCancelEdit && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={onCancelEdit}
+                className="rounded-xl h-8.5 px-2 text-xs font-bold text-muted-foreground hover:text-foreground cursor-pointer"
+              >
+                Cancelar
+              </Button>
+            )}
+
+            <Button
+              type="button"
+              onClick={handleQuickWhatsApp}
+              size="sm"
+              className="rounded-xl h-8.5 sm:h-9 px-2.5 sm:px-3.5 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white gap-1.5 cursor-pointer shadow-xs"
+              title="Enviar Orçamento no WhatsApp"
+            >
+              <MessageSquare className="w-3.5 h-3.5" />
+              <span className="hidden xs:inline">WhatsApp</span>
+            </Button>
+
+            <Button
+              type="button"
+              onClick={handleQuickProposal}
+              size="sm"
+              className="rounded-xl h-8.5 sm:h-9 px-2.5 sm:px-3.5 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white gap-1.5 cursor-pointer shadow-xs"
+              title="Gerar Proposta Comercial em PDF"
+            >
+              <FileText className="w-3.5 h-3.5" />
+              <span className="hidden xs:inline">PDF</span>
+            </Button>
+
+            <Button
+              type="submit"
+              size="sm"
+              className="rounded-xl h-8.5 sm:h-9 px-3 sm:px-4 text-xs font-black bg-primary hover:bg-primary/90 text-primary-foreground gap-1.5 cursor-pointer shadow-xs"
+            >
+              <Save className="w-3.5 h-3.5" />
+              <span>Salvar</span>
+            </Button>
           </div>
         </div>
       </div>

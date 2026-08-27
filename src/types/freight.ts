@@ -23,11 +23,15 @@ export interface RouteStop {
 export interface VehicleConfigItem {
   id: string;
   label: string;
-  iconName?: string;
+  iconName?: 'Bike' | 'Car' | 'Truck' | string;
+  maxWeight: string;
+  desc?: string;
   defaultPriceKm: number;
   defaultBase: number;
-  maxWeight?: string;
-  desc?: string;
+  stopFee?: number;
+  kmPerLiter?: number;
+  maintenancePerKm?: number;
+  isDefault?: boolean;
   is_custom?: boolean;
 }
 
@@ -67,6 +71,8 @@ export interface FreightQuote {
 
   // Rota e Logística
   vehicle_type: VehicleType;
+  vehicle_label?: string; // Nome personalizado do veículo
+  vehicle_capacity?: string; // Capacidade de carga personalizada
   service_type: ServiceType;
   origin_address: string;
   origin_neighborhood?: string;
@@ -133,6 +139,11 @@ export interface DriverFreightPreset {
   pix_key: string;
   pix_key_type: 'cpf' | 'cnpj' | 'email' | 'phone' | 'random';
   default_vehicle: VehicleType;
+  default_vehicle_label?: string; // Nome/modelo do veículo
+  default_vehicle_capacity?: string; // Capacidade de carga (ex: Até 25kg)
+  default_vehicle_desc?: string; // Informações do veículo
+  default_vehicle_icon?: 'Bike' | 'Car' | 'Truck' | string;
+  default_km_per_liter?: number; // Consumo médio
   default_price_per_km: number;
   default_base_fee: number;
   default_maintenance_per_km: number;

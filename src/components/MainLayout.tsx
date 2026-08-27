@@ -1,6 +1,6 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { Home, List, PlusCircle, User, PiggyBank, TrendingUp, Bike, Sparkles, LogOut, ChevronRight, ShieldCheck, Terminal, Cloud, RefreshCw, Truck } from 'lucide-react';
+import { Home, List, PlusCircle, User, PiggyBank, TrendingUp, Bike, Sparkles, LogOut, ChevronRight, ShieldCheck, Terminal, Cloud, RefreshCw, Truck, Menu, X, Plus } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { Button } from '@/components/ui/button';
 import { syncQueueManager, SyncTask } from '../lib/syncQueue';
@@ -13,7 +13,8 @@ import { systemSettings } from '../lib/systemSettings';
 export function MainLayout({ children }: { children: React.ReactNode }) {
   const location = useLocation();
   const navigate = useNavigate();
-  const [syncQueue, setSyncQueue] = React.useState<SyncTask[]>([]);
+  const [syncQueue, setSyncQueue] = useState<SyncTask[]>([]);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const { settings } = useData();
 
   // Watch session inactivity according to system settings timeout
@@ -36,6 +37,8 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
     ...(settings?.is_admin ? [{ path: '/admin', label: 'Modo Admin', icon: ShieldCheck, desc: 'Gestão e configurações' }] : []),
     { path: '/profile', label: 'Perfil & Ajustes', icon: User, desc: 'Categorias e parâmetros' },
   ];
+
+  const isMoreMenuActive = ['/reserves', '/investments', '/profile', '/admin'].some(p => location.pathname === p);
 
   const handleLogoClick = () => {
     const config = systemSettings.getConfig();
@@ -65,6 +68,11 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
     } else {
       setTimeout(() => { (window as any).__logo_clicks_mobile = 0; }, 2000);
     }
+  };
+
+  const handleNavigateMobile = (path: string) => {
+    setIsMobileMenuOpen(false);
+    navigate(path);
   };
 
   return (
@@ -220,44 +228,249 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
         </header>
 
         {/* Main Content Area */}
-        <main className="flex-1 w-full md:pl-64 lg:pl-72 pt-14 md:pt-0 pb-24 md:pb-12 min-h-screen transition-all flex flex-col">
+        <main className="flex-1 w-full md:pl-64 lg:pl-72 pt-14 md:pt-0 pb-20 md:pb-12 min-h-screen transition-all flex flex-col">
           <BroadcastBanner />
           <div className="flex-1">
             {children}
           </div>
         </main>
 
-        {/* Mobile Bottom Navigation (Visible strictly on mobile < md) */}
-        <div className="md:hidden fixed bottom-0 left-0 right-0 border-t border-border bg-background/95 backdrop-blur-md flex items-center justify-around px-1 py-1.5 z-40 pb-[max(0.5rem,safe-area-inset-bottom)] overflow-x-auto">
-          <Link to="/" className={`flex flex-col items-center py-1 px-1.5 rounded-lg transition-colors shrink-0 ${location.pathname === '/' ? 'text-primary font-bold' : 'text-muted-foreground hover:text-foreground'}`}>
-            <Home className="w-4 h-4" />
-            <span className="text-[8.5px] mt-0.5 leading-none">Início</span>
-          </Link>
-          <Link to="/freight" className={`flex flex-col items-center py-1 px-1.5 rounded-lg transition-colors shrink-0 ${location.pathname === '/freight' ? 'text-primary font-bold' : 'text-muted-foreground hover:text-foreground'}`}>
-            <Truck className="w-4 h-4" />
-            <span className="text-[8.5px] mt-0.5 leading-none">Frete</span>
-          </Link>
-          <Link to="/history" className={`flex flex-col items-center py-1 px-1.5 rounded-lg transition-colors shrink-0 ${location.pathname === '/history' ? 'text-primary font-bold' : 'text-muted-foreground hover:text-foreground'}`}>
-            <List className="w-4 h-4" />
-            <span className="text-[8.5px] mt-0.5 leading-none">Extrato</span>
-          </Link>
-          <Link to="/add" className={`flex flex-col items-center py-1 px-1.5 rounded-lg transition-colors shrink-0 ${location.pathname === '/add' ? 'text-primary font-bold' : 'text-muted-foreground hover:text-foreground'}`}>
-            <PlusCircle className="w-4 h-4 text-primary" />
-            <span className="text-[8.5px] mt-0.5 leading-none font-bold text-primary">Lançar</span>
-          </Link>
-          <Link to="/reserves" className={`flex flex-col items-center py-1 px-1.5 rounded-lg transition-colors shrink-0 ${location.pathname === '/reserves' ? 'text-primary font-bold' : 'text-muted-foreground hover:text-foreground'}`}>
-            <PiggyBank className="w-4 h-4" />
-            <span className="text-[8.5px] mt-0.5 leading-none">Reservas</span>
-          </Link>
-          <Link to="/investments" className={`flex flex-col items-center py-1 px-1.5 rounded-lg transition-colors shrink-0 ${location.pathname === '/investments' ? 'text-primary font-bold' : 'text-muted-foreground hover:text-foreground'}`}>
-            <TrendingUp className="w-4 h-4" />
-            <span className="text-[8.5px] mt-0.5 leading-none">Ativos</span>
-          </Link>
-          <Link to="/profile" className={`flex flex-col items-center py-1 px-1.5 rounded-lg transition-colors shrink-0 ${location.pathname === '/profile' ? 'text-primary font-bold' : 'text-muted-foreground hover:text-foreground'}`}>
-            <User className="w-4 h-4" />
-            <span className="text-[8.5px] mt-0.5 leading-none">Perfil</span>
-          </Link>
+        {/* REFINED MOBILE BOTTOM NAVIGATION (5 Primary Touch Targets) */}
+        <div className="md:hidden fixed bottom-0 left-0 right-0 border-t border-border/80 bg-background/95 backdrop-blur-xl z-40 pb-[max(0.35rem,safe-area-inset-bottom)] px-3 py-1.5 shadow-lg">
+          <div className="flex items-center justify-around max-w-md mx-auto">
+            {/* 1. Início */}
+            <Link 
+              to="/" 
+              className={`flex-1 flex flex-col items-center justify-center py-1 rounded-xl transition-all active:scale-95 min-h-[44px] ${
+                location.pathname === '/' 
+                  ? 'text-primary font-bold' 
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              <Home className={`w-5 h-5 transition-transform ${location.pathname === '/' ? 'scale-110' : ''}`} />
+              <span className="text-[10px] font-semibold mt-0.5 leading-none">Início</span>
+            </Link>
+
+            {/* 2. Frete */}
+            <Link 
+              to="/freight" 
+              className={`flex-1 flex flex-col items-center justify-center py-1 rounded-xl transition-all active:scale-95 min-h-[44px] ${
+                location.pathname === '/freight' 
+                  ? 'text-primary font-bold' 
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              <Truck className={`w-5 h-5 transition-transform ${location.pathname === '/freight' ? 'scale-110' : ''}`} />
+              <span className="text-[10px] font-semibold mt-0.5 leading-none">Fretes</span>
+            </Link>
+
+            {/* 3. Central CTA: Lançar */}
+            <div className="flex-1 flex flex-col items-center justify-center -mt-4">
+              <Link
+                to="/add"
+                className="h-12 w-12 rounded-full bg-gradient-to-tr from-primary via-indigo-600 to-indigo-700 text-primary-foreground flex items-center justify-center shadow-lg shadow-primary/30 active:scale-90 transition-transform ring-4 ring-background"
+                title="Novo Lançamento"
+              >
+                <Plus className="w-6 h-6 stroke-[2.5]" />
+              </Link>
+              <span className="text-[9.5px] font-extrabold text-foreground mt-0.5 leading-none">
+                Lançar
+              </span>
+            </div>
+
+            {/* 4. Extrato */}
+            <Link 
+              to="/history" 
+              className={`flex-1 flex flex-col items-center justify-center py-1 rounded-xl transition-all active:scale-95 min-h-[44px] ${
+                location.pathname === '/history' 
+                  ? 'text-primary font-bold' 
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              <List className={`w-5 h-5 transition-transform ${location.pathname === '/history' ? 'scale-110' : ''}`} />
+              <span className="text-[10px] font-semibold mt-0.5 leading-none">Extrato</span>
+            </Link>
+
+            {/* 5. Mais / Menu Sheet */}
+            <button
+              type="button"
+              onClick={() => setIsMobileMenuOpen(true)}
+              className={`flex-1 flex flex-col items-center justify-center py-1 rounded-xl transition-all active:scale-95 min-h-[44px] cursor-pointer relative ${
+                isMoreMenuActive 
+                  ? 'text-primary font-bold' 
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              <div className="relative">
+                <Menu className={`w-5 h-5 transition-transform ${isMoreMenuActive ? 'scale-110' : ''}`} />
+                {isMoreMenuActive && (
+                  <span className="absolute -top-0.5 -right-1 h-2 w-2 rounded-full bg-primary ring-2 ring-background animate-pulse" />
+                )}
+              </div>
+              <span className="text-[10px] font-semibold mt-0.5 leading-none">Mais</span>
+            </button>
+          </div>
         </div>
+
+        {/* MOBILE "MAIS" DRAWER SHEET */}
+        {isMobileMenuOpen && (
+          <div className="md:hidden fixed inset-0 z-50 flex flex-col justify-end bg-black/60 backdrop-blur-xs animate-in fade-in-50">
+            {/* Backdrop click to close */}
+            <div className="flex-1 w-full" onClick={() => setIsMobileMenuOpen(false)} />
+
+            {/* Bottom Sheet Modal */}
+            <div className="bg-background border-t border-border/80 rounded-t-3xl shadow-2xl p-5 space-y-4 max-h-[85vh] overflow-y-auto animate-in slide-in-from-bottom-5 duration-200">
+              {/* Handlebar & Header */}
+              <div className="flex items-center justify-between pb-2 border-b border-border/40">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2 rounded-xl bg-primary/10 text-primary">
+                    <Bike className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-black text-foreground">Menu & Ferramentas</h3>
+                    <p className="text-[11px] text-muted-foreground">Acesso rápido aos módulos financeiros</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsMobileMenuOpen(false)}
+                  className="p-2 rounded-full hover:bg-muted text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Menu Options Grid / List */}
+              <div className="grid grid-cols-1 gap-2.5">
+                {/* Reservas */}
+                <button
+                  type="button"
+                  onClick={() => handleNavigateMobile('/reserves')}
+                  className={`w-full p-3.5 rounded-2xl border transition-all flex items-center justify-between text-left cursor-pointer ${
+                    location.pathname === '/reserves'
+                      ? 'bg-primary/10 border-primary/40 text-primary font-bold shadow-xs'
+                      : 'bg-card hover:bg-muted/50 border-border/60 text-foreground'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="p-2.5 rounded-xl bg-indigo-500/10 text-indigo-500 shrink-0">
+                      <PiggyBank className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-bold text-foreground">Reservas Financeiras</div>
+                      <div className="text-[10.5px] text-muted-foreground">Fundo de emergência, IPVA, manutenção e metas</div>
+                    </div>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
+                </button>
+
+                {/* Ativos / Investimentos */}
+                <button
+                  type="button"
+                  onClick={() => handleNavigateMobile('/investments')}
+                  className={`w-full p-3.5 rounded-2xl border transition-all flex items-center justify-between text-left cursor-pointer ${
+                    location.pathname === '/investments'
+                      ? 'bg-primary/10 border-primary/40 text-primary font-bold shadow-xs'
+                      : 'bg-card hover:bg-muted/50 border-border/60 text-foreground'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="p-2.5 rounded-xl bg-emerald-500/10 text-emerald-500 shrink-0">
+                      <TrendingUp className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-bold text-foreground">Carteira de Ativos</div>
+                      <div className="text-[10.5px] text-muted-foreground">Ações, FIIs, renda fixa e patrimônio líquido</div>
+                    </div>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
+                </button>
+
+                {/* Perfil & Ajustes */}
+                <button
+                  type="button"
+                  onClick={() => handleNavigateMobile('/profile')}
+                  className={`w-full p-3.5 rounded-2xl border transition-all flex items-center justify-between text-left cursor-pointer ${
+                    location.pathname === '/profile'
+                      ? 'bg-primary/10 border-primary/40 text-primary font-bold shadow-xs'
+                      : 'bg-card hover:bg-muted/50 border-border/60 text-foreground'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="p-2.5 rounded-xl bg-primary/10 text-primary shrink-0">
+                      <User className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-bold text-foreground">Perfil & Preferências</div>
+                      <div className="text-[10.5px] text-muted-foreground">Categorias de gastos, metas e dados da conta</div>
+                    </div>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
+                </button>
+
+                {/* Admin (se admin) */}
+                {settings?.is_admin && (
+                  <button
+                    type="button"
+                    onClick={() => handleNavigateMobile('/admin')}
+                    className={`w-full p-3.5 rounded-2xl border transition-all flex items-center justify-between text-left cursor-pointer ${
+                      location.pathname === '/admin'
+                        ? 'bg-primary/10 border-primary/40 text-primary font-bold shadow-xs'
+                        : 'bg-card hover:bg-muted/50 border-border/60 text-foreground'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="p-2.5 rounded-xl bg-amber-500/10 text-amber-500 shrink-0">
+                        <ShieldCheck className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <div className="text-xs font-bold text-foreground">Painel Administrativo</div>
+                        <div className="text-[10.5px] text-muted-foreground">Gestão de usuários, alertas e configurações globais</div>
+                      </div>
+                    </div>
+                    <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
+                  </button>
+                )}
+              </div>
+
+              {/* Status e Logout */}
+              <div className="pt-2 border-t border-border/40 space-y-2">
+                <div className="p-3 bg-muted/20 border border-border/50 rounded-2xl flex items-center gap-3">
+                  <div className={`h-8 w-8 rounded-xl flex items-center justify-center shrink-0 transition-all ${
+                    syncQueue.length > 0 
+                      ? 'bg-amber-500/10 border border-amber-500/20 text-amber-500' 
+                      : 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-500'
+                  }`}>
+                    {syncQueue.length > 0 ? (
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <ShieldCheck className="w-4 h-4" />
+                    )}
+                  </div>
+                  <div className="overflow-hidden flex-1 leading-none">
+                    <span className="text-[10px] font-extrabold uppercase text-muted-foreground tracking-wider block">
+                      {syncQueue.length > 0 ? 'Sincronizando' : 'Sincronização Nuvem'}
+                    </span>
+                    <span className={`text-xs font-bold truncate block mt-1 ${
+                      syncQueue.length > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'
+                    }`}>
+                      {syncQueue.length > 0 ? `${syncQueue.length} registro(s) pendente(s)` : 'Banco Supabase 100% Sincronizado'}
+                    </span>
+                  </div>
+                </div>
+
+                <Button
+                  variant="outline"
+                  onClick={handleLogout}
+                  className="w-full rounded-2xl h-11 text-xs font-bold bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 border-rose-500/30 flex items-center justify-center gap-2 cursor-pointer transition-all"
+                >
+                  <LogOut className="w-4 h-4" />
+                  Sair da Conta
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </MaintenanceGuard>
   );

@@ -16,11 +16,43 @@ export const DEFAULT_VEHICLES: VehicleConfigItem[] = [
     id: 'moto',
     label: 'Motocicleta (Frete Express)',
     iconName: 'Bike',
-    defaultPriceKm: 2.80,
-    defaultBase: 12.00,
     maxWeight: 'Até 20kg (Baú / Mochila)',
     desc: 'Documentos, pequenos pacotes, entregas rápidas e urgentes',
+    defaultBase: 12.00,
+    defaultPriceKm: 2.80,
+    stopFee: 6.00,
+    kmPerLiter: 35,
+    maintenancePerKm: 0.25,
+    isDefault: true,
     is_custom: false,
+  },
+  {
+    id: 'fiorino',
+    label: 'Utilitário / Fiorino / Furgão',
+    iconName: 'Car',
+    maxWeight: 'Até 650kg (3.2 m³)',
+    desc: 'Caixas volumosas, pequenas mudanças, equipamentos e paletes',
+    defaultBase: 40.00,
+    defaultPriceKm: 4.50,
+    stopFee: 15.00,
+    kmPerLiter: 11,
+    maintenancePerKm: 0.55,
+    isDefault: false,
+    is_custom: true,
+  },
+  {
+    id: 'van',
+    label: 'Van de Carga / Furgão Grande',
+    iconName: 'Truck',
+    maxWeight: 'Até 1.500kg (10 m³)',
+    desc: 'Grandes cargas fracionadas, mudanças comerciais e móveis',
+    defaultBase: 80.00,
+    defaultPriceKm: 6.50,
+    stopFee: 25.00,
+    kmPerLiter: 8.5,
+    maintenancePerKm: 0.85,
+    isDefault: false,
+    is_custom: true,
   },
 ];
 
@@ -32,6 +64,11 @@ export const DEFAULT_PRESET: DriverFreightPreset = {
   pix_key: '',
   pix_key_type: 'phone',
   default_vehicle: 'moto',
+  default_vehicle_label: 'Motocicleta (Frete Express)',
+  default_vehicle_capacity: 'Até 20kg (Baú / Mochila)',
+  default_vehicle_desc: 'Documentos, pequenos pacotes, entregas rápidas e urgentes',
+  default_vehicle_icon: 'Bike',
+  default_km_per_liter: 35,
   default_price_per_km: 2.80,
   default_base_fee: 12.00,
   default_maintenance_per_km: 0.25,
@@ -168,10 +205,39 @@ export const freightStorage = {
       const raw = localStorage.getItem(`${PRESET_KEY_PREFIX}${userId}`);
       if (!raw) return DEFAULT_PRESET;
       const parsed = JSON.parse(raw);
+
+      const rawVehicles: VehicleConfigItem[] = Array.isArray(parsed.vehicles) && parsed.vehicles.length > 0
+        ? parsed.vehicles
+        : DEFAULT_VEHICLES;
+
+      // Find active default vehicle
+      const defaultVehId = parsed.default_vehicle || rawVehicles.find(v => v.isDefault)?.id || rawVehicles[0]?.id || 'moto';
+      const activeVehicle = rawVehicles.find(v => v.id === defaultVehId) || rawVehicles[0] || DEFAULT_VEHICLES[0];
+
+      const vehicleLabel = parsed.default_vehicle_label || activeVehicle.label || DEFAULT_PRESET.default_vehicle_label;
+      const vehicleCapacity = parsed.default_vehicle_capacity || activeVehicle.maxWeight || DEFAULT_PRESET.default_vehicle_capacity;
+      const vehicleDesc = parsed.default_vehicle_desc || activeVehicle.desc || DEFAULT_PRESET.default_vehicle_desc;
+      const vehicleIcon = parsed.default_vehicle_icon || activeVehicle.iconName || DEFAULT_PRESET.default_vehicle_icon;
+
+      const normalizedVehicles = rawVehicles.map(v => ({
+        ...v,
+        isDefault: v.id === defaultVehId,
+      }));
+
       return {
         ...DEFAULT_PRESET,
         ...parsed,
-        vehicles: parsed.vehicles && parsed.vehicles.length > 0 ? parsed.vehicles : DEFAULT_VEHICLES,
+        default_vehicle: defaultVehId,
+        default_vehicle_label: vehicleLabel,
+        default_vehicle_capacity: vehicleCapacity,
+        default_vehicle_desc: vehicleDesc,
+        default_vehicle_icon: vehicleIcon,
+        default_km_per_liter: activeVehicle.kmPerLiter ?? parsed.default_km_per_liter ?? 35,
+        default_price_per_km: activeVehicle.defaultPriceKm ?? parsed.default_price_per_km ?? 2.80,
+        default_base_fee: activeVehicle.defaultBase ?? parsed.default_base_fee ?? 12.00,
+        default_maintenance_per_km: activeVehicle.maintenancePerKm ?? parsed.default_maintenance_per_km ?? 0.25,
+        default_stop_fee: activeVehicle.stopFee ?? parsed.default_stop_fee ?? 6.00,
+        vehicles: normalizedVehicles,
       };
     } catch (e) {
       return DEFAULT_PRESET;
@@ -187,6 +253,23 @@ export const freightStorage = {
         .single();
 
       if (!error && data) {
+        const rawVehicles: VehicleConfigItem[] = Array.isArray(data.vehicles) && data.vehicles.length > 0
+          ? data.vehicles
+          : DEFAULT_VEHICLES;
+
+        const defaultVehId = data.default_vehicle || rawVehicles.find(v => v.isDefault)?.id || rawVehicles[0]?.id || 'moto';
+        const activeVehicle = rawVehicles.find(v => v.id === defaultVehId) || rawVehicles[0] || DEFAULT_VEHICLES[0];
+
+        const vehicleLabel = data.default_vehicle_label || activeVehicle.label || DEFAULT_PRESET.default_vehicle_label;
+        const vehicleCapacity = data.default_vehicle_capacity || activeVehicle.maxWeight || DEFAULT_PRESET.default_vehicle_capacity;
+        const vehicleDesc = data.default_vehicle_desc || activeVehicle.desc || DEFAULT_PRESET.default_vehicle_desc;
+        const vehicleIcon = data.default_vehicle_icon || activeVehicle.iconName || DEFAULT_PRESET.default_vehicle_icon;
+
+        const normalizedVehicles = rawVehicles.map(v => ({
+          ...v,
+          isDefault: v.id === defaultVehId,
+        }));
+
         const preset: DriverFreightPreset = {
           driver_name: data.driver_name || '',
           driver_phone: data.driver_phone || '',
@@ -194,14 +277,19 @@ export const freightStorage = {
           driver_document: data.driver_document || '',
           pix_key: data.pix_key || '',
           pix_key_type: data.pix_key_type || 'phone',
-          default_vehicle: data.default_vehicle || 'moto',
-          default_price_per_km: data.default_price_per_km ?? 2.80,
-          default_base_fee: data.default_base_fee ?? 12.00,
-          default_maintenance_per_km: data.default_maintenance_per_km ?? 0.25,
-          default_stop_fee: data.default_stop_fee ?? 6.00,
+          default_vehicle: defaultVehId,
+          default_vehicle_label: vehicleLabel,
+          default_vehicle_capacity: vehicleCapacity,
+          default_vehicle_desc: vehicleDesc,
+          default_vehicle_icon: vehicleIcon,
+          default_km_per_liter: activeVehicle.kmPerLiter ?? data.default_km_per_liter ?? 35,
+          default_price_per_km: activeVehicle.defaultPriceKm ?? data.default_price_per_km ?? 2.80,
+          default_base_fee: activeVehicle.defaultBase ?? data.default_base_fee ?? 12.00,
+          default_maintenance_per_km: activeVehicle.maintenancePerKm ?? data.default_maintenance_per_km ?? 0.25,
+          default_stop_fee: activeVehicle.stopFee ?? data.default_stop_fee ?? 6.00,
           default_terms: data.default_terms || DEFAULT_TERMS,
           default_payment_method: data.default_payment_method || 'pix',
-          vehicles: Array.isArray(data.vehicles) && data.vehicles.length > 0 ? data.vehicles : DEFAULT_VEHICLES,
+          vehicles: normalizedVehicles,
         };
         localStorage.setItem(`${PRESET_KEY_PREFIX}${userId}`, JSON.stringify(preset));
         return preset;
@@ -214,14 +302,45 @@ export const freightStorage = {
 
   savePreset(preset: Partial<DriverFreightPreset>, userId: string = 'default'): DriverFreightPreset {
     const current = this.getPreset(userId);
+
+    const vehiclesList: VehicleConfigItem[] = Array.isArray(preset.vehicles) && preset.vehicles.length > 0
+      ? preset.vehicles
+      : (current.vehicles && current.vehicles.length > 0 ? current.vehicles : DEFAULT_VEHICLES);
+
+    const defaultVehId = preset.default_vehicle || vehiclesList.find(v => v.isDefault)?.id || vehiclesList[0]?.id || 'moto';
+    const activeVehicle = vehiclesList.find(v => v.id === defaultVehId) || vehiclesList[0] || DEFAULT_VEHICLES[0];
+
+    const normalizedVehicles = vehiclesList.map(v => ({
+      ...v,
+      isDefault: v.id === defaultVehId,
+    }));
+
+    const vehicleLabel = activeVehicle.label || preset.default_vehicle_label || current.default_vehicle_label || 'Motocicleta (Frete Express)';
+    const vehicleCapacity = activeVehicle.maxWeight || preset.default_vehicle_capacity || current.default_vehicle_capacity || 'Até 20kg (Baú / Mochila)';
+    const vehicleDesc = activeVehicle.desc || preset.default_vehicle_desc || current.default_vehicle_desc || 'Documentos, pequenos pacotes, entregas rápidas e urgentes';
+    const vehicleIcon = activeVehicle.iconName || preset.default_vehicle_icon || current.default_vehicle_icon || 'Bike';
+
     const merged: DriverFreightPreset = { 
       ...current, 
       ...preset,
-      vehicles: preset.vehicles && preset.vehicles.length > 0 ? preset.vehicles : (current.vehicles || DEFAULT_VEHICLES),
+      default_vehicle: defaultVehId,
+      default_vehicle_label: vehicleLabel,
+      default_vehicle_capacity: vehicleCapacity,
+      default_vehicle_desc: vehicleDesc,
+      default_vehicle_icon: vehicleIcon,
+      default_price_per_km: activeVehicle.defaultPriceKm ?? preset.default_price_per_km ?? current.default_price_per_km ?? 2.80,
+      default_base_fee: activeVehicle.defaultBase ?? preset.default_base_fee ?? current.default_base_fee ?? 12.00,
+      default_stop_fee: activeVehicle.stopFee ?? preset.default_stop_fee ?? current.default_stop_fee ?? 6.00,
+      default_km_per_liter: activeVehicle.kmPerLiter ?? preset.default_km_per_liter ?? current.default_km_per_liter ?? 35,
+      default_maintenance_per_km: activeVehicle.maintenancePerKm ?? preset.default_maintenance_per_km ?? current.default_maintenance_per_km ?? 0.25,
+      vehicles: normalizedVehicles,
     };
 
     try {
       localStorage.setItem(`${PRESET_KEY_PREFIX}${userId}`, JSON.stringify(merged));
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('freight_preset_updated', { detail: merged }));
+      }
     } catch (e) {
       console.error('Erro ao salvar preset do motorista:', e);
     }
@@ -240,6 +359,11 @@ export const freightStorage = {
             pix_key: merged.pix_key,
             pix_key_type: merged.pix_key_type,
             default_vehicle: merged.default_vehicle,
+            default_vehicle_label: merged.default_vehicle_label,
+            default_vehicle_capacity: merged.default_vehicle_capacity,
+            default_vehicle_desc: merged.default_vehicle_desc,
+            default_vehicle_icon: merged.default_vehicle_icon,
+            default_km_per_liter: merged.default_km_per_liter,
             default_price_per_km: merged.default_price_per_km,
             default_base_fee: merged.default_base_fee,
             default_maintenance_per_km: merged.default_maintenance_per_km,
@@ -362,6 +486,57 @@ export const freightStorage = {
     return preset.vehicles && preset.vehicles.length > 0 ? preset.vehicles : DEFAULT_VEHICLES;
   },
 
+  getVehicleInfo(quoteOrType?: FreightQuote | string | null, userId: string = 'default'): {
+    id: string;
+    label: string;
+    maxWeight: string;
+    desc: string;
+    iconName: string;
+    defaultPriceKm: number;
+    defaultBase: number;
+    stopFee: number;
+    kmPerLiter: number;
+    maintenancePerKm: number;
+  } {
+    const preset = this.getPreset(userId);
+
+    // If a full quote is passed with explicit vehicle_label / vehicle_capacity
+    if (quoteOrType && typeof quoteOrType === 'object') {
+      const q = quoteOrType as FreightQuote;
+      const vehicleType = q.vehicle_type || 'moto';
+      const vMatch = (preset.vehicles || []).find(v => v.id === vehicleType);
+
+      return {
+        id: vehicleType,
+        label: q.vehicle_label || vMatch?.label || preset.default_vehicle_label || 'Motocicleta (Frete Express)',
+        maxWeight: q.vehicle_capacity || vMatch?.maxWeight || preset.default_vehicle_capacity || 'Até 20kg (Baú / Mochila)',
+        desc: vMatch?.desc || preset.default_vehicle_desc || 'Documentos, pequenos pacotes, entregas rápidas e urgentes',
+        iconName: vMatch?.iconName || preset.default_vehicle_icon || 'Bike',
+        defaultPriceKm: vMatch?.defaultPriceKm ?? preset.default_price_per_km ?? 2.80,
+        defaultBase: vMatch?.defaultBase ?? preset.default_base_fee ?? 12.00,
+        stopFee: vMatch?.stopFee ?? preset.default_stop_fee ?? 6.00,
+        kmPerLiter: vMatch?.kmPerLiter ?? preset.default_km_per_liter ?? 35,
+        maintenancePerKm: vMatch?.maintenancePerKm ?? preset.default_maintenance_per_km ?? 0.25,
+      };
+    }
+
+    const typeStr = typeof quoteOrType === 'string' ? quoteOrType : preset.default_vehicle || 'moto';
+    const vMatch = (preset.vehicles || []).find(v => v.id === typeStr);
+
+    return {
+      id: typeStr,
+      label: vMatch?.label || preset.default_vehicle_label || 'Motocicleta (Frete Express)',
+      maxWeight: vMatch?.maxWeight || preset.default_vehicle_capacity || 'Até 20kg (Baú / Mochila)',
+      desc: vMatch?.desc || preset.default_vehicle_desc || 'Documentos, pequenos pacotes, entregas rápidas e urgentes',
+      iconName: vMatch?.iconName || preset.default_vehicle_icon || 'Bike',
+      defaultPriceKm: vMatch?.defaultPriceKm ?? preset.default_price_per_km ?? 2.80,
+      defaultBase: vMatch?.defaultBase ?? preset.default_base_fee ?? 12.00,
+      stopFee: vMatch?.stopFee ?? preset.default_stop_fee ?? 6.00,
+      kmPerLiter: vMatch?.kmPerLiter ?? preset.default_km_per_liter ?? 35,
+      maintenancePerKm: vMatch?.maintenancePerKm ?? preset.default_maintenance_per_km ?? 0.25,
+    };
+  },
+
   generateNextCode(userId: string = 'default'): string {
     const year = new Date().getFullYear();
     const list = this.getQuotes(userId);
@@ -372,9 +547,8 @@ export const freightStorage = {
   },
 
   formatWhatsAppMessage(quote: FreightQuote, userId: string = 'default'): string {
-    const vehiclesList = this.getVehicles(userId);
-    const vMatch = vehiclesList.find(v => v.id === quote.vehicle_type);
-    const vehicleLabel = vMatch ? vMatch.label : (VEHICLE_PRESETS[quote.vehicle_type]?.label || quote.vehicle_type);
+    const vehicleInfo = this.getVehicleInfo(quote, userId);
+    const iconEmoji = vehicleInfo.iconName === 'Car' ? '🚗' : vehicleInfo.iconName === 'Truck' ? '🚚' : '🛵';
     
     const formatBRL = (val: number) => 
       new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val || 0);
@@ -393,7 +567,7 @@ export const freightStorage = {
     if (quote.client_company) {
       msg += `🏢 *Empresa:* ${quote.client_company}\n`;
     }
-    msg += `🛵 *Veículo:* Motocicleta (Frete Express)\n`;
+    msg += `${iconEmoji} *Veículo:* ${vehicleInfo.label}${vehicleInfo.maxWeight ? ` (${vehicleInfo.maxWeight})` : ''}\n`;
     msg += `📋 *Carga:* ${quote.cargo_description || 'Volumes diversos'}\n`;
 
     if (quote.scheduled_date) {

@@ -1,9 +1,28 @@
-import { useRef } from 'react';
+import { useState, useRef } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { Printer, MapPin, Calendar, Clock, Bike, Car, Truck, CheckCircle2, Shield, QrCode, Phone, Mail } from 'lucide-react';
+import { 
+  Printer, 
+  Download, 
+  Share2, 
+  MapPin, 
+  Calendar, 
+  Clock, 
+  Bike, 
+  Car, 
+  Truck, 
+  CheckCircle2, 
+  Shield, 
+  QrCode, 
+  Phone, 
+  Mail,
+  Loader2,
+  FileDown
+} from 'lucide-react';
+import { toast } from 'sonner';
 import { FreightQuote } from '../../types/freight';
-import { VEHICLE_PRESETS } from '../../lib/freightStorage';
+import { freightStorage } from '../../lib/freightStorage';
+import { downloadFreightQuotePDF, shareFreightQuotePDF } from '../../lib/freightPdfGenerator';
 
 interface FreightProposalModalProps {
   open: boolean;
@@ -13,20 +32,51 @@ interface FreightProposalModalProps {
 
 export function FreightProposalModal({ open, onOpenChange, quote }: FreightProposalModalProps) {
   const printableRef = useRef<HTMLDivElement>(null);
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+  const [isSharingPdf, setIsSharingPdf] = useState(false);
 
   if (!quote) return null;
 
-  const vehicleInfo = VEHICLE_PRESETS[quote.vehicle_type] || {
-    label: quote.vehicle_type,
-    maxWeight: 'Padrão',
-    desc: 'Transporte dedicado',
-  };
+  const vehicleInfo = freightStorage.getVehicleInfo(quote, quote.user_id || 'default');
 
   const formatBRL = (val: number) =>
     new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val || 0);
 
+  const handleDownloadPDF = async () => {
+    try {
+      setIsGeneratingPdf(true);
+      await downloadFreightQuotePDF(quote, quote.user_id || 'default');
+      toast.success(`PDF do orçamento ${quote.code} gerado e baixado com sucesso!`);
+    } catch (error: any) {
+      console.error('Erro ao gerar PDF:', error);
+      toast.error('Erro ao gerar arquivo PDF: ' + (error?.message || 'Tente novamente.'));
+    } finally {
+      setIsGeneratingPdf(false);
+    }
+  };
+
+  const handleSharePDF = async () => {
+    try {
+      setIsSharingPdf(true);
+      const shared = await shareFreightQuotePDF(quote, quote.user_id || 'default');
+      if (shared) {
+        toast.success(`Proposta ${quote.code} pronta para envio!`);
+      }
+    } catch (error: any) {
+      console.error('Erro ao compartilhar PDF:', error);
+      toast.error('Erro ao compartilhar: ' + (error?.message || 'Tente novamente.'));
+    } finally {
+      setIsSharingPdf(false);
+    }
+  };
+
   const handlePrint = () => {
-    window.print();
+    try {
+      window.print();
+    } catch (e) {
+      // If print fails in iframe, fallback to PDF download
+      handleDownloadPDF();
+    }
   };
 
   const paymentLabels: Record<string, string> = {
@@ -43,7 +93,7 @@ export function FreightProposalModal({ open, onOpenChange, quote }: FreightPropo
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="w-[95vw] sm:max-w-3xl p-0 overflow-hidden rounded-3xl border-border bg-card max-h-[85vh] sm:max-h-[90vh] flex flex-col">
         {/* Modal Header Controls (Hidden during print) */}
-        <DialogHeader className="p-4 sm:p-6 bg-muted/30 border-b border-border/60 print:hidden flex flex-row items-center justify-between shrink-0">
+        <DialogHeader className="p-4 sm:p-6 bg-muted/30 border-b border-border/60 print:hidden flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
           <div>
             <DialogTitle className="text-base sm:text-lg font-black tracking-tight flex items-center gap-2">
               Proposta Comercial Formal
@@ -52,18 +102,52 @@ export function FreightProposalModal({ open, onOpenChange, quote }: FreightPropo
               </span>
             </DialogTitle>
             <DialogDescription className="text-xs text-muted-foreground">
-              Documento pronto para impressão ou envio em PDF para empresas e clientes.
+              Documento oficial em PDF de alta qualidade para envio a empresas e clientes.
             </DialogDescription>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Button
               type="button"
-              onClick={handlePrint}
-              className="rounded-2xl h-10 px-4 font-extrabold text-xs bg-primary hover:bg-primary/90 text-primary-foreground shadow-sm gap-2 cursor-pointer"
+              variant="outline"
+              size="sm"
+              onClick={handleSharePDF}
+              disabled={isSharingPdf || isGeneratingPdf}
+              className="rounded-2xl h-9 px-3 font-bold text-xs border-border hover:bg-muted gap-1.5 cursor-pointer"
+              title="Compartilhar PDF por WhatsApp ou aplicativo"
             >
-              <Printer className="w-4 h-4" />
-              Imprimir / PDF
+              {isSharingPdf ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />
+              ) : (
+                <Share2 className="w-3.5 h-3.5 text-primary" />
+              )}
+              Compartilhar
+            </Button>
+
+            <Button
+              type="button"
+              size="sm"
+              onClick={handleDownloadPDF}
+              disabled={isGeneratingPdf || isSharingPdf}
+              className="rounded-2xl h-9 px-3.5 font-extrabold text-xs bg-primary hover:bg-primary/90 text-primary-foreground shadow-xs gap-1.5 cursor-pointer"
+            >
+              {isGeneratingPdf ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Download className="w-3.5 h-3.5" />
+              )}
+              Baixar PDF (.pdf)
+            </Button>
+
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={handlePrint}
+              className="rounded-2xl h-9 px-2.5 font-bold text-xs text-muted-foreground hover:text-foreground hidden sm:flex items-center gap-1 cursor-pointer"
+              title="Imprimir direto do navegador"
+            >
+              <Printer className="w-3.5 h-3.5" />
             </Button>
           </div>
         </DialogHeader>
@@ -74,9 +158,9 @@ export function FreightProposalModal({ open, onOpenChange, quote }: FreightPropo
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6 pb-6 border-b-2 border-border/80">
             <div className="flex items-center gap-3.5">
               <div className="h-14 w-14 rounded-2xl bg-gradient-to-tr from-primary to-indigo-600 flex items-center justify-center text-primary-foreground shadow-md shrink-0">
-                {quote.vehicle_type === 'fiorino' || quote.vehicle_type === 'carro' ? (
+                {vehicleInfo.iconName === 'Car' ? (
                   <Car className="w-7 h-7" />
-                ) : quote.vehicle_type === 'van' || quote.vehicle_type === 'caminhao' ? (
+                ) : vehicleInfo.iconName === 'Truck' ? (
                   <Truck className="w-7 h-7" />
                 ) : (
                   <Bike className="w-7 h-7" />
@@ -396,6 +480,52 @@ export function FreightProposalModal({ open, onOpenChange, quote }: FreightPropo
               <p className="font-bold text-foreground">{quote.client_name || 'Cliente Contratante'}</p>
               <p className="text-[10px] text-muted-foreground">Aceite e Autorização</p>
             </div>
+          </div>
+        </div>
+
+        {/* Modal Bottom Action Bar (Mobile First) */}
+        <div className="p-3.5 sm:p-4 bg-muted/30 border-t border-border/60 flex items-center justify-between gap-3 shrink-0 print:hidden">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => onOpenChange(false)}
+            className="rounded-2xl h-10 px-4 text-xs font-semibold text-muted-foreground hover:text-foreground cursor-pointer"
+          >
+            Fechar
+          </Button>
+
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleSharePDF}
+              disabled={isSharingPdf || isGeneratingPdf}
+              className="rounded-2xl h-10 px-3.5 font-bold text-xs border-border hover:bg-muted gap-1.5 cursor-pointer"
+            >
+              {isSharingPdf ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />
+              ) : (
+                <Share2 className="w-3.5 h-3.5 text-primary" />
+              )}
+              Compartilhar PDF
+            </Button>
+
+            <Button
+              type="button"
+              size="sm"
+              onClick={handleDownloadPDF}
+              disabled={isGeneratingPdf || isSharingPdf}
+              className="rounded-2xl h-10 px-4 font-extrabold text-xs bg-primary hover:bg-primary/90 text-primary-foreground shadow-xs gap-1.5 cursor-pointer"
+            >
+              {isGeneratingPdf ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Download className="w-4 h-4" />
+              )}
+              Baixar PDF Oficial
+            </Button>
           </div>
         </div>
       </DialogContent>

@@ -234,7 +234,7 @@ export function FreightQuotesList({
           {filteredQuotes.map((quote) => {
             const statusInfo = statusConfig[quote.status] || statusConfig.pending;
             const StatusIcon = statusInfo.icon;
-            const vehicleInfo = VEHICLE_PRESETS[quote.vehicle_type];
+            const vehicleInfo = freightStorage.getVehicleInfo(quote, userId);
 
             return (
               <Card
@@ -246,9 +246,9 @@ export function FreightQuotesList({
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 border-b border-border/40 pb-3">
                     <div className="flex items-center gap-2.5">
                       <div className="h-9 w-9 rounded-xl bg-primary/10 text-primary flex items-center justify-center shrink-0">
-                        {quote.vehicle_type === 'fiorino' || quote.vehicle_type === 'carro' ? (
+                        {vehicleInfo.iconName === 'Car' ? (
                           <Car className="w-4 h-4" />
-                        ) : quote.vehicle_type === 'van' || quote.vehicle_type === 'caminhao' ? (
+                        ) : vehicleInfo.iconName === 'Truck' ? (
                           <Truck className="w-4 h-4" />
                         ) : (
                           <Bike className="w-4 h-4" />
@@ -263,7 +263,7 @@ export function FreightQuotesList({
                           </div>
                         </div>
                         <p className="text-[11px] text-muted-foreground mt-0.5">
-                          Criado em {new Date(quote.created_at).toLocaleDateString('pt-BR')} • {vehicleInfo?.label || quote.vehicle_type}
+                          Criado em {new Date(quote.created_at).toLocaleDateString('pt-BR')} • {quote.vehicle_label || vehicleInfo.label}
                         </p>
                       </div>
                     </div>

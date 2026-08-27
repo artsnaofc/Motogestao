@@ -117,63 +117,7 @@ export default function FreightQuotePage() {
             <Settings className="w-4 h-4 text-muted-foreground" />
             Configurar Padrões
           </Button>
-
-          <Button
-            onClick={() => {
-              setEditingQuote(null);
-              setActiveTab('create');
-            }}
-            className="rounded-2xl h-10 px-4 text-xs font-extrabold bg-primary hover:bg-primary/90 text-primary-foreground gap-2 cursor-pointer shadow-sm"
-          >
-            <PlusCircle className="w-4 h-4" />
-            Novo Orçamento
-          </Button>
         </div>
-      </div>
-
-      {/* KPI METRICS OVERVIEW */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
-        <Card className="border-border/60 bg-card/75 shadow-2xs rounded-3xl p-4 space-y-1">
-          <div className="flex items-center justify-between text-muted-foreground text-xs font-bold">
-            <span>Orçamentos Emitidos</span>
-            <FileText className="w-4 h-4 text-primary" />
-          </div>
-          <p className="text-xl sm:text-2xl font-black text-foreground">{stats.totalCount}</p>
-          <p className="text-[11px] text-muted-foreground">{stats.pendingCount} aguardando resposta</p>
-        </Card>
-
-        <Card className="border-border/60 bg-card/75 shadow-2xs rounded-3xl p-4 space-y-1">
-          <div className="flex items-center justify-between text-muted-foreground text-xs font-bold">
-            <span>Aprovados / Fechados</span>
-            <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-          </div>
-          <p className="text-xl sm:text-2xl font-black text-emerald-600 dark:text-emerald-400">
-            {stats.approvedCount}
-          </p>
-          <p className="text-[11px] text-muted-foreground">Taxa de conversão {(stats.totalCount > 0 ? (stats.approvedCount / stats.totalCount) * 100 : 0).toFixed(0)}%</p>
-        </Card>
-
-        <Card className="border-border/60 bg-card/75 shadow-2xs rounded-3xl p-4 space-y-1">
-          <div className="flex items-center justify-between text-muted-foreground text-xs font-bold">
-            <span>Receita Aprovada</span>
-            <DollarSign className="w-4 h-4 text-primary" />
-          </div>
-          <p className="text-xl sm:text-2xl font-black text-foreground">
-            {formatBRL(stats.approvedRevenue)}
-          </p>
-          <p className="text-[11px] text-muted-foreground">Pipeline: {formatBRL(stats.totalPipelineValue)}</p>
-        </Card>
-
-        <Card className="border-emerald-500/25 bg-emerald-500/5 shadow-2xs rounded-3xl p-4 space-y-1">
-          <div className="flex items-center justify-between text-emerald-700 dark:text-emerald-300 text-xs font-bold">
-            <span>Lucro Líquido Estimado</span>
-            <TrendingUp className="w-4 h-4 text-emerald-500" />
-          </div>
-          <p className="text-xl sm:text-2xl font-black text-emerald-600 dark:text-emerald-400">
-            {formatBRL(stats.expectedProfit)}
-          </p>
-          <p className="text-[11px] text-emerald-600/80 dark:text-emerald-400/80">Livre de combustível & manutenção</p>
-        </Card>
       </div>
 
       {/* NAVIGATION TABS */}
@@ -236,6 +180,7 @@ export default function FreightQuotePage() {
               onOpenWhatsApp={(quote) => setWhatsAppModalQuote(quote)}
               onOpenProposal={(quote) => setProposalModalQuote(quote)}
               onCancelEdit={editingQuote ? () => setEditingQuote(null) : undefined}
+              onOpenSettings={() => setIsSettingsOpen(true)}
             />
           </motion.div>
         )}
@@ -268,24 +213,34 @@ export default function FreightQuotePage() {
             transition={{ duration: 0.15 }}
             className="space-y-4"
           >
-            <div className="p-4 rounded-2xl bg-muted/20 border border-border/60 text-xs">
-              <h3 className="font-black text-foreground text-sm">Tabela Referencial de Tarifas & Veículos</h3>
-              <p className="text-muted-foreground text-xs mt-0.5">
-                Consulte ou use como base para negociação direta de fretes fracionados, dedicados e lotação.
-              </p>
+            <div className="p-4 rounded-2xl bg-muted/20 border border-border/60 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <h3 className="font-black text-foreground text-sm">Tabela Referencial de Tarifas & Veículo</h3>
+                <p className="text-muted-foreground text-xs mt-0.5">
+                  Consulte a capacidade de carga, autonomia e tarifas do seu veículo configurado.
+                </p>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setIsSettingsOpen(true)}
+                className="rounded-2xl h-9 text-xs font-bold gap-1.5 cursor-pointer border-border hover:bg-muted shrink-0"
+              >
+                <Settings className="w-3.5 h-3.5 text-muted-foreground" />
+                Alterar Veículo & Tarifas
+              </Button>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {(Object.keys(VEHICLE_PRESETS) as VehicleType[]).map((vKey) => {
-                const v = VEHICLE_PRESETS[vKey];
+              {freightStorage.getVehicles(userId).map((v) => {
                 return (
-                  <Card key={vKey} className="border-border/60 bg-card rounded-3xl p-5 space-y-3">
+                  <Card key={v.id} className="border-border/60 bg-card rounded-3xl p-5 space-y-3">
                     <div className="flex items-center justify-between border-b border-border/40 pb-3">
                       <div className="flex items-center gap-3">
                         <div className="p-2.5 rounded-xl bg-primary/10 text-primary">
-                          {vKey === 'fiorino' || vKey === 'carro' ? (
+                          {v.iconName === 'Car' ? (
                             <Car className="w-5 h-5" />
-                          ) : vKey === 'van' || vKey === 'caminhao' ? (
+                          ) : v.iconName === 'Truck' ? (
                             <Truck className="w-5 h-5" />
                           ) : (
                             <Bike className="w-5 h-5" />
@@ -293,7 +248,7 @@ export default function FreightQuotePage() {
                         </div>
                         <div>
                           <h4 className="font-black text-sm text-foreground">{v.label}</h4>
-                          <span className="text-[11px] text-muted-foreground">{v.maxWeight}</span>
+                          <span className="text-[11px] text-muted-foreground font-semibold">{v.maxWeight}</span>
                         </div>
                       </div>
                     </div>
@@ -310,16 +265,25 @@ export default function FreightQuotePage() {
                       <p className="text-[11px] text-muted-foreground pt-1">{v.desc}</p>
                     </div>
 
-                    <Button
-                      variant="outline"
-                      onClick={() => {
-                        setEditingQuote(null);
-                        setActiveTab('create');
-                      }}
-                      className="w-full rounded-xl h-9 text-xs font-bold border-border/60 hover:bg-muted cursor-pointer"
-                    >
-                      Criar Orçamento com este Veículo
-                    </Button>
+                    <div className="pt-2 flex flex-col gap-2">
+                      <Button
+                        variant="default"
+                        onClick={() => {
+                          setEditingQuote(null);
+                          setActiveTab('create');
+                        }}
+                        className="w-full rounded-xl h-9 text-xs font-bold bg-primary hover:bg-primary/90 text-primary-foreground cursor-pointer"
+                      >
+                        Novo Orçamento com este Veículo
+                      </Button>
+                      <Button
+                        variant="outline"
+                        onClick={() => setIsSettingsOpen(true)}
+                        className="w-full rounded-xl h-8 text-xs font-semibold border-border/60 hover:bg-muted cursor-pointer"
+                      >
+                        Editar Informações & Capacidade
+                      </Button>
+                    </div>
                   </Card>
                 );
               })}
@@ -347,6 +311,9 @@ export default function FreightQuotePage() {
         open={isSettingsOpen}
         onOpenChange={setIsSettingsOpen}
         userId={userId}
+        onSaved={() => {
+          loadQuotes();
+        }}
       />
     </div>
   );
