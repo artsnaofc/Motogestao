@@ -94,28 +94,35 @@ export function FreightQuoteForm({
   onOpenSettings,
   userId = 'default',
 }: FreightQuoteFormProps) {
-  const { settings } = useData();
+  const { settings, reserves } = useData();
 
   // Load driver preset & sync from database
   const [preset, setPreset] = useState<DriverFreightPreset>(() => freightStorage.getPreset(userId));
 
-  // Available Vehicles from Preset
-  const availableVehicles: VehicleConfigItem[] = useMemo(() => {
-    return preset.vehicles && preset.vehicles.length > 0 ? preset.vehicles : DEFAULT_VEHICLES;
-  }, [preset.vehicles]);
+  // Vehicle is strictly Motorcycle
+  const [vehicleType] = useState<string>('moto');
 
-  // Form State - Selected Vehicle Type
-  const [vehicleType, setVehicleType] = useState<string>(
-    initialQuote?.vehicle_type || preset.default_vehicle || availableVehicles[0]?.id || 'moto'
-  );
+  // Compute kmPerLiter from profile config (settings)
+  const profileKmPerLiter = useMemo(() => {
+    if (settings?.vehicle_km_per_liter && settings.vehicle_km_per_liter > 0) {
+      return settings.vehicle_km_per_liter;
+    }
+    return preset.default_km_per_liter ?? 35;
+  }, [settings?.vehicle_km_per_liter, preset.default_km_per_liter]);
 
-  const selectedVehicle = useMemo(() => {
-    return availableVehicles.find(v => v.id === vehicleType) || availableVehicles[0] || DEFAULT_VEHICLES[0];
-  }, [availableVehicles, vehicleType]);
-
-  const vehicleInfo = useMemo(() => {
-    return freightStorage.getVehicleInfo(initialQuote || selectedVehicle.id, userId);
-  }, [initialQuote, selectedVehicle.id, userId]);
+  // Compute maintenanceCostPerKm from Maintenance Reserve rule
+  const maintenanceReserveKmCost = useMemo(() => {
+    if (reserves && reserves.length > 0) {
+      const maintRes = reserves.find(
+        r => (r.regra_tipo === 'km' && r.regra_valor && r.regra_valor > 0) ||
+             (r.name.toLowerCase().includes('manutenção') && r.regra_valor && r.regra_valor > 0)
+      );
+      if (maintRes?.regra_valor) {
+        return maintRes.regra_valor;
+      }
+    }
+    return preset.default_maintenance_per_km ?? 0.15;
+  }, [reserves, preset.default_maintenance_per_km]);
 
   // Service Type & Status
   const [serviceType, setServiceType] = useState<ServiceType>(initialQuote?.service_type || 'express');
@@ -174,22 +181,21 @@ export function FreightQuoteForm({
   const [distanceKm, setDistanceKm] = useState<number>(initialQuote?.distance_km ?? 10);
   const [isRoundTrip, setIsRoundTrip] = useState<boolean>(initialQuote?.is_round_trip || false);
 
-  // Cargo & Scheduling
-  const [cargoDescription, setCargoDescription] = useState(initialQuote?.cargo_description || 'Encomendas / Volumes gerais');
+  // Scheduling
   const [cargoWeightKg, setCargoWeightKg] = useState<number | undefined>(initialQuote?.cargo_weight_kg);
   const [cargoValue, setCargoValue] = useState<number | undefined>(initialQuote?.cargo_value);
   const [scheduledDate, setScheduledDate] = useState(initialQuote?.scheduled_date || new Date().toISOString().split('T')[0]);
   const [scheduledTime, setScheduledTime] = useState(initialQuote?.scheduled_time || '');
 
-  // Pricing & Fees
+  // Pricing & Fees (Base R$ 15,00, Price/km R$ 0,80, Stop fee R$ 6,00)
   const [baseFee, setBaseFee] = useState<number>(
-    initialQuote?.base_fee ?? selectedVehicle?.defaultBase ?? preset.default_base_fee ?? 12.00
+    initialQuote?.base_fee ?? preset.default_base_fee ?? 15.00
   );
   const [pricePerKm, setPricePerKm] = useState<number>(
-    initialQuote?.price_per_km ?? selectedVehicle?.defaultPriceKm ?? preset.default_price_per_km ?? 2.80
+    initialQuote?.price_per_km ?? preset.default_price_per_km ?? 0.80
   );
   const [extraStopsFee, setExtraStopsFee] = useState<number>(
-    initialQuote?.extra_stops_fee ?? (selectedVehicle?.stopFee ? selectedVehicle.stopFee * (initialQuote?.additional_stops?.length || 0) : 0)
+    initialQuote?.extra_stops_fee ?? (preset.default_stop_fee ? preset.default_stop_fee * (initialQuote?.additional_stops?.length || 0) : 0)
   );
 
   // Extra Surcharges (Quick add-ons)
@@ -209,11 +215,19 @@ export function FreightQuoteForm({
   // Operational Fuel & Vehicle Wear
   const [fuelPrice, setFuelPrice] = useState<number>(initialQuote?.fuel_price || 5.89);
   const [kmPerLiter, setKmPerLiter] = useState<number>(
-    initialQuote?.km_per_liter ?? selectedVehicle?.kmPerLiter ?? preset.default_km_per_liter ?? 35
+    initialQuote?.km_per_liter ?? profileKmPerLiter
   );
   const [maintenanceCostPerKm, setMaintenanceCostPerKm] = useState<number>(
-    initialQuote?.maintenance_cost_per_km ?? selectedVehicle?.maintenancePerKm ?? preset.default_maintenance_per_km ?? 0.25
+    initialQuote?.maintenance_cost_per_km ?? maintenanceReserveKmCost
   );
+
+  // Update operational consumption & maintenance cost reactively when settings or reserves change
+  useEffect(() => {
+    if (!initialQuote) {
+      setKmPerLiter(profileKmPerLiter);
+      setMaintenanceCostPerKm(maintenanceReserveKmCost);
+    }
+  }, [profileKmPerLiter, maintenanceReserveKmCost, initialQuote]);
 
   // Driver & Payment Info
   const [driverName, setDriverName] = useState(initialQuote?.driver_name || preset.driver_name || settings?.full_name || '');
@@ -236,38 +250,19 @@ export function FreightQuoteForm({
   // 1. Reactive Sync on Preset Update (From Settings Modal or CustomEvent)
   const applyPresetData = useCallback((p: DriverFreightPreset, forceRates: boolean = false) => {
     setPreset(p);
-    const available = p.vehicles && p.vehicles.length > 0 ? p.vehicles : DEFAULT_VEHICLES;
-    
     if (!initialQuote || forceRates) {
-      const currentOrDefId = p.default_vehicle || available[0]?.id || 'moto';
-      const targetVeh = available.find(v => v.id === vehicleType) || available.find(v => v.id === currentOrDefId) || available[0];
-      
-      if (!initialQuote) {
-        setVehicleType(targetVeh.id);
-        setBaseFee(targetVeh.defaultBase ?? p.default_base_fee ?? 12);
-        setPricePerKm(targetVeh.defaultPriceKm ?? p.default_price_per_km ?? 2.8);
-        setKmPerLiter(targetVeh.kmPerLiter ?? p.default_km_per_liter ?? 35);
-        setMaintenanceCostPerKm(targetVeh.maintenancePerKm ?? p.default_maintenance_per_km ?? 0.25);
-        setPaymentMethod(p.default_payment_method || 'pix');
-        setPixKey(p.pix_key || '');
-        setPixKeyType(p.pix_key_type || 'phone');
-        setDriverName(p.driver_name || settings?.full_name || '');
-        setDriverPhone(p.driver_phone || '');
-        setDriverCompany(p.driver_company || '');
-        setDriverDocument(p.driver_document || '');
-        setTermsAndConditions(p.default_terms || '');
-      } else {
-        // If editing, update rates of the current vehicle if user updated them
-        const matchingVeh = available.find(v => v.id === vehicleType);
-        if (matchingVeh) {
-          setBaseFee(matchingVeh.defaultBase);
-          setPricePerKm(matchingVeh.defaultPriceKm);
-          setKmPerLiter(matchingVeh.kmPerLiter);
-          setMaintenanceCostPerKm(matchingVeh.maintenancePerKm);
-        }
-      }
+      setBaseFee(p.default_base_fee ?? 15.00);
+      setPricePerKm(p.default_price_per_km ?? 0.80);
+      setPaymentMethod(p.default_payment_method || 'pix');
+      setPixKey(p.pix_key || '');
+      setPixKeyType(p.pix_key_type || 'phone');
+      setDriverName(p.driver_name || settings?.full_name || '');
+      setDriverPhone(p.driver_phone || '');
+      setDriverCompany(p.driver_company || '');
+      setDriverDocument(p.driver_document || '');
+      setTermsAndConditions(p.default_terms || '');
     }
-  }, [initialQuote, vehicleType, settings?.full_name]);
+  }, [initialQuote, settings?.full_name]);
 
   // Listen to preset updates dispatched across the app
   useEffect(() => {
@@ -293,24 +288,6 @@ export function FreightQuoteForm({
       setSavedClients(clients);
     });
   }, [userId, applyPresetData]);
-
-  // When user switches vehicle tab: automatically adopt that vehicle's rates
-  const handleSelectVehicle = (vehId: string) => {
-    setVehicleType(vehId);
-    const veh = availableVehicles.find(v => v.id === vehId);
-    if (veh) {
-      setBaseFee(veh.defaultBase);
-      setPricePerKm(veh.defaultPriceKm);
-      setKmPerLiter(veh.kmPerLiter);
-      setMaintenanceCostPerKm(veh.maintenancePerKm);
-      if (additionalStops.length > 0 && veh.stopFee) {
-        setExtraStopsFee(veh.stopFee * additionalStops.length);
-      }
-      toast.info(`Veículo alterado para "${veh.label}"`, {
-        description: `Tarifa ajustada: Base R$ ${veh.defaultBase.toFixed(2)} + R$ ${veh.defaultPriceKm.toFixed(2)}/km`,
-      });
-    }
-  };
 
   // Client Selection Handler
   const handleSelectClient = (clientId: string) => {
@@ -350,7 +327,7 @@ export function FreightQuoteForm({
 
   // Manage Multiple Stops
   const handleAddStop = () => {
-    const stopFeeUnit = selectedVehicle?.stopFee || preset.default_stop_fee || 6.00;
+    const stopFeeUnit = preset.default_stop_fee || 6.00;
     const newStop: RouteStop = {
       id: `stop_${Date.now()}`,
       address: '',
@@ -364,7 +341,7 @@ export function FreightQuoteForm({
   };
 
   const handleRemoveStop = (index: number) => {
-    const stopFeeUnit = selectedVehicle?.stopFee || preset.default_stop_fee || 6.00;
+    const stopFeeUnit = preset.default_stop_fee || 6.00;
     const updated = additionalStops.filter((_, i) => i !== index);
     setAdditionalStops(updated);
     setExtraStopsFee(updated.length * stopFeeUnit);
@@ -485,9 +462,9 @@ export function FreightQuoteForm({
       pix_key: pixKey.trim(),
       pix_key_type: pixKeyType as any,
 
-      vehicle_type: vehicleType,
-      vehicle_label: vehicleInfo.label,
-      vehicle_capacity: vehicleInfo.maxWeight,
+      vehicle_type: 'moto',
+      vehicle_label: 'Motocicleta (Frete Express)',
+      vehicle_capacity: 'Até 50Kg (Bauleto / amarração)',
       service_type: serviceType,
       origin_address: originAddress.trim() || 'Ponto de Coleta',
       origin_neighborhood: originNeighborhood.trim(),
@@ -498,7 +475,7 @@ export function FreightQuoteForm({
       is_round_trip: isRoundTrip,
       total_calculated_km: totalCalculatedKm,
 
-      cargo_description: cargoDescription.trim() || 'Volumes diversos',
+      cargo_description: 'Encomendas / Entregas Rápidas',
       cargo_weight_kg: cargoWeightKg ? Number(cargoWeightKg) : undefined,
       cargo_value: cargoValue ? Number(cargoValue) : undefined,
       scheduled_date: scheduledDate,
@@ -572,74 +549,37 @@ export function FreightQuoteForm({
 
   return (
     <form onSubmit={handleFormSubmit} className="space-y-6 pb-36 sm:pb-24">
-      {/* 1. FLEET VEHICLE PICKER & SERVICE TYPE BAR */}
+      {/* 1. VEHICLE & SERVICE TYPE BAR */}
       <div className="bg-card border border-border/80 rounded-3xl p-4 sm:p-5 shadow-xs space-y-4">
-        <div className="flex items-center gap-2.5 border-b border-border/40 pb-3">
-          <div className="p-2 rounded-xl bg-primary/10 text-primary">
-            <Zap className="w-5 h-5" />
+        <div className="flex items-center justify-between border-b border-border/40 pb-3">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2.5 rounded-2xl bg-primary text-primary-foreground shrink-0">
+              <Bike className="w-5 h-5" />
+            </div>
+            <div>
+              <h2 className="text-sm sm:text-base font-black tracking-tight text-foreground flex items-center gap-2 flex-wrap">
+                Motocicleta (Frete Express)
+                <span className="px-2 py-0.5 rounded-full bg-primary/10 text-primary text-[10px] font-extrabold">
+                  Veículo Ativo
+                </span>
+              </h2>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                Capacidade: <strong className="text-foreground">Até 50Kg (Bauleto / amarração)</strong> • Saída: <strong className="text-foreground">{formatBRL(baseFee)}</strong> • KM: <strong className="text-primary">{formatBRL(pricePerKm)}/km</strong>
+              </p>
+            </div>
           </div>
-          <div>
-            <h2 className="text-sm sm:text-base font-black tracking-tight text-foreground">
-              1. Seleção de Veículo & Modalidade
-            </h2>
-            <p className="text-[11px] text-muted-foreground">
-              Escolha o veículo para carregar automaticamente a capacidade de carga e tarifas cadastradas.
-            </p>
-          </div>
-        </div>
-
-        {/* Vehicles Grid / Carousel */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-          {availableVehicles.map((v) => {
-            const isSelected = v.id === vehicleType;
-            return (
-              <button
-                key={v.id}
-                type="button"
-                onClick={() => handleSelectVehicle(v.id)}
-                className={`relative p-3.5 rounded-2xl text-left transition-all border cursor-pointer flex flex-col justify-between gap-2.5 group ${
-                  isSelected
-                    ? 'bg-primary/10 border-primary shadow-sm shadow-primary/10 ring-2 ring-primary/20'
-                    : 'bg-muted/30 hover:bg-muted/60 border-border/70 hover:border-border text-foreground'
-                }`}
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <div className="flex items-center gap-2.5">
-                    <div className={`p-2 rounded-xl shrink-0 transition-colors ${
-                      isSelected ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground group-hover:text-foreground'
-                    }`}>
-                      {v.iconName === 'Car' ? (
-                        <Car className="w-4 h-4" />
-                      ) : v.iconName === 'Truck' ? (
-                        <Truck className="w-4 h-4" />
-                      ) : (
-                        <Bike className="w-4 h-4" />
-                      )}
-                    </div>
-                    <div>
-                      <h4 className="font-extrabold text-xs text-foreground leading-tight line-clamp-1">
-                        {v.label}
-                      </h4>
-                      <span className="text-[10px] font-semibold text-muted-foreground line-clamp-1">
-                        {v.maxWeight}
-                      </span>
-                    </div>
-                  </div>
-                  {isSelected && (
-                    <span className="h-5 w-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-[10px] shrink-0">
-                      <Check className="w-3 h-3" />
-                    </span>
-                  )}
-                </div>
-
-                {/* Rates snippet */}
-                <div className="flex items-center justify-between text-[11px] pt-1 border-t border-border/30">
-                  <span className="text-muted-foreground font-medium">Saída: {formatBRL(v.defaultBase)}</span>
-                  <span className="font-black text-primary">{formatBRL(v.defaultPriceKm)}/km</span>
-                </div>
-              </button>
-            );
-          })}
+          {onOpenSettings && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={onOpenSettings}
+              className="rounded-xl text-xs font-bold gap-1.5 h-8.5 shrink-0 border-border/70 hover:bg-muted cursor-pointer"
+            >
+              <Settings className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Configurar Tarifas</span>
+            </Button>
+          )}
         </div>
 
         {/* Service Type Pills */}
@@ -1000,7 +940,7 @@ export function FreightQuoteForm({
         </div>
       </div>
 
-      {/* 4. CARGO DETAILS & QUICK SPECIFICATIONS */}
+      {/* 4. ESPECIFICAÇÕES DA CARGA (OPCIONAL) */}
       <div className="bg-card border border-border/80 rounded-3xl p-4 sm:p-5 shadow-xs space-y-4">
         <div className="flex items-center gap-2.5 border-b border-border/40 pb-3">
           <div className="p-2 rounded-xl bg-primary/10 text-primary">
@@ -1008,46 +948,15 @@ export function FreightQuoteForm({
           </div>
           <div>
             <h2 className="text-sm sm:text-base font-black tracking-tight text-foreground">
-              4. Descrição da Carga & Mercadoria
+              4. Peso e Valor Declarado (Opcional)
             </h2>
             <p className="text-[11px] text-muted-foreground">
-              Descreva os itens ou utilize as tags rápidas para preenchimento ágil.
+              Capacidade máxima suportada: Até 50Kg (Bauleto / amarração).
             </p>
           </div>
         </div>
 
-        {/* Quick Cargo Tags */}
-        <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
-          <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider shrink-0 mr-1">
-            Tags Rápidas:
-          </span>
-          {CARGO_PRESETS.map((presetItem) => (
-            <button
-              key={presetItem}
-              type="button"
-              onClick={() => setCargoDescription(presetItem)}
-              className={`px-2.5 py-1 rounded-lg text-xs font-semibold shrink-0 transition-colors border cursor-pointer ${
-                cargoDescription === presetItem
-                  ? 'bg-foreground text-background border-foreground'
-                  : 'bg-muted/30 hover:bg-muted text-foreground border-border/60'
-              }`}
-            >
-              {presetItem}
-            </button>
-          ))}
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <div className="sm:col-span-2 space-y-1">
-            <label className="text-xs font-bold text-foreground">Descrição Detalhada dos Itens:</label>
-            <Input
-              value={cargoDescription}
-              onChange={(e) => setCargoDescription(e.target.value)}
-              placeholder="Ex: 3 caixas de ferramentas pesando 15kg total"
-              className="rounded-xl h-9.5 text-xs bg-background border-border/70"
-            />
-          </div>
-
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div className="space-y-1">
             <label className="text-xs font-bold text-foreground flex items-center gap-1">
               <Weight className="w-3 h-3 text-muted-foreground" /> Peso Estimado (kg):
@@ -1057,8 +966,20 @@ export function FreightQuoteForm({
               step="1"
               value={cargoWeightKg || ''}
               onChange={(e) => setCargoWeightKg(parseFloat(e.target.value) || undefined)}
-              placeholder="Ex: 25"
+              placeholder="Ex: 15 (Capacidade máx: 50kg)"
               className="rounded-xl h-9.5 text-xs bg-background border-border/70"
+            />
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-xs font-bold text-foreground flex items-center gap-1">
+              <DollarSign className="w-3 h-3 text-muted-foreground" /> Valor Declarado da Mercadoria (R$):
+            </label>
+            <DecimalInput
+              value={cargoValue || 0}
+              onChange={(v) => setCargoValue(v > 0 ? v : undefined)}
+              placeholder="0,00"
+              className="rounded-xl h-9.5 text-xs bg-background border-border/70 font-semibold text-foreground"
             />
           </div>
         </div>

@@ -1,4 +1,4 @@
-export type VehicleType = string;
+export type VehicleType = 'moto' | string;
 
 export type ServiceType = 'express' | 'same_day' | 'scheduled' | 'multi_stop' | 'hourly';
 
@@ -72,7 +72,7 @@ export interface FreightQuote {
   // Rota e Logística
   vehicle_type: VehicleType;
   vehicle_label?: string; // Nome personalizado do veículo
-  vehicle_capacity?: string; // Capacidade de carga personalizada
+  vehicle_capacity?: string; // Capacidade de carga (Até 50Kg Bauleto / amarração)
   service_type: ServiceType;
   origin_address: string;
   origin_neighborhood?: string;
@@ -85,8 +85,8 @@ export interface FreightQuote {
   is_round_trip: boolean; // Cobrar volta / retorno
   total_calculated_km: number;
 
-  // Carga & Detalhes
-  cargo_description: string;
+  // Agendamento
+  cargo_description?: string;
   cargo_weight_kg?: number;
   cargo_volume?: string;
   cargo_value?: number;
@@ -95,9 +95,9 @@ export interface FreightQuote {
   expected_payment_date?: string; // Previsão de recebimento (Opcional)
 
   // Precificação e Parâmetros
-  base_fee: number; // Saída / Bandeirada
-  price_per_km: number;
-  extra_stops_fee: number;
+  base_fee: number; // Saída / Bandeirada (Padrão R$ 15,00)
+  price_per_km: number; // Preço por KM (Padrão R$ 0,80)
+  extra_stops_fee: number; // Parada extra (Padrão R$ 6,00)
   heavy_cargo_fee: number; // Taxa de peso / ajudante
   stairs_floor_fee: number; // Taxa de escadas / carregamento
   urgent_or_rain_fee: number; // Taxa de urgência / clima
@@ -139,17 +139,17 @@ export interface DriverFreightPreset {
   pix_key: string;
   pix_key_type: 'cpf' | 'cnpj' | 'email' | 'phone' | 'random';
   default_vehicle: VehicleType;
-  default_vehicle_label?: string; // Nome/modelo do veículo
-  default_vehicle_capacity?: string; // Capacidade de carga (ex: Até 25kg)
-  default_vehicle_desc?: string; // Informações do veículo
+  default_vehicle_label?: string; // Motocicleta (Frete Express)
+  default_vehicle_capacity?: string; // Até 50Kg (Bauleto / amarração)
+  default_vehicle_desc?: string;
   default_vehicle_icon?: 'Bike' | 'Car' | 'Truck' | string;
-  default_km_per_liter?: number; // Consumo médio
-  default_price_per_km: number;
-  default_base_fee: number;
-  default_maintenance_per_km: number;
-  default_stop_fee: number;
+  default_km_per_liter?: number; // Consumo médio (obtido do perfil)
+  default_price_per_km: number; // R$ 0,80
+  default_base_fee: number; // R$ 15,00
+  default_maintenance_per_km: number; // Obtido da reserva de manutenção
+  default_stop_fee: number; // R$ 6,00
   default_terms: string;
   default_payment_method: PaymentMethod;
-  vehicles?: VehicleConfigItem[]; // Tipos de veículos editáveis/customizáveis
+  vehicles?: VehicleConfigItem[];
 }
 

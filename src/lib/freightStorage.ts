@@ -16,43 +16,15 @@ export const DEFAULT_VEHICLES: VehicleConfigItem[] = [
     id: 'moto',
     label: 'Motocicleta (Frete Express)',
     iconName: 'Bike',
-    maxWeight: 'Até 20kg (Baú / Mochila)',
-    desc: 'Documentos, pequenos pacotes, entregas rápidas e urgentes',
-    defaultBase: 12.00,
-    defaultPriceKm: 2.80,
+    maxWeight: 'Até 50Kg (Bauleto / amarração)',
+    desc: 'Entregas rápidas, documentos e encomendas de até 50kg',
+    defaultBase: 15.00,
+    defaultPriceKm: 0.80,
     stopFee: 6.00,
     kmPerLiter: 35,
-    maintenancePerKm: 0.25,
+    maintenancePerKm: 0.15,
     isDefault: true,
     is_custom: false,
-  },
-  {
-    id: 'fiorino',
-    label: 'Utilitário / Fiorino / Furgão',
-    iconName: 'Car',
-    maxWeight: 'Até 650kg (3.2 m³)',
-    desc: 'Caixas volumosas, pequenas mudanças, equipamentos e paletes',
-    defaultBase: 40.00,
-    defaultPriceKm: 4.50,
-    stopFee: 15.00,
-    kmPerLiter: 11,
-    maintenancePerKm: 0.55,
-    isDefault: false,
-    is_custom: true,
-  },
-  {
-    id: 'van',
-    label: 'Van de Carga / Furgão Grande',
-    iconName: 'Truck',
-    maxWeight: 'Até 1.500kg (10 m³)',
-    desc: 'Grandes cargas fracionadas, mudanças comerciais e móveis',
-    defaultBase: 80.00,
-    defaultPriceKm: 6.50,
-    stopFee: 25.00,
-    kmPerLiter: 8.5,
-    maintenancePerKm: 0.85,
-    isDefault: false,
-    is_custom: true,
   },
 ];
 
@@ -65,13 +37,13 @@ export const DEFAULT_PRESET: DriverFreightPreset = {
   pix_key_type: 'phone',
   default_vehicle: 'moto',
   default_vehicle_label: 'Motocicleta (Frete Express)',
-  default_vehicle_capacity: 'Até 20kg (Baú / Mochila)',
-  default_vehicle_desc: 'Documentos, pequenos pacotes, entregas rápidas e urgentes',
+  default_vehicle_capacity: 'Até 50Kg (Bauleto / amarração)',
+  default_vehicle_desc: 'Entregas rápidas, documentos e encomendas de até 50kg',
   default_vehicle_icon: 'Bike',
   default_km_per_liter: 35,
-  default_price_per_km: 2.80,
-  default_base_fee: 12.00,
-  default_maintenance_per_km: 0.25,
+  default_price_per_km: 0.80,
+  default_base_fee: 15.00,
+  default_maintenance_per_km: 0.15,
   default_stop_fee: 6.00,
   default_terms: DEFAULT_TERMS,
   default_payment_method: 'pix',
@@ -667,14 +639,14 @@ export const freightStorage = {
       return {
         id: vehicleType,
         label: q.vehicle_label || vMatch?.label || preset.default_vehicle_label || 'Motocicleta (Frete Express)',
-        maxWeight: q.vehicle_capacity || vMatch?.maxWeight || preset.default_vehicle_capacity || 'Até 20kg (Baú / Mochila)',
-        desc: vMatch?.desc || preset.default_vehicle_desc || 'Documentos, pequenos pacotes, entregas rápidas e urgentes',
+        maxWeight: q.vehicle_capacity || vMatch?.maxWeight || preset.default_vehicle_capacity || 'Até 50Kg (Bauleto / amarração)',
+        desc: vMatch?.desc || preset.default_vehicle_desc || 'Entregas rápidas, documentos e encomendas de até 50kg',
         iconName: vMatch?.iconName || preset.default_vehicle_icon || 'Bike',
-        defaultPriceKm: vMatch?.defaultPriceKm ?? preset.default_price_per_km ?? 2.80,
-        defaultBase: vMatch?.defaultBase ?? preset.default_base_fee ?? 12.00,
+        defaultPriceKm: vMatch?.defaultPriceKm ?? preset.default_price_per_km ?? 0.80,
+        defaultBase: vMatch?.defaultBase ?? preset.default_base_fee ?? 15.00,
         stopFee: vMatch?.stopFee ?? preset.default_stop_fee ?? 6.00,
         kmPerLiter: vMatch?.kmPerLiter ?? preset.default_km_per_liter ?? 35,
-        maintenancePerKm: vMatch?.maintenancePerKm ?? preset.default_maintenance_per_km ?? 0.25,
+        maintenancePerKm: vMatch?.maintenancePerKm ?? preset.default_maintenance_per_km ?? 0.15,
       };
     }
 
@@ -684,14 +656,14 @@ export const freightStorage = {
     return {
       id: typeStr,
       label: vMatch?.label || preset.default_vehicle_label || 'Motocicleta (Frete Express)',
-      maxWeight: vMatch?.maxWeight || preset.default_vehicle_capacity || 'Até 20kg (Baú / Mochila)',
-      desc: vMatch?.desc || preset.default_vehicle_desc || 'Documentos, pequenos pacotes, entregas rápidas e urgentes',
+      maxWeight: vMatch?.maxWeight || preset.default_vehicle_capacity || 'Até 50Kg (Bauleto / amarração)',
+      desc: vMatch?.desc || preset.default_vehicle_desc || 'Entregas rápidas, documentos e encomendas de até 50kg',
       iconName: vMatch?.iconName || preset.default_vehicle_icon || 'Bike',
-      defaultPriceKm: vMatch?.defaultPriceKm ?? preset.default_price_per_km ?? 2.80,
-      defaultBase: vMatch?.defaultBase ?? preset.default_base_fee ?? 12.00,
+      defaultPriceKm: vMatch?.defaultPriceKm ?? preset.default_price_per_km ?? 0.80,
+      defaultBase: vMatch?.defaultBase ?? preset.default_base_fee ?? 15.00,
       stopFee: vMatch?.stopFee ?? preset.default_stop_fee ?? 6.00,
       kmPerLiter: vMatch?.kmPerLiter ?? preset.default_km_per_liter ?? 35,
-      maintenancePerKm: vMatch?.maintenancePerKm ?? preset.default_maintenance_per_km ?? 0.25,
+      maintenancePerKm: vMatch?.maintenancePerKm ?? preset.default_maintenance_per_km ?? 0.15,
     };
   },
 
@@ -706,7 +678,7 @@ export const freightStorage = {
 
   formatWhatsAppMessage(quote: FreightQuote, userId: string = 'default'): string {
     const vehicleInfo = this.getVehicleInfo(quote, userId);
-    const iconEmoji = vehicleInfo.iconName === 'Car' ? '🚗' : vehicleInfo.iconName === 'Truck' ? '🚚' : '🛵';
+    const iconEmoji = '🛵';
     
     const formatBRL = (val: number) => 
       new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val || 0);
@@ -725,8 +697,7 @@ export const freightStorage = {
     if (quote.client_company) {
       msg += `🏢 *Empresa:* ${quote.client_company}\n`;
     }
-    msg += `${iconEmoji} *Veículo:* ${vehicleInfo.label}${vehicleInfo.maxWeight ? ` (${vehicleInfo.maxWeight})` : ''}\n`;
-    msg += `📋 *Carga:* ${quote.cargo_description || 'Volumes diversos'}\n`;
+    msg += `${iconEmoji} *Veículo:* ${vehicleInfo.label} (${vehicleInfo.maxWeight})\n`;
 
     if (quote.scheduled_date) {
       const formattedDate = new Date(quote.scheduled_date + 'T00:00:00').toLocaleDateString('pt-BR');
