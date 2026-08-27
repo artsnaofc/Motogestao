@@ -84,12 +84,39 @@ export const VEHICLE_PRESETS: Record<string, VehicleConfigItem> = DEFAULT_VEHICL
   return acc;
 }, {} as Record<string, VehicleConfigItem>);
 
+/**
+ * Resolves the authenticated Supabase user ID if available
+ */
+async function getEffectiveUserId(fallbackId: string = 'default'): Promise<string> {
+  if (fallbackId && fallbackId !== 'default' && fallbackId.length > 5) {
+    return fallbackId;
+  }
+  try {
+    const { data } = await supabase.auth.getUser();
+    if (data?.user?.id) {
+      return data.user.id;
+    }
+  } catch (e) {
+    // fallback
+  }
+  return fallbackId || 'default';
+}
+
 export const freightStorage = {
   // QUOTES
   getQuotes(userId: string = 'default'): FreightQuote[] {
     try {
       const raw = localStorage.getItem(`${STORAGE_KEY_PREFIX}${userId}`);
-      if (!raw) return [];
+      if (!raw) {
+        if (userId !== 'default') {
+          const fallbackRaw = localStorage.getItem(`${STORAGE_KEY_PREFIX}default`);
+          if (fallbackRaw) {
+            const parsedFallback = JSON.parse(fallbackRaw);
+            return Array.isArray(parsedFallback) ? parsedFallback : [];
+          }
+        }
+        return [];
+      }
       const parsed = JSON.parse(raw);
       return Array.isArray(parsed) ? parsed : [];
     } catch (e) {
@@ -100,14 +127,24 @@ export const freightStorage = {
 
   async syncQuotesFromDatabase(userId: string = 'default'): Promise<FreightQuote[]> {
     try {
-      const { data, error } = await supabase
+      const effectiveId = await getEffectiveUserId(userId);
+      const query = supabase
         .from('freight_quotes')
-        .select('*')
-        .eq('user_id', userId)
-        .order('created_at', { ascending: false });
+        .select('*');
 
-      if (!error && data) {
+      if (effectiveId && effectiveId !== 'default') {
+        query.eq('user_id', effectiveId);
+      }
+
+      const { data, error } = await query.order('created_at', { ascending: false });
+
+      if (error) {
+        console.warn('[freightStorage] Supabase sync error for freight_quotes:', error.message);
+      } else if (data) {
         localStorage.setItem(`${STORAGE_KEY_PREFIX}${userId}`, JSON.stringify(data));
+        if (effectiveId !== userId) {
+          localStorage.setItem(`${STORAGE_KEY_PREFIX}${effectiveId}`, JSON.stringify(data));
+        }
         return data as FreightQuote[];
       }
     } catch (err) {
@@ -146,15 +183,94 @@ export const freightStorage = {
       }, userId);
     }
 
-    // Async save to Supabase
+    // Async save to Supabase with precise payload mapping
     (async () => {
       try {
-        await supabase
+        const effectiveId = await getEffectiveUserId(userId);
+        const quotePayload = {
+          id: quote.id,
+          user_id: effectiveId,
+          code: quote.code,
+          created_at: quote.created_at || new Date().toISOString(),
+          valid_until: quote.valid_until || null,
+          status: quote.status || 'pending',
+
+          client_name: quote.client_name || 'Cliente',
+          client_phone: quote.client_phone || '',
+          client_company: quote.client_company || '',
+          client_document: quote.client_document || '',
+          client_email: quote.client_email || '',
+
+          driver_name: quote.driver_name || '',
+          driver_phone: quote.driver_phone || '',
+          driver_company: quote.driver_company || '',
+          driver_document: quote.driver_document || '',
+          pix_key: quote.pix_key || '',
+          pix_key_type: quote.pix_key_type || 'phone',
+
+          vehicle_type: quote.vehicle_type || 'moto',
+          vehicle_label: quote.vehicle_label || '',
+          vehicle_capacity: quote.vehicle_capacity || '',
+          service_type: quote.service_type || 'express',
+          origin_address: quote.origin_address,
+          origin_neighborhood: quote.origin_neighborhood || '',
+          origin_city: quote.origin_city || '',
+          destination_address: quote.destination_address,
+          destination_neighborhood: quote.destination_neighborhood || '',
+          destination_city: quote.destination_city || '',
+          additional_stops: quote.additional_stops || [],
+          distance_km: Number(quote.distance_km) || 0,
+          is_round_trip: Boolean(quote.is_round_trip),
+          total_calculated_km: Number(quote.total_calculated_km) || 0,
+
+          cargo_description: quote.cargo_description || '',
+          cargo_weight_kg: quote.cargo_weight_kg !== undefined ? Number(quote.cargo_weight_kg) : null,
+          cargo_volume: quote.cargo_volume || null,
+          cargo_value: quote.cargo_value !== undefined ? Number(quote.cargo_value) : null,
+          scheduled_date: quote.scheduled_date || null,
+          scheduled_time: quote.scheduled_time || null,
+          expected_payment_date: quote.expected_payment_date || null,
+
+          base_fee: Number(quote.base_fee) || 0,
+          price_per_km: Number(quote.price_per_km) || 0,
+          extra_stops_fee: Number(quote.extra_stops_fee) || 0,
+          heavy_cargo_fee: Number(quote.heavy_cargo_fee) || 0,
+          stairs_floor_fee: Number(quote.stairs_floor_fee) || 0,
+          urgent_or_rain_fee: Number(quote.urgent_or_rain_fee) || 0,
+          night_fee: Number(quote.night_fee) || 0,
+          tolls_fee: Number(quote.tolls_fee) || 0,
+          waiting_hours_fee: Number(quote.waiting_hours_fee) || 0,
+          discount: Number(quote.discount) || 0,
+          discount_type: quote.discount_type || 'fixed',
+          discount_value: Number(quote.discount_value) || 0,
+
+          fuel_price: Number(quote.fuel_price) || 0,
+          km_per_liter: Number(quote.km_per_liter) || 0,
+          maintenance_cost_per_km: Number(quote.maintenance_cost_per_km) || 0,
+          estimated_fuel_cost: Number(quote.estimated_fuel_cost) || 0,
+          estimated_maintenance_cost: Number(quote.estimated_maintenance_cost) || 0,
+          total_driver_cost: Number(quote.total_driver_cost) || 0,
+
+          total_price: Number(quote.total_price) || 0,
+          driver_net_profit: Number(quote.driver_net_profit) || 0,
+          profit_margin_percent: Number(quote.profit_margin_percent) || 0,
+
+          payment_method: quote.payment_method || 'pix',
+          observations: quote.observations || '',
+          terms_and_conditions: quote.terms_and_conditions || '',
+          converted_to_transaction_id: quote.converted_to_transaction_id || null,
+          converted_at: quote.converted_at || null,
+        };
+
+        const { error } = await supabase
           .from('freight_quotes')
-          .upsert({
-            ...quote,
-            user_id: userId,
-          });
+          .upsert(quotePayload);
+
+        if (error) {
+          console.warn('[freightStorage] Supabase save error for freight_quotes:', error.message, error.details);
+        } else {
+          console.log(`[freightStorage] Quote ${quote.code} successfully saved to Supabase.`);
+        }
       } catch (err) {
         console.warn('[freightStorage] Supabase save exception:', err);
       }
@@ -175,10 +291,14 @@ export const freightStorage = {
     // Async delete from Supabase
     (async () => {
       try {
-        await supabase
+        const { error } = await supabase
           .from('freight_quotes')
           .delete()
           .eq('id', id);
+
+        if (error) {
+          console.warn('[freightStorage] Supabase delete error for freight_quotes:', error.message);
+        }
       } catch (err) {
         console.warn('[freightStorage] Supabase delete exception:', err);
       }
@@ -202,7 +322,10 @@ export const freightStorage = {
   // PRESETS & DRIVER CONFIGS
   getPreset(userId: string = 'default'): DriverFreightPreset {
     try {
-      const raw = localStorage.getItem(`${PRESET_KEY_PREFIX}${userId}`);
+      let raw = localStorage.getItem(`${PRESET_KEY_PREFIX}${userId}`);
+      if (!raw && userId !== 'default') {
+        raw = localStorage.getItem(`${PRESET_KEY_PREFIX}default`);
+      }
       if (!raw) return DEFAULT_PRESET;
       const parsed = JSON.parse(raw);
 
@@ -246,13 +369,16 @@ export const freightStorage = {
 
   async syncPresetFromDatabase(userId: string = 'default'): Promise<DriverFreightPreset> {
     try {
+      const effectiveId = await getEffectiveUserId(userId);
       const { data, error } = await supabase
         .from('freight_presets')
         .select('*')
-        .eq('user_id', userId)
-        .single();
+        .eq('user_id', effectiveId)
+        .maybeSingle();
 
-      if (!error && data) {
+      if (error) {
+        console.warn('[freightStorage] Supabase preset sync warning:', error.message);
+      } else if (data) {
         const rawVehicles: VehicleConfigItem[] = Array.isArray(data.vehicles) && data.vehicles.length > 0
           ? data.vehicles
           : DEFAULT_VEHICLES;
@@ -292,6 +418,9 @@ export const freightStorage = {
           vehicles: normalizedVehicles,
         };
         localStorage.setItem(`${PRESET_KEY_PREFIX}${userId}`, JSON.stringify(preset));
+        if (effectiveId !== userId) {
+          localStorage.setItem(`${PRESET_KEY_PREFIX}${effectiveId}`, JSON.stringify(preset));
+        }
         return preset;
       }
     } catch (err) {
@@ -348,16 +477,17 @@ export const freightStorage = {
     // Async save to Supabase
     (async () => {
       try {
-        await supabase
+        const effectiveId = await getEffectiveUserId(userId);
+        const { error } = await supabase
           .from('freight_presets')
           .upsert({
-            user_id: userId,
-            driver_name: merged.driver_name,
-            driver_phone: merged.driver_phone,
-            driver_company: merged.driver_company,
-            driver_document: merged.driver_document,
-            pix_key: merged.pix_key,
-            pix_key_type: merged.pix_key_type,
+            user_id: effectiveId,
+            driver_name: merged.driver_name || '',
+            driver_phone: merged.driver_phone || '',
+            driver_company: merged.driver_company || '',
+            driver_document: merged.driver_document || '',
+            pix_key: merged.pix_key || '',
+            pix_key_type: merged.pix_key_type || 'phone',
             default_vehicle: merged.default_vehicle,
             default_vehicle_label: merged.default_vehicle_label,
             default_vehicle_capacity: merged.default_vehicle_capacity,
@@ -368,11 +498,17 @@ export const freightStorage = {
             default_base_fee: merged.default_base_fee,
             default_maintenance_per_km: merged.default_maintenance_per_km,
             default_stop_fee: merged.default_stop_fee,
-            default_terms: merged.default_terms,
-            default_payment_method: merged.default_payment_method,
-            vehicles: merged.vehicles,
+            default_terms: merged.default_terms || '',
+            default_payment_method: merged.default_payment_method || 'pix',
+            vehicles: merged.vehicles || [],
             updated_at: new Date().toISOString(),
           }, { onConflict: 'user_id' });
+
+        if (error) {
+          console.warn('[freightStorage] Supabase preset save error:', error.message, error.details);
+        } else {
+          console.log('[freightStorage] Preset successfully saved to Supabase.');
+        }
       } catch (err) {
         console.warn('[freightStorage] Supabase preset save exception:', err);
       }
@@ -384,7 +520,10 @@ export const freightStorage = {
   // CLIENTS & AUTOCOMPLETE
   getClients(userId: string = 'default'): FreightClient[] {
     try {
-      const raw = localStorage.getItem(`${CLIENTS_KEY_PREFIX}${userId}`);
+      let raw = localStorage.getItem(`${CLIENTS_KEY_PREFIX}${userId}`);
+      if (!raw && userId !== 'default') {
+        raw = localStorage.getItem(`${CLIENTS_KEY_PREFIX}default`);
+      }
       if (!raw) return [];
       const parsed = JSON.parse(raw);
       return Array.isArray(parsed) ? parsed : [];
@@ -395,14 +534,24 @@ export const freightStorage = {
 
   async syncClientsFromDatabase(userId: string = 'default'): Promise<FreightClient[]> {
     try {
-      const { data, error } = await supabase
+      const effectiveId = await getEffectiveUserId(userId);
+      const query = supabase
         .from('freight_clients')
-        .select('*')
-        .eq('user_id', userId)
-        .order('name', { ascending: true });
+        .select('*');
 
-      if (!error && data) {
+      if (effectiveId && effectiveId !== 'default') {
+        query.eq('user_id', effectiveId);
+      }
+
+      const { data, error } = await query.order('name', { ascending: true });
+
+      if (error) {
+        console.warn('[freightStorage] Supabase clients sync warning:', error.message);
+      } else if (data) {
         localStorage.setItem(`${CLIENTS_KEY_PREFIX}${userId}`, JSON.stringify(data));
+        if (effectiveId !== userId) {
+          localStorage.setItem(`${CLIENTS_KEY_PREFIX}${effectiveId}`, JSON.stringify(data));
+        }
         return data as FreightClient[];
       }
     } catch (err) {
@@ -445,12 +594,17 @@ export const freightStorage = {
     // Async save to Supabase
     (async () => {
       try {
-        await supabase
+        const effectiveId = await getEffectiveUserId(userId);
+        const { error } = await supabase
           .from('freight_clients')
           .upsert({
             ...updatedClient,
-            user_id: userId,
+            user_id: effectiveId,
           });
+
+        if (error) {
+          console.warn('[freightStorage] Supabase client save error:', error.message);
+        }
       } catch (err) {
         console.warn('[freightStorage] Supabase client save exception:', err);
       }
@@ -470,10 +624,14 @@ export const freightStorage = {
 
     (async () => {
       try {
-        await supabase
+        const { error } = await supabase
           .from('freight_clients')
           .delete()
           .eq('id', id);
+
+        if (error) {
+          console.warn('[freightStorage] Supabase client delete error:', error.message);
+        }
       } catch (err) {
         console.warn('[freightStorage] Supabase client delete exception:', err);
       }
