@@ -42,7 +42,7 @@ export default function FreightQuotePage() {
   const [whatsAppModalQuote, setWhatsAppModalQuote] = useState<FreightQuote | null>(null);
   const [proposalModalQuote, setProposalModalQuote] = useState<FreightQuote | null>(null);
 
-  // Load quotes
+  // Load quotes and sync with database on mount
   const loadQuotes = () => {
     const loaded = freightStorage.getQuotes(userId);
     setQuotes(loaded);
@@ -50,6 +50,14 @@ export default function FreightQuotePage() {
 
   useEffect(() => {
     loadQuotes();
+    // Sync presets, vehicles, clients and quotes from Supabase on mount
+    freightStorage.syncPresetFromDatabase(userId);
+    freightStorage.syncClientsFromDatabase(userId);
+    freightStorage.syncQuotesFromDatabase(userId).then((synced) => {
+      if (synced && synced.length > 0) {
+        setQuotes(synced);
+      }
+    });
   }, [userId]);
 
   // Handle Save
