@@ -228,30 +228,34 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
         </main>
 
         {/* Mobile Bottom Navigation (Visible strictly on mobile < md) */}
-        <div className="md:hidden fixed bottom-0 left-0 right-0 border-t border-border bg-background flex items-center justify-around p-2 z-40 pb-[max(0.5rem,safe-area-inset-bottom)]">
-          <Link to="/" className={`flex flex-col items-center p-2 rounded-lg transition-colors min-w-[44px] ${location.pathname === '/' ? 'text-primary' : 'text-muted-foreground hover:text-foreground'}`}>
-            <Home className="w-5 h-5" />
-            <span className="text-[9px] font-medium mt-0.5">Início</span>
+        <div className="md:hidden fixed bottom-0 left-0 right-0 border-t border-border bg-background/95 backdrop-blur-md flex items-center justify-around px-1 py-1.5 z-40 pb-[max(0.5rem,safe-area-inset-bottom)] overflow-x-auto">
+          <Link to="/" className={`flex flex-col items-center py-1 px-1.5 rounded-lg transition-colors shrink-0 ${location.pathname === '/' ? 'text-primary font-bold' : 'text-muted-foreground hover:text-foreground'}`}>
+            <Home className="w-4 h-4" />
+            <span className="text-[8.5px] mt-0.5 leading-none">Início</span>
           </Link>
-          <Link to="/freight" className={`flex flex-col items-center p-2 rounded-lg transition-colors min-w-[44px] ${location.pathname === '/freight' ? 'text-primary' : 'text-muted-foreground hover:text-foreground'}`}>
-            <Truck className="w-5 h-5" />
-            <span className="text-[9px] font-medium mt-0.5">Frete</span>
+          <Link to="/freight" className={`flex flex-col items-center py-1 px-1.5 rounded-lg transition-colors shrink-0 ${location.pathname === '/freight' ? 'text-primary font-bold' : 'text-muted-foreground hover:text-foreground'}`}>
+            <Truck className="w-4 h-4" />
+            <span className="text-[8.5px] mt-0.5 leading-none">Frete</span>
           </Link>
-          <Link to="/history" className={`flex flex-col items-center p-2 rounded-lg transition-colors min-w-[44px] ${location.pathname === '/history' ? 'text-primary' : 'text-muted-foreground hover:text-foreground'}`}>
-            <List className="w-5 h-5" />
-            <span className="text-[9px] font-medium mt-0.5">Extrato</span>
+          <Link to="/history" className={`flex flex-col items-center py-1 px-1.5 rounded-lg transition-colors shrink-0 ${location.pathname === '/history' ? 'text-primary font-bold' : 'text-muted-foreground hover:text-foreground'}`}>
+            <List className="w-4 h-4" />
+            <span className="text-[8.5px] mt-0.5 leading-none">Extrato</span>
           </Link>
-          <Link to="/add" className={`flex flex-col items-center p-2 rounded-lg transition-colors min-w-[44px] ${location.pathname === '/add' ? 'text-primary' : 'text-muted-foreground hover:text-foreground'}`}>
-            <PlusCircle className="w-5 h-5" />
-            <span className="text-[9px] font-medium mt-0.5">Lançar</span>
+          <Link to="/add" className={`flex flex-col items-center py-1 px-1.5 rounded-lg transition-colors shrink-0 ${location.pathname === '/add' ? 'text-primary font-bold' : 'text-muted-foreground hover:text-foreground'}`}>
+            <PlusCircle className="w-4 h-4 text-primary" />
+            <span className="text-[8.5px] mt-0.5 leading-none font-bold text-primary">Lançar</span>
           </Link>
-          <Link to="/reserves" className={`flex flex-col items-center p-2 rounded-lg transition-colors min-w-[44px] ${location.pathname === '/reserves' ? 'text-primary' : 'text-muted-foreground hover:text-foreground'}`}>
-            <PiggyBank className="w-5 h-5" />
-            <span className="text-[9px] font-medium mt-0.5">Reservas</span>
+          <Link to="/reserves" className={`flex flex-col items-center py-1 px-1.5 rounded-lg transition-colors shrink-0 ${location.pathname === '/reserves' ? 'text-primary font-bold' : 'text-muted-foreground hover:text-foreground'}`}>
+            <PiggyBank className="w-4 h-4" />
+            <span className="text-[8.5px] mt-0.5 leading-none">Reservas</span>
           </Link>
-          <Link to="/profile" className={`flex flex-col items-center p-2 rounded-lg transition-colors min-w-[44px] ${location.pathname === '/profile' ? 'text-primary' : 'text-muted-foreground hover:text-foreground'}`}>
-            <User className="w-5 h-5" />
-            <span className="text-[9px] font-medium mt-0.5">Perfil</span>
+          <Link to="/investments" className={`flex flex-col items-center py-1 px-1.5 rounded-lg transition-colors shrink-0 ${location.pathname === '/investments' ? 'text-primary font-bold' : 'text-muted-foreground hover:text-foreground'}`}>
+            <TrendingUp className="w-4 h-4" />
+            <span className="text-[8.5px] mt-0.5 leading-none">Ativos</span>
+          </Link>
+          <Link to="/profile" className={`flex flex-col items-center py-1 px-1.5 rounded-lg transition-colors shrink-0 ${location.pathname === '/profile' ? 'text-primary font-bold' : 'text-muted-foreground hover:text-foreground'}`}>
+            <User className="w-4 h-4" />
+            <span className="text-[8.5px] mt-0.5 leading-none">Perfil</span>
           </Link>
         </div>
       </div>
