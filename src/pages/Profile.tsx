@@ -80,14 +80,11 @@ import {
   Coins,
   CheckCircle2,
   Info,
-  Terminal,
-  Bug,
   RotateCcw,
   AlertCircle,
   Key
 } from 'lucide-react';
 import { useData } from '../contexts/DataContext';
-import { DebugConsoleModal } from '../components/DebugConsoleModal';
 import { executeQuoteFetch, QuoteProvider, QuoteFetchResult } from '../lib/quoteService';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -110,7 +107,6 @@ export function Profile() {
   
   const [deleteCategoryConfirm, setDeleteCategoryConfirm] = useState<{type: 'income' | 'personal' | 'operational', name: string} | null>(null);
   const [editCategoryData, setEditCategoryData] = useState<{type: 'income' | 'personal' | 'operational', oldName: string, newName: string} | null>(null);
-  const [isDebugModalOpen, setIsDebugModalOpen] = useState(false);
   
   // Auth states
   const [email, setEmail] = useState('');
@@ -875,30 +871,6 @@ export function Profile() {
                 <div className="text-right">Cotações: <strong className="text-cyan-600 dark:text-cyan-400 uppercase font-bold">{settings.quote_provider || 'auto'}</strong></div>
               </div>
             </div>
-
-            {/* CARD 6: DEV TOOLS / DEBUG QUICK CARD */}
-            {globalSettings?.is_admin && (
-              <div 
-                onClick={() => setIsDebugModalOpen(true)}
-                className="group p-5 rounded-2xl border border-indigo-500/20 bg-gradient-to-tr from-card to-indigo-500/5 hover:border-indigo-500/40 hover:shadow-md transition-all cursor-pointer flex flex-col justify-between gap-4"
-              >
-                <div className="flex items-start justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2.5 rounded-xl bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 group-hover:bg-indigo-500/20 transition-colors">
-                      <Bug className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <h3 className="text-sm font-black text-foreground">Console Developer & Debug</h3>
-                      <p className="text-[11px] text-muted-foreground">Diagnóstico, latência de banco e cache</p>
-                    </div>
-                  </div>
-                  <ChevronRight className="w-4 h-4 text-muted-foreground group-hover:text-foreground transition-colors" />
-                </div>
-                <div className="pt-2 border-t border-indigo-500/10 text-[10px] text-indigo-500 dark:text-indigo-400 font-bold flex items-center gap-1.5">
-                  <Terminal className="w-3.5 h-3.5" /> Clique para abrir ferramentas avançadas
-                </div>
-              </div>
-            )}
 
           </div>
         )}
@@ -1862,36 +1834,6 @@ export function Profile() {
           </Card>
         )}
 
-        {/* SECTION 6: DEBUG & DIAGNOSTICS */}
-        {globalSettings?.is_admin && (
-          <Card className="border border-indigo-500/25 bg-gradient-to-br from-card via-card to-indigo-500/5 shadow-md rounded-3xl overflow-hidden transition-all hover:border-indigo-500/40">
-            <CardHeader className="p-5 sm:p-6 border-b border-border/60">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                <div className="flex items-center gap-3.5">
-                  <div className="p-3 rounded-2xl bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20 shrink-0">
-                    <Bug className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <CardTitle className="text-base sm:text-lg font-black tracking-tight">Ferramentas de Desenvolvedor & Debug</CardTitle>
-                    <CardDescription className="text-xs">
-                      Inspecione logs do console em tempo real, erros de rede, testes de cotações e diagnóstico do banco de dados.
-                    </CardDescription>
-                  </div>
-                </div>
-
-                <Button
-                  type="button"
-                  onClick={() => setIsDebugModalOpen(true)}
-                  className="h-11 px-5 rounded-2xl font-extrabold text-xs uppercase tracking-wider bg-slate-900 hover:bg-slate-800 dark:bg-indigo-600 dark:hover:bg-indigo-500 text-white shadow-md transition-all cursor-pointer flex items-center gap-2 shrink-0"
-                >
-                  <Terminal className="w-4 h-4 text-emerald-400" />
-                  Abrir Console de Debug
-                </Button>
-              </div>
-            </CardHeader>
-          </Card>
-        )}
-
       </div>
 
       {/* GLOBAL STICKY SAVE BAR (FIXED POSITIONING, Z-INDEX & DIRTY FORM CHECK) */}
@@ -2008,12 +1950,6 @@ export function Profile() {
       <div className="text-center text-xs text-muted-foreground pt-4">
         MotoGestão v1.2.0 • Sistema Financeiro de Alta Performance
       </div>
-
-      {/* DEBUG CONSOLE MODAL */}
-      <DebugConsoleModal 
-        open={isDebugModalOpen} 
-        onOpenChange={setIsDebugModalOpen} 
-      />
     </div>
   );
 }

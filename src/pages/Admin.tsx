@@ -5,22 +5,30 @@ import {
   ShieldCheck, 
   Users, 
   Settings, 
-  Database, 
   Activity,
-  AlertTriangle,
-  ServerCrash
+  ServerCrash,
+  Clock,
+  Radio,
+  FileText,
+  Database
 } from 'lucide-react';
-import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'motion/react';
 import { UserSettings } from '../types';
+import { systemSettings } from '../lib/systemSettings';
 
 import { UserList } from '../components/admin/UserList';
 import { CreateUserModal } from '../components/admin/CreateUserModal';
+import { UserDetailModal } from '../components/admin/UserDetailModal';
+import { EditUserModal } from '../components/admin/EditUserModal';
+import { AdminOverview } from '../components/admin/AdminOverview';
+import { SystemSettingsTab } from '../components/admin/SystemSettingsTab';
+import { AdminAuditTab } from '../components/admin/AdminAuditTab';
+import { DatabaseBackupSuite } from '../components/admin/DatabaseBackupSuite';
 import { DebugConsoleModal } from '../components/DebugConsoleModal';
 
-type AdminTab = 'overview' | 'users' | 'settings';
+type AdminTab = 'overview' | 'users' | 'settings' | 'backup' | 'audit';
 
 export default function Admin() {
   const { settings } = useData();
@@ -30,11 +38,17 @@ export default function Admin() {
   const [allUsers, setAllUsers] = useState<UserSettings[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [loadingUserId, setLoadingUserId] = useState<string | undefined>();
+  
+  // Modals state
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isDebugModalOpen, setIsDebugModalOpen] = useState(false);
+  const [detailUser, setDetailUser] = useState<UserSettings | null>(null);
+  const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
+  const [editUser, setEditUser] = useState<UserSettings | null>(null);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
 
   useEffect(() => {
-    if (isAdmin && activeTab === 'users') {
+    if (isAdmin) {
       fetchUsers();
     }
   }, [isAdmin, activeTab]);
@@ -66,6 +80,12 @@ export default function Admin() {
 
       if (error) throw error;
 
+      const targetUser = allUsers.find(u => u.user_id === userId);
+      const actionName = !currentStatus ? 'Promoção para Admin' : 'Revogação de Admin';
+      const details = `${targetUser?.full_name || userId} teve privilégios de administrador ${!currentStatus ? 'concedidos' : 'revogados'}.`;
+
+      systemSettings.logAction('Administrador', actionName, details, 'user', 'warn');
+
       toast.success(currentStatus ? 'Privilégios de admin removidos.' : 'Privilégios de admin concedidos.');
       fetchUsers();
     } catch (err: any) {
@@ -75,73 +95,148 @@ export default function Admin() {
     }
   };
 
+  const handleDeleteUser = async (userId: string) => {
+    const targetUser = allUsers.find(u => u.user_id === userId);
+    const userName = targetUser?.full_name || userId;
+
+    if (!confirm(`Atenção: Tem certeza de que deseja excluir as configurações do usuário "${userName}"? Esta ação removerá os parâmetros deste membro.`)) {
+      return;
+    }
+
+    setLoadingUserId(userId);
+    try {
+      const { error } = await supabase
+        .from('user_settings')
+        .delete()
+        .eq('user_id', userId);
+
+      if (error) throw error;
+
+      systemSettings.logAction(
+        'Administrador',
+        'Exclusão de Membro',
+        `Membro ${userName} (${userId}) foi excluído da base de configurações.`,
+        'user',
+        'error'
+      );
+
+      toast.success('Membro excluído com sucesso.');
+      fetchUsers();
+    } catch (err: any) {
+      toast.error('Erro ao excluir membro', { description: err.message });
+    } finally {
+      setLoadingUserId(undefined);
+    }
+  };
+
+  const handleOpenDetails = (user: UserSettings) => {
+    setDetailUser(user);
+    setIsDetailModalOpen(true);
+  };
+
+  const handleOpenEdit = (user: UserSettings) => {
+    setEditUser(user);
+    setIsEditModalOpen(true);
+  };
+
   if (!isAdmin) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center p-6 space-y-4">
-        <div className="w-20 h-20 bg-rose-500/10 rounded-[2rem] flex items-center justify-center border shadow-sm">
+      <div className="flex-1 flex flex-col items-center justify-center p-6 space-y-4 min-h-[70vh]">
+        <div className="w-20 h-20 bg-rose-500/10 rounded-[2rem] flex items-center justify-center border border-rose-500/20 shadow-sm">
           <ShieldCheck className="w-10 h-10 text-rose-500" />
         </div>
-        <h2 className="text-2xl font-black text-center">Acesso Restrito</h2>
+        <h2 className="text-2xl font-black text-center text-foreground">Acesso Restrito</h2>
         <p className="text-center text-muted-foreground text-sm max-w-sm">
-          Você não tem permissão para visualizar o painel de controle administrativo.
+          Você não possui privilégios de administrador para acessar o centro de controle e configurações do sistema.
         </p>
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col min-h-screen bg-background pb-20 sm:pb-0">
+    <div className="flex flex-col min-h-screen bg-background pb-20 sm:pb-8">
       {/* Admin Header */}
       <header className="sticky top-0 z-30 bg-background/80 backdrop-blur-md border-b border-border/40 px-6 py-4 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="p-2 bg-primary/10 rounded-xl border border-primary/20 text-primary">
+          <div className="p-2 bg-primary/10 rounded-2xl border border-primary/20 text-primary shadow-xs">
             <ShieldCheck className="w-5 h-5" />
           </div>
           <div>
-            <h1 className="text-lg font-black leading-none">Console Admin</h1>
-            <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-bold mt-1">Nível de Acesso: Máximo</p>
+            <h1 className="text-lg font-black leading-none text-foreground">Painel Administrativo & Telemetria</h1>
+            <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-bold mt-1">
+              Controle Geral • Plataforma Finanças Pro
+            </p>
           </div>
         </div>
         
         <Button
           variant="outline"
           size="icon"
-          className="h-10 w-10 rounded-xl border-border/50 text-muted-foreground hover:text-foreground"
+          className="h-10 w-10 rounded-2xl border-border/50 text-muted-foreground hover:text-foreground cursor-pointer shadow-xs"
           onClick={() => setIsDebugModalOpen(true)}
-          title="Console de Debug"
+          title="Abrir Console de Diagnóstico & Debug"
         >
-          <ServerCrash className="w-4 h-4" />
+          <ServerCrash className="w-4 h-4 text-primary" />
         </Button>
       </header>
 
       {/* Main Content Area */}
       <main className="flex-1 p-4 sm:p-6 max-w-7xl mx-auto w-full space-y-6">
-        
         {/* Navigation Tabs */}
-        <div className="flex overflow-x-auto hide-scrollbar gap-2 pb-2">
+        <div className="flex overflow-x-auto hide-scrollbar gap-2 pb-1">
           <Button
             variant={activeTab === 'overview' ? 'default' : 'outline'}
-            className={`rounded-xl h-10 font-bold shrink-0 ${activeTab !== 'overview' ? 'border-border/50 bg-background text-muted-foreground' : 'shadow-sm'}`}
+            className={`rounded-2xl h-11 px-4 font-bold shrink-0 cursor-pointer transition-all ${
+              activeTab !== 'overview' ? 'border-border/50 bg-background text-muted-foreground hover:text-foreground' : 'shadow-sm'
+            }`}
             onClick={() => setActiveTab('overview')}
           >
             <Activity className="w-4 h-4 mr-2" />
             Visão Geral
           </Button>
+
           <Button
             variant={activeTab === 'users' ? 'default' : 'outline'}
-            className={`rounded-xl h-10 font-bold shrink-0 ${activeTab !== 'users' ? 'border-border/50 bg-background text-muted-foreground' : 'shadow-sm'}`}
+            className={`rounded-2xl h-11 px-4 font-bold shrink-0 cursor-pointer transition-all ${
+              activeTab !== 'users' ? 'border-border/50 bg-background text-muted-foreground hover:text-foreground' : 'shadow-sm'
+            }`}
             onClick={() => setActiveTab('users')}
           >
             <Users className="w-4 h-4 mr-2" />
-            Membros
+            Membros ({allUsers.length})
           </Button>
+
           <Button
             variant={activeTab === 'settings' ? 'default' : 'outline'}
-            className={`rounded-xl h-10 font-bold shrink-0 ${activeTab !== 'settings' ? 'border-border/50 bg-background text-muted-foreground' : 'shadow-sm'}`}
+            className={`rounded-2xl h-11 px-4 font-bold shrink-0 cursor-pointer transition-all ${
+              activeTab !== 'settings' ? 'border-border/50 bg-background text-muted-foreground hover:text-foreground' : 'shadow-sm'
+            }`}
             onClick={() => setActiveTab('settings')}
           >
             <Settings className="w-4 h-4 mr-2" />
-            Sistema
+            Configurações do Sistema
+          </Button>
+
+          <Button
+            variant={activeTab === 'backup' ? 'default' : 'outline'}
+            className={`rounded-2xl h-11 px-4 font-bold shrink-0 cursor-pointer transition-all ${
+              activeTab !== 'backup' ? 'border-border/50 bg-background text-muted-foreground hover:text-foreground' : 'shadow-sm'
+            }`}
+            onClick={() => setActiveTab('backup')}
+          >
+            <Database className="w-4 h-4 mr-2 text-primary" />
+            Backup & Database
+          </Button>
+
+          <Button
+            variant={activeTab === 'audit' ? 'default' : 'outline'}
+            className={`rounded-2xl h-11 px-4 font-bold shrink-0 cursor-pointer transition-all ${
+              activeTab !== 'audit' ? 'border-border/50 bg-background text-muted-foreground hover:text-foreground' : 'shadow-sm'
+            }`}
+            onClick={() => setActiveTab('audit')}
+          >
+            <Clock className="w-4 h-4 mr-2" />
+            Auditoria & Logs
           </Button>
         </div>
 
@@ -152,60 +247,12 @@ export default function Admin() {
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -10 }}
-              className="space-y-6"
+              transition={{ duration: 0.15 }}
             >
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                <Card className="border-border/40 bg-background/50 shadow-sm">
-                  <CardContent className="p-5 flex flex-col gap-1">
-                    <div className="flex items-center gap-2 text-muted-foreground mb-2">
-                      <Users className="w-4 h-4" />
-                      <span className="text-[10px] font-black uppercase tracking-wider">Total de Usuários</span>
-                    </div>
-                    <p className="text-3xl font-black">1</p>
-                    <p className="text-xs text-emerald-600 font-bold flex items-center gap-1 mt-1">
-                      +100% ativos
-                    </p>
-                  </CardContent>
-                </Card>
-                
-                <Card className="border-border/40 bg-background/50 shadow-sm">
-                  <CardContent className="p-5 flex flex-col gap-1">
-                    <div className="flex items-center gap-2 text-muted-foreground mb-2">
-                      <Database className="w-4 h-4" />
-                      <span className="text-[10px] font-black uppercase tracking-wider">Volume de Dados</span>
-                    </div>
-                    <p className="text-3xl font-black">8.4<span className="text-lg text-muted-foreground font-bold ml-1">MB</span></p>
-                    <p className="text-xs text-muted-foreground font-bold flex items-center gap-1 mt-1">
-                      Capacidade Saudável
-                    </p>
-                  </CardContent>
-                </Card>
-                
-                <Card className="border-border/40 bg-background/50 shadow-sm sm:col-span-2">
-                  <CardContent className="p-5">
-                    <div className="flex items-center gap-2 text-muted-foreground mb-4">
-                      <Activity className="w-4 h-4" />
-                      <span className="text-[10px] font-black uppercase tracking-wider">Status do Sistema</span>
-                    </div>
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between p-3 rounded-xl bg-muted/30 border border-border/40">
-                        <div className="flex items-center gap-3">
-                          <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                          <span className="text-sm font-bold">API Services</span>
-                        </div>
-                        <span className="text-xs font-mono font-bold text-emerald-600">Online</span>
-                      </div>
-                      <div className="flex items-center justify-between p-3 rounded-xl bg-muted/30 border border-border/40">
-                        <div className="flex items-center gap-3">
-                          <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                          <span className="text-sm font-bold">Database & RLS</span>
-                        </div>
-                        <span className="text-xs font-mono font-bold text-emerald-600">Secure</span>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              </div>
+              <AdminOverview 
+                onNavigateToTab={(tab) => setActiveTab(tab)}
+                onOpenCreateUser={() => setIsCreateModalOpen(true)}
+              />
             </motion.div>
           )}
 
@@ -215,10 +262,14 @@ export default function Admin() {
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.15 }}
             >
               <UserList 
                 users={allUsers} 
-                onToggleAdmin={handleToggleAdminStatus} 
+                onToggleAdmin={handleToggleAdminStatus}
+                onDeleteUser={handleDeleteUser}
+                onEditUser={handleOpenEdit}
+                onViewDetails={handleOpenDetails}
                 loadingId={loadingUserId}
                 onCreateClick={() => setIsCreateModalOpen(true)}
               />
@@ -231,66 +282,73 @@ export default function Admin() {
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -10 }}
-              className="max-w-2xl"
+              transition={{ duration: 0.15 }}
             >
-              <Card className="border-border/40 shadow-sm">
-                <CardContent className="p-0">
-                  <div className="p-6 border-b border-border/40">
-                    <h3 className="text-lg font-bold mb-1">Configurações Globais</h3>
-                    <p className="text-sm text-muted-foreground">
-                      Parâmetros gerais do sistema. Algumas opções requerem reinicialização dos containers.
-                    </p>
-                  </div>
-                  
-                  <div className="p-6 space-y-6">
-                    <div className="flex items-center justify-between gap-4">
-                      <div>
-                        <label className="text-sm font-bold block leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">Modo Manutenção</label>
-                        <p className="text-xs text-muted-foreground mt-1">
-                          Bloqueia o acesso de usuários não-administradores.
-                        </p>
-                      </div>
-                      <div className="w-11 h-6 bg-muted rounded-full relative opacity-50 cursor-not-allowed border border-border">
-                        <div className="w-5 h-5 bg-background rounded-full absolute left-0.5 top-0.5 shadow-sm"></div>
-                      </div>
-                    </div>
-                    
-                    <div className="flex items-center justify-between gap-4">
-                      <div>
-                        <label className="text-sm font-bold block leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">Cadastro Público</label>
-                        <p className="text-xs text-muted-foreground mt-1">
-                          Permitir que novos usuários criem contas livremente.
-                        </p>
-                      </div>
-                      <div className="w-11 h-6 bg-primary rounded-full relative opacity-50 cursor-not-allowed">
-                        <div className="w-5 h-5 bg-primary-foreground rounded-full absolute right-0.5 top-0.5 shadow-sm"></div>
-                      </div>
-                    </div>
+              <SystemSettingsTab />
+            </motion.div>
+          )}
 
-                    <div className="pt-4 border-t border-border/40">
-                      <div className="p-4 bg-amber-500/10 border border-amber-500/20 rounded-2xl flex items-start gap-3 text-amber-700 dark:text-amber-400">
-                        <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5" />
-                        <div className="text-xs leading-relaxed font-medium">
-                          <strong>Nota de Ambiente:</strong> As alterações acima estão em modo leitura (Read-Only) porque a aplicação está operando em um ambiente isolado (Cloud). Funcionalidades em nível de infraestrutura devem ser configuradas via console de provedor (Supabase Dashboard).
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
+          {activeTab === 'backup' && (
+            <motion.div
+              key="backup"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.15 }}
+            >
+              <DatabaseBackupSuite />
+            </motion.div>
+          )}
+
+          {activeTab === 'audit' && (
+            <motion.div
+              key="audit"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.15 }}
+            >
+              <AdminAuditTab />
             </motion.div>
           )}
         </AnimatePresence>
       </main>
 
+      {/* Create User Modal */}
       <CreateUserModal 
         open={isCreateModalOpen}
         onOpenChange={setIsCreateModalOpen}
         onSuccess={() => {
-          if (activeTab === 'users') fetchUsers();
+          fetchUsers();
         }}
       />
 
+      {/* User Ray-X Details Modal */}
+      <UserDetailModal
+        user={detailUser}
+        open={isDetailModalOpen}
+        onOpenChange={setIsDetailModalOpen}
+        onEditClick={handleOpenEdit}
+        onToggleAdmin={handleToggleAdminStatus}
+        onDeleteClick={handleDeleteUser}
+      />
+
+      {/* Edit User Full Modal */}
+      <EditUserModal
+        user={editUser}
+        open={isEditModalOpen}
+        onOpenChange={setIsEditModalOpen}
+        onSuccess={() => {
+          fetchUsers();
+          if (detailUser && editUser && detailUser.user_id === editUser.user_id) {
+            // Update detail view if open
+            const updated = allUsers.find(u => u.user_id === editUser.user_id);
+            if (updated) setDetailUser(updated);
+          }
+        }}
+      />
+
+      {/* Debug Console Modal */}
       <DebugConsoleModal
         open={isDebugModalOpen}
         onOpenChange={setIsDebugModalOpen}

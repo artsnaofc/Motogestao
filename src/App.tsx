@@ -46,6 +46,7 @@ const Profile = lazyWithLogging(() => import('./pages/Profile'), 'Profile');
 const Reserves = lazyWithLogging(() => import('./pages/Reserves'), 'Reserves');
 const Investments = lazyWithLogging(() => import('./pages/Investments'), 'Investments');
 const Admin = lazyWithLogging(() => import('./pages/Admin'), 'Admin');
+const FreightQuotePage = lazyWithLogging(() => import('./pages/FreightQuote'), 'default');
 
 // Auth guard outside App to prevent recreation
 const PrivateRoute = ({ session, children }: { session: Session | null; children: React.ReactNode }) => {
@@ -142,6 +143,7 @@ export default function App() {
                           <Route path="/" element={<Dashboard />} />
                           <Route path="/history" element={<History />} />
                           <Route path="/add" element={<AddTransaction />} />
+                          <Route path="/freight" element={<FreightQuotePage />} />
                           <Route path="/reserves" element={<Reserves />} />
                           <Route path="/investments" element={<Investments />} />
                           <Route path="/admin" element={<Admin />} />

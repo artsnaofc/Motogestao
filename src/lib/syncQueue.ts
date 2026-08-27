@@ -32,6 +32,10 @@ class SyncQueueManager {
     return cacheManager.get<SyncTask[]>(this.queueKey) || [];
   }
 
+  public getPendingCount(): number {
+    return this.getQueue().length;
+  }
+
   private saveQueue(queue: SyncTask[]) {
     cacheManager.set(this.queueKey, queue, undefined, 'sync');
     this.notifyListeners(queue);
