@@ -679,27 +679,6 @@ export function AddTransaction() {
             {/* ==== FRETE TAB ==== */}
             {activeTab === 'frete' && (
               <div className="space-y-4">
-                {/* Freight Calculator Action Banner */}
-                <div className="p-3 bg-gradient-to-r from-indigo-500/10 via-violet-500/10 to-indigo-500/5 border border-indigo-500/25 rounded-2xl flex items-center justify-between gap-3 shadow-2xs">
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <div className="p-2.5 rounded-xl bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 shrink-0">
-                      <Calculator className="w-5 h-5" />
-                    </div>
-                    <div className="min-w-0">
-                      <span className="text-xs font-black text-foreground block truncate">Calculadora de Precificação</span>
-                      <span className="text-[10px] text-muted-foreground block truncate">Precifique por KM, consumo, manutenção e margem</span>
-                    </div>
-                  </div>
-                  <Button
-                    type="button"
-                    onClick={() => setShowFreightCalc(true)}
-                    className="shrink-0 h-9 px-3.5 text-xs font-black bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-xs transition-all cursor-pointer flex items-center gap-1.5"
-                  >
-                    <Calculator className="w-3.5 h-3.5" />
-                    Calcular
-                  </Button>
-                </div>
-
                 <div className="space-y-2">
                   <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground/90">Valor Líquido do Frete</label>
                   <div className="relative">

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { Home, List, PlusCircle, User, PiggyBank, TrendingUp, Bike, Sparkles, LogOut, ChevronRight, ShieldCheck, Terminal, Cloud, RefreshCw, Truck, Menu, X, Plus } from 'lucide-react';
+import { Home, List, PlusCircle, User, PiggyBank, TrendingUp, Bike, Sparkles, LogOut, ChevronRight, ShieldCheck, Terminal, Cloud, RefreshCw, Truck, Menu, X, Plus, ReceiptText } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { Button } from '@/components/ui/button';
 import { syncQueueManager, SyncTask } from '../lib/syncQueue';
@@ -30,8 +30,8 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
 
   const navItems = [
     { path: '/', label: 'Painel Geral', icon: Home, desc: 'Visão holística do caixa' },
+    { path: '/history', label: 'Extrato & Histórico', icon: ReceiptText, desc: 'Corridas, fretes e despesas' },
     { path: '/freight', label: 'Orçamentos de Frete', icon: Truck, desc: 'Calculadora e propostas PDF' },
-    { path: '/history', label: 'Extrato & Histórico', icon: List, desc: 'Corridas, fretes e despesas' },
     { path: '/reserves', label: 'Reservas Financeiras', icon: PiggyBank, desc: 'Fundos de emergência' },
     { path: '/investments', label: 'Carteira de Ativos', icon: TrendingUp, desc: 'Ações e FIIs' },
     ...(settings?.is_admin ? [{ path: '/admin', label: 'Modo Admin', icon: ShieldCheck, desc: 'Gestão e configurações' }] : []),
@@ -251,17 +251,17 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
               <span className="text-[10px] font-semibold mt-0.5 leading-none">Início</span>
             </Link>
 
-            {/* 2. Frete */}
+            {/* 2. Extrato */}
             <Link 
-              to="/freight" 
+              to="/history" 
               className={`flex-1 flex flex-col items-center justify-center py-1 rounded-xl transition-all active:scale-95 min-h-[44px] ${
-                location.pathname === '/freight' 
+                location.pathname === '/history' 
                   ? 'text-primary font-bold' 
                   : 'text-muted-foreground hover:text-foreground'
               }`}
             >
-              <Truck className={`w-5 h-5 transition-transform ${location.pathname === '/freight' ? 'scale-110' : ''}`} />
-              <span className="text-[10px] font-semibold mt-0.5 leading-none">Fretes</span>
+              <ReceiptText className={`w-5 h-5 transition-transform ${location.pathname === '/history' ? 'scale-110' : ''}`} />
+              <span className="text-[10px] font-semibold mt-0.5 leading-none">Extrato</span>
             </Link>
 
             {/* 3. Central CTA: Lançar */}
@@ -278,17 +278,17 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
               </span>
             </div>
 
-            {/* 4. Extrato */}
+            {/* 4. Frete */}
             <Link 
-              to="/history" 
+              to="/freight" 
               className={`flex-1 flex flex-col items-center justify-center py-1 rounded-xl transition-all active:scale-95 min-h-[44px] ${
-                location.pathname === '/history' 
+                location.pathname === '/freight' 
                   ? 'text-primary font-bold' 
                   : 'text-muted-foreground hover:text-foreground'
               }`}
             >
-              <List className={`w-5 h-5 transition-transform ${location.pathname === '/history' ? 'scale-110' : ''}`} />
-              <span className="text-[10px] font-semibold mt-0.5 leading-none">Extrato</span>
+              <Truck className={`w-5 h-5 transition-transform ${location.pathname === '/freight' ? 'scale-110' : ''}`} />
+              <span className="text-[10px] font-semibold mt-0.5 leading-none">Fretes</span>
             </Link>
 
             {/* 5. Mais / Menu Sheet */}
