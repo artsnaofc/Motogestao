@@ -39,7 +39,7 @@ export function ClientAutocompleteInput({
         (c.document && c.document.includes(q))
       );
     })
-    .slice(0, 6);
+    .slice(0, 10);
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {

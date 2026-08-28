@@ -10,7 +10,7 @@ import {
   FileText, 
   MoreVertical, 
   Edit, 
-  Copy, 
+  RotateCcw, 
   Trash2, 
   CheckCircle2, 
   Clock, 
@@ -37,6 +37,7 @@ import { supabase } from '../../lib/supabase';
 interface FreightQuotesListProps {
   quotes: FreightQuote[];
   onEditQuote: (quote: FreightQuote) => void;
+  onUseAsBaseQuote: (quote: FreightQuote) => void;
   onOpenWhatsApp: (quote: FreightQuote) => void;
   onOpenProposal: (quote: FreightQuote) => void;
   onQuotesChanged: () => void;
@@ -46,6 +47,7 @@ interface FreightQuotesListProps {
 export function FreightQuotesList({
   quotes,
   onEditQuote,
+  onUseAsBaseQuote,
   onOpenWhatsApp,
   onOpenProposal,
   onQuotesChanged,
@@ -97,23 +99,6 @@ export function FreightQuotesList({
       toast.success(`Orçamento ${code} removido.`);
       onQuotesChanged();
     }
-  };
-
-  const handleDuplicate = (quote: FreightQuote) => {
-    const nextCode = freightStorage.generateNextCode(userId);
-    const duplicated: FreightQuote = {
-      ...quote,
-      id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `frt_${Date.now()}`,
-      code: nextCode,
-      created_at: new Date().toISOString(),
-      status: 'draft',
-      converted_to_transaction_id: undefined,
-      converted_at: undefined,
-    };
-
-    freightStorage.saveQuote(duplicated, userId);
-    toast.success(`Orçamento duplicado como ${nextCode}!`);
-    onQuotesChanged();
   };
 
   // Convert Quote into Financial Income Transaction in Supabase
@@ -294,9 +279,9 @@ export function FreightQuotesList({
                             <Edit className="w-3.5 h-3.5 text-primary" />
                             Editar Orçamento
                           </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => handleDuplicate(quote)} className="gap-2 cursor-pointer">
-                            <Copy className="w-3.5 h-3.5 text-amber-500" />
-                            Duplicar Orçamento
+                          <DropdownMenuItem onClick={() => onUseAsBaseQuote(quote)} className="gap-2 cursor-pointer font-semibold text-primary">
+                            <RotateCcw className="w-3.5 h-3.5 text-primary" />
+                            Usar como Base
                           </DropdownMenuItem>
 
                           <DropdownMenuSeparator />
@@ -379,6 +364,18 @@ export function FreightQuotesList({
                           Lançar no Caixa
                         </Button>
                       )}
+
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => onUseAsBaseQuote(quote)}
+                        className="rounded-xl h-8 text-[11px] font-bold border-primary/30 text-primary hover:bg-primary/10 gap-1.5 cursor-pointer"
+                        title="Usar como modelo para nova data"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" />
+                        Usar como Base
+                      </Button>
 
                       <Button
                         type="button"

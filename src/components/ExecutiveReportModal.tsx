@@ -3,6 +3,8 @@ import {
   BarChart2, 
   Printer, 
   Download, 
+  FileDown,
+  Loader2,
   Eye, 
   EyeOff, 
   TrendingUp, 
@@ -26,6 +28,7 @@ import {
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Transaction, UserSettings, Reserve } from '../types';
+import { downloadExecutiveReportPDF } from '../lib/executiveReportPdfGenerator';
 import { format, parseISO, startOfMonth, endOfMonth, isWithinInterval, subMonths } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { toast } from 'sonner';
@@ -61,6 +64,7 @@ export const ExecutiveReportModal: React.FC<ExecutiveReportModalProps> = ({
   const [selectedPeriod, setSelectedPeriod] = useState<string>('month'); // 'month', 'lastMonth', 'last30Days', 'thisYear', 'yyyy-MM'
   const [hideValues, setHideValues] = useState<boolean>(false);
   const [customMonthKey, setCustomMonthKey] = useState<string>('');
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState<boolean>(false);
 
   // Helper date parser
   const parseLocalDate = (dateStr: string) => {
@@ -369,47 +373,67 @@ export const ExecutiveReportModal: React.FC<ExecutiveReportModalProps> = ({
     URL.revokeObjectURL(url);
   };
 
+  const handleExportPDF = async () => {
+    try {
+      setIsGeneratingPdf(true);
+      await downloadExecutiveReportPDF(dreData, periodLabel, settings);
+    } catch (error: any) {
+      console.error('Erro ao gerar PDF do relatório:', error);
+      toast.error('Erro ao gerar PDF do relatório: ' + (error?.message || 'Tente novamente.'));
+    } finally {
+      setIsGeneratingPdf(false);
+    }
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-6xl lg:max-w-7xl w-[96vw] xl:w-[92vw] p-0 bg-card border-border/80 rounded-3xl shadow-2xl overflow-hidden max-h-[94vh] flex flex-col print:max-w-none print:w-full print:h-auto print:max-h-none print:p-0 print:border-none print:shadow-none print:rounded-none">
         
         {/* Top Control Header (Hidden on Print) */}
-        <DialogHeader className="p-5 sm:p-8 pb-5 border-b border-border/40 shrink-0 bg-muted/10 print:hidden">
-          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
-            <div className="flex items-center gap-3">
-              <div className="p-3 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded-2xl border border-emerald-500/20 shrink-0 shadow-sm">
-                <FileText className="w-6 h-6 sm:w-7 sm:h-7" />
-              </div>
-              <div>
-                <DialogTitle className="text-xl sm:text-2xl font-black text-foreground tracking-tight">
-                  Relatório Gerencial de Performance Executiva
-                </DialogTitle>
-                <DialogDescription className="text-xs sm:text-sm font-semibold text-muted-foreground mt-0.5">
-                  Demonstrativo DRE completo, análise unitária por KM, ponto de equilíbrio e indicadores avançados de frota.
-                </DialogDescription>
-              </div>
+        <DialogHeader className="p-4 sm:p-5 pb-4 border-b border-border/40 shrink-0 bg-muted/5 print:hidden">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex items-center gap-2">
+              <FileText className="w-5 h-5 text-emerald-500 shrink-0" />
+              <DialogTitle className="text-lg font-black text-foreground tracking-tight">
+                Relatório Gerencial
+              </DialogTitle>
             </div>
 
-            {/* Action Bar - Highlighted & Prominent CTA */}
-            <div className="flex flex-wrap items-center gap-2.5 sm:justify-end shrink-0 w-full lg:w-auto">
+            {/* Action Bar - Compact & Complete Buttons */}
+            <div className="flex flex-wrap items-center gap-2 sm:justify-end shrink-0 w-full sm:w-auto">
               <Button
                 variant="outline"
                 size="sm"
                 onClick={() => setHideValues(!hideValues)}
-                className="rounded-xl h-9 sm:h-10 px-3.5 text-xs font-bold bg-card hover:bg-muted cursor-pointer transition-all shadow-2xs"
+                className="rounded-xl h-9 px-3 text-xs font-bold bg-card hover:bg-muted cursor-pointer transition-all shadow-2xs gap-1"
               >
-                {hideValues ? <EyeOff className="w-4 h-4 mr-1.5 text-rose-500" /> : <Eye className="w-4 h-4 mr-1.5 text-emerald-500" />}
-                {hideValues ? 'Valores Ocultos' : 'Ocultar Valores'}
+                {hideValues ? <EyeOff className="w-3.5 h-3.5 text-rose-500" /> : <Eye className="w-3.5 h-3.5 text-emerald-500" />}
+                <span>{hideValues ? 'Mostrar' : 'Ocultar'}</span>
               </Button>
 
               <Button
                 variant="outline"
                 size="sm"
                 onClick={handleExportCSV}
-                className="rounded-xl h-9 sm:h-10 px-3.5 text-xs font-bold bg-card hover:bg-muted cursor-pointer transition-all shadow-2xs"
+                className="rounded-xl h-9 px-3 text-xs font-bold bg-card hover:bg-muted cursor-pointer transition-all shadow-2xs gap-1"
               >
-                <Download className="w-4 h-4 mr-1.5 text-indigo-500" />
-                Exportar CSV
+                <Download className="w-3.5 h-3.5 text-indigo-500" />
+                <span>CSV</span>
+              </Button>
+
+              <Button
+                variant="default"
+                size="sm"
+                onClick={handleExportPDF}
+                disabled={isGeneratingPdf}
+                className="rounded-xl h-9 px-3 text-xs font-black bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer transition-all shadow-2xs gap-1"
+              >
+                {isGeneratingPdf ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <FileDown className="w-3.5 h-3.5" />
+                )}
+                <span>{isGeneratingPdf ? 'Gerando...' : 'Exportar PDF'}</span>
               </Button>
             </div>
           </div>

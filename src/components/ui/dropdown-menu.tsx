@@ -9,9 +9,19 @@ export function DropdownMenu({ children, ...props }: PopoverPrimitive.Root.Props
 export function DropdownMenuTrigger({ 
   children, 
   asChild, 
+  render,
   ...props 
 }: PopoverPrimitive.Trigger.Props & { asChild?: boolean }) {
-  return <PopoverPrimitive.Trigger data-slot="dropdown-menu-trigger" {...props}>{children}</PopoverPrimitive.Trigger>;
+  const triggerRender = render || (asChild && React.isValidElement(children) ? children : undefined);
+  return (
+    <PopoverPrimitive.Trigger 
+      data-slot="dropdown-menu-trigger" 
+      render={triggerRender} 
+      {...props}
+    >
+      {triggerRender ? null : children}
+    </PopoverPrimitive.Trigger>
+  );
 }
 
 export function DropdownMenuContent({

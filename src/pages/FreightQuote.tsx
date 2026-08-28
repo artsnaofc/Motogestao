@@ -18,8 +18,10 @@ import {
   Layers, 
   ShieldCheck,
   Zap,
-  RotateCcw
+  RotateCcw,
+  X
 } from 'lucide-react';
+import { toast } from 'sonner';
 import { FreightQuote, DriverFreightPreset, VehicleType } from '../types/freight';
 import { freightStorage, VEHICLE_PRESETS } from '../lib/freightStorage';
 import { FreightQuoteForm } from '../components/freight/FreightQuoteForm';
@@ -36,6 +38,7 @@ export default function FreightQuotePage() {
   const [activeTab, setActiveTab] = useState<'create' | 'list' | 'rates'>('create');
   const [quotes, setQuotes] = useState<FreightQuote[]>([]);
   const [editingQuote, setEditingQuote] = useState<FreightQuote | null>(null);
+  const [isBaseMode, setIsBaseMode] = useState(false);
 
   // Modals
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -65,11 +68,33 @@ export default function FreightQuotePage() {
     freightStorage.saveQuote(quote, userId);
     loadQuotes();
     setEditingQuote(null);
+    setIsBaseMode(false);
   };
 
   const handleEditQuote = (quote: FreightQuote) => {
     setEditingQuote(quote);
+    setIsBaseMode(false);
     setActiveTab('create');
+  };
+
+  const handleUseAsBaseQuote = (baseQuote: FreightQuote) => {
+    const nextCode = freightStorage.generateNextCode(userId);
+    const newQuote: FreightQuote = {
+      ...baseQuote,
+      id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `frt_${Date.now()}`,
+      code: nextCode,
+      created_at: new Date().toISOString(),
+      status: 'pending',
+      scheduled_date: new Date().toISOString().split('T')[0],
+      converted_to_transaction_id: undefined,
+      converted_at: undefined,
+    };
+    setEditingQuote(newQuote);
+    setIsBaseMode(true);
+    setActiveTab('create');
+    toast.info(`Orçamento ${baseQuote.code} carregado como base!`, {
+      description: `Gerando novo orçamento ${nextCode}. Selecione a nova data da coleta.`,
+    });
   };
 
   // KPIs
@@ -138,8 +163,25 @@ export default function FreightQuotePage() {
           }`}
         >
           <PlusCircle className="w-4 h-4" />
-          {editingQuote ? `Editando (${editingQuote.code})` : 'Novo Orçamento'}
+          {editingQuote ? (isBaseMode ? `Base (${editingQuote.code})` : `Editando (${editingQuote.code})`) : 'Novo Orçamento'}
         </Button>
+
+        {editingQuote && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              setEditingQuote(null);
+              setIsBaseMode(false);
+              toast.info('Edição cancelada');
+            }}
+            className="rounded-2xl h-10 px-3 text-xs font-bold text-rose-600 dark:text-rose-400 border-rose-500/30 hover:bg-rose-500/10 cursor-pointer gap-1.5 shrink-0"
+            title="Cancelar edição e voltar ao modo Novo Orçamento"
+          >
+            <X className="w-4 h-4" />
+            Cancelar Edição
+          </Button>
+        )}
 
         <Button
           variant={activeTab === 'list' ? 'default' : 'ghost'}
@@ -183,11 +225,12 @@ export default function FreightQuotePage() {
           >
             <FreightQuoteForm
               initialQuote={editingQuote}
+              isBaseMode={isBaseMode}
               userId={userId}
               onSaveQuote={handleSaveQuote}
               onOpenWhatsApp={(quote) => setWhatsAppModalQuote(quote)}
               onOpenProposal={(quote) => setProposalModalQuote(quote)}
-              onCancelEdit={editingQuote ? () => setEditingQuote(null) : undefined}
+              onCancelEdit={editingQuote ? () => { setEditingQuote(null); setIsBaseMode(false); } : undefined}
               onOpenSettings={() => setIsSettingsOpen(true)}
             />
           </motion.div>
@@ -205,6 +248,7 @@ export default function FreightQuotePage() {
               quotes={quotes}
               userId={userId}
               onEditQuote={handleEditQuote}
+              onUseAsBaseQuote={handleUseAsBaseQuote}
               onOpenWhatsApp={(quote) => setWhatsAppModalQuote(quote)}
               onOpenProposal={(quote) => setProposalModalQuote(quote)}
               onQuotesChanged={loadQuotes}

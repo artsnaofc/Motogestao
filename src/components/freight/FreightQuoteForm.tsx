@@ -42,8 +42,11 @@ import {
   CreditCard,
   QrCode,
   Banknote,
+  RotateCcw,
   Sliders,
-  AlertCircle
+  AlertCircle,
+  Edit,
+  X
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { 
@@ -64,6 +67,7 @@ import { maskPhone, maskCpfCnpj } from '@/lib/brazilianFormatters';
 
 interface FreightQuoteFormProps {
   initialQuote?: FreightQuote | null;
+  isBaseMode?: boolean;
   onSaveQuote: (quote: FreightQuote) => void;
   onOpenWhatsApp: (quote: FreightQuote) => void;
   onOpenProposal: (quote: FreightQuote) => void;
@@ -87,6 +91,7 @@ const DISTANCE_PRESETS = [3, 5, 10, 15, 25, 40, 60, 100];
 
 export function FreightQuoteForm({
   initialQuote,
+  isBaseMode = false,
   onSaveQuote,
   onOpenWhatsApp,
   onOpenProposal,
@@ -136,6 +141,42 @@ export function FreightQuoteForm({
   const [clientCompany, setClientCompany] = useState(initialQuote?.client_company || '');
   const [clientDocument, setClientDocument] = useState(initialQuote?.client_document ? maskCpfCnpj(initialQuote.client_document) : '');
   const [clientEmail, setClientEmail] = useState(initialQuote?.client_email || '');
+
+  // All clients (explicitly saved + extracted from past quotes history)
+  const allClients = useMemo(() => {
+    const map = new Map<string, FreightClient>();
+    savedClients.forEach((c) => {
+      if (c.name && c.name.trim()) {
+        map.set(c.name.trim().toLowerCase(), c);
+      }
+    });
+
+    try {
+      const quotes = freightStorage.getQuotes(userId);
+      quotes.forEach((q) => {
+        if (q.client_name && q.client_name.trim()) {
+          const key = q.client_name.trim().toLowerCase();
+          if (!map.has(key)) {
+            const histClient: FreightClient = {
+              id: `hist_${q.id}`,
+              user_id: userId,
+              name: q.client_name.trim(),
+              phone: q.client_phone || '',
+              company: q.client_company || '',
+              document: q.client_document || '',
+              email: q.client_email || '',
+              updated_at: q.created_at,
+            };
+            map.set(key, histClient);
+          }
+        }
+      });
+    } catch (e) {
+      // fallback to savedClients
+    }
+
+    return Array.from(map.values());
+  }, [userId, savedClients]);
 
   // History Addresses from previous quotes for instant autocomplete
   const historyAddresses = useMemo(() => {
@@ -229,6 +270,61 @@ export function FreightQuoteForm({
     }
   }, [profileKmPerLiter, maintenanceReserveKmCost, initialQuote]);
 
+  // Reactive Sync on initialQuote prop update
+  useEffect(() => {
+    if (initialQuote) {
+      setServiceType(initialQuote.service_type || 'express');
+      setStatus(initialQuote.status || 'pending');
+      setClientName(initialQuote.client_name || '');
+      setClientPhone(initialQuote.client_phone ? maskPhone(initialQuote.client_phone) : '');
+      setClientCompany(initialQuote.client_company || '');
+      setClientDocument(initialQuote.client_document ? maskCpfCnpj(initialQuote.client_document) : '');
+      setClientEmail(initialQuote.client_email || '');
+
+      setOriginAddress(initialQuote.origin_address || '');
+      setOriginNeighborhood(initialQuote.origin_neighborhood || '');
+      setDestinationAddress(initialQuote.destination_address || '');
+      setDestinationNeighborhood(initialQuote.destination_neighborhood || '');
+      setAdditionalStops(initialQuote.additional_stops || []);
+      setDistanceKm(initialQuote.distance_km ?? 10);
+      setIsRoundTrip(initialQuote.is_round_trip || false);
+
+      setCargoWeightKg(initialQuote.cargo_weight_kg);
+      setCargoValue(initialQuote.cargo_value);
+      setScheduledDate(initialQuote.scheduled_date || new Date().toISOString().split('T')[0]);
+      setScheduledTime(initialQuote.scheduled_time || '');
+
+      setBaseFee(initialQuote.base_fee ?? preset.default_base_fee ?? 15.00);
+      setPricePerKm(initialQuote.price_per_km ?? preset.default_price_per_km ?? 0.80);
+      setExtraStopsFee(initialQuote.extra_stops_fee ?? 0);
+
+      setHeavyCargoFee(initialQuote.heavy_cargo_fee || 0);
+      setStairsFloorFee(initialQuote.stairs_floor_fee || 0);
+      setUrgentOrRainFee(initialQuote.urgent_or_rain_fee || 0);
+      setNightFee(initialQuote.night_fee || 0);
+      setTollsFee(initialQuote.tolls_fee || 0);
+      setWaitingHoursFee(initialQuote.waiting_hours_fee || 0);
+
+      setDiscountType(initialQuote.discount_type || 'fixed');
+      setDiscountValue(initialQuote.discount_value || 0);
+
+      setFuelPrice(initialQuote.fuel_price || 5.89);
+      setKmPerLiter(initialQuote.km_per_liter || profileKmPerLiter);
+      setMaintenanceCostPerKm(initialQuote.maintenance_cost_per_km || maintenanceReserveKmCost);
+
+      setDriverName(initialQuote.driver_name || preset.driver_name || settings?.full_name || '');
+      setDriverPhone(initialQuote.driver_phone || preset.driver_phone || '');
+      setDriverCompany(initialQuote.driver_company || preset.driver_company || '');
+      setDriverDocument(initialQuote.driver_document || preset.driver_document || '');
+      setPixKey(initialQuote.pix_key || preset.pix_key || '');
+      setPixKeyType(initialQuote.pix_key_type || preset.pix_key_type || 'phone');
+      setPaymentMethod(initialQuote.payment_method || preset.default_payment_method || 'pix');
+
+      setObservations(initialQuote.observations || '');
+      setTermsAndConditions(initialQuote.terms_and_conditions || preset.default_terms || '');
+    }
+  }, [initialQuote, profileKmPerLiter, maintenanceReserveKmCost, preset, settings?.full_name]);
+
   // Driver & Payment Info
   const [driverName, setDriverName] = useState(initialQuote?.driver_name || preset.driver_name || settings?.full_name || '');
   const [driverPhone, setDriverPhone] = useState(initialQuote?.driver_phone || preset.driver_phone || '');
@@ -293,7 +389,7 @@ export function FreightQuoteForm({
   const handleSelectClient = (clientId: string) => {
     setSelectedClientId(clientId);
     if (!clientId) return;
-    const found = savedClients.find(c => c.id === clientId);
+    const found = allClients.find(c => c.id === clientId);
     if (found) {
       setClientName(found.name);
       setClientPhone(maskPhone(found.phone || ''));
@@ -549,6 +645,74 @@ export function FreightQuoteForm({
 
   return (
     <form onSubmit={handleFormSubmit} className="space-y-6 pb-36 sm:pb-24">
+      {/* BASE QUOTE BANNER */}
+      {isBaseMode && initialQuote && (
+        <div className="bg-primary/10 border border-primary/30 rounded-3xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs shadow-xs animate-in fade-in-50">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-2xl bg-primary text-primary-foreground shrink-0 shadow-xs">
+              <RotateCcw className="w-5 h-5" />
+            </div>
+            <div>
+              <h4 className="font-black text-foreground text-sm flex items-center gap-2">
+                Novo Orçamento com Base em {initialQuote.code}
+                <span className="px-2 py-0.5 rounded-full bg-primary/20 text-primary text-[10px] font-extrabold uppercase">
+                  Modelo: {initialQuote.code}
+                </span>
+              </h4>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                Os dados do orçamento foram carregados como modelo. Defina a nova data e salve a proposta.
+              </p>
+            </div>
+          </div>
+          {onCancelEdit && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={onCancelEdit}
+              className="rounded-xl text-xs font-bold h-9 border-border/80 hover:bg-muted shrink-0 cursor-pointer gap-1.5"
+            >
+              <X className="w-4 h-4 text-rose-500" />
+              Cancelar Edição
+            </Button>
+          )}
+        </div>
+      )}
+
+      {/* STANDARD EDIT MODE BANNER */}
+      {!isBaseMode && initialQuote && (
+        <div className="bg-amber-500/10 border border-amber-500/30 rounded-3xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs shadow-xs animate-in fade-in-50">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-2xl bg-amber-500 text-white shrink-0 shadow-xs">
+              <Edit className="w-5 h-5" />
+            </div>
+            <div>
+              <h4 className="font-black text-foreground text-sm flex items-center gap-2">
+                Editando Orçamento {initialQuote.code}
+                <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-600 dark:text-amber-400 text-[10px] font-extrabold uppercase">
+                  Modo Edição
+                </span>
+              </h4>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                Você está alterando as informações do orçamento <strong>{initialQuote.code}</strong>.
+              </p>
+            </div>
+          </div>
+          {onCancelEdit && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={onCancelEdit}
+              className="rounded-xl text-xs font-bold h-9 border-amber-500/40 text-amber-600 dark:text-amber-400 hover:bg-amber-500/10 shrink-0 cursor-pointer gap-1.5"
+            >
+              <X className="w-4 h-4" />
+              Cancelar Edição
+            </Button>
+          )}
+        </div>
+      )}
+
       {/* 1. VEHICLE & SERVICE TYPE BAR */}
       <div className="bg-card border border-border/80 rounded-3xl p-4 sm:p-5 shadow-xs space-y-4">
         <div className="flex items-center justify-between border-b border-border/40 pb-3">
@@ -611,38 +775,39 @@ export function FreightQuoteForm({
 
       {/* 2. CLIENT & SCHEDULING (AGILE & SMART) */}
       <div className="bg-card border border-border/80 rounded-3xl p-4 sm:p-5 shadow-xs space-y-4">
-        <div className="flex items-center justify-between border-b border-border/40 pb-3">
-          <div className="flex items-center gap-2.5">
-            <div className="p-2 rounded-xl bg-primary/10 text-primary">
-              <User className="w-5 h-5" />
+        <div className="flex items-center justify-between border-b border-border/40 pb-3 gap-2">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="p-2.5 rounded-2xl bg-primary/10 text-primary shrink-0">
+              <User className="w-4 h-4 sm:w-5 sm:h-5" />
             </div>
-            <div>
-              <h2 className="text-sm sm:text-base font-black tracking-tight text-foreground">
+            <div className="min-w-0">
+              <h2 className="text-sm sm:text-base font-black tracking-tight text-foreground truncate">
                 2. Cliente & Agendamento
               </h2>
-              <p className="text-[11px] text-muted-foreground">
-                Digite para buscar clientes cadastrados ou preencha rapidamente os dados para a proposta.
+              <p className="text-[11px] text-muted-foreground truncate">
+                Digite o nome para buscar ou cadastrar os dados do cliente.
               </p>
             </div>
           </div>
 
-          {savedClients.length > 0 && (
-            <div className="w-48 sm:w-60">
-              <Select value={selectedClientId} onValueChange={handleSelectClient}>
-                <SelectTrigger className="h-8 rounded-xl text-xs bg-muted/30 border-border/60">
-                  <Users className="w-3.5 h-3.5 mr-1.5 text-muted-foreground" />
-                  <SelectValue placeholder="Clientes Salvos..." />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="">-- Novo Cliente --</SelectItem>
-                  {savedClients.map((c) => (
-                    <SelectItem key={c.id} value={c.id}>
-                      {c.name} {c.company ? `• ${c.company}` : ''}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+          {clientName && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setSelectedClientId('');
+                setClientName('');
+                setClientPhone('');
+                setClientCompany('');
+                setClientDocument('');
+                setClientEmail('');
+              }}
+              className="text-xs text-muted-foreground hover:text-destructive h-7 px-2 shrink-0 rounded-lg cursor-pointer"
+              title="Limpar campos do cliente"
+            >
+              Limpar Cliente
+            </Button>
           )}
         </div>
 
@@ -654,7 +819,7 @@ export function FreightQuoteForm({
             <ClientAutocompleteInput
               value={clientName}
               onChange={setClientName}
-              clients={savedClients}
+              clients={allClients}
               onSelectClient={handleSelectClientFromAutocomplete}
               placeholder="Ex: Carlos Silva / Loja Central"
               className="rounded-xl h-9.5 text-xs bg-background border-border/70 font-semibold"

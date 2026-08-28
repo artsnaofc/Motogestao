@@ -120,13 +120,16 @@
 @layer base {
   * {
     @apply border-border outline-ring/50;
-    }
+    touch-action: manipulation;
+  }
   body {
-    @apply bg-background text-foreground;
-    }
+    @apply bg-background text-foreground overflow-x-hidden;
+    touch-action: manipulation;
+  }
   html {
-    @apply font-sans;
-    }
+    @apply font-sans overflow-x-hidden;
+    touch-action: manipulation;
+  }
 }
 
 @media print {
