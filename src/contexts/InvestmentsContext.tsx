@@ -47,6 +47,53 @@ const generateUUID = () => {
   });
 };
 
+const sanitizeInvestmentTransactionPayload = (it: Partial<InvestmentTransaction> & { id: string; user_id: string }): Record<string, any> => {
+  const payload: Record<string, any> = {
+    id: it.id,
+    user_id: it.user_id,
+    operation: it.operation || 'buy',
+    type: it.type || 'Ação',
+    ticker: (it.ticker || '').toUpperCase().trim(),
+    amount: typeof it.amount === 'number' ? it.amount : Number(it.amount) || 0,
+    price: typeof it.price === 'number' ? it.price : Number(it.price) || 0,
+    quantity: typeof it.quantity === 'number' ? it.quantity : Number(it.quantity) || 0,
+    costs: typeof it.costs === 'number' ? it.costs : Number(it.costs) || 0,
+    date: it.date ? (it.date.includes('T') ? it.date.split('T')[0] : it.date) : new Date().toISOString().split('T')[0],
+    created_at: it.created_at || new Date().toISOString(),
+  };
+
+  if (it.cnpj) payload.cnpj = it.cnpj.trim();
+  if (it.reserve_id) payload.reserve_id = it.reserve_id;
+  if (it.transaction_id) payload.transaction_id = it.transaction_id;
+  if (it.description) payload.description = it.description;
+  if (it.asset_type) payload.asset_type = it.asset_type;
+
+  return payload;
+};
+
+const sanitizeDividendPayload = (div: Partial<Dividend> & { id: string; user_id: string }): Record<string, any> => {
+  const payload: Record<string, any> = {
+    id: div.id,
+    user_id: div.user_id,
+    ticker: (div.ticker || '').toUpperCase().trim(),
+    amount: typeof div.amount === 'number' ? div.amount : Number(div.amount) || 0,
+    type: div.type || 'Dividendo',
+    status: div.status || 'received',
+    date: div.date ? (div.date.includes('T') ? div.date.split('T')[0] : div.date) : new Date().toISOString().split('T')[0],
+    created_at: div.created_at || new Date().toISOString(),
+  };
+
+  if (div.unit_amount !== undefined && div.unit_amount !== null && !isNaN(Number(div.unit_amount))) {
+    payload.unit_amount = Number(div.unit_amount);
+  }
+  if (div.data_com) payload.data_com = div.data_com;
+  if (div.data_ex) payload.data_ex = div.data_ex;
+  if (div.description) payload.description = div.description;
+  if (div.transaction_id) payload.transaction_id = div.transaction_id;
+
+  return payload;
+};
+
 const InvestmentsContext = createContext<InvestmentsContextType | undefined>(undefined);
 
 export function InvestmentsProvider({
@@ -269,10 +316,21 @@ export function InvestmentsProvider({
   }, [dividends, settings, onDataChange]);
 
   const addInvestmentTransaction = useCallback(async (newIt: Omit<InvestmentTransaction, 'id' | 'user_id' | 'created_at'>): Promise<string | undefined> => {
-    const { data: userData } = await supabase.auth.getUser();
-    if (!userData.user) return;
+    let userId = 'default';
+    try {
+      const { data: userData } = await supabase.auth.getUser();
+      if (userData?.user?.id) {
+        userId = userData.user.id;
+      } else {
+        const { data: sessionData } = await supabase.auth.getSession();
+        if (sessionData?.session?.user?.id) {
+          userId = sessionData.session.user.id;
+        }
+      }
+    } catch (e) {
+      console.warn('Auth user lookup warning:', e);
+    }
 
-    const userId = userData.user.id;
     const itObj: InvestmentTransaction = {
       id: generateUUID(),
       user_id: userId,
@@ -280,11 +338,16 @@ export function InvestmentsProvider({
       created_at: new Date().toISOString(),
     };
 
+    const sanitizedItPayload = sanitizeInvestmentTransactionPayload(itObj);
+
     try {
       let rtObj: ReserveTransaction | null = null;
+      let sanitizedRtPayload: Record<string, any> | null = null;
+
       if (itObj.reserve_id) {
         const rtId = generateUUID();
         itObj.transaction_id = rtId;
+        sanitizedItPayload.transaction_id = rtId;
 
         const isBuy = itObj.operation === 'buy';
         const subtotal = itObj.price * itObj.quantity;
@@ -307,23 +370,64 @@ export function InvestmentsProvider({
           created_at: new Date().toISOString(),
         };
 
+        sanitizedRtPayload = {
+          id: rtObj.id,
+          user_id: rtObj.user_id,
+          reserve_id: rtObj.reserve_id,
+          type: rtObj.type,
+          amount: rtObj.amount,
+          date: rtObj.date,
+          category: rtObj.category,
+          description: rtObj.description,
+          linked_investment_id: rtObj.linked_investment_id,
+          created_at: rtObj.created_at
+        };
+
         const curRts = cacheManager.get<ReserveTransaction[]>(`reserve_transactions_${userId}`) || [];
         cacheManager.set(`reserve_transactions_${userId}`, [rtObj, ...curRts.filter(r => r.id !== rtId)], undefined, 'reserves');
-
-        syncQueueManager.enqueue('reserve_transactions', 'insert', rtObj.id, rtObj);
       }
 
+      // Optimistic update in state & cache
       setInvestmentTransactions(prev => {
-        const existing = [itObj, ...prev];
+        const existing = [itObj, ...prev.filter(t => t.id !== itObj.id)];
         cacheManager.set(`investment_transactions_${userId}`, existing, undefined, 'investments');
         return existing;
       });
 
-      syncQueueManager.enqueue('investment_transactions', 'insert', itObj.id, itObj);
+      // Direct write to Supabase Database with SyncQueue fallback
+      try {
+        const { error: itDbError } = await supabase
+          .from('investment_transactions')
+          .upsert(sanitizedItPayload);
+
+        if (itDbError) {
+          console.warn('[InvestmentsContext] Direct DB upsert failed, queuing to syncQueue:', itDbError);
+          syncQueueManager.enqueue('investment_transactions', 'insert', itObj.id, sanitizedItPayload);
+        } else {
+          console.log('[InvestmentsContext] Lançamento de investimento persistido na base de dados:', itObj.id);
+        }
+
+        if (rtObj && sanitizedRtPayload) {
+          const { error: rtDbError } = await supabase
+            .from('reserve_transactions')
+            .upsert(sanitizedRtPayload);
+
+          if (rtDbError) {
+            syncQueueManager.enqueue('reserve_transactions', 'insert', rtObj.id, sanitizedRtPayload);
+          }
+        }
+      } catch (dbErr) {
+        console.warn('[InvestmentsContext] DB network error, queuing for sync:', dbErr);
+        syncQueueManager.enqueue('investment_transactions', 'insert', itObj.id, sanitizedItPayload);
+        if (rtObj && sanitizedRtPayload) {
+          syncQueueManager.enqueue('reserve_transactions', 'insert', rtObj.id, sanitizedRtPayload);
+        }
+      }
+
       toast.success('Lançamento de investimento registrado!');
       return itObj.id;
     } catch (err: any) {
-      console.warn('Error queuing investment transaction:', err);
+      console.warn('Error saving investment transaction:', err);
       toast.error('Erro ao salvar lançamento localmente.');
       return itObj.id;
     }
@@ -331,9 +435,13 @@ export function InvestmentsProvider({
 
   const deleteInvestmentTransaction = useCallback(async (id: string) => {
     toast.loading('Processando exclusão...', { id: 'del-inv' });
-    const { data: userData } = await supabase.auth.getUser();
-    if (!userData.user) return;
-    const userId = userData.user.id;
+    let userId = 'default';
+    try {
+      const { data: userData } = await supabase.auth.getUser();
+      if (userData?.user?.id) userId = userData.user.id;
+    } catch (e) {
+      console.warn(e);
+    }
 
     const targetTx = investmentTransactions.find(it => it.id === id);
 
@@ -346,19 +454,37 @@ export function InvestmentsProvider({
     if (targetTx?.transaction_id) {
       const curRts = cacheManager.get<ReserveTransaction[]>(`reserve_transactions_${userId}`) || [];
       cacheManager.set(`reserve_transactions_${userId}`, curRts.filter(r => r.id !== targetTx.transaction_id), undefined, 'reserves');
-      syncQueueManager.enqueue('reserve_transactions', 'delete', targetTx.transaction_id);
+      try {
+        await supabase.from('reserve_transactions').delete().eq('id', targetTx.transaction_id);
+      } catch {
+        syncQueueManager.enqueue('reserve_transactions', 'delete', targetTx.transaction_id);
+      }
     }
-    syncQueueManager.enqueue('investment_transactions', 'delete', id);
+
+    try {
+      const { error } = await supabase.from('investment_transactions').delete().eq('id', id);
+      if (error) {
+        syncQueueManager.enqueue('investment_transactions', 'delete', id);
+      }
+    } catch {
+      syncQueueManager.enqueue('investment_transactions', 'delete', id);
+    }
+
     toast.success('Lançamento excluído!', { id: 'del-inv' });
   }, [investmentTransactions]);
 
   const updateInvestmentTransaction = useCallback(async (id: string, updatedFields: Partial<InvestmentTransaction>) => {
-    const { data: userData } = await supabase.auth.getUser();
-    if (!userData.user) return;
-    const userId = userData.user.id;
+    let userId = 'default';
+    try {
+      const { data: userData } = await supabase.auth.getUser();
+      if (userData?.user?.id) userId = userData.user.id;
+    } catch (e) {
+      console.warn(e);
+    }
 
     const targetTx = investmentTransactions.find(it => it.id === id);
     const merged = { ...targetTx, ...updatedFields } as InvestmentTransaction;
+    const sanitizedItPayload = sanitizeInvestmentTransactionPayload({ ...merged, id, user_id: userId });
 
     setInvestmentTransactions(prev => {
       const newState = prev.map(it => it.id === id ? { ...it, ...updatedFields } : it);
@@ -366,7 +492,18 @@ export function InvestmentsProvider({
       return newState;
     });
 
-    syncQueueManager.enqueue('investment_transactions', 'update', id, updatedFields);
+    try {
+      const { error: itDbError } = await supabase
+        .from('investment_transactions')
+        .update(sanitizedItPayload)
+        .eq('id', id);
+
+      if (itDbError) {
+        syncQueueManager.enqueue('investment_transactions', 'update', id, sanitizedItPayload);
+      }
+    } catch {
+      syncQueueManager.enqueue('investment_transactions', 'update', id, sanitizedItPayload);
+    }
 
     // Sync linked reserve transaction
     if (merged.reserve_id && targetTx?.transaction_id) {
@@ -382,7 +519,18 @@ export function InvestmentsProvider({
 
       const curRts = cacheManager.get<ReserveTransaction[]>(`reserve_transactions_${userId}`) || [];
       cacheManager.set(`reserve_transactions_${userId}`, curRts.map(r => r.id === targetTx.transaction_id ? { ...r, ...rtPayload } : r), undefined, 'reserves');
-      syncQueueManager.enqueue('reserve_transactions', 'update', targetTx.transaction_id, rtPayload);
+      
+      try {
+        const { error: rtErr } = await supabase
+          .from('reserve_transactions')
+          .update(rtPayload)
+          .eq('id', targetTx.transaction_id);
+        if (rtErr) {
+          syncQueueManager.enqueue('reserve_transactions', 'update', targetTx.transaction_id, rtPayload);
+        }
+      } catch {
+        syncQueueManager.enqueue('reserve_transactions', 'update', targetTx.transaction_id, rtPayload);
+      }
     }
 
     toast.success('Lançamento atualizado!');
@@ -390,9 +538,13 @@ export function InvestmentsProvider({
 
   const deleteInvestmentTransactionsByTicker = useCallback(async (ticker: string) => {
     toast.loading('Limpando posição de ' + ticker + '...', { id: 'del-ticker' });
-    const { data: userData } = await supabase.auth.getUser();
-    if (!userData.user) return;
-    const userId = userData.user.id;
+    let userId = 'default';
+    try {
+      const { data: userData } = await supabase.auth.getUser();
+      if (userData?.user?.id) userId = userData.user.id;
+    } catch (e) {
+      console.warn(e);
+    }
 
     const txsToDelete = investmentTransactions.filter(it => it.ticker.toUpperCase() === ticker.toUpperCase());
     const txIds = txsToDelete.map(t => t.id);
@@ -404,21 +556,33 @@ export function InvestmentsProvider({
       return newState;
     });
 
-    rtIds.forEach(rtId => {
-      syncQueueManager.enqueue('reserve_transactions', 'delete', rtId);
-    });
+    for (const rtId of rtIds) {
+      try {
+        await supabase.from('reserve_transactions').delete().eq('id', rtId);
+      } catch {
+        syncQueueManager.enqueue('reserve_transactions', 'delete', rtId);
+      }
+    }
 
-    txIds.forEach(txId => {
-      syncQueueManager.enqueue('investment_transactions', 'delete', txId);
-    });
+    for (const txId of txIds) {
+      try {
+        await supabase.from('investment_transactions').delete().eq('id', txId);
+      } catch {
+        syncQueueManager.enqueue('investment_transactions', 'delete', txId);
+      }
+    }
 
     toast.success('Lançamentos excluídos!', { id: 'del-ticker' });
   }, [investmentTransactions]);
 
   const addDividend = useCallback(async (newDiv: Omit<Dividend, 'id' | 'user_id' | 'created_at'>) => {
-    const { data: userData } = await supabase.auth.getUser();
-    if (!userData.user) return;
-    const userId = userData.user.id;
+    let userId = 'default';
+    try {
+      const { data: userData } = await supabase.auth.getUser();
+      if (userData?.user?.id) userId = userData.user.id;
+    } catch (e) {
+      console.warn(e);
+    }
 
     const divObj: Dividend = {
       id: generateUUID(),
@@ -427,20 +591,34 @@ export function InvestmentsProvider({
       created_at: new Date().toISOString(),
     };
 
+    const sanitized = sanitizeDividendPayload(divObj);
+
     setDividends(prev => {
-      const existing = [divObj, ...prev];
+      const existing = [divObj, ...prev.filter(d => d.id !== divObj.id)];
       cacheManager.set(`dividends_${userId}`, existing, undefined, 'investments');
       return existing;
     });
 
-    syncQueueManager.enqueue('dividends', 'insert', divObj.id, divObj);
+    try {
+      const { error } = await supabase.from('dividends').upsert(sanitized);
+      if (error) {
+        syncQueueManager.enqueue('dividends', 'insert', divObj.id, sanitized);
+      }
+    } catch {
+      syncQueueManager.enqueue('dividends', 'insert', divObj.id, sanitized);
+    }
+
     toast.success('Provento registrado!');
   }, []);
 
   const updateDividend = useCallback(async (id: string, updatedFields: Partial<Dividend>) => {
-    const { data: userData } = await supabase.auth.getUser();
-    if (!userData.user) return;
-    const userId = userData.user.id;
+    let userId = 'default';
+    try {
+      const { data: userData } = await supabase.auth.getUser();
+      if (userData?.user?.id) userId = userData.user.id;
+    } catch (e) {
+      console.warn(e);
+    }
 
     const currentDiv = dividends.find(d => d.id === id);
     const finalFields: Partial<Dividend> = { ...updatedFields };
@@ -448,10 +626,17 @@ export function InvestmentsProvider({
     // If changing status from received to provisioned, remove linked reserve transaction if existing
     if (currentDiv && currentDiv.status === 'received' && updatedFields.status === 'provisioned') {
       if (currentDiv.transaction_id) {
-        syncQueueManager.enqueue('reserve_transactions', 'delete', currentDiv.transaction_id);
+        try {
+          await supabase.from('reserve_transactions').delete().eq('id', currentDiv.transaction_id);
+        } catch {
+          syncQueueManager.enqueue('reserve_transactions', 'delete', currentDiv.transaction_id);
+        }
         finalFields.transaction_id = undefined;
       }
     }
+
+    const merged = { ...currentDiv, ...finalFields } as Dividend;
+    const sanitized = sanitizeDividendPayload({ ...merged, id, user_id: userId });
 
     setDividends(prev => {
       const existing = prev.map(d => d.id === id ? { ...d, ...finalFields } : d);
@@ -459,18 +644,34 @@ export function InvestmentsProvider({
       return existing;
     });
 
-    syncQueueManager.enqueue('dividends', 'update', id, finalFields);
+    try {
+      const { error } = await supabase.from('dividends').update(sanitized).eq('id', id);
+      if (error) {
+        syncQueueManager.enqueue('dividends', 'update', id, sanitized);
+      }
+    } catch {
+      syncQueueManager.enqueue('dividends', 'update', id, sanitized);
+    }
+
     toast.success('Provento atualizado!');
   }, [dividends]);
 
   const deleteDividend = useCallback(async (id: string) => {
-    const { data: userData } = await supabase.auth.getUser();
-    if (!userData.user) return;
-    const userId = userData.user.id;
+    let userId = 'default';
+    try {
+      const { data: userData } = await supabase.auth.getUser();
+      if (userData?.user?.id) userId = userData.user.id;
+    } catch (e) {
+      console.warn(e);
+    }
 
     const currentDiv = dividends.find(d => d.id === id);
     if (currentDiv?.transaction_id) {
-      syncQueueManager.enqueue('reserve_transactions', 'delete', currentDiv.transaction_id);
+      try {
+        await supabase.from('reserve_transactions').delete().eq('id', currentDiv.transaction_id);
+      } catch {
+        syncQueueManager.enqueue('reserve_transactions', 'delete', currentDiv.transaction_id);
+      }
     }
 
     setDividends(prev => {
@@ -479,7 +680,15 @@ export function InvestmentsProvider({
       return existing;
     });
 
-    syncQueueManager.enqueue('dividends', 'delete', id);
+    try {
+      const { error } = await supabase.from('dividends').delete().eq('id', id);
+      if (error) {
+        syncQueueManager.enqueue('dividends', 'delete', id);
+      }
+    } catch {
+      syncQueueManager.enqueue('dividends', 'delete', id);
+    }
+
     toast.success('Provento removido!');
   }, [dividends]);
 

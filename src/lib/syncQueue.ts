@@ -115,33 +115,54 @@ class SyncQueueManager {
       let error: any = null;
 
       if (task.action === 'insert') {
-        const payloadToInsert = {
+        const rawPayload = {
           id: task.targetId,
           ...(task.payload || {})
         };
 
+        // Filter out undefined values to avoid PostgREST / JSON schema validation issues
+        const payloadToInsert: Record<string, any> = {};
+        for (const [k, v] of Object.entries(rawPayload)) {
+          if (v !== undefined) {
+            payloadToInsert[k] = v;
+          }
+        }
+
         const { error: insertErr } = await supabase
           .from(task.table)
-          .insert(payloadToInsert);
+          .upsert(payloadToInsert);
         error = insertErr;
 
         // Auto fallback 1: If column does not exist in schema (e.g. newer columns before migration)
         if (error && (error.code === '42703' || error.code === 'PGRST204' || error.message?.includes('column'))) {
           console.warn(`[SyncQueue] Tentando payload simplificado para ${task.table}:${task.targetId}`);
-          const coreKeys = ['id', 'user_id', 'reserve_id', 'type', 'amount', 'date', 'description', 'category', 'operation', 'ticker', 'price', 'quantity', 'costs', 'created_at', 'status', 'saldo_inicial'];
+          const coreKeys = [
+            'id', 'user_id', 'reserve_id', 'type', 'amount', 'date', 'description', 
+            'category', 'operation', 'ticker', 'price', 'quantity', 'costs', 
+            'created_at', 'status', 'saldo_inicial', 'cnpj', 'transaction_id', 
+            'asset_type', 'unit_amount', 'notes', 'data_com', 'payment_date'
+          ];
           const simplified: Record<string, any> = {};
           for (const k of coreKeys) {
             if (payloadToInsert[k] !== undefined) simplified[k] = payloadToInsert[k];
           }
-          const { error: fallbackErr } = await supabase.from(task.table).insert(simplified);
+          const { error: fallbackErr } = await supabase.from(task.table).upsert(simplified);
           if (!fallbackErr) {
             error = null;
           }
         }
       } else if (task.action === 'update') {
+        const rawUpdate = task.payload || {};
+        const cleanUpdate: Record<string, any> = {};
+        for (const [k, v] of Object.entries(rawUpdate)) {
+          if (v !== undefined) {
+            cleanUpdate[k] = v;
+          }
+        }
+
         const { error: updateErr } = await supabase
           .from(task.table)
-          .update(task.payload)
+          .update(cleanUpdate)
           .eq('id', task.targetId);
         error = updateErr;
       } else if (task.action === 'delete') {
