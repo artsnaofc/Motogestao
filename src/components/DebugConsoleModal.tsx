@@ -1031,7 +1031,7 @@ export function DebugConsoleModal({ open, onOpenChange }: DebugConsoleModalProps
                   size="sm"
                   variant="outline"
                   onClick={() => {
-                    const rlsSql = `-- Script de Correção de RLS e Permissões para Finanças Pro
+                    const rlsSql = `-- Script de Correção de RLS, Permissões e Constraints para Finanças Pro
 GRANT ALL ON TABLE public.investment_transactions TO anon, authenticated, service_role, postgres;
 GRANT ALL ON TABLE public.dividends TO anon, authenticated, service_role, postgres;
 GRANT ALL ON TABLE public.valuation_targets TO anon, authenticated, service_role, postgres;
@@ -1041,6 +1041,15 @@ GRANT ALL ON TABLE public.transactions TO anon, authenticated, service_role, pos
 GRANT ALL ON TABLE public.user_settings TO anon, authenticated, service_role, postgres;
 GRANT ALL ON TABLE public.freight_quotes TO anon, authenticated, service_role, postgres;
 
+-- 1. Remoção de restrições rígidas circulares (evita erro 23503 em sincronizações cruzadas)
+ALTER TABLE public.reserve_transactions DROP CONSTRAINT IF EXISTS reserve_transactions_linked_investment_id_fkey;
+ALTER TABLE public.reserve_transactions DROP CONSTRAINT IF EXISTS fk_reserve_tx_linked_investment;
+ALTER TABLE public.investment_transactions DROP CONSTRAINT IF EXISTS fk_investment_reserve_transaction;
+ALTER TABLE public.investment_transactions DROP CONSTRAINT IF EXISTS investment_transactions_transaction_id_fkey;
+ALTER TABLE public.investment_transactions DROP CONSTRAINT IF EXISTS investment_transactions_reserve_id_fkey;
+ALTER TABLE public.dividends DROP CONSTRAINT IF EXISTS dividends_transaction_id_fkey;
+
+-- 2. Políticas RLS
 ALTER TABLE public.investment_transactions ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Acesso Total Investments" ON public.investment_transactions;
 DROP POLICY IF EXISTS "Users can manage their investments" ON public.investment_transactions;
@@ -1055,10 +1064,14 @@ CREATE POLICY "Acesso Total Dividends" ON public.dividends FOR ALL TO public USI
 
 ALTER TABLE public.valuation_targets ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Acesso Total Valuation" ON public.valuation_targets;
-CREATE POLICY "Acesso Total Valuation" ON public.valuation_targets FOR ALL TO public USING (true) WITH CHECK (true);`;
+CREATE POLICY "Acesso Total Valuation" ON public.valuation_targets FOR ALL TO public USING (true) WITH CHECK (true);
+
+ALTER TABLE public.reserve_transactions ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Acesso Total Reserve Transactions" ON public.reserve_transactions;
+CREATE POLICY "Acesso Total Reserve Transactions" ON public.reserve_transactions FOR ALL TO public USING (true) WITH CHECK (true);`;
                     navigator.clipboard.writeText(rlsSql);
                     setCopiedRlsSql(true);
-                    toast.success('SQL de Correção RLS copiado para a Área de Transferência!');
+                    toast.success('SQL de Correção RLS e Constraints copiado!');
                     setTimeout(() => setCopiedRlsSql(false), 3000);
                   }}
                   className="bg-cyan-950/60 hover:bg-cyan-800 border-cyan-800 text-cyan-200 text-xs h-8 px-3 rounded-lg"

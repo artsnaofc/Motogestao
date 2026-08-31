@@ -144,17 +144,91 @@ class SyncQueueManager {
             error = null;
           }
         }
+
+        // Auto fallback 2: Foreign key violation (23503) e.g., circular FK between reserve_transactions and investment_transactions
+        if (error && error.code === '23503') {
+          console.warn(`[SyncQueue] Foreign Key violation (23503) em ${task.table}:${task.targetId}. Tentando inserir sem chaves de vínculo externo...`);
+          const fkKeysToOmit = ['linked_investment_id', 'transaction_id', 'reserve_id'];
+          const sanitizedPayload: Record<string, any> = { ...payloadToInsert };
+          let omitted = false;
+
+          for (const key of fkKeysToOmit) {
+            if (sanitizedPayload[key] !== undefined && sanitizedPayload[key] !== null) {
+              delete sanitizedPayload[key];
+              omitted = true;
+            }
+          }
+
+          if (omitted) {
+            const { error: fkRetryErr } = await supabase.from(task.table).insert(sanitizedPayload);
+            if (!fkRetryErr) {
+              error = null;
+              // Re-queue an update so the FK link is applied after referenced records exist
+              const updatePayload: Record<string, any> = {};
+              for (const key of fkKeysToOmit) {
+                if (payloadToInsert[key] !== undefined && payloadToInsert[key] !== null) {
+                  updatePayload[key] = payloadToInsert[key];
+                }
+              }
+              if (Object.keys(updatePayload).length > 0) {
+                this.enqueue(task.table, 'update', task.targetId, updatePayload);
+              }
+            }
+          }
+        }
       } else if (task.action === 'update') {
         const { error: updateErr } = await supabase
           .from(task.table)
           .update(task.payload)
           .eq('id', task.targetId);
         error = updateErr;
+
+        // If update failed due to FK constraint (23503), retry by unlinking invalid FK
+        if (error && error.code === '23503') {
+          console.warn(`[SyncQueue] FK violation (23503) no update de ${task.table}:${task.targetId}.`);
+          const fkKeysToOmit = ['linked_investment_id', 'transaction_id', 'reserve_id'];
+          const sanitizedUpdate = { ...task.payload };
+          let omitted = false;
+          for (const key of fkKeysToOmit) {
+            if (sanitizedUpdate[key] !== undefined) {
+              delete sanitizedUpdate[key];
+              omitted = true;
+            }
+          }
+          if (omitted && Object.keys(sanitizedUpdate).length > 0) {
+            const { error: retryUpdateErr } = await supabase
+              .from(task.table)
+              .update(sanitizedUpdate)
+              .eq('id', task.targetId);
+            if (!retryUpdateErr) {
+              error = null;
+            }
+          }
+        }
       } else if (task.action === 'delete') {
-        const { error: deleteErr } = await supabase
+        let { error: deleteErr } = await supabase
           .from(task.table)
           .delete()
           .eq('id', task.targetId);
+        
+        // If delete is blocked by FK constraint (23503), clear references in referencing tables first
+        if (deleteErr && deleteErr.code === '23503') {
+          console.warn(`[SyncQueue] FK violation (23503) ao excluir de ${task.table}:${task.targetId}. Desvinculando registros dependentes...`);
+          try {
+            if (task.table === 'investment_transactions') {
+              await supabase.from('reserve_transactions').update({ linked_investment_id: null }).eq('linked_investment_id', task.targetId);
+            } else if (task.table === 'reserve_transactions') {
+              await supabase.from('investment_transactions').update({ transaction_id: null }).eq('transaction_id', task.targetId);
+              await supabase.from('dividends').update({ transaction_id: null }).eq('transaction_id', task.targetId);
+            } else if (task.table === 'transactions') {
+              await supabase.from('reserve_transactions').update({ transaction_id: null }).eq('transaction_id', task.targetId);
+            }
+            const retryRes = await supabase.from(task.table).delete().eq('id', task.targetId);
+            deleteErr = retryRes.error;
+          } catch (e) {
+            console.warn('[SyncQueue] Falha ao desvincular dependências antes da exclusão:', e);
+          }
+        }
         error = deleteErr;
       }
 
@@ -166,22 +240,24 @@ class SyncQueueManager {
           console.error(`[SyncQueue] Falha na sincronização do item ${task.id}:`, error);
         }
         
-        // Critical database validation failures (duplicate key, constraint violation, format error, or RLS permission error after retries)
+        // Critical database validation failures or exceeded retry threshold
         const isDatabaseConstraint = error.code && ['23505', '42P01', '22P02', 'P0001'].includes(error.code);
         
-        if (isDatabaseConstraint || task.attempts >= 5) {
+        if (isDatabaseConstraint || task.attempts >= 4) {
           console.warn(`[SyncQueue] Descartando item por limite de tentativas ou restrição irremediável:`, task);
           const remaining = this.getQueue().filter(t => t.id !== task.id);
           this.saveQueue(remaining);
         } else {
-          // Increment retry attempt for next trigger
+          // Rotate task to back of queue so subsequent independent items are not blocked
           const currentQueue = this.getQueue();
           if (currentQueue[0]?.id === task.id) {
-            currentQueue[0].attempts++;
-            this.saveQueue(currentQueue);
+            const [failedTask, ...rest] = currentQueue;
+            this.saveQueue([...rest, { ...failedTask, attempts: failedTask.attempts + 1 }]);
           }
           this.processing = false;
-          return; // Pause execution loop to avoid endless high frequency retries while offline or server down
+          // Delay next attempt slightly
+          setTimeout(() => this.processQueue(), 800);
+          return;
         }
       } else {
         // Succeeded syncing mutation to Supabase!

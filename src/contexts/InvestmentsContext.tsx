@@ -308,21 +308,6 @@ export function InvestmentsProvider({
 
         const curRts = cacheManager.get<ReserveTransaction[]>(`reserve_transactions_${userId}`) || [];
         cacheManager.set(`reserve_transactions_${userId}`, [rtObj, ...curRts.filter(r => r.id !== rtId)], undefined, 'reserves');
-
-        const rtSupabasePayload: Record<string, any> = {
-          id: rtObj.id,
-          user_id: rtObj.user_id,
-          reserve_id: rtObj.reserve_id,
-          type: rtObj.type,
-          amount: rtObj.amount,
-          date: rtObj.date,
-          category: rtObj.category,
-          description: rtObj.description,
-          linked_investment_id: rtObj.linked_investment_id,
-          created_at: rtObj.created_at,
-        };
-
-        syncQueueManager.enqueue('reserve_transactions', 'insert', rtObj.id, rtSupabasePayload);
       }
 
       setInvestmentTransactions(prev => {
@@ -346,11 +331,35 @@ export function InvestmentsProvider({
       };
       if (itObj.cnpj) itSupabasePayload.cnpj = itObj.cnpj;
       if (itObj.reserve_id) itSupabasePayload.reserve_id = itObj.reserve_id;
-      if (itObj.transaction_id) itSupabasePayload.transaction_id = itObj.transaction_id;
       if (itObj.description) itSupabasePayload.description = itObj.description;
       if (itObj.asset_type) itSupabasePayload.asset_type = itObj.asset_type;
 
+      // 1. Enqueue investment transaction first (without circular transaction_id to avoid FK lock)
       syncQueueManager.enqueue('investment_transactions', 'insert', itObj.id, itSupabasePayload);
+
+      // 2. If linked to a reserve, enqueue reserve transaction (linked_investment_id now refers to valid itObj.id)
+      if (rtObj) {
+        const rtSupabasePayload: Record<string, any> = {
+          id: rtObj.id,
+          user_id: rtObj.user_id,
+          reserve_id: rtObj.reserve_id,
+          type: rtObj.type,
+          amount: rtObj.amount,
+          date: rtObj.date,
+          category: rtObj.category,
+          description: rtObj.description,
+          linked_investment_id: rtObj.linked_investment_id,
+          created_at: rtObj.created_at,
+        };
+
+        syncQueueManager.enqueue('reserve_transactions', 'insert', rtObj.id, rtSupabasePayload);
+
+        // 3. Link reserve transaction back to investment transaction via update
+        if (itObj.transaction_id) {
+          syncQueueManager.enqueue('investment_transactions', 'update', itObj.id, { transaction_id: itObj.transaction_id });
+        }
+      }
+
       toast.success('Lançamento de investimento registrado!');
       return itObj.id;
     } catch (err: any) {

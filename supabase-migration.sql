@@ -359,6 +359,30 @@ CREATE INDEX IF NOT EXISTS idx_freight_quotes_user ON public.freight_quotes(user
 CREATE INDEX IF NOT EXISTS idx_freight_quotes_code ON public.freight_quotes(code);
 
 -- ==============================================================================
+-- 8. OTIMIZAÇÃO DE CONSTRAINTS E RELACIONAMENTOS (Evitar Deadlock Circular)
+-- ==============================================================================
+ALTER TABLE public.reserve_transactions DROP CONSTRAINT IF EXISTS reserve_transactions_linked_investment_id_fkey;
+ALTER TABLE public.reserve_transactions DROP CONSTRAINT IF EXISTS fk_reserve_tx_linked_investment;
+ALTER TABLE public.investment_transactions DROP CONSTRAINT IF EXISTS fk_investment_reserve_transaction;
+ALTER TABLE public.investment_transactions DROP CONSTRAINT IF EXISTS investment_transactions_transaction_id_fkey;
+ALTER TABLE public.investment_transactions DROP CONSTRAINT IF EXISTS investment_transactions_reserve_id_fkey;
+ALTER TABLE public.dividends DROP CONSTRAINT IF EXISTS dividends_transaction_id_fkey;
+
+-- Recriar vínculos com ON DELETE SET NULL se desejar integridade referencial não-bloqueante
+DO $$ 
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'reserve_transactions_linked_investment_id_fkey'
+    ) THEN
+        ALTER TABLE public.reserve_transactions 
+        ADD CONSTRAINT reserve_transactions_linked_investment_id_fkey 
+        FOREIGN KEY (linked_investment_id) REFERENCES public.investment_transactions(id) ON DELETE SET NULL;
+    END IF;
+EXCEPTION
+    WHEN OTHERS THEN NULL;
+END $$;
+
+-- ==============================================================================
 -- 9. CONFIGURAÇÃO DE RLS (ROW LEVEL SECURITY) E PERMISSÕES
 -- ==============================================================================
 ALTER TABLE public.transactions ENABLE ROW LEVEL SECURITY;
