@@ -307,6 +307,9 @@ export function InvestmentsProvider({
           created_at: new Date().toISOString(),
         };
 
+        const curRts = cacheManager.get<ReserveTransaction[]>(`reserve_transactions_${userId}`) || [];
+        cacheManager.set(`reserve_transactions_${userId}`, [rtObj, ...curRts.filter(r => r.id !== rtId)], undefined, 'reserves');
+
         syncQueueManager.enqueue('reserve_transactions', 'insert', rtObj.id, rtObj);
       }
 
@@ -341,6 +344,8 @@ export function InvestmentsProvider({
     });
 
     if (targetTx?.transaction_id) {
+      const curRts = cacheManager.get<ReserveTransaction[]>(`reserve_transactions_${userId}`) || [];
+      cacheManager.set(`reserve_transactions_${userId}`, curRts.filter(r => r.id !== targetTx.transaction_id), undefined, 'reserves');
       syncQueueManager.enqueue('reserve_transactions', 'delete', targetTx.transaction_id);
     }
     syncQueueManager.enqueue('investment_transactions', 'delete', id);
@@ -375,6 +380,8 @@ export function InvestmentsProvider({
         description: `Investimento: ${isBuy ? 'Compra' : 'Venda'} ${merged.ticker}`
       };
 
+      const curRts = cacheManager.get<ReserveTransaction[]>(`reserve_transactions_${userId}`) || [];
+      cacheManager.set(`reserve_transactions_${userId}`, curRts.map(r => r.id === targetTx.transaction_id ? { ...r, ...rtPayload } : r), undefined, 'reserves');
       syncQueueManager.enqueue('reserve_transactions', 'update', targetTx.transaction_id, rtPayload);
     }
 

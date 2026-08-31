@@ -23,6 +23,8 @@ class SyncQueueManager {
         console.log('[SyncQueue] Dispositivo voltou a ficar online. Retomando processamento...');
         this.processQueue();
       });
+      // Process queue immediately on load
+      setTimeout(() => this.processQueue(), 200);
       // Poll queue every 15 seconds as a safety net
       setInterval(() => this.processQueue(), 15000);
     }
@@ -113,10 +115,29 @@ class SyncQueueManager {
       let error: any = null;
 
       if (task.action === 'insert') {
+        const payloadToInsert = {
+          id: task.targetId,
+          ...(task.payload || {})
+        };
+
         const { error: insertErr } = await supabase
           .from(task.table)
-          .insert(task.payload);
+          .insert(payloadToInsert);
         error = insertErr;
+
+        // Auto fallback 1: If column does not exist in schema (e.g. newer columns before migration)
+        if (error && (error.code === '42703' || error.code === 'PGRST204' || error.message?.includes('column'))) {
+          console.warn(`[SyncQueue] Tentando payload simplificado para ${task.table}:${task.targetId}`);
+          const coreKeys = ['id', 'user_id', 'reserve_id', 'type', 'amount', 'date', 'description', 'category', 'operation', 'ticker', 'price', 'quantity', 'costs', 'created_at', 'status', 'saldo_inicial'];
+          const simplified: Record<string, any> = {};
+          for (const k of coreKeys) {
+            if (payloadToInsert[k] !== undefined) simplified[k] = payloadToInsert[k];
+          }
+          const { error: fallbackErr } = await supabase.from(task.table).insert(simplified);
+          if (!fallbackErr) {
+            error = null;
+          }
+        }
       } else if (task.action === 'update') {
         const { error: updateErr } = await supabase
           .from(task.table)
@@ -134,11 +155,11 @@ class SyncQueueManager {
       if (error) {
         console.error(`[SyncQueue] Falha na sincronização do item ${task.id}:`, error);
         
-        // Critical database validation failures (wrong columns, constraints, format error)
-        const isDatabaseConstraint = error.code && ['23503', '23505', '42P01', '22P02', 'P0001'].includes(error.code);
+        // Critical database validation failures (duplicate key, constraint violation, format error)
+        const isDatabaseConstraint = error.code && ['23505', '42P01', '22P02', 'P0001'].includes(error.code);
         
         if (isDatabaseConstraint || task.attempts >= 5) {
-          console.warn(`[SyncQueue] Forçando descarte do item por erro crítico ou limite de tentativas excedido:`, task);
+          console.warn(`[SyncQueue] Descartando item por limite de tentativas ou restrição irremediável:`, task);
           const remaining = this.getQueue().filter(t => t.id !== task.id);
           this.saveQueue(remaining);
         } else {

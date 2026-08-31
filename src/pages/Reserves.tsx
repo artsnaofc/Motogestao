@@ -382,6 +382,8 @@ export function Reserves() {
       // Enqueue syncs
       allNewRts.forEach(rt => {
         syncQueueManager.enqueue('reserve_transactions', 'insert', rt.id, {
+          id: rt.id,
+          user_id: userId,
           reserve_id: rt.reserve_id,
           type: rt.type,
           amount: rt.amount,

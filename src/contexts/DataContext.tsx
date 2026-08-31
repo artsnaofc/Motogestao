@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase';
 import { Transaction, UserSettings, Reserve, ReserveTransaction, InvestmentTransaction, Dividend, DividendAnalysisMode, ValuationTarget } from '../types';
 import { QuoteProvider, QuoteFetchResult } from '../lib/quoteService';
 import { cacheManager } from '../lib/cacheManager';
+import { syncQueueManager } from '../lib/syncQueue';
 
 // Segregated Contexts & Hooks
 import { QuotesProvider, useQuotes } from './QuotesContext';
@@ -302,6 +303,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
         }
       }
 
+      // Trigger sync queue immediately
+      syncQueueManager.processQueue();
+
       // 2. Fetch transactions
       try {
         const { data: txData, error: txError } = await supabase
@@ -313,8 +317,15 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
         if (txError) throw txError;
         if (txData) {
-          setTransactions(txData);
-          cacheManager.set(`transactions_${userId}`, txData, undefined, 'transactions');
+          const localTxs = cacheManager.get<Transaction[]>(`transactions_${userId}`);
+          let mergedTxs = txData;
+          if (localTxs && Array.isArray(localTxs)) {
+            const supaIds = new Set(txData.map(item => item.id));
+            const localOnly = localTxs.filter((item: any) => item && item.id && !supaIds.has(item.id));
+            mergedTxs = [...txData, ...localOnly];
+          }
+          setTransactions(mergedTxs);
+          cacheManager.set(`transactions_${userId}`, mergedTxs, undefined, 'transactions');
         }
       } catch (errTx) {
         console.warn('Could not load transactions from Supabase, loading from cache:', errTx);
@@ -338,7 +349,13 @@ export function DataProvider({ children }: { children: ReactNode }) {
         const hasSeeded = cacheManager.get<boolean>(hasSeededKey) === true;
 
         if (rSupadata && rSupadata.length > 0) {
-          const finalReserves = rSupadata as Reserve[];
+          const localRes = cacheManager.get<Reserve[]>(`reserves_${userId}`);
+          let finalReserves = rSupadata as Reserve[];
+          if (localRes && Array.isArray(localRes)) {
+            const supaIds = new Set(rSupadata.map(item => item.id));
+            const localOnly = localRes.filter((item: any) => item && item.id && !supaIds.has(item.id));
+            finalReserves = [...finalReserves, ...localOnly];
+          }
           setReserves(finalReserves);
           cacheManager.set(`reserves_${userId}`, finalReserves, undefined, 'reserves');
           if (!hasSeeded) cacheManager.set(hasSeededKey, true, undefined, 'reserves');
@@ -360,8 +377,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
             cacheManager.set(hasSeededKey, true, undefined, 'reserves');
           }
         } else {
-          setReserves([]);
-          cacheManager.set(`reserves_${userId}`, [], undefined, 'reserves');
+          const localRes = cacheManager.get<Reserve[]>(`reserves_${userId}`) || [];
+          setReserves(localRes);
+          cacheManager.set(`reserves_${userId}`, localRes, undefined, 'reserves');
         }
       } catch (errRes) {
         console.warn('Could not load reserves from Supabase, loading from cache:', errRes);
@@ -415,8 +433,15 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
         if (itSupaerror) throw itSupaerror;
         if (itSupadata) {
-          setInvestmentTransactions(itSupadata);
-          cacheManager.set(`investment_transactions_${userId}`, itSupadata, undefined, 'investments');
+          const localIts = cacheManager.get<InvestmentTransaction[]>(`investment_transactions_${userId}`);
+          let mergedIts = itSupadata;
+          if (localIts && Array.isArray(localIts)) {
+            const supaIds = new Set(itSupadata.map(item => item.id));
+            const localOnly = localIts.filter((item: any) => item && item.id && !supaIds.has(item.id));
+            mergedIts = [...itSupadata, ...localOnly];
+          }
+          setInvestmentTransactions(mergedIts);
+          cacheManager.set(`investment_transactions_${userId}`, mergedIts, undefined, 'investments');
         }
       } catch (errIt) {
         console.warn('Supabase investment loading error, using cache:', errIt);
@@ -436,8 +461,15 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
         if (divError) throw divError;
         if (divData) {
-          setDividends(divData);
-          cacheManager.set(`dividends_${userId}`, divData, undefined, 'investments');
+          const localDivs = cacheManager.get<Dividend[]>(`dividends_${userId}`);
+          let mergedDivs = divData;
+          if (localDivs && Array.isArray(localDivs)) {
+            const supaIds = new Set(divData.map(item => item.id));
+            const localOnly = localDivs.filter((item: any) => item && item.id && !supaIds.has(item.id));
+            mergedDivs = [...divData, ...localOnly];
+          }
+          setDividends(mergedDivs);
+          cacheManager.set(`dividends_${userId}`, mergedDivs, undefined, 'investments');
         }
       } catch (errDiv) {
         console.warn('Supabase dividends loading error, using cache:', errDiv);
