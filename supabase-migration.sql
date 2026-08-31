@@ -359,7 +359,7 @@ CREATE INDEX IF NOT EXISTS idx_freight_quotes_user ON public.freight_quotes(user
 CREATE INDEX IF NOT EXISTS idx_freight_quotes_code ON public.freight_quotes(code);
 
 -- ==============================================================================
--- 9. CONFIGURAÇÃO DE RLS (ROW LEVEL SECURITY)
+-- 9. CONFIGURAÇÃO DE RLS (ROW LEVEL SECURITY) E PERMISSÕES
 -- ==============================================================================
 ALTER TABLE public.transactions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.reserves ENABLE ROW LEVEL SECURITY;
@@ -370,27 +370,60 @@ ALTER TABLE public.dividends ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.valuation_targets ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.freight_quotes ENABLE ROW LEVEL SECURITY;
 
--- Políticas de Acesso Total (compatíveis com auth.uid() ou chave anônima/sessão local)
+-- Concessão de permissões completas aos roles do Supabase
+GRANT ALL ON TABLE public.transactions TO anon, authenticated, service_role, postgres;
+GRANT ALL ON TABLE public.reserves TO anon, authenticated, service_role, postgres;
+GRANT ALL ON TABLE public.reserve_transactions TO anon, authenticated, service_role, postgres;
+GRANT ALL ON TABLE public.user_settings TO anon, authenticated, service_role, postgres;
+GRANT ALL ON TABLE public.investment_transactions TO anon, authenticated, service_role, postgres;
+GRANT ALL ON TABLE public.dividends TO anon, authenticated, service_role, postgres;
+GRANT ALL ON TABLE public.valuation_targets TO anon, authenticated, service_role, postgres;
+GRANT ALL ON TABLE public.freight_quotes TO anon, authenticated, service_role, postgres;
+
+-- 1. Transações
 DROP POLICY IF EXISTS "Acesso Total Transactions" ON public.transactions;
-CREATE POLICY "Acesso Total Transactions" ON public.transactions FOR ALL USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Users can manage their transactions" ON public.transactions;
+DROP POLICY IF EXISTS "Allow All Transactions" ON public.transactions;
+CREATE POLICY "Acesso Total Transactions" ON public.transactions FOR ALL TO public USING (true) WITH CHECK (true);
 
+-- 2. Reservas
 DROP POLICY IF EXISTS "Acesso Total Reserves" ON public.reserves;
-CREATE POLICY "Acesso Total Reserves" ON public.reserves FOR ALL USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Users can manage their reserves" ON public.reserves;
+DROP POLICY IF EXISTS "Allow All Reserves" ON public.reserves;
+CREATE POLICY "Acesso Total Reserves" ON public.reserves FOR ALL TO public USING (true) WITH CHECK (true);
 
+-- 3. Transações de Reserva
 DROP POLICY IF EXISTS "Acesso Total Reserve Transactions" ON public.reserve_transactions;
-CREATE POLICY "Acesso Total Reserve Transactions" ON public.reserve_transactions FOR ALL USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Users can manage their reserve transactions" ON public.reserve_transactions;
+DROP POLICY IF EXISTS "Allow All Reserve Transactions" ON public.reserve_transactions;
+CREATE POLICY "Acesso Total Reserve Transactions" ON public.reserve_transactions FOR ALL TO public USING (true) WITH CHECK (true);
 
+-- 4. Configurações de Usuário
 DROP POLICY IF EXISTS "Acesso Total User Settings" ON public.user_settings;
-CREATE POLICY "Acesso Total User Settings" ON public.user_settings FOR ALL USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Users can manage their settings" ON public.user_settings;
+DROP POLICY IF EXISTS "Allow All User Settings" ON public.user_settings;
+CREATE POLICY "Acesso Total User Settings" ON public.user_settings FOR ALL TO public USING (true) WITH CHECK (true);
 
+-- 5. Transações de Investimentos
 DROP POLICY IF EXISTS "Acesso Total Investments" ON public.investment_transactions;
-CREATE POLICY "Acesso Total Investments" ON public.investment_transactions FOR ALL USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Users can manage their investments" ON public.investment_transactions;
+DROP POLICY IF EXISTS "Allow All Investments" ON public.investment_transactions;
+CREATE POLICY "Acesso Total Investments" ON public.investment_transactions FOR ALL TO public USING (true) WITH CHECK (true);
 
+-- 6. Dividendos e Proventos
 DROP POLICY IF EXISTS "Acesso Total Dividends" ON public.dividends;
-CREATE POLICY "Acesso Total Dividends" ON public.dividends FOR ALL USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Users can manage their dividends" ON public.dividends;
+DROP POLICY IF EXISTS "Allow All Dividends" ON public.dividends;
+CREATE POLICY "Acesso Total Dividends" ON public.dividends FOR ALL TO public USING (true) WITH CHECK (true);
 
+-- 7. Metas de Valuation / Preço Teto
 DROP POLICY IF EXISTS "Acesso Total Valuation" ON public.valuation_targets;
-CREATE POLICY "Acesso Total Valuation" ON public.valuation_targets FOR ALL USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Users can manage their valuation targets" ON public.valuation_targets;
+DROP POLICY IF EXISTS "Allow All Valuation" ON public.valuation_targets;
+CREATE POLICY "Acesso Total Valuation" ON public.valuation_targets FOR ALL TO public USING (true) WITH CHECK (true);
 
+-- 8. Cotações de Frete
 DROP POLICY IF EXISTS "Acesso Total Freight Quotes" ON public.freight_quotes;
-CREATE POLICY "Acesso Total Freight Quotes" ON public.freight_quotes FOR ALL USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Users can manage their freight quotes" ON public.freight_quotes;
+DROP POLICY IF EXISTS "Allow All Freight Quotes" ON public.freight_quotes;
+CREATE POLICY "Acesso Total Freight Quotes" ON public.freight_quotes FOR ALL TO public USING (true) WITH CHECK (true);

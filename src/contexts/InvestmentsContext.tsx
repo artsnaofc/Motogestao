@@ -47,53 +47,6 @@ const generateUUID = () => {
   });
 };
 
-const sanitizeInvestmentTransactionPayload = (it: Partial<InvestmentTransaction> & { id: string; user_id: string }): Record<string, any> => {
-  const payload: Record<string, any> = {
-    id: it.id,
-    user_id: it.user_id,
-    operation: it.operation || 'buy',
-    type: it.type || 'Ação',
-    ticker: (it.ticker || '').toUpperCase().trim(),
-    amount: typeof it.amount === 'number' ? it.amount : Number(it.amount) || 0,
-    price: typeof it.price === 'number' ? it.price : Number(it.price) || 0,
-    quantity: typeof it.quantity === 'number' ? it.quantity : Number(it.quantity) || 0,
-    costs: typeof it.costs === 'number' ? it.costs : Number(it.costs) || 0,
-    date: it.date ? (it.date.includes('T') ? it.date.split('T')[0] : it.date) : new Date().toISOString().split('T')[0],
-    created_at: it.created_at || new Date().toISOString(),
-  };
-
-  if (it.cnpj) payload.cnpj = it.cnpj.trim();
-  if (it.reserve_id) payload.reserve_id = it.reserve_id;
-  if (it.transaction_id) payload.transaction_id = it.transaction_id;
-  if (it.description) payload.description = it.description;
-  if (it.asset_type) payload.asset_type = it.asset_type;
-
-  return payload;
-};
-
-const sanitizeDividendPayload = (div: Partial<Dividend> & { id: string; user_id: string }): Record<string, any> => {
-  const payload: Record<string, any> = {
-    id: div.id,
-    user_id: div.user_id,
-    ticker: (div.ticker || '').toUpperCase().trim(),
-    amount: typeof div.amount === 'number' ? div.amount : Number(div.amount) || 0,
-    type: div.type || 'Dividendo',
-    status: div.status || 'received',
-    date: div.date ? (div.date.includes('T') ? div.date.split('T')[0] : div.date) : new Date().toISOString().split('T')[0],
-    created_at: div.created_at || new Date().toISOString(),
-  };
-
-  if (div.unit_amount !== undefined && div.unit_amount !== null && !isNaN(Number(div.unit_amount))) {
-    payload.unit_amount = Number(div.unit_amount);
-  }
-  if (div.data_com) payload.data_com = div.data_com;
-  if (div.data_ex) payload.data_ex = div.data_ex;
-  if (div.description) payload.description = div.description;
-  if (div.transaction_id) payload.transaction_id = div.transaction_id;
-
-  return payload;
-};
-
 const InvestmentsContext = createContext<InvestmentsContextType | undefined>(undefined);
 
 export function InvestmentsProvider({
@@ -316,20 +269,8 @@ export function InvestmentsProvider({
   }, [dividends, settings, onDataChange]);
 
   const addInvestmentTransaction = useCallback(async (newIt: Omit<InvestmentTransaction, 'id' | 'user_id' | 'created_at'>): Promise<string | undefined> => {
-    let userId = 'default';
-    try {
-      const { data: userData } = await supabase.auth.getUser();
-      if (userData?.user?.id) {
-        userId = userData.user.id;
-      } else {
-        const { data: sessionData } = await supabase.auth.getSession();
-        if (sessionData?.session?.user?.id) {
-          userId = sessionData.session.user.id;
-        }
-      }
-    } catch (e) {
-      console.warn('Auth user lookup warning:', e);
-    }
+    const { data: userData } = await supabase.auth.getUser();
+    const userId = userData.user?.id || 'default';
 
     const itObj: InvestmentTransaction = {
       id: generateUUID(),
@@ -338,16 +279,11 @@ export function InvestmentsProvider({
       created_at: new Date().toISOString(),
     };
 
-    const sanitizedItPayload = sanitizeInvestmentTransactionPayload(itObj);
-
     try {
       let rtObj: ReserveTransaction | null = null;
-      let sanitizedRtPayload: Record<string, any> | null = null;
-
       if (itObj.reserve_id) {
         const rtId = generateUUID();
         itObj.transaction_id = rtId;
-        sanitizedItPayload.transaction_id = rtId;
 
         const isBuy = itObj.operation === 'buy';
         const subtotal = itObj.price * itObj.quantity;
@@ -370,7 +306,10 @@ export function InvestmentsProvider({
           created_at: new Date().toISOString(),
         };
 
-        sanitizedRtPayload = {
+        const curRts = cacheManager.get<ReserveTransaction[]>(`reserve_transactions_${userId}`) || [];
+        cacheManager.set(`reserve_transactions_${userId}`, [rtObj, ...curRts.filter(r => r.id !== rtId)], undefined, 'reserves');
+
+        const rtSupabasePayload: Record<string, any> = {
           id: rtObj.id,
           user_id: rtObj.user_id,
           reserve_id: rtObj.reserve_id,
@@ -380,54 +319,42 @@ export function InvestmentsProvider({
           category: rtObj.category,
           description: rtObj.description,
           linked_investment_id: rtObj.linked_investment_id,
-          created_at: rtObj.created_at
+          created_at: rtObj.created_at,
         };
 
-        const curRts = cacheManager.get<ReserveTransaction[]>(`reserve_transactions_${userId}`) || [];
-        cacheManager.set(`reserve_transactions_${userId}`, [rtObj, ...curRts.filter(r => r.id !== rtId)], undefined, 'reserves');
+        syncQueueManager.enqueue('reserve_transactions', 'insert', rtObj.id, rtSupabasePayload);
       }
 
-      // Optimistic update in state & cache
       setInvestmentTransactions(prev => {
-        const existing = [itObj, ...prev.filter(t => t.id !== itObj.id)];
+        const existing = [itObj, ...prev];
         cacheManager.set(`investment_transactions_${userId}`, existing, undefined, 'investments');
         return existing;
       });
 
-      // Direct write to Supabase Database with SyncQueue fallback
-      try {
-        const { error: itDbError } = await supabase
-          .from('investment_transactions')
-          .upsert(sanitizedItPayload);
+      const itSupabasePayload: Record<string, any> = {
+        id: itObj.id,
+        user_id: itObj.user_id,
+        operation: itObj.operation,
+        type: itObj.type || 'Ação',
+        ticker: itObj.ticker,
+        amount: Number(itObj.amount) || 0,
+        price: Number(itObj.price) || 0,
+        quantity: Number(itObj.quantity) || 0,
+        costs: Number(itObj.costs) || 0,
+        date: itObj.date,
+        created_at: itObj.created_at,
+      };
+      if (itObj.cnpj) itSupabasePayload.cnpj = itObj.cnpj;
+      if (itObj.reserve_id) itSupabasePayload.reserve_id = itObj.reserve_id;
+      if (itObj.transaction_id) itSupabasePayload.transaction_id = itObj.transaction_id;
+      if (itObj.description) itSupabasePayload.description = itObj.description;
+      if (itObj.asset_type) itSupabasePayload.asset_type = itObj.asset_type;
 
-        if (itDbError) {
-          console.warn('[InvestmentsContext] Direct DB upsert failed, queuing to syncQueue:', itDbError);
-          syncQueueManager.enqueue('investment_transactions', 'insert', itObj.id, sanitizedItPayload);
-        } else {
-          console.log('[InvestmentsContext] Lançamento de investimento persistido na base de dados:', itObj.id);
-        }
-
-        if (rtObj && sanitizedRtPayload) {
-          const { error: rtDbError } = await supabase
-            .from('reserve_transactions')
-            .upsert(sanitizedRtPayload);
-
-          if (rtDbError) {
-            syncQueueManager.enqueue('reserve_transactions', 'insert', rtObj.id, sanitizedRtPayload);
-          }
-        }
-      } catch (dbErr) {
-        console.warn('[InvestmentsContext] DB network error, queuing for sync:', dbErr);
-        syncQueueManager.enqueue('investment_transactions', 'insert', itObj.id, sanitizedItPayload);
-        if (rtObj && sanitizedRtPayload) {
-          syncQueueManager.enqueue('reserve_transactions', 'insert', rtObj.id, sanitizedRtPayload);
-        }
-      }
-
+      syncQueueManager.enqueue('investment_transactions', 'insert', itObj.id, itSupabasePayload);
       toast.success('Lançamento de investimento registrado!');
       return itObj.id;
     } catch (err: any) {
-      console.warn('Error saving investment transaction:', err);
+      console.warn('Error queuing investment transaction:', err);
       toast.error('Erro ao salvar lançamento localmente.');
       return itObj.id;
     }
@@ -435,13 +362,8 @@ export function InvestmentsProvider({
 
   const deleteInvestmentTransaction = useCallback(async (id: string) => {
     toast.loading('Processando exclusão...', { id: 'del-inv' });
-    let userId = 'default';
-    try {
-      const { data: userData } = await supabase.auth.getUser();
-      if (userData?.user?.id) userId = userData.user.id;
-    } catch (e) {
-      console.warn(e);
-    }
+    const { data: userData } = await supabase.auth.getUser();
+    const userId = userData.user?.id || 'default';
 
     const targetTx = investmentTransactions.find(it => it.id === id);
 
@@ -454,37 +376,18 @@ export function InvestmentsProvider({
     if (targetTx?.transaction_id) {
       const curRts = cacheManager.get<ReserveTransaction[]>(`reserve_transactions_${userId}`) || [];
       cacheManager.set(`reserve_transactions_${userId}`, curRts.filter(r => r.id !== targetTx.transaction_id), undefined, 'reserves');
-      try {
-        await supabase.from('reserve_transactions').delete().eq('id', targetTx.transaction_id);
-      } catch {
-        syncQueueManager.enqueue('reserve_transactions', 'delete', targetTx.transaction_id);
-      }
+      syncQueueManager.enqueue('reserve_transactions', 'delete', targetTx.transaction_id);
     }
-
-    try {
-      const { error } = await supabase.from('investment_transactions').delete().eq('id', id);
-      if (error) {
-        syncQueueManager.enqueue('investment_transactions', 'delete', id);
-      }
-    } catch {
-      syncQueueManager.enqueue('investment_transactions', 'delete', id);
-    }
-
+    syncQueueManager.enqueue('investment_transactions', 'delete', id);
     toast.success('Lançamento excluído!', { id: 'del-inv' });
   }, [investmentTransactions]);
 
   const updateInvestmentTransaction = useCallback(async (id: string, updatedFields: Partial<InvestmentTransaction>) => {
-    let userId = 'default';
-    try {
-      const { data: userData } = await supabase.auth.getUser();
-      if (userData?.user?.id) userId = userData.user.id;
-    } catch (e) {
-      console.warn(e);
-    }
+    const { data: userData } = await supabase.auth.getUser();
+    const userId = userData.user?.id || 'default';
 
     const targetTx = investmentTransactions.find(it => it.id === id);
     const merged = { ...targetTx, ...updatedFields } as InvestmentTransaction;
-    const sanitizedItPayload = sanitizeInvestmentTransactionPayload({ ...merged, id, user_id: userId });
 
     setInvestmentTransactions(prev => {
       const newState = prev.map(it => it.id === id ? { ...it, ...updatedFields } : it);
@@ -492,18 +395,18 @@ export function InvestmentsProvider({
       return newState;
     });
 
-    try {
-      const { error: itDbError } = await supabase
-        .from('investment_transactions')
-        .update(sanitizedItPayload)
-        .eq('id', id);
-
-      if (itDbError) {
-        syncQueueManager.enqueue('investment_transactions', 'update', id, sanitizedItPayload);
+    const cleanPayload: Record<string, any> = {};
+    const allowedKeys: (keyof InvestmentTransaction)[] = [
+      'operation', 'type', 'ticker', 'cnpj', 'amount', 'price', 'quantity', 
+      'costs', 'reserve_id', 'transaction_id', 'date', 'description', 'asset_type'
+    ];
+    for (const k of allowedKeys) {
+      if (updatedFields[k] !== undefined) {
+        cleanPayload[k] = updatedFields[k];
       }
-    } catch {
-      syncQueueManager.enqueue('investment_transactions', 'update', id, sanitizedItPayload);
     }
+
+    syncQueueManager.enqueue('investment_transactions', 'update', id, cleanPayload);
 
     // Sync linked reserve transaction
     if (merged.reserve_id && targetTx?.transaction_id) {
@@ -519,18 +422,7 @@ export function InvestmentsProvider({
 
       const curRts = cacheManager.get<ReserveTransaction[]>(`reserve_transactions_${userId}`) || [];
       cacheManager.set(`reserve_transactions_${userId}`, curRts.map(r => r.id === targetTx.transaction_id ? { ...r, ...rtPayload } : r), undefined, 'reserves');
-      
-      try {
-        const { error: rtErr } = await supabase
-          .from('reserve_transactions')
-          .update(rtPayload)
-          .eq('id', targetTx.transaction_id);
-        if (rtErr) {
-          syncQueueManager.enqueue('reserve_transactions', 'update', targetTx.transaction_id, rtPayload);
-        }
-      } catch {
-        syncQueueManager.enqueue('reserve_transactions', 'update', targetTx.transaction_id, rtPayload);
-      }
+      syncQueueManager.enqueue('reserve_transactions', 'update', targetTx.transaction_id, rtPayload);
     }
 
     toast.success('Lançamento atualizado!');
@@ -538,13 +430,8 @@ export function InvestmentsProvider({
 
   const deleteInvestmentTransactionsByTicker = useCallback(async (ticker: string) => {
     toast.loading('Limpando posição de ' + ticker + '...', { id: 'del-ticker' });
-    let userId = 'default';
-    try {
-      const { data: userData } = await supabase.auth.getUser();
-      if (userData?.user?.id) userId = userData.user.id;
-    } catch (e) {
-      console.warn(e);
-    }
+    const { data: userData } = await supabase.auth.getUser();
+    const userId = userData.user?.id || 'default';
 
     const txsToDelete = investmentTransactions.filter(it => it.ticker.toUpperCase() === ticker.toUpperCase());
     const txIds = txsToDelete.map(t => t.id);
@@ -556,33 +443,20 @@ export function InvestmentsProvider({
       return newState;
     });
 
-    for (const rtId of rtIds) {
-      try {
-        await supabase.from('reserve_transactions').delete().eq('id', rtId);
-      } catch {
-        syncQueueManager.enqueue('reserve_transactions', 'delete', rtId);
-      }
-    }
+    rtIds.forEach(rtId => {
+      syncQueueManager.enqueue('reserve_transactions', 'delete', rtId);
+    });
 
-    for (const txId of txIds) {
-      try {
-        await supabase.from('investment_transactions').delete().eq('id', txId);
-      } catch {
-        syncQueueManager.enqueue('investment_transactions', 'delete', txId);
-      }
-    }
+    txIds.forEach(txId => {
+      syncQueueManager.enqueue('investment_transactions', 'delete', txId);
+    });
 
     toast.success('Lançamentos excluídos!', { id: 'del-ticker' });
   }, [investmentTransactions]);
 
   const addDividend = useCallback(async (newDiv: Omit<Dividend, 'id' | 'user_id' | 'created_at'>) => {
-    let userId = 'default';
-    try {
-      const { data: userData } = await supabase.auth.getUser();
-      if (userData?.user?.id) userId = userData.user.id;
-    } catch (e) {
-      console.warn(e);
-    }
+    const { data: userData } = await supabase.auth.getUser();
+    const userId = userData.user?.id || 'default';
 
     const divObj: Dividend = {
       id: generateUUID(),
@@ -591,34 +465,35 @@ export function InvestmentsProvider({
       created_at: new Date().toISOString(),
     };
 
-    const sanitized = sanitizeDividendPayload(divObj);
-
     setDividends(prev => {
-      const existing = [divObj, ...prev.filter(d => d.id !== divObj.id)];
+      const existing = [divObj, ...prev];
       cacheManager.set(`dividends_${userId}`, existing, undefined, 'investments');
       return existing;
     });
 
-    try {
-      const { error } = await supabase.from('dividends').upsert(sanitized);
-      if (error) {
-        syncQueueManager.enqueue('dividends', 'insert', divObj.id, sanitized);
-      }
-    } catch {
-      syncQueueManager.enqueue('dividends', 'insert', divObj.id, sanitized);
-    }
+    const divSupabasePayload: Record<string, any> = {
+      id: divObj.id,
+      user_id: divObj.user_id,
+      ticker: divObj.ticker,
+      amount: Number(divObj.amount) || 0,
+      unit_amount: Number(divObj.unit_amount) || 0,
+      type: divObj.type,
+      status: divObj.status,
+      date: divObj.date,
+      created_at: divObj.created_at,
+    };
+    if (divObj.data_com) divSupabasePayload.data_com = divObj.data_com;
+    if (divObj.data_ex) divSupabasePayload.data_ex = divObj.data_ex;
+    if (divObj.description) divSupabasePayload.description = divObj.description;
+    if (divObj.transaction_id) divSupabasePayload.transaction_id = divObj.transaction_id;
 
+    syncQueueManager.enqueue('dividends', 'insert', divObj.id, divSupabasePayload);
     toast.success('Provento registrado!');
   }, []);
 
   const updateDividend = useCallback(async (id: string, updatedFields: Partial<Dividend>) => {
-    let userId = 'default';
-    try {
-      const { data: userData } = await supabase.auth.getUser();
-      if (userData?.user?.id) userId = userData.user.id;
-    } catch (e) {
-      console.warn(e);
-    }
+    const { data: userData } = await supabase.auth.getUser();
+    const userId = userData.user?.id || 'default';
 
     const currentDiv = dividends.find(d => d.id === id);
     const finalFields: Partial<Dividend> = { ...updatedFields };
@@ -626,17 +501,10 @@ export function InvestmentsProvider({
     // If changing status from received to provisioned, remove linked reserve transaction if existing
     if (currentDiv && currentDiv.status === 'received' && updatedFields.status === 'provisioned') {
       if (currentDiv.transaction_id) {
-        try {
-          await supabase.from('reserve_transactions').delete().eq('id', currentDiv.transaction_id);
-        } catch {
-          syncQueueManager.enqueue('reserve_transactions', 'delete', currentDiv.transaction_id);
-        }
+        syncQueueManager.enqueue('reserve_transactions', 'delete', currentDiv.transaction_id);
         finalFields.transaction_id = undefined;
       }
     }
-
-    const merged = { ...currentDiv, ...finalFields } as Dividend;
-    const sanitized = sanitizeDividendPayload({ ...merged, id, user_id: userId });
 
     setDividends(prev => {
       const existing = prev.map(d => d.id === id ? { ...d, ...finalFields } : d);
@@ -644,34 +512,28 @@ export function InvestmentsProvider({
       return existing;
     });
 
-    try {
-      const { error } = await supabase.from('dividends').update(sanitized).eq('id', id);
-      if (error) {
-        syncQueueManager.enqueue('dividends', 'update', id, sanitized);
+    const cleanPayload: Record<string, any> = {};
+    const allowedKeys: (keyof Dividend)[] = [
+      'ticker', 'amount', 'unit_amount', 'type', 'status', 'date', 
+      'data_com', 'data_ex', 'description', 'transaction_id'
+    ];
+    for (const k of allowedKeys) {
+      if (finalFields[k] !== undefined) {
+        cleanPayload[k] = finalFields[k];
       }
-    } catch {
-      syncQueueManager.enqueue('dividends', 'update', id, sanitized);
     }
 
+    syncQueueManager.enqueue('dividends', 'update', id, cleanPayload);
     toast.success('Provento atualizado!');
   }, [dividends]);
 
   const deleteDividend = useCallback(async (id: string) => {
-    let userId = 'default';
-    try {
-      const { data: userData } = await supabase.auth.getUser();
-      if (userData?.user?.id) userId = userData.user.id;
-    } catch (e) {
-      console.warn(e);
-    }
+    const { data: userData } = await supabase.auth.getUser();
+    const userId = userData.user?.id || 'default';
 
     const currentDiv = dividends.find(d => d.id === id);
     if (currentDiv?.transaction_id) {
-      try {
-        await supabase.from('reserve_transactions').delete().eq('id', currentDiv.transaction_id);
-      } catch {
-        syncQueueManager.enqueue('reserve_transactions', 'delete', currentDiv.transaction_id);
-      }
+      syncQueueManager.enqueue('reserve_transactions', 'delete', currentDiv.transaction_id);
     }
 
     setDividends(prev => {
@@ -680,15 +542,7 @@ export function InvestmentsProvider({
       return existing;
     });
 
-    try {
-      const { error } = await supabase.from('dividends').delete().eq('id', id);
-      if (error) {
-        syncQueueManager.enqueue('dividends', 'delete', id);
-      }
-    } catch {
-      syncQueueManager.enqueue('dividends', 'delete', id);
-    }
-
+    syncQueueManager.enqueue('dividends', 'delete', id);
     toast.success('Provento removido!');
   }, [dividends]);
 

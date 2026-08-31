@@ -69,6 +69,7 @@ export function DebugConsoleModal({ open, onOpenChange }: DebugConsoleModalProps
   const [userSession, setUserSession] = useState<any>(null);
   const [localStorageSize, setLocalStorageSize] = useState<number>(0);
   const [tableCounts, setTableCounts] = useState<Record<string, number>>({});
+  const [copiedRlsSql, setCopiedRlsSql] = useState(false);
   const [loadingDiagnostics, setLoadingDiagnostics] = useState(false);
   const [perfMetrics, setPerfMetrics] = useState<any>(null);
 
@@ -1018,6 +1019,57 @@ export function DebugConsoleModal({ open, onOpenChange }: DebugConsoleModalProps
                 </div>
               </div>
 
+            </div>
+
+            {/* RLS Policies & Database Permission Diagnostics */}
+            <div className="p-4 sm:p-5 rounded-2xl border border-cyan-900/40 bg-cyan-950/20 space-y-3">
+              <div className="flex items-center justify-between">
+                <h4 className="font-extrabold text-cyan-400 flex items-center gap-2 text-sm">
+                  <Database className="w-4 h-4 text-cyan-400" /> Correção de Políticas RLS no Supabase
+                </h4>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    const rlsSql = `-- Script de Correção de RLS e Permissões para Finanças Pro
+GRANT ALL ON TABLE public.investment_transactions TO anon, authenticated, service_role, postgres;
+GRANT ALL ON TABLE public.dividends TO anon, authenticated, service_role, postgres;
+GRANT ALL ON TABLE public.valuation_targets TO anon, authenticated, service_role, postgres;
+GRANT ALL ON TABLE public.reserves TO anon, authenticated, service_role, postgres;
+GRANT ALL ON TABLE public.reserve_transactions TO anon, authenticated, service_role, postgres;
+GRANT ALL ON TABLE public.transactions TO anon, authenticated, service_role, postgres;
+GRANT ALL ON TABLE public.user_settings TO anon, authenticated, service_role, postgres;
+GRANT ALL ON TABLE public.freight_quotes TO anon, authenticated, service_role, postgres;
+
+ALTER TABLE public.investment_transactions ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Acesso Total Investments" ON public.investment_transactions;
+DROP POLICY IF EXISTS "Users can manage their investments" ON public.investment_transactions;
+DROP POLICY IF EXISTS "Allow All Investments" ON public.investment_transactions;
+CREATE POLICY "Acesso Total Investments" ON public.investment_transactions FOR ALL TO public USING (true) WITH CHECK (true);
+
+ALTER TABLE public.dividends ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Acesso Total Dividends" ON public.dividends;
+DROP POLICY IF EXISTS "Users can manage their dividends" ON public.dividends;
+DROP POLICY IF EXISTS "Allow All Dividends" ON public.dividends;
+CREATE POLICY "Acesso Total Dividends" ON public.dividends FOR ALL TO public USING (true) WITH CHECK (true);
+
+ALTER TABLE public.valuation_targets ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Acesso Total Valuation" ON public.valuation_targets;
+CREATE POLICY "Acesso Total Valuation" ON public.valuation_targets FOR ALL TO public USING (true) WITH CHECK (true);`;
+                    navigator.clipboard.writeText(rlsSql);
+                    setCopiedRlsSql(true);
+                    toast.success('SQL de Correção RLS copiado para a Área de Transferência!');
+                    setTimeout(() => setCopiedRlsSql(false), 3000);
+                  }}
+                  className="bg-cyan-950/60 hover:bg-cyan-800 border-cyan-800 text-cyan-200 text-xs h-8 px-3 rounded-lg"
+                >
+                  {copiedRlsSql ? <Check className="w-3.5 h-3.5 mr-1 text-emerald-400" /> : <Copy className="w-3.5 h-3.5 mr-1" />}
+                  {copiedRlsSql ? 'SQL Copiado!' : 'Copiar SQL de RLS'}
+                </Button>
+              </div>
+              <p className="text-[11px] text-slate-400 leading-relaxed">
+                Se os lançamentos de investimentos ou dividendos ficarem salvos apenas localmente com aviso de <code className="text-amber-300 font-mono">Sem Acesso</code> ou erro <code className="text-amber-300 font-mono">42501</code> (RLS violation), execute este script no <strong className="text-slate-200">Supabase SQL Editor</strong> para liberar as permissões de gravação.
+              </p>
             </div>
 
             {/* Cache Controls & Repair Panel */}

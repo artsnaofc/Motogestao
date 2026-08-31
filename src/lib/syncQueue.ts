@@ -115,22 +115,14 @@ class SyncQueueManager {
       let error: any = null;
 
       if (task.action === 'insert') {
-        const rawPayload = {
+        const payloadToInsert = {
           id: task.targetId,
           ...(task.payload || {})
         };
 
-        // Filter out undefined values to avoid PostgREST / JSON schema validation issues
-        const payloadToInsert: Record<string, any> = {};
-        for (const [k, v] of Object.entries(rawPayload)) {
-          if (v !== undefined) {
-            payloadToInsert[k] = v;
-          }
-        }
-
         const { error: insertErr } = await supabase
           .from(task.table)
-          .upsert(payloadToInsert);
+          .insert(payloadToInsert);
         error = insertErr;
 
         // Auto fallback 1: If column does not exist in schema (e.g. newer columns before migration)
@@ -138,31 +130,24 @@ class SyncQueueManager {
           console.warn(`[SyncQueue] Tentando payload simplificado para ${task.table}:${task.targetId}`);
           const coreKeys = [
             'id', 'user_id', 'reserve_id', 'type', 'amount', 'date', 'description', 
-            'category', 'operation', 'ticker', 'price', 'quantity', 'costs', 
-            'created_at', 'status', 'saldo_inicial', 'cnpj', 'transaction_id', 
-            'asset_type', 'unit_amount', 'notes', 'data_com', 'payment_date'
+            'category', 'operation', 'ticker', 'price', 'quantity', 'costs', 'cnpj', 
+            'transaction_id', 'linked_investment_id', 'asset_type', 'unit_amount', 
+            'status', 'data_com', 'data_ex', 'created_at', 'saldo_inicial', 'color', 
+            'payment_status', 'payment_date', 'due_date'
           ];
           const simplified: Record<string, any> = {};
           for (const k of coreKeys) {
             if (payloadToInsert[k] !== undefined) simplified[k] = payloadToInsert[k];
           }
-          const { error: fallbackErr } = await supabase.from(task.table).upsert(simplified);
+          const { error: fallbackErr } = await supabase.from(task.table).insert(simplified);
           if (!fallbackErr) {
             error = null;
           }
         }
       } else if (task.action === 'update') {
-        const rawUpdate = task.payload || {};
-        const cleanUpdate: Record<string, any> = {};
-        for (const [k, v] of Object.entries(rawUpdate)) {
-          if (v !== undefined) {
-            cleanUpdate[k] = v;
-          }
-        }
-
         const { error: updateErr } = await supabase
           .from(task.table)
-          .update(cleanUpdate)
+          .update(task.payload)
           .eq('id', task.targetId);
         error = updateErr;
       } else if (task.action === 'delete') {
@@ -174,9 +159,14 @@ class SyncQueueManager {
       }
 
       if (error) {
-        console.error(`[SyncQueue] Falha na sincronização do item ${task.id}:`, error);
+        const isRlsError = error.code === '42501' || error.message?.includes('row-level security');
+        if (isRlsError) {
+          console.error(`[SyncQueue] [RLS VIOLATION] A tabela '${task.table}' bloqueou a operação '${task.action}' via Row Level Security (RLS). Execute as políticas de liberação no Supabase SQL Editor:`, error);
+        } else {
+          console.error(`[SyncQueue] Falha na sincronização do item ${task.id}:`, error);
+        }
         
-        // Critical database validation failures (duplicate key, constraint violation, format error)
+        // Critical database validation failures (duplicate key, constraint violation, format error, or RLS permission error after retries)
         const isDatabaseConstraint = error.code && ['23505', '42P01', '22P02', 'P0001'].includes(error.code);
         
         if (isDatabaseConstraint || task.attempts >= 5) {

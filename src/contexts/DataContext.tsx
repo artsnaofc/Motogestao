@@ -439,11 +439,6 @@ export function DataProvider({ children }: { children: ReactNode }) {
             const supaIds = new Set(itSupadata.map(item => item.id));
             const localOnly = localIts.filter((item: any) => item && item.id && !supaIds.has(item.id));
             mergedIts = [...itSupadata, ...localOnly];
-            if (localOnly.length > 0) {
-              localOnly.forEach(item => {
-                syncQueueManager.enqueue('investment_transactions', 'insert', item.id, item);
-              });
-            }
           }
           setInvestmentTransactions(mergedIts);
           cacheManager.set(`investment_transactions_${userId}`, mergedIts, undefined, 'investments');
@@ -472,11 +467,6 @@ export function DataProvider({ children }: { children: ReactNode }) {
             const supaIds = new Set(divData.map(item => item.id));
             const localOnly = localDivs.filter((item: any) => item && item.id && !supaIds.has(item.id));
             mergedDivs = [...divData, ...localOnly];
-            if (localOnly.length > 0) {
-              localOnly.forEach(item => {
-                syncQueueManager.enqueue('dividends', 'insert', item.id, item);
-              });
-            }
           }
           setDividends(mergedDivs);
           cacheManager.set(`dividends_${userId}`, mergedDivs, undefined, 'investments');
