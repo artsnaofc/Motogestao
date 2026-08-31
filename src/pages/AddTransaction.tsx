@@ -4,6 +4,13 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { CurrencyInput } from '../components/CurrencyInput';
 import { Button } from '@/components/ui/button';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { toast } from 'sonner';
 import { 
   Bike, 
@@ -63,11 +70,14 @@ import {
 } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useData } from '../contexts/DataContext';
-import { TransactionType } from '../types';
+import { TransactionType, PaymentStatus, RecurrenceFrequency } from '../types';
 import { FreightCalculatorModal } from '../components/FreightCalculatorModal';
-import { startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth, subMonths, isWithinInterval, parseISO } from 'date-fns';
+import { startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth, subMonths, isWithinInterval, parseISO, format } from 'date-fns';
 import { syncQueueManager } from '../lib/syncQueue';
 import { cacheManager } from '../lib/cacheManager';
+import { freightStorage } from '../lib/freightStorage';
+import { calculateNextOccurrence, getFrequencyLabel, generateUUID, parseLocalDate } from '../lib/recurrenceUtils';
+import { RefreshCw, CalendarClock, CalendarRange, CheckCircle2, AlertCircle } from 'lucide-react';
 
 export function AddTransaction() {
   const navigate = useNavigate();
@@ -76,9 +86,18 @@ export function AddTransaction() {
 
   const paramType = searchParams.get('type') as 'aporte' | 'utilizacao' | null;
   const paramReserveId = searchParams.get('reserve_id') || '';
+  const paramTab = searchParams.get('tab');
   const paramAmountRaw = searchParams.get('amount') || '';
   const parsedAmount = Number(paramAmountRaw);
   const paramAmount = (!isNaN(parsedAmount) && paramAmountRaw !== '') ? String(Number(parsedAmount.toFixed(2))) : '';
+
+  const paramOpExpensesRaw = searchParams.get('operational_expenses') || searchParams.get('toll') || searchParams.get('expenses') || '';
+  const parsedOpExpenses = Number(paramOpExpensesRaw);
+  const paramOpExpenses = (!isNaN(parsedOpExpenses) && paramOpExpensesRaw !== '') ? String(Number(parsedOpExpenses.toFixed(2))) : '';
+  const paramDesc = searchParams.get('description') || '';
+  const paramDate = searchParams.get('date') || '';
+  const paramQuoteId = searchParams.get('quote_id') || '';
+  const paramDistanceKm = searchParams.get('distance_km') || '';
 
   const { transactions, setTransactions, settings, refreshData, globalPeriod, reserves, addReserveTransaction, hideValues } = useData();
 
@@ -92,19 +111,19 @@ export function AddTransaction() {
     maintenanceRatePerKm = Number(maintenanceReserve.regra_valor);
   }
   const [activeTab, setActiveTab] = useState<'pizzaria' | 'frete' | 'despesa' | 'avulso' | 'reserva'>(
-    paramType ? 'reserva' : 'pizzaria'
+    paramType ? 'reserva' : (paramTab === 'frete' ? 'frete' : 'pizzaria')
   );
   
-  const expenseCategories = settings?.expense_categories || ['Combustível', 'Manutenção', 'Alimentação', 'Plano de Internet', 'Equipamento', 'Outras Despesas', 'Outros'];
+  const expenseCategories = settings?.expense_categories || ['Combustível', 'Manutenção', 'Alimentação', 'Plano de Internet', 'Equipamento', 'Trabalho', 'Gastos Operacionais', 'Outras Despesas', 'Outros'];
   const incomeCategoriesRaw = settings?.income_categories || ['iFood', 'Uber', '99Moto', 'Particular', 'Gorjeta', 'Frete do Dia', 'Pizzaria', 'Outros'];
   const incomeCategories = incomeCategoriesRaw.filter(c => c !== 'Pizzaria' && c !== 'Frete do Dia');
 
   // Common Fields
-  const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+  const [date, setDate] = useState(paramDate || new Date().toISOString().split('T')[0]);
   const [startKm, setStartKm] = useState('');
   const [endKm, setEndKm] = useState('');
   const [description, setDescription] = useState(
-    paramType === 'aporte' && paramReserveId ? 'Aporte sugerido por lançamentos' : ''
+    paramType === 'aporte' && paramReserveId ? 'Aporte sugerido por lançamentos' : (paramDesc || '')
   );
   
   // Pizzaria Fields starting with 0 deliveries initialized (as requested)
@@ -114,7 +133,7 @@ export function AddTransaction() {
   // Frete/Despesa/Avulso Fields
   const [amount, setAmount] = useState(paramAmount || '');
   const [category, setCategory] = useState('');
-  const [tollExpense, setTollExpense] = useState('');
+  const [operationalExpenses, setOperationalExpenses] = useState(paramOpExpenses || '');
   const [showFreightCalc, setShowFreightCalc] = useState(false);
 
   const handleApplyFreight = ({
@@ -130,7 +149,7 @@ export function AddTransaction() {
   }) => {
     setAmount(String(freightPrice));
     if (calcToll > 0) {
-      setTollExpense(String(calcToll));
+      setOperationalExpenses(String(calcToll));
     }
     if (totalKm > 0 && startKm && !isNaN(Number(startKm))) {
       setEndKm(String(Number(startKm) + totalKm));
@@ -147,6 +166,14 @@ export function AddTransaction() {
   );
   const [reserveId, setReserveId] = useState(paramReserveId);
   const [rtCategory, setRtCategory] = useState('Combustível');
+
+  // Payment Status & Recurrence state
+  const [paymentStatus, setPaymentStatus] = useState<PaymentStatus>('paid');
+  const [paymentDate, setPaymentDate] = useState<string>('');
+  const [dueDate, setDueDate] = useState<string>('');
+  const [isRecurring, setIsRecurring] = useState<boolean>(false);
+  const [recurrenceFrequency, setRecurrenceFrequency] = useState<RecurrenceFrequency>('monthly');
+  const [recurrenceInstallments, setRecurrenceInstallments] = useState<string>('12');
 
   // Robust effect to pre-fill the initial kilometer from the last registered final kilometer
   useEffect(() => {
@@ -182,17 +209,32 @@ export function AddTransaction() {
       if (paramType === 'aporte' && paramReserveId) {
         setDescription('Aporte sugerido por lançamentos');
       }
+    } else if (paramTab === 'frete') {
+      setActiveTab('frete');
+      if (paramAmount) setAmount(paramAmount);
+      if (paramOpExpenses) setOperationalExpenses(paramOpExpenses);
+      if (paramDesc) setDescription(paramDesc);
+      if (paramDate) setDate(paramDate);
+      if (paramDistanceKm && !isNaN(Number(paramDistanceKm)) && startKm && !isNaN(Number(startKm))) {
+        setEndKm(String(Number(startKm) + Number(paramDistanceKm)));
+      }
     }
-  }, [paramType, paramReserveId, paramAmount]);
+  }, [paramType, paramReserveId, paramAmount, paramTab, paramOpExpenses, paramDesc, paramDate, paramDistanceKm, startKm]);
 
   const resetForm = () => {
-     setDeliveries('0');
-     setOutOfNeighborhood('0');
-     setAmount('');
-     setDescription('');
-     setStartKm('');
-     setEndKm('');
-     setTollExpense('');
+    setDeliveries('0');
+    setOutOfNeighborhood('0');
+    setAmount('');
+    setDescription('');
+    setStartKm('');
+    setEndKm('');
+    setOperationalExpenses('');
+    setPaymentStatus('paid');
+    setPaymentDate('');
+    setDueDate('');
+    setIsRecurring(false);
+    setRecurrenceFrequency('monthly');
+    setRecurrenceInstallments('12');
   };
 
 
@@ -328,19 +370,79 @@ export function AddTransaction() {
           finalRtCategory = selectedRes.default_use_category || selectedRes.name;
         }
 
-        // Record the reserve transaction
-        const rtId = await addReserveTransaction({
-          reserve_id: reserveId,
-          type: rtType,
-          amount: finalAmt,
-          date: date,
-          category: rtType === 'utilizacao' ? finalRtCategory : 'Aporte Extra',
-          description: description || (rtType === 'aporte' ? `Aporte para ${selectedRes?.name}` : `Uso da reserva ${selectedRes?.name}`),
-        });
+        const effectivePaymentStatus = paymentStatus;
+        const effectivePaymentDate = effectivePaymentStatus === 'paid' 
+          ? (paymentDate.trim() || date || new Date().toISOString().split('T')[0])
+          : null;
+        const effectiveDueDate = dueDate.trim() || date;
 
-        let targetHighlightId = rtId;
+        let targetHighlightId = '';
 
-        toast.success(rtType === 'aporte' ? 'Aporte efetuado com sucesso!' : 'Resgate efetuado com sucesso!');
+        if (isRecurring) {
+          const numInstallments = Math.max(2, Math.min(60, Number(recurrenceInstallments) || 12));
+          const recurrenceGroupId = generateUUID();
+
+          for (let i = 1; i <= numInstallments; i++) {
+            const isFirst = i === 1;
+            const installmentDate = isFirst ? date : calculateNextOccurrence(date, recurrenceFrequency, i - 1);
+            const installmentDueDate = isFirst ? effectiveDueDate : installmentDate;
+            const installmentPaymentStatus: PaymentStatus = isFirst ? effectivePaymentStatus : 'pending';
+            const installmentPaymentDate = isFirst && effectivePaymentStatus === 'paid' ? effectivePaymentDate : null;
+
+            const baseDesc = description || (rtType === 'aporte' ? `Aporte para ${selectedRes?.name}` : `Uso da reserva ${selectedRes?.name}`);
+            const installmentDesc = `${baseDesc} (${i}/${numInstallments})`;
+
+            const rtId = await addReserveTransaction({
+              reserve_id: reserveId,
+              type: rtType,
+              amount: finalAmt,
+              date: installmentDate,
+              category: rtType === 'utilizacao' ? finalRtCategory : 'Aporte Extra',
+              description: installmentDesc,
+              payment_status: installmentPaymentStatus,
+              payment_date: installmentPaymentDate,
+              due_date: installmentDueDate,
+              is_recurring: true,
+              recurrence_frequency: recurrenceFrequency,
+              recurrence_installments: numInstallments,
+              recurrence_group_id: recurrenceGroupId,
+              installment_number: i,
+              installment_total: numInstallments,
+            }, { silent: true });
+
+            if (isFirst) {
+              targetHighlightId = rtId;
+            }
+          }
+
+          toast.success(
+            rtType === 'aporte'
+              ? `Aporte recorrente programado (${numInstallments} parcelas)!`
+              : `Resgate recorrente programado (${numInstallments} parcelas)!`
+          );
+        } else {
+          // Single reserve transaction
+          const rtId = await addReserveTransaction({
+            reserve_id: reserveId,
+            type: rtType,
+            amount: finalAmt,
+            date: date,
+            category: rtType === 'utilizacao' ? finalRtCategory : 'Aporte Extra',
+            description: description || (rtType === 'aporte' ? `Aporte para ${selectedRes?.name}` : `Uso da reserva ${selectedRes?.name}`),
+            payment_status: effectivePaymentStatus,
+            payment_date: effectivePaymentDate,
+            due_date: effectiveDueDate,
+            is_recurring: false,
+          });
+
+          targetHighlightId = rtId;
+          toast.success(
+            rtType === 'aporte'
+              ? (effectivePaymentStatus === 'paid' ? 'Aporte efetuado com sucesso!' : 'Aporte agendado como pendente!')
+              : (effectivePaymentStatus === 'paid' ? 'Resgate efetuado com sucesso!' : 'Resgate agendado como pendente!')
+          );
+        }
+
         resetForm();
         await refreshData(true);
         navigate(`/history?highlight=${targetHighlightId}`);
@@ -373,12 +475,79 @@ export function AddTransaction() {
         return;
       }
 
-      // Generate a client-side UUID so that updates/deletes in queue can match
-      const newTxId = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-        const r = (Math.random() * 16) | 0;
-        const v = c === 'x' ? r : (r & 0x3) | 0x8;
-        return v.toString(16);
-      });
+      // Handle Recurring Expenses
+      if (activeTab === 'despesa' && isRecurring) {
+        const numInstallments = Math.max(2, Math.min(60, Number(recurrenceInstallments) || 12));
+        const recurrenceGroupId = generateUUID();
+        const effectiveDueDate = dueDate.trim() || date;
+        const effectivePaymentDate = paymentStatus === 'paid' 
+          ? (paymentDate.trim() || date || new Date().toISOString().split('T')[0])
+          : null;
+
+        const newTxBatch: any[] = [];
+        let firstTxId = '';
+
+        for (let i = 1; i <= numInstallments; i++) {
+          const isFirst = i === 1;
+          const instId = isFirst ? generateUUID() : generateUUID();
+          if (isFirst) firstTxId = instId;
+
+          const instDate = isFirst ? date : calculateNextOccurrence(date, recurrenceFrequency, i - 1);
+          const instDueDate = isFirst ? effectiveDueDate : instDate;
+          const instPaymentStatus: PaymentStatus = isFirst ? paymentStatus : 'pending';
+          const instPaymentDate = isFirst && paymentStatus === 'paid' ? effectivePaymentDate : null;
+
+          const baseDesc = description || finalCategory || 'Despesa';
+          const instDesc = `${baseDesc} (${i}/${numInstallments})`;
+
+          const payload = {
+            id: instId,
+            user_id: userData.user.id,
+            type: 'expense' as TransactionType,
+            amount: finalAmount,
+            date: instDate,
+            category: finalCategory,
+            description: instDesc,
+            payment_status: instPaymentStatus,
+            payment_date: instPaymentDate,
+            due_date: instDueDate,
+            is_recurring: true,
+            recurrence_frequency: recurrenceFrequency,
+            recurrence_installments: numInstallments,
+            recurrence_group_id: recurrenceGroupId,
+            installment_number: i,
+            installment_total: numInstallments,
+            start_km: null,
+            end_km: null,
+            deliveries: null,
+            out_of_neighborhood: null,
+            created_at: new Date().toISOString()
+          };
+
+          newTxBatch.push(payload);
+          syncQueueManager.enqueue('transactions', 'insert', instId, payload);
+        }
+
+        // Optimistic update for full batch
+        setTransactions(prev => {
+          const newState = [...newTxBatch, ...prev];
+          cacheManager.set(`transactions_${userData.user.id}`, newState, undefined, 'transactions');
+          return newState;
+        });
+
+        toast.success(`Despesa recorrente criada com sucesso (${numInstallments} parcelas)!`);
+        resetForm();
+        navigate(`/history?highlight=${firstTxId}`);
+        return;
+      }
+
+      // Single Transaction (Normal Flow)
+      const newTxId = generateUUID();
+      const effectivePaymentStatus: PaymentStatus = activeTab === 'despesa' ? paymentStatus : 'paid';
+      const effectivePaymentDate = effectivePaymentStatus === 'paid' 
+        ? (paymentDate.trim() || date || new Date().toISOString().split('T')[0])
+        : null;
+      const effectiveDueDate = (activeTab === 'despesa' && dueDate.trim()) ? dueDate.trim() : date;
 
       const newTxPayload = {
         id: newTxId,
@@ -392,6 +561,10 @@ export function AddTransaction() {
         end_km: endKm ? Number(endKm) : null,
         deliveries: finalCategory === 'Pizzaria' && deliveries ? Number(deliveries) : null,
         out_of_neighborhood: finalCategory === 'Pizzaria' && outOfNeighborhood ? Number(outOfNeighborhood) : null,
+        payment_status: effectivePaymentStatus,
+        payment_date: effectivePaymentDate,
+        due_date: effectiveDueDate,
+        is_recurring: false,
         created_at: new Date().toISOString()
       };
 
@@ -405,35 +578,52 @@ export function AddTransaction() {
       // Enqueue the primary transaction insertion
       syncQueueManager.enqueue('transactions', 'insert', newTxId, newTxPayload);
 
-      // Handle optional toll expense (Pedágio) for freight
-      if (activeTab === 'frete' && tollExpense) {
-        const tollVal = Number(tollExpense);
-        if (!isNaN(tollVal) && tollVal > 0) {
-          const tollId = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-            const r = (Math.random() * 16) | 0;
-            const v = c === 'x' ? r : (r & 0x3) | 0x8;
-            return v.toString(16);
-          });
+      // Handle optional operational expenses for freight
+      if (activeTab === 'frete' && operationalExpenses) {
+        const opVal = Number(operationalExpenses);
+        if (!isNaN(opVal) && opVal > 0) {
+          const opId = generateUUID();
 
-          const tollPayload = {
-            id: tollId,
+          const opPayload = {
+            id: opId,
             user_id: userData.user.id,
             type: 'expense' as TransactionType,
-            amount: tollVal,
+            amount: opVal,
             date: date,
-            category: 'Pedágio',
-            description: description ? `[Pedágio] ${description}` : 'Pedágio (Viagem/Frete)',
+            category: 'Trabalho',
+            description: description ? `[Custos] ${description}` : 'Custos Adicionais (Frete)',
+            payment_status: 'paid' as PaymentStatus,
+            payment_date: date,
+            due_date: date,
             created_at: new Date().toISOString()
           };
 
           setTransactions(prev => {
-            const newState = [tollPayload, ...prev];
+            const newState = [opPayload, ...prev];
             cacheManager.set(`transactions_${userData.user.id}`, newState, undefined, 'transactions');
             return newState;
           });
 
-          // Enqueue toll insertion
-          syncQueueManager.enqueue('transactions', 'insert', tollId, tollPayload);
+          // Enqueue operational expenses insertion
+          syncQueueManager.enqueue('transactions', 'insert', opId, opPayload);
+        }
+      }
+
+      // If this transaction was generated from a freight quote, mark quote as completed
+      if (paramQuoteId) {
+        try {
+          const quotes = freightStorage.getQuotes(userData.user.id);
+          const found = quotes.find(q => q.id === paramQuoteId);
+          if (found) {
+            freightStorage.saveQuote({
+              ...found,
+              status: 'completed',
+              converted_to_transaction_id: newTxId,
+              converted_at: new Date().toISOString(),
+            }, userData.user.id);
+          }
+        } catch (e) {
+          console.warn('Erro ao atualizar status do orçamento após lançamento:', e);
         }
       }
 
@@ -680,7 +870,9 @@ export function AddTransaction() {
             {activeTab === 'frete' && (
               <div className="space-y-4">
                 <div className="space-y-2">
-                  <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground/90">Valor Líquido do Frete</label>
+                  <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground/90">
+                    Valor Total do Frete (Receita)
+                  </label>
                   <div className="relative">
                     <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-muted-foreground/75 font-bold text-sm">
                       R$
@@ -695,13 +887,16 @@ export function AddTransaction() {
                   </div>
                 </div>
 
-                <div className="space-y-2 p-4 bg-rose-500/[0.01] border border-rose-500/10 rounded-xl">
+                <div className="space-y-2 p-4 bg-amber-500/[0.03] border border-amber-500/20 rounded-xl">
                   <div className="flex items-center justify-between">
-                    <label className="text-[10px] font-extrabold uppercase tracking-wider text-rose-500/90 flex items-center gap-1.5">
-                      <CreditCard className="w-3.5 h-3.5" /> Gasto com Pedágio (Rio)
+                    <label className="text-[10px] font-extrabold uppercase tracking-wider text-amber-600 dark:text-amber-400 flex items-center gap-1.5 font-bold">
+                      <CreditCard className="w-3.5 h-3.5" /> Gastos Operacionais
                     </label>
                     <span className="text-[9px] text-muted-foreground bg-muted/65 px-1.5 py-0.5 rounded font-medium">Opcional</span>
                   </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    Soma dos adicionais e taxas extras do frete (pedágios, ajudante, paradas extras, escadas, urgência).
+                  </p>
                   <div className="relative">
                     <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-muted-foreground/75 font-bold text-sm">
                       R$
@@ -709,8 +904,8 @@ export function AddTransaction() {
                     <CurrencyInput
                       placeholder="0,00"
                       className="pl-9 h-11 rounded-xl font-bold border-border fill-background"
-                      value={tollExpense}
-                      onChange={setTollExpense}
+                      value={operationalExpenses}
+                      onChange={setOperationalExpenses}
                     />
                   </div>
                 </div>
@@ -771,6 +966,230 @@ export function AddTransaction() {
                   </div>
                 </div>
               </>
+            )}
+
+            {/* ==== PAYMENT STATUS & DUE DATE SECTION (FOR EXPENSES & RESERVES UTILIZACAO) ==== */}
+            {(activeTab === 'despesa' || (activeTab === 'reserva' && rtType === 'utilizacao')) && (
+              <div className="space-y-3 pt-2">
+                <hr className="border-border/60" />
+                <div className="p-4 bg-muted/20 border border-border/80 rounded-xl space-y-4">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground/90 flex items-center gap-1.5">
+                      <CalendarClock className="w-3.5 h-3.5 text-primary" /> Status do Pagamento
+                    </label>
+                    <span className="text-[10px] text-muted-foreground">
+                      {paymentStatus === 'paid' ? 'Liquidado no caixa' : 'Pendente de quitação'}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setPaymentStatus('paid')}
+                      className={`py-2.5 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                        paymentStatus === 'paid'
+                          ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-600 dark:text-emerald-400 shadow-xs'
+                          : 'bg-card border-border text-muted-foreground hover:bg-muted/40'
+                      }`}
+                    >
+                      <CheckCircle2 className="w-4 h-4" />
+                      {activeTab === 'reserva' ? 'Já Efetuado' : 'Já Pago'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPaymentStatus('pending')}
+                      className={`py-2.5 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                        paymentStatus === 'pending'
+                          ? 'bg-amber-500/15 border-amber-500/40 text-amber-600 dark:text-amber-400 shadow-xs'
+                          : 'bg-card border-border text-muted-foreground hover:bg-muted/40'
+                      }`}
+                    >
+                      <Clock className="w-4 h-4" />
+                      {activeTab === 'reserva' ? 'Agendado (Pendente)' : 'Pendente (A Pagar)'}
+                    </button>
+                  </div>
+
+                  {paymentStatus === 'paid' ? (
+                    <div className="space-y-1.5 animate-fade-in">
+                      <div className="flex justify-between items-center">
+                        <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground/90">
+                          Data do Pagamento
+                        </label>
+                        <span className="text-[9px] text-muted-foreground bg-muted/60 px-1.5 py-0.5 rounded">
+                          Vazio = Hoje
+                        </span>
+                      </div>
+                      <Input
+                        type="date"
+                        value={paymentDate}
+                        placeholder={date || new Date().toISOString().split('T')[0]}
+                        onChange={(e) => setPaymentDate(e.target.value)}
+                        className="h-10 rounded-xl border-border bg-card text-xs font-semibold"
+                      />
+                      <p className="text-[10px] text-muted-foreground/80 leading-relaxed">
+                        Caso deixe a data de pagamento vazia, o sistema considerará como pago na data informada ({date || 'hoje'}).
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-1.5 animate-fade-in">
+                      <label className="text-[10px] font-extrabold uppercase tracking-wider text-amber-600 dark:text-amber-400 flex items-center gap-1 font-bold">
+                        <AlertCircle className="w-3 h-3" /> Data de Vencimento
+                      </label>
+                      <Input
+                        type="date"
+                        value={dueDate || date}
+                        onChange={(e) => setDueDate(e.target.value)}
+                        className="h-10 rounded-xl border-amber-500/30 bg-card text-xs font-semibold focus:ring-amber-500"
+                        required
+                      />
+                      <p className="text-[10px] text-amber-600/90 dark:text-amber-400/90 leading-relaxed">
+                        Esta despesa ficará visível na seção <strong>"A Pagar / Pendentes"</strong> do Extrato até você liquidá-la.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* ==== RECURRENCE & INSTALLMENTS SECTION ==== */}
+            {(activeTab === 'despesa' || (activeTab === 'reserva' && rtType === 'utilizacao')) && (
+              <div className="space-y-3 pt-1">
+                <div className="p-4 bg-primary/[0.03] border border-primary/20 rounded-xl space-y-4">
+                  <div className="flex items-center justify-between cursor-pointer" onClick={() => setIsRecurring(!isRecurring)}>
+                    <div className="flex items-center gap-2">
+                      <div className={`p-1.5 rounded-lg transition-colors ${isRecurring ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}`}>
+                        <RefreshCw className={`w-4 h-4 ${isRecurring ? 'animate-spin-slow' : ''}`} />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-extrabold text-foreground">
+                          {activeTab === 'reserva' ? 'Agendar Recorrência de Reserva' : 'Repetir Lançamento / Recorrência'}
+                        </h4>
+                        <p className="text-[10px] text-muted-foreground">
+                          {activeTab === 'reserva'
+                            ? 'Programe aportes ou utilizações periódicas automáticas'
+                            : 'Gera parcelas mensais, semanais ou anuais com vencimentos automáticos'}
+                        </p>
+                      </div>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={isRecurring}
+                      onChange={(e) => setIsRecurring(e.target.checked)}
+                      className="h-4 w-4 rounded border-border text-primary focus:ring-primary cursor-pointer"
+                    />
+                  </div>
+
+                  {isRecurring && (
+                    <div className="space-y-4 pt-2 border-t border-primary/10 animate-fade-in">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground/90">
+                            Frequência
+                          </label>
+                          <Select
+                            value={recurrenceFrequency}
+                            onValueChange={(val: RecurrenceFrequency) => setRecurrenceFrequency(val)}
+                          >
+                            <SelectTrigger className="h-10 rounded-xl border-border bg-card text-xs font-semibold">
+                              <SelectValue placeholder="Selecione a frequência" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="daily">Diário</SelectItem>
+                              <SelectItem value="weekly">Semanal</SelectItem>
+                              <SelectItem value="biweekly">Quinzenal (14 dias)</SelectItem>
+                              <SelectItem value="monthly">Mensal</SelectItem>
+                              <SelectItem value="bimonthly">Bimestral (2 meses)</SelectItem>
+                              <SelectItem value="quarterly">Trimestral (3 meses)</SelectItem>
+                              <SelectItem value="semiannual">Semestral (6 meses)</SelectItem>
+                              <SelectItem value="yearly">Anual</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground/90">
+                            Qtd. Parcelas / Repetições
+                          </label>
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => setRecurrenceInstallments(String(Math.max(2, (Number(recurrenceInstallments) || 12) - 1)))}
+                              className="h-10 w-10 shrink-0 rounded-xl bg-card border border-border flex items-center justify-center font-black text-sm hover:bg-muted cursor-pointer"
+                            >
+                              -
+                            </button>
+                            <Input
+                              type="number"
+                              min="2"
+                              max="60"
+                              value={recurrenceInstallments}
+                              onChange={(e) => setRecurrenceInstallments(e.target.value)}
+                              className="h-10 rounded-xl font-black text-center border-border bg-card text-xs"
+                              placeholder="12"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setRecurrenceInstallments(String(Math.min(60, (Number(recurrenceInstallments) || 12) + 1)))}
+                              className="h-10 w-10 shrink-0 rounded-xl bg-primary text-primary-foreground flex items-center justify-center font-black text-sm hover:bg-primary/90 cursor-pointer"
+                            >
+                              +
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Quick Presets for Installments */}
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-[9px] font-bold text-muted-foreground mr-1">Atalhos:</span>
+                        {['2', '3', '6', '12', '24', '36'].map((preset) => (
+                          <button
+                            key={preset}
+                            type="button"
+                            onClick={() => setRecurrenceInstallments(preset)}
+                            className={`px-2 py-0.5 rounded-lg text-[10px] font-bold transition-colors cursor-pointer border ${
+                              recurrenceInstallments === preset
+                                ? 'bg-primary text-primary-foreground border-primary'
+                                : 'bg-card border-border text-muted-foreground hover:bg-muted'
+                            }`}
+                          >
+                            {preset}x
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* Recurrence Summary & Preview */}
+                      {Number(recurrenceInstallments) >= 2 && (
+                        <div className="p-3 bg-card border border-border/80 rounded-xl space-y-2 text-xs">
+                          <div className="flex justify-between items-center font-bold text-foreground">
+                            <span className="flex items-center gap-1 text-[11px]">
+                              <CalendarRange className="w-3.5 h-3.5 text-primary" />
+                              Plano Gerado: {recurrenceInstallments}x de R$ {Number(amount) ? Number(amount).toFixed(2) : '0,00'}
+                            </span>
+                            <span className="text-primary font-mono text-[11px]">
+                              Total: R$ {((Number(amount) || 0) * (Number(recurrenceInstallments) || 0)).toFixed(2)}
+                            </span>
+                          </div>
+
+                          <div className="text-[10px] text-muted-foreground space-y-1 pt-1 border-t border-border/60">
+                            <p className="font-semibold text-foreground/80">Primeiras datas geradas:</p>
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-1">
+                              <span className="bg-muted/40 p-1.5 rounded text-[10px]">
+                                1ª: <strong>{date ? format(parseLocalDate(date), 'dd/MM/yyyy') : 'Hoje'}</strong> ({paymentStatus === 'paid' ? 'Pago' : 'Pendente'})
+                              </span>
+                              <span className="bg-muted/40 p-1.5 rounded text-[10px]">
+                                2ª: <strong>{format(parseLocalDate(calculateNextOccurrence(date || new Date().toISOString().split('T')[0], recurrenceFrequency, 1)), 'dd/MM/yyyy')}</strong> (Pendente)
+                              </span>
+                              <span className="bg-muted/40 p-1.5 rounded text-[10px]">
+                                3ª: <strong>{format(parseLocalDate(calculateNextOccurrence(date || new Date().toISOString().split('T')[0], recurrenceFrequency, 2)), 'dd/MM/yyyy')}</strong> (Pendente)
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
             )}
 
             {/* Odometer & Desc (Common Bottom) */}

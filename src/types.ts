@@ -1,5 +1,17 @@
 export type TransactionType = 'income' | 'expense';
 
+export type PaymentStatus = 'paid' | 'pending';
+
+export type RecurrenceFrequency =
+  | 'daily'
+  | 'weekly'
+  | 'biweekly'
+  | 'monthly'
+  | 'bimonthly'
+  | 'quarterly'
+  | 'semiannual'
+  | 'yearly';
+
 export interface Transaction {
   id: string;
   user_id: string;
@@ -18,6 +30,22 @@ export interface Transaction {
   isInvestmentTx?: boolean;
   isReserveAporte?: boolean;
   isDividendTx?: boolean;
+
+  // Status de Pagamento e Vencimento
+  payment_status?: PaymentStatus;
+  payment_date?: string | null;
+  due_date?: string | null;
+
+  // Sistema de Recorrência e Parcelamento
+  is_recurring?: boolean;
+  recurrence_frequency?: RecurrenceFrequency;
+  recurrence_installments?: number | null;
+  recurrence_group_id?: string | null;
+  installment_number?: number | null;
+  installment_total?: number | null;
+  installment_index?: number | null;
+  total_installments?: number | null;
+
   created_at?: string;
 }
 
@@ -99,6 +127,22 @@ export interface ReserveTransaction {
   transaction_id?: string;
   source?: 'manual' | 'mass_contribution' | 'automation' | 'investment';
   batch_id?: string;
+
+  // Status de Pagamento e Vencimento
+  payment_status?: PaymentStatus;
+  payment_date?: string | null;
+  due_date?: string | null;
+
+  // Sistema de Recorrência e Parcelamento
+  is_recurring?: boolean;
+  recurrence_frequency?: RecurrenceFrequency;
+  recurrence_installments?: number | null;
+  recurrence_group_id?: string | null;
+  installment_number?: number | null;
+  installment_total?: number | null;
+  installment_index?: number | null;
+  total_installments?: number | null;
+
   created_at?: string;
 }
 

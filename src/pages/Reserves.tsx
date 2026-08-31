@@ -16,8 +16,13 @@ import {
   formatCurrency, 
   calculateSuggestion, 
   getEffectiveAportesInPeriod,
-  parseLocalDate 
+  parseLocalDate,
+  generateUUID,
+  calculateNextOccurrence,
+  RecurrenceFrequency
 } from '../components/reserves/reserveUtils';
+import { cacheManager } from '../lib/cacheManager';
+import { syncQueueManager } from '../lib/syncQueue';
 import { ReservesHeader } from '../components/reserves/ReservesHeader';
 import { ReserveCard } from '../components/reserves/ReserveCard';
 import { MassAporteConsolidator } from '../components/reserves/MassAporteConsolidator';
@@ -44,6 +49,7 @@ export function Reserves() {
     addReserveTransaction,
     deleteReserveTransaction,
     updateReserveTransaction,
+    setReserveTransactions,
     refreshData,
     globalPeriod = 'month',
     setGlobalPeriod,
@@ -288,25 +294,144 @@ export function Reserves() {
     date: string;
     category: string;
     description: string;
+    payment_status?: 'paid' | 'pending';
+    payment_date?: string | null;
+    due_date?: string | null;
+    is_recurring?: boolean;
+    recurrence_frequency?: RecurrenceFrequency;
+    recurrence_installments?: number;
+    generate_future?: boolean;
   }) => {
     if (!selectedReserveForAction) return;
     const res = selectedReserveForAction;
     const cleanAmount = Math.round(data.amount * 100) / 100;
+    const isPaid = (data.payment_status || 'paid') === 'paid';
+    const isRecurring = Boolean(data.is_recurring);
+    const frequency = data.recurrence_frequency || 'monthly';
+    const totalInstallments = Math.max(2, Math.min(60, Number(data.recurrence_installments) || 12));
+    const shouldGenerateFuture = isRecurring && Boolean(data.generate_future);
 
-    await addReserveTransaction({
-      reserve_id: res.id,
-      type: 'utilizacao',
-      amount: cleanAmount,
-      date: data.date,
-      category: data.category,
-      description: data.description,
-      source: 'manual'
-    });
+    const { data: userData } = await supabase.auth.getUser();
+    const userId = userData?.user?.id;
 
-    const newBal = Math.max(0, Math.round(((res.saldo_atual || 0) - cleanAmount) * 100) / 100);
-    await updateReserve(res.id, { saldo_atual: newBal });
+    if (isRecurring && shouldGenerateFuture && userId) {
+      const recurrenceGroupId = generateUUID();
+      const firstTxId = generateUUID();
+      const firstDesc = `${data.description} (1/${totalInstallments})`;
 
-    toast.success(`Resgate de ${formatCurrency(cleanAmount)} registrado com sucesso!`);
+      const firstRt: ReserveTransaction = {
+        id: firstTxId,
+        user_id: userId,
+        reserve_id: res.id,
+        type: 'utilizacao',
+        amount: cleanAmount,
+        date: data.date,
+        category: data.category,
+        description: firstDesc,
+        payment_status: data.payment_status || 'paid',
+        payment_date: isPaid ? (data.payment_date || data.date) : null,
+        due_date: !isPaid ? (data.due_date || data.date) : null,
+        is_recurring: true,
+        recurrence_frequency: frequency,
+        recurrence_installments: totalInstallments,
+        recurrence_group_id: recurrenceGroupId,
+        installment_number: 1,
+        installment_total: totalInstallments,
+        installment_index: 1,
+        total_installments: totalInstallments,
+        created_at: new Date().toISOString(),
+      };
+
+      const futureTxs: ReserveTransaction[] = [];
+      for (let i = 2; i <= totalInstallments; i++) {
+        const futureDate = calculateNextOccurrence(data.date, frequency, i - 1);
+        const futureRt: ReserveTransaction = {
+          id: generateUUID(),
+          user_id: userId,
+          reserve_id: res.id,
+          type: 'utilizacao',
+          amount: cleanAmount,
+          date: futureDate,
+          category: data.category,
+          description: `${data.description} (${i}/${totalInstallments})`,
+          payment_status: 'pending',
+          payment_date: null,
+          due_date: futureDate,
+          is_recurring: true,
+          recurrence_frequency: frequency,
+          recurrence_installments: totalInstallments,
+          recurrence_group_id: recurrenceGroupId,
+          installment_number: i,
+          installment_total: totalInstallments,
+          installment_index: i,
+          total_installments: totalInstallments,
+          created_at: new Date().toISOString(),
+        };
+        futureTxs.push(futureRt);
+      }
+
+      const allNewRts = [firstRt, ...futureTxs];
+
+      // Optimistic update
+      setReserveTransactions(prev => {
+        const nextState = [...allNewRts, ...prev];
+        cacheManager.set(`reserve_transactions_${userId}`, nextState, undefined, 'reserves');
+        return nextState;
+      });
+
+      // Enqueue syncs
+      allNewRts.forEach(rt => {
+        syncQueueManager.enqueue('reserve_transactions', 'insert', rt.id, {
+          reserve_id: rt.reserve_id,
+          type: rt.type,
+          amount: rt.amount,
+          date: rt.date,
+          category: rt.category,
+          description: rt.description,
+          payment_status: rt.payment_status,
+          payment_date: rt.payment_date,
+          due_date: rt.due_date,
+          is_recurring: rt.is_recurring,
+          recurrence_frequency: rt.recurrence_frequency,
+          recurrence_installments: rt.recurrence_installments,
+          recurrence_group_id: rt.recurrence_group_id,
+          installment_number: rt.installment_number,
+          installment_total: rt.installment_total,
+          created_at: rt.created_at,
+        });
+      });
+
+      if (isPaid) {
+        const newBal = Math.max(0, Math.round(((res.saldo_atual || 0) - cleanAmount) * 100) / 100);
+        await updateReserve(res.id, { saldo_atual: newBal });
+      }
+
+      toast.success(`Resgate recorrente criado (${totalInstallments} parcelas programadas)!`);
+    } else {
+      await addReserveTransaction({
+        reserve_id: res.id,
+        type: 'utilizacao',
+        amount: cleanAmount,
+        date: data.date,
+        category: data.category,
+        description: data.description,
+        source: 'manual',
+        payment_status: data.payment_status || 'paid',
+        payment_date: isPaid ? (data.payment_date || data.date) : null,
+        due_date: !isPaid ? (data.due_date || data.date) : null,
+        is_recurring: isRecurring,
+        recurrence_frequency: isRecurring ? frequency : undefined,
+        recurrence_installments: isRecurring ? totalInstallments : undefined,
+      });
+
+      if (isPaid) {
+        const newBal = Math.max(0, Math.round(((res.saldo_atual || 0) - cleanAmount) * 100) / 100);
+        await updateReserve(res.id, { saldo_atual: newBal });
+      }
+
+      toast.success(`Resgate de ${formatCurrency(cleanAmount)} registrado com sucesso!`);
+    }
+
     if (refreshData) await refreshData(true);
   };
 

@@ -3,8 +3,8 @@ import { useSearchParams } from 'react-router-dom';
 import { cacheManager } from '../lib/cacheManager';
 import { motion } from 'motion/react';
 import { supabase } from '../lib/supabase';
-import { Transaction } from '../types';
-import { format, parseISO, startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth, subMonths, isWithinInterval, startOfYear, endOfYear, subYears, subDays } from 'date-fns';
+import { Transaction, ReserveTransaction } from '../types';
+import { format, parseISO, startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth, subMonths, isWithinInterval, startOfYear, endOfYear, subYears, subDays, addDays } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { 
@@ -57,11 +57,24 @@ import {
   X,
   Layers,
   Zap,
-  SlidersHorizontal
+  SlidersHorizontal,
+  CalendarClock,
+  AlertCircle,
+  Check,
+  RefreshCw
 } from 'lucide-react';
 import { ExecutiveReportModal } from '../components/ExecutiveReportModal';
 import { TransactionDetailView } from '../components/history/TransactionDetailView';
 import { isOperationalCategory, getActiveRuleForDate } from '../components/reserves/reserveUtils';
+import { 
+  getPaymentStatusMeta, 
+  formatRecurrenceFrequency, 
+  calculateNextOccurrence, 
+  generateUUID, 
+  getFrequencyLabel, 
+  RecurrenceFrequency 
+} from '../lib/recurrenceUtils';
+import { syncQueueManager } from '../lib/syncQueue';
 
 const HISTORY_FILTERS_KEY = 'motogestao_history_filters_v2';
 
@@ -405,7 +418,7 @@ function CollapsibleCashFlowBlock({
 }
 
 export function History() {
-  const { transactions, updateTransaction, deleteTransaction, settings, loading, refreshData, globalPeriod, setGlobalPeriod, customDateRange, setCustomDateRange, hideValues, reserves, reserveTransactions, investmentTransactions, deleteReserveTransaction, updateReserveTransaction, quotes, dividends, deleteInvestmentTransaction, deleteDividend } = useData();
+  const { transactions, setTransactions, updateTransaction, deleteTransaction, settings, loading, refreshData, globalPeriod, setGlobalPeriod, customDateRange, setCustomDateRange, hideValues, reserves, reserveTransactions, setReserveTransactions, investmentTransactions, deleteReserveTransaction, updateReserveTransaction, quotes, dividends, deleteInvestmentTransaction, deleteDividend } = useData();
 
   const [searchParams, setSearchParams] = useSearchParams();
   const highlightId = searchParams.get('highlight');
@@ -419,6 +432,7 @@ export function History() {
   const [filterType, setFilterType] = useState(savedFilters?.filterType || 'all');
   const [filterCategory, setFilterCategory] = useState(searchParams.get('category') || savedFilters?.filterCategory || 'all');
   const [filterStatus, setFilterStatus] = useState(savedFilters?.filterStatus || 'all');
+  const [filterPaymentStatus, setFilterPaymentStatus] = useState(savedFilters?.filterPaymentStatus || 'all');
   const [minAmount, setMinAmount] = useState(savedFilters?.minAmount || '');
   const [maxAmount, setMaxAmount] = useState(savedFilters?.maxAmount || '');
   const [sortBy, setSortBy] = useState(savedFilters?.sortBy || 'date-desc');
@@ -436,6 +450,44 @@ export function History() {
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [activeQuickChip, setActiveQuickChip] = useState(savedFilters?.activeQuickChip || 'all');
+
+  // Quick Settle Modal State
+  const [settleItem, setSettleItem] = useState<Transaction | null>(null);
+  const [settlePaymentDate, setSettlePaymentDate] = useState<string>(format(new Date(), 'yyyy-MM-dd'));
+  const [isSettling, setIsSettling] = useState(false);
+
+  const handleOpenSettle = (t: Transaction) => {
+    setSettleItem(t);
+    setSettlePaymentDate(format(new Date(), 'yyyy-MM-dd'));
+  };
+
+  const handleConfirmSettle = async () => {
+    if (!settleItem || isSettling) return;
+    setIsSettling(true);
+    try {
+      const isReserveTx = (settleItem as any).isReserveTx;
+      const finalPaymentDate = settlePaymentDate || format(new Date(), 'yyyy-MM-dd');
+      
+      if (isReserveTx) {
+        await updateReserveTransaction(settleItem.id, {
+          payment_status: 'paid',
+          payment_date: finalPaymentDate,
+        });
+      } else {
+        await updateTransaction(settleItem.id, {
+          payment_status: 'paid',
+          payment_date: finalPaymentDate,
+        });
+      }
+      toast.success('Despesa quitada com sucesso!');
+      setSettleItem(null);
+      await refreshData(true);
+    } catch (err) {
+      toast.error('Erro ao registrar quitação.');
+    } finally {
+      setIsSettling(false);
+    }
+  };
 
   // Sync category parameter from URL search params
   React.useEffect(() => {
@@ -456,6 +508,7 @@ export function History() {
       filterType,
       filterCategory,
       filterStatus,
+      filterPaymentStatus,
       minAmount,
       maxAmount,
       sortBy,
@@ -469,7 +522,7 @@ export function History() {
     };
     cacheManager.set(HISTORY_FILTERS_KEY, filterState, undefined, 'settings');
   }, [
-    searchTerm, filterType, filterCategory, filterStatus, minAmount, maxAmount,
+    searchTerm, filterType, filterCategory, filterStatus, filterPaymentStatus, minAmount, maxAmount,
     sortBy, showAdvanced, includeCash, includeReserves, includeInvestments,
     filterReserveId, filterTicker, activeQuickChip
   ]);
@@ -479,6 +532,7 @@ export function History() {
     if (filterType !== 'all') count++;
     if (filterCategory !== 'all') count++;
     if (filterStatus !== 'all') count++;
+    if (filterPaymentStatus !== 'all') count++;
     if (minAmount !== '') count++;
     if (maxAmount !== '') count++;
     if (sortBy !== 'date-desc') count++;
@@ -488,7 +542,7 @@ export function History() {
     if (filterReserveId !== 'all') count++;
     if (filterTicker !== 'all') count++;
     return count;
-  }, [filterType, filterCategory, filterStatus, minAmount, maxAmount, sortBy, includeCash, includeReserves, includeInvestments, filterReserveId, filterTicker]);
+  }, [filterType, filterCategory, filterStatus, filterPaymentStatus, minAmount, maxAmount, sortBy, includeCash, includeReserves, includeInvestments, filterReserveId, filterTicker]);
 
   // Edit Modal
   const [editItem, setEditItem] = useState<Transaction | null>(null);
@@ -498,6 +552,16 @@ export function History() {
   const [editDesc, setEditDesc] = useState('');
   const [editType, setEditType] = useState<'income' | 'expense'>('income');
   const [editDate, setEditDate] = useState('');
+  const [editPaymentStatus, setEditPaymentStatus] = useState<'paid' | 'pending'>('paid');
+  const [editPaymentDate, setEditPaymentDate] = useState('');
+  const [editDueDate, setEditDueDate] = useState('');
+
+  // Recurrence Edit States
+  const [editIsRecurring, setEditIsRecurring] = useState(false);
+  const [editRecurrenceFrequency, setEditRecurrenceFrequency] = useState<RecurrenceFrequency>('monthly');
+  const [editRecurrenceInstallments, setEditRecurrenceInstallments] = useState('12');
+  const [editGenerateFuture, setEditGenerateFuture] = useState(true);
+  const [editApplyToFuture, setEditApplyToFuture] = useState(true);
   
   const [editStartKm, setEditStartKm] = useState('');
   const [editEndKm, setEditEndKm] = useState('');
@@ -557,6 +621,17 @@ export function History() {
     const tAmount = (t as any).rawAmount !== undefined ? (t as any).rawAmount : t.amount;
     const tDescription = (t as any).rawDescription !== undefined ? (t as any).rawDescription : t.description;
 
+    setEditPaymentStatus(t.payment_status || 'paid');
+    setEditPaymentDate(t.payment_date || t.date);
+    setEditDueDate(t.due_date || t.date);
+
+    const isRecurring = Boolean(t.is_recurring);
+    setEditIsRecurring(isRecurring);
+    setEditRecurrenceFrequency((t.recurrence_frequency as RecurrenceFrequency) || 'monthly');
+    setEditRecurrenceInstallments(String(t.recurrence_installments || (t as any).total_installments || (t as any).installment_total || 12));
+    setEditGenerateFuture(!isRecurring);
+    setEditApplyToFuture(true);
+
     if (isRt) {
       setEditIsReserve(true);
       setEditItem(t);
@@ -566,6 +641,19 @@ export function History() {
       setEditDate(t.date);
       setEditDesc(tDescription || '');
       setEditReserveCategory((t as any).reserveCategory || '');
+
+      const matchRt = (reserveTransactions || []).find(r => r.id === t.id);
+      if (matchRt) {
+        setEditPaymentStatus(matchRt.payment_status || t.payment_status || 'paid');
+        setEditPaymentDate(matchRt.payment_date || t.payment_date || t.date);
+        setEditDueDate(matchRt.due_date || t.due_date || t.date);
+        const isRec = Boolean(matchRt.is_recurring ?? t.is_recurring);
+        setEditIsRecurring(isRec);
+        setEditRecurrenceFrequency((matchRt.recurrence_frequency || t.recurrence_frequency || 'monthly') as RecurrenceFrequency);
+        setEditRecurrenceInstallments(String(matchRt.recurrence_installments || t.recurrence_installments || (t as any).total_installments || (t as any).installment_total || 12));
+        setEditGenerateFuture(!isRec);
+        setEditApplyToFuture(true);
+      }
     } else if (isReserveUse) {
       const matchRt = (reserveTransactions || []).find(
         rt => rt.type === 'utilizacao' && 
@@ -578,6 +666,14 @@ export function History() {
         setEditItem({
           ...t,
           id: matchRt.id,
+          is_recurring: matchRt.is_recurring,
+          recurrence_frequency: matchRt.recurrence_frequency,
+          recurrence_installments: matchRt.recurrence_installments,
+          installment_number: matchRt.installment_number || (matchRt as any).installment_index,
+          installment_total: matchRt.installment_total || (matchRt as any).total_installments,
+          payment_status: matchRt.payment_status,
+          payment_date: matchRt.payment_date,
+          due_date: matchRt.due_date,
         });
         setEditReserveId(matchRt.reserve_id);
         setEditReserveTxType('utilizacao');
@@ -585,6 +681,16 @@ export function History() {
         setEditDate(matchRt.date);
         setEditDesc(matchRt.description ? matchRt.description.replace(/^\[Reserva\]\s*/, '') : '');
         setEditReserveCategory(matchRt.category || '');
+
+        setEditPaymentStatus(matchRt.payment_status || t.payment_status || 'paid');
+        setEditPaymentDate(matchRt.payment_date || t.payment_date || t.date);
+        setEditDueDate(matchRt.due_date || t.due_date || t.date);
+        const isRec = Boolean(matchRt.is_recurring ?? t.is_recurring);
+        setEditIsRecurring(isRec);
+        setEditRecurrenceFrequency((matchRt.recurrence_frequency || t.recurrence_frequency || 'monthly') as RecurrenceFrequency);
+        setEditRecurrenceInstallments(String(matchRt.recurrence_installments || t.recurrence_installments || (t as any).total_installments || (t as any).installment_total || 12));
+        setEditGenerateFuture(!isRec);
+        setEditApplyToFuture(true);
       } else {
         // Fallback to normal transaction edit if no matching reserve transaction was found
         setEditIsReserve(false);
@@ -643,16 +749,209 @@ export function History() {
           finalReserveCat = editReserveCategory !== 'none' && editReserveCategory ? editReserveCategory : '';
         }
 
-        const oldRt = (reserveTransactions || []).find(rt => rt.id === editItem.id);
+        const oldRt = (reserveTransactions || []).find(r => r.id === editItem.id);
+        const effectivePaymentStatus = editReserveTxType === 'utilizacao' ? editPaymentStatus : 'paid';
+        const effectivePaymentDate = editReserveTxType === 'utilizacao' && editPaymentStatus === 'paid'
+          ? (editPaymentDate || editDate)
+          : (editReserveTxType !== 'utilizacao' ? editDate : null);
+        const effectiveDueDate = editReserveTxType === 'utilizacao' && editPaymentStatus === 'pending'
+          ? (editDueDate || editDate)
+          : null;
 
-        await updateReserveTransaction(editItem.id, {
-          reserve_id: editReserveId,
-          type: editReserveTxType,
-          amount: finalAmt,
-          date: editDate,
-          category: editReserveTxType === 'utilizacao' ? (finalReserveCat || undefined) : undefined,
-          description: editDesc || defaultDesc,
-        });
+        if (editReserveTxType === 'utilizacao') {
+          if (editIsRecurring) {
+            const numInstallments = Math.max(2, Math.min(60, Number(editRecurrenceInstallments) || 12));
+
+            if (!oldRt?.is_recurring) {
+              // Convert single reserve use to recurring
+              const recurrenceGroupId = generateUUID();
+              const baseDesc = editDesc.trim() || defaultDesc;
+              const inst1Desc = baseDesc.includes('(1/') ? baseDesc : `${baseDesc} (1/${numInstallments})`;
+
+              await updateReserveTransaction(editItem.id, {
+                reserve_id: editReserveId,
+                type: 'utilizacao',
+                amount: finalAmt,
+                date: editDate,
+                category: finalReserveCat || undefined,
+                description: inst1Desc,
+                payment_status: effectivePaymentStatus,
+                payment_date: effectivePaymentDate,
+                due_date: effectiveDueDate,
+                is_recurring: true,
+                recurrence_frequency: editRecurrenceFrequency,
+                recurrence_installments: numInstallments,
+                recurrence_group_id: recurrenceGroupId,
+                installment_number: 1,
+                installment_total: numInstallments,
+                installment_index: 1,
+                total_installments: numInstallments,
+              });
+
+              if (editGenerateFuture && numInstallments > 1) {
+                const futureBatch: ReserveTransaction[] = [];
+                const { data: userData } = await supabase.auth.getUser();
+                const userId = userData?.user?.id || oldRt?.user_id || 'local';
+
+                for (let i = 2; i <= numInstallments; i++) {
+                  const instId = generateUUID();
+                  const instDate = calculateNextOccurrence(editDate, editRecurrenceFrequency, i - 1);
+                  const instDueDate = effectivePaymentStatus === 'pending' && editDueDate
+                    ? calculateNextOccurrence(editDueDate, editRecurrenceFrequency, i - 1)
+                    : instDate;
+                  const instDesc = `${baseDesc} (${i}/${numInstallments})`;
+
+                  const instPayload: ReserveTransaction = {
+                    id: instId,
+                    user_id: userId,
+                    reserve_id: editReserveId,
+                    type: 'utilizacao',
+                    amount: finalAmt,
+                    date: instDate,
+                    category: finalReserveCat || undefined,
+                    description: instDesc,
+                    payment_status: 'pending',
+                    payment_date: null,
+                    due_date: instDueDate,
+                    is_recurring: true,
+                    recurrence_frequency: editRecurrenceFrequency,
+                    recurrence_installments: numInstallments,
+                    recurrence_group_id: recurrenceGroupId,
+                    installment_number: i,
+                    installment_total: numInstallments,
+                    installment_index: i,
+                    total_installments: numInstallments,
+                    created_at: new Date().toISOString()
+                  };
+
+                  futureBatch.push(instPayload);
+                  syncQueueManager.enqueue('reserve_transactions', 'insert', instId, instPayload);
+                }
+
+                if (futureBatch.length > 0) {
+                  setReserveTransactions(prev => {
+                    const newState = [...futureBatch, ...prev];
+                    cacheManager.set(`reserve_transactions_${userId}`, newState, undefined, 'reserves');
+                    return newState;
+                  });
+                }
+                toast.success(`Resgate convertido em recorrente com ${numInstallments} parcelas geradas!`);
+              } else {
+                toast.success('Resgate configurado como recorrente.');
+              }
+            } else {
+              // Existing recurring series
+              const currentGroup = oldRt.recurrence_group_id;
+              const currentInstNumber = oldRt.installment_number || (oldRt as any).installment_index || 1;
+
+              await updateReserveTransaction(editItem.id, {
+                reserve_id: editReserveId,
+                type: 'utilizacao',
+                amount: finalAmt,
+                date: editDate,
+                category: finalReserveCat || undefined,
+                description: editDesc || defaultDesc,
+                payment_status: effectivePaymentStatus,
+                payment_date: effectivePaymentDate,
+                due_date: effectiveDueDate,
+                is_recurring: true,
+                recurrence_frequency: editRecurrenceFrequency,
+                recurrence_installments: numInstallments,
+                installment_number: currentInstNumber,
+                installment_total: numInstallments,
+                installment_index: currentInstNumber,
+                total_installments: numInstallments,
+              });
+
+              if (editApplyToFuture && currentGroup) {
+                const futureSeries = (reserveTransactions || []).filter(
+                  rt => rt.recurrence_group_id === currentGroup && 
+                        (rt.installment_number || (rt as any).installment_index || 0) > currentInstNumber
+                );
+
+                if (futureSeries.length > 0) {
+                  const updatedIds = new Set(futureSeries.map(r => r.id));
+                  setReserveTransactions(prev => {
+                    const updated = prev.map(rt => {
+                      if (!updatedIds.has(rt.id)) return rt;
+                      const instNum = rt.installment_number || (rt as any).installment_index || 1;
+                      const baseDesc = editDesc.replace(/\s*\(\d+\/\d+\)$/, '').trim() || defaultDesc;
+                      const instDesc = `${baseDesc} (${instNum}/${numInstallments})`;
+                      return {
+                        ...rt,
+                        amount: finalAmt,
+                        category: finalReserveCat || undefined,
+                        description: instDesc,
+                        recurrence_frequency: editRecurrenceFrequency,
+                        recurrence_installments: numInstallments,
+                        installment_total: numInstallments,
+                        total_installments: numInstallments,
+                      };
+                    });
+                    const uid = oldRt?.user_id || 'local';
+                    cacheManager.set(`reserve_transactions_${uid}`, updated, undefined, 'reserves');
+                    return updated;
+                  });
+
+                  futureSeries.forEach(rt => {
+                    const instNum = rt.installment_number || (rt as any).installment_index || 1;
+                    const baseDesc = editDesc.replace(/\s*\(\d+\/\d+\)$/, '').trim() || defaultDesc;
+                    const instDesc = `${baseDesc} (${instNum}/${numInstallments})`;
+                    syncQueueManager.enqueue('reserve_transactions', 'update', rt.id, {
+                      amount: finalAmt,
+                      category: finalReserveCat || undefined,
+                      description: instDesc,
+                      recurrence_frequency: editRecurrenceFrequency,
+                      recurrence_installments: numInstallments,
+                      installment_total: numInstallments,
+                    });
+                  });
+                  toast.success(`Alterações aplicadas a esta e a mais ${futureSeries.length} parcelas futuras!`);
+                } else {
+                  toast.success('Parcela atualizada com sucesso!');
+                }
+              } else {
+                toast.success('Parcela atualizada com sucesso!');
+              }
+            }
+          } else {
+            // Turning off recurrence
+            await updateReserveTransaction(editItem.id, {
+              reserve_id: editReserveId,
+              type: 'utilizacao',
+              amount: finalAmt,
+              date: editDate,
+              category: finalReserveCat || undefined,
+              description: editDesc || defaultDesc,
+              payment_status: effectivePaymentStatus,
+              payment_date: effectivePaymentDate,
+              due_date: effectiveDueDate,
+              is_recurring: false,
+              recurrence_frequency: undefined,
+              recurrence_installments: undefined,
+              recurrence_group_id: undefined,
+              installment_number: undefined,
+              installment_total: undefined,
+              installment_index: undefined,
+              total_installments: undefined,
+            });
+            toast.success('Resgate atualizado (recorrência desativada).');
+          }
+        } else {
+          // Aporte or rendimento
+          await updateReserveTransaction(editItem.id, {
+            reserve_id: editReserveId,
+            type: editReserveTxType,
+            amount: finalAmt,
+            date: editDate,
+            category: undefined,
+            description: editDesc || defaultDesc,
+            payment_status: 'paid',
+            payment_date: editDate,
+            due_date: null,
+          });
+          toast.success('Movimentação da reserva atualizada com sucesso!');
+        }
 
         setEditItem(null);
         await refreshData(true);
@@ -683,18 +982,188 @@ export function History() {
     }
 
     const oldTx = transactions.find(t => t.id === editItem.id);
+    const effectivePaymentStatus = editType === 'expense' ? editPaymentStatus : 'paid';
+    const effectivePaymentDate = editType === 'expense' && editPaymentStatus === 'paid' 
+      ? (editPaymentDate || editDate) 
+      : (editType === 'income' ? editDate : null);
+    const effectiveDueDate = editType === 'expense' && editPaymentStatus === 'pending' 
+      ? (editDueDate || editDate) 
+      : editDate;
 
-    await updateTransaction(editItem.id, {
+    // Recurrence logic handling
+    let recurrenceFields: Partial<Transaction> = {};
+
+    if (editType === 'expense') {
+      if (editIsRecurring) {
+        const numInstallments = Math.max(2, Math.min(60, Number(editRecurrenceInstallments) || 12));
+        
+        // Scenario A: Converting from single non-recurring to recurring
+        if (!oldTx?.is_recurring) {
+          const recurrenceGroupId = generateUUID();
+          const baseDesc = editDesc.trim() || editCategory || 'Despesa';
+          const inst1Desc = baseDesc.includes('(1/') ? baseDesc : `${baseDesc} (1/${numInstallments})`;
+
+          recurrenceFields = {
+            is_recurring: true,
+            recurrence_frequency: editRecurrenceFrequency,
+            recurrence_installments: numInstallments,
+            recurrence_group_id: recurrenceGroupId,
+            installment_number: 1,
+            installment_total: numInstallments,
+            installment_index: 1,
+            total_installments: numInstallments,
+            description: inst1Desc,
+          };
+
+          // Generate remaining (N - 1) future installments if requested
+          if (editGenerateFuture && numInstallments > 1) {
+            const futureBatch: Transaction[] = [];
+            for (let i = 2; i <= numInstallments; i++) {
+              const instId = generateUUID();
+              const instDate = calculateNextOccurrence(editDate, editRecurrenceFrequency, i - 1);
+              const instDueDate = editPaymentStatus === 'pending' && editDueDate
+                ? calculateNextOccurrence(editDueDate, editRecurrenceFrequency, i - 1)
+                : instDate;
+              const instDesc = `${baseDesc} (${i}/${numInstallments})`;
+
+              const instPayload: Transaction = {
+                id: instId,
+                user_id: oldTx?.user_id || 'local',
+                type: 'expense',
+                amount: finalAmount,
+                date: instDate,
+                category: editCategory,
+                description: instDesc,
+                payment_status: 'pending',
+                payment_date: null,
+                due_date: instDueDate,
+                is_recurring: true,
+                recurrence_frequency: editRecurrenceFrequency,
+                recurrence_installments: numInstallments,
+                recurrence_group_id: recurrenceGroupId,
+                installment_number: i,
+                installment_total: numInstallments,
+                installment_index: i,
+                total_installments: numInstallments,
+                start_km: null,
+                end_km: null,
+                deliveries: null,
+                out_of_neighborhood: null,
+                created_at: new Date().toISOString()
+              };
+
+              futureBatch.push(instPayload);
+              syncQueueManager.enqueue('transactions', 'insert', instId, instPayload);
+            }
+
+            if (futureBatch.length > 0) {
+              setTransactions(prev => {
+                const newState = [...futureBatch, ...prev];
+                cacheManager.set(`transactions_${oldTx?.user_id || 'local'}`, newState, undefined, 'transactions');
+                return newState;
+              });
+            }
+            toast.success(`Despesa convertida em recorrente com ${numInstallments} parcelas geradas!`);
+          } else {
+            toast.success('Despesa configurada como recorrente.');
+          }
+        } else {
+          // Scenario B: Updating an existing recurring series
+          const currentGroup = oldTx.recurrence_group_id;
+          const currentInstNumber = oldTx.installment_number || (oldTx as any).installment_index || 1;
+          
+          recurrenceFields = {
+            is_recurring: true,
+            recurrence_frequency: editRecurrenceFrequency,
+            recurrence_installments: numInstallments,
+            installment_number: currentInstNumber,
+            installment_total: numInstallments,
+            installment_index: currentInstNumber,
+            total_installments: numInstallments,
+          };
+
+          // Apply changes to subsequent installments in group if requested
+          if (editApplyToFuture && currentGroup) {
+            const subsequentTxs = transactions.filter(
+              t => t.recurrence_group_id === currentGroup && 
+                   t.id !== oldTx.id && 
+                   (t.installment_number || (t as any).installment_index || 0) > currentInstNumber
+            );
+
+            if (subsequentTxs.length > 0) {
+              const updatedSubsequent = subsequentTxs.map(subTx => {
+                const subInstNumber = subTx.installment_number || (subTx as any).installment_index || 2;
+                const cleanBaseDesc = (editDesc.trim() || editCategory || 'Despesa').replace(/\s*\(\d+\/\d+\)$/, '');
+                const subDesc = `${cleanBaseDesc} (${subInstNumber}/${numInstallments})`;
+
+                const updatedSub: Transaction = {
+                  ...subTx,
+                  amount: finalAmount,
+                  category: editCategory,
+                  description: subDesc,
+                  recurrence_frequency: editRecurrenceFrequency,
+                  recurrence_installments: numInstallments,
+                  installment_total: numInstallments,
+                  total_installments: numInstallments,
+                };
+
+                syncQueueManager.enqueue('transactions', 'update', subTx.id, {
+                  amount: finalAmount,
+                  category: editCategory,
+                  description: subDesc,
+                  recurrence_frequency: editRecurrenceFrequency,
+                  recurrence_installments: numInstallments,
+                  installment_total: numInstallments,
+                  total_installments: numInstallments,
+                });
+
+                return updatedSub;
+              });
+
+              setTransactions(prev => {
+                const mapUpdated = new Map(updatedSubsequent.map(u => [u.id, u]));
+                const newState = prev.map(item => mapUpdated.get(item.id) || item);
+                cacheManager.set(`transactions_${oldTx?.user_id || 'local'}`, newState, undefined, 'transactions');
+                return newState;
+              });
+
+              toast.success(`Atualizada esta e mais ${subsequentTxs.length} parcelas futuras do grupo!`);
+            }
+          }
+        }
+      } else if (oldTx?.is_recurring) {
+        // Scenario C: Turning recurrence off
+        recurrenceFields = {
+          is_recurring: false,
+          recurrence_frequency: null as any,
+          recurrence_installments: null as any,
+          recurrence_group_id: null as any,
+          installment_number: null as any,
+          installment_total: null as any,
+          installment_index: null as any,
+          total_installments: null as any,
+        };
+        toast.success('Recorrência desativada para este lançamento.');
+      }
+    }
+
+    const txUpdatePayload = {
       amount: finalAmount,
       category: editCategory,
-      description: editDesc,
+      description: recurrenceFields.description || editDesc,
       type: editType,
       date: editDate,
       start_km: editStartKm ? Number(editStartKm) : null,
       end_km: editEndKm ? Number(editEndKm) : null,
       deliveries: editCategory === 'Pizzaria' && editDeliveries !== '' ? Number(editDeliveries) : null,
       out_of_neighborhood: editCategory === 'Pizzaria' && editOutOfNeighborhood !== '' ? Number(editOutOfNeighborhood) : null,
-    });
+      payment_status: effectivePaymentStatus,
+      payment_date: effectivePaymentDate,
+      due_date: effectiveDueDate,
+      ...recurrenceFields,
+    };
+
+    await updateTransaction(editItem.id, txUpdatePayload);
 
     // Keep matching reserve transaction in sync!
     if (oldTx && (oldTx.is_reserve_use || oldTx.description?.startsWith('[Reserva]'))) {
@@ -709,10 +1178,16 @@ export function History() {
           date: editDate,
           category: editCategory,
           description: editDesc?.startsWith('[Reserva]') ? editDesc.replace(/^\[Reserva\]\s*/, '') : editDesc,
+          payment_status: effectivePaymentStatus,
+          payment_date: effectivePaymentDate,
+          due_date: effectiveDueDate,
         });
       }
     }
 
+    if (!editIsRecurring || oldTx?.is_recurring) {
+      toast.success('Lançamento atualizado com sucesso!');
+    }
     setEditItem(null);
     setSaving(false);
   };
@@ -893,6 +1368,17 @@ export function History() {
           created_at: rt.created_at,
           originalCategory: rt.category,
           linkedInvestmentId: rt.linked_investment_id,
+          payment_status: rt.payment_status || 'paid',
+          payment_date: rt.payment_date,
+          due_date: rt.due_date,
+          is_recurring: rt.is_recurring,
+          recurrence_frequency: rt.recurrence_frequency,
+          recurrence_installments: rt.recurrence_installments,
+          recurrence_group_id: rt.recurrence_group_id,
+          installment_number: rt.installment_number,
+          installment_total: rt.installment_total,
+          installment_index: rt.installment_index,
+          total_installments: rt.total_installments,
         } as unknown as Transaction;
       });
 
@@ -946,7 +1432,21 @@ export function History() {
   }, [transactions, reserveTransactions, reserves, investmentTransactions, dividends]);
 
   const allTransactionsAdjusted = useMemo(() => {
-    return adjustTransactionsForReserves(allTransactions);
+    const base = adjustTransactionsForReserves(allTransactions);
+    return base.map(t => {
+      // Data efetiva para o extrato, gráficos e agrupamentos diários:
+      // Se pendente, vai para a data de vencimento (due_date) ou date
+      // Se pago, vai para payment_date ou date
+      const effectiveDate = t.payment_status === 'pending'
+        ? (t.due_date || t.date)
+        : (t.payment_date || t.date);
+
+      return {
+        ...t,
+        date: effectiveDate,
+        originalDate: t.date,
+      };
+    });
   }, [allTransactions, settings]);
 
   const periodFiltered = useMemo(() => {
@@ -1012,6 +1512,7 @@ export function History() {
     let totalDividendosRecebidos = 0;
     
     transactions.forEach(t => {
+      if (t.payment_status === 'pending') return;
       const amount = Number(t.amount);
       // Skip internal transfers for patrimonio (Caixa + Reservas)
       if (t.category === 'Aporte Reserva' || t.category === 'Resgate Reserva' || t.category === 'Resgate de Reserva' || (t as any).isReserveTx || (t as any).isReserveAporte) {
@@ -1023,6 +1524,7 @@ export function History() {
 
     // Subtract investment buys and add sells from cash balance (outflows/inflows)
     (investmentTransactions || []).forEach(tx => {
+      if ((tx as any).payment_status === 'pending') return;
       if (tx.reserve_id) return; // Handled by reserveTransactions
       const amount = (Number(tx.price) * Number(tx.quantity)) + Number(tx.costs || 0);
       if (tx.operation === 'buy') {
@@ -1034,6 +1536,7 @@ export function History() {
 
     // Include 'rendimento' and spent 'utilizacao' from reserves into total liquid net
     (reserveTransactions || []).forEach(rt => {
+      if (rt.payment_status === 'pending') return;
       if (rt.type === 'rendimento') {
         patrimonio += Number(rt.amount);
       } else if (rt.type === 'utilizacao') {
@@ -1051,6 +1554,9 @@ export function History() {
     const opCats = settings?.operational_expense_categories || ['Combustível', 'Pedágio', 'Manutenção'];
 
     periodFiltered.forEach(t => {
+      if (t.payment_status === 'pending') {
+        return;
+      }
       const amount = Number(t.amount);
       const isInvestment = (t as any).isInvestmentTx;
       const isDividend = (t as any).isDividendTx;
@@ -1099,6 +1605,7 @@ export function History() {
           // Do not consider investment redemptions as expenses/costs that leave the patrimony
           return;
         }
+
         if (isAporte) {
           rawReserveAporte += amount;
         } else if (isReserveUse) {
@@ -1156,7 +1663,7 @@ export function History() {
   const patrimonioPorDia = useMemo(() => {
     if (!transactions) return { dailyAccumulated: [], initialBalance: 0 };
     const events = [
-      ...transactions.map(t => ({
+      ...transactions.filter(t => t.payment_status !== 'pending').map(t => ({
         date: t.date,
         amount: Number(t.amount),
         type: t.type,
@@ -1174,6 +1681,7 @@ export function History() {
         description: t.description
       })),
       ...(reserveTransactions || [])
+        .filter(rt => rt.payment_status !== 'pending')
         .map(rt => ({
           date: rt.date,
           amount: Number(rt.amount),
@@ -1191,7 +1699,7 @@ export function History() {
           linked_investment_id: rt.linked_investment_id,
           description: rt.description
         })),
-      ...(investmentTransactions || []).map(tx => {
+      ...(investmentTransactions || []).filter(tx => (tx as any).payment_status !== 'pending').map(tx => {
         const amount = (Number(tx.price) * Number(tx.quantity)) + Number(tx.costs || 0);
         return {
           date: tx.date,
@@ -1354,6 +1862,7 @@ export function History() {
     });
 
     (reserveTransactions || []).forEach(rt => {
+      if (rt.payment_status === 'pending') return;
       try {
         const rtDateStr = format(parseLocalDate(rt.date), 'yyyy-MM-dd');
         if (rtDateStr <= targetStr) {
@@ -1405,7 +1914,13 @@ export function History() {
   const filteredTransactions = useMemo(() => {
     const opCats = settings?.operational_expense_categories || ['Combustível', 'Pedágio', 'Manutenção'];
     
-    let result = periodFiltered.filter(t => {
+    const isPendingFilterActive = filterPaymentStatus === 'pending' || filterPaymentStatus === 'overdue';
+    const baseList = isPendingFilterActive ? allTransactionsAdjusted : periodFiltered;
+
+    const todayStr = format(new Date(), 'yyyy-MM-dd');
+    const in30DaysStr = format(addDays(new Date(), 30), 'yyyy-MM-dd');
+
+    let result = baseList.filter(t => {
       // Data Source Filters
       const isInvestment = (t as any).isInvestmentTx || (t as any).isDividendTx;
       const isReserve = (t as any).isReserveTx;
@@ -1472,10 +1987,25 @@ export function History() {
         if (filterStatus === 'scheduled' && !isFuture) return false;
       }
 
+      // 6. Payment Status Filter (Pending / Overdue / Paid)
+      if (filterPaymentStatus !== 'all') {
+        const isPending = t.payment_status === 'pending';
+        const isPaid = t.payment_status === 'paid' || !t.payment_status;
+        const dueDateStr = (t.due_date || t.date || '').split('T')[0];
+        const isOverdue = isPending && (dueDateStr < todayStr);
+
+        if (filterPaymentStatus === 'pending') {
+          if (!isPending) return false;
+          if (dueDateStr > in30DaysStr) return false;
+        }
+        if (filterPaymentStatus === 'overdue' && !isOverdue) return false;
+        if (filterPaymentStatus === 'paid' && !isPaid) return false;
+      }
+
       return true;
     });
 
-    // 6. Sorting
+    // 7. Sorting
     if (sortBy === 'date-desc') {
       result.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
     } else if (sortBy === 'date-asc') {
@@ -1491,7 +2021,38 @@ export function History() {
     }
 
     return result;
-  }, [periodFiltered, searchTerm, filterType, filterCategory, filterStatus, minAmount, maxAmount, sortBy, settings, includeCash, includeReserves, includeInvestments, filterReserveId, filterTicker]);
+  }, [periodFiltered, allTransactionsAdjusted, searchTerm, filterType, filterCategory, filterStatus, filterPaymentStatus, minAmount, maxAmount, sortBy, settings, includeCash, includeReserves, includeInvestments, filterReserveId, filterTicker]);
+
+  const pendingSummary = useMemo(() => {
+    const todayStr = format(new Date(), 'yyyy-MM-dd');
+    const in30DaysStr = format(addDays(new Date(), 30), 'yyyy-MM-dd');
+    let pendingCount = 0;
+    let totalPendingAmount = 0;
+    let overdueCount = 0;
+    let overdueAmount = 0;
+
+    allTransactionsAdjusted.forEach(t => {
+      if (t.payment_status === 'pending') {
+        const dueDateStr = (t.due_date || t.date || '').split('T')[0];
+        if (dueDateStr <= in30DaysStr) {
+          const amt = Number((t as any).rawAmount !== undefined ? (t as any).rawAmount : t.amount) || 0;
+          pendingCount++;
+          totalPendingAmount += amt;
+          if (dueDateStr < todayStr) {
+            overdueCount++;
+            overdueAmount += amt;
+          }
+        }
+      }
+    });
+
+    return {
+      pendingCount,
+      totalPendingAmount,
+      overdueCount,
+      overdueAmount,
+    };
+  }, [allTransactionsAdjusted]);
 
   const groupedTransactions = useMemo(() => {
     const groups: Record<string, { 
@@ -1533,37 +2094,40 @@ export function History() {
       );
 
       const isInvestmentTx = (t as any).isInvestmentTx;
+      const isPending = t.payment_status === 'pending';
 
-      if (t.type === 'income') {
-        if (!isInvestmentTx && t.category !== 'Resgate Reserva' && (!(t as any).isReserveTx || (t as any).reserveTxType === 'rendimento')) {
-          groups[dateKey].income += Number(t.amount);
-        }
-      } else {
-        const isAporte = t.category === 'Aporte Reserva' || (t as any).reserveTxType === 'aporte';
-        if (isInvestmentTx) {
-          // Do not count asset purchases as personal expenses
-        } else if (isInvestmentReserveUse) {
-          // Do not count as expense in daily summary metrics since it doesn't leave the net worth
-        } else if (isAporte) {
-          groups[dateKey].opExpense += Number(t.amount);
-          groups[dateKey].reserveAporte += Number(t.amount);
-        } else if (isReserveUse) {
-          const rawAmt = (t as any).rawAmount !== undefined ? Number((t as any).rawAmount) : Number(t.amount);
-          groups[dateKey].reserveExpense += rawAmt;
-          
-          const effectiveCat = (t as any).originalCategory || t.category;
-          if (isOperationalCategory(effectiveCat, opCats)) {
-            groups[dateKey].opExpense += Number(t.amount);
-            groups[dateKey].opExpensePuro += Number(t.amount);
-          } else {
-            groups[dateKey].perExpense += Number(t.amount);
+      if (!isPending) {
+        if (t.type === 'income') {
+          if (!isInvestmentTx && t.category !== 'Resgate Reserva' && (!(t as any).isReserveTx || (t as any).reserveTxType === 'rendimento')) {
+            groups[dateKey].income += Number(t.amount);
           }
         } else {
-          if (isOperationalCategory(t.category, opCats)) {
+          const isAporte = t.category === 'Aporte Reserva' || (t as any).reserveTxType === 'aporte';
+          if (isInvestmentTx) {
+            // Do not count asset purchases as personal expenses
+          } else if (isInvestmentReserveUse) {
+            // Do not count as expense in daily summary metrics since it doesn't leave the net worth
+          } else if (isAporte) {
             groups[dateKey].opExpense += Number(t.amount);
-            groups[dateKey].opExpensePuro += Number(t.amount);
+            groups[dateKey].reserveAporte += Number(t.amount);
+          } else if (isReserveUse) {
+            const rawAmt = (t as any).rawAmount !== undefined ? Number((t as any).rawAmount) : Number(t.amount);
+            groups[dateKey].reserveExpense += rawAmt;
+            
+            const effectiveCat = (t as any).originalCategory || t.category;
+            if (isOperationalCategory(effectiveCat, opCats)) {
+              groups[dateKey].opExpense += Number(t.amount);
+              groups[dateKey].opExpensePuro += Number(t.amount);
+            } else {
+              groups[dateKey].perExpense += Number(t.amount);
+            }
           } else {
-            groups[dateKey].perExpense += Number(t.amount);
+            if (isOperationalCategory(t.category, opCats)) {
+              groups[dateKey].opExpense += Number(t.amount);
+              groups[dateKey].opExpensePuro += Number(t.amount);
+            } else {
+              groups[dateKey].perExpense += Number(t.amount);
+            }
           }
         }
       }
@@ -1622,6 +2186,7 @@ export function History() {
   const { avgDailyEarnings, raceCount } = useMemo(() => {
     const incomeTxs = periodFiltered.filter(t => {
       if (t.type !== 'income') return false;
+      if (t.payment_status === 'pending') return false;
       const isReserveTx = (t as any).isReserveTx === true;
       const isInvestmentTx = (t as any).isInvestmentTx === true;
       const isResgateReserva = t.category === 'Resgate Reserva';
@@ -1640,6 +2205,7 @@ export function History() {
   const totalInvestmentEquity = useMemo(() => {
     const posMap: Record<string, number> = {};
     (investmentTransactions || []).forEach(tx => {
+      if ((tx as any).payment_status === 'pending') return;
       const q = Number(tx.quantity);
       if (tx.operation === 'buy') {
         posMap[tx.ticker] = (posMap[tx.ticker] || 0) + q;
@@ -1655,7 +2221,7 @@ export function History() {
         return acc + (price * quantity);
       }
       const lastTx = (investmentTransactions || [])
-        .filter(t => t.ticker === ticker)
+        .filter(t => t.ticker === ticker && (t as any).payment_status !== 'pending')
         .sort((a, b) => (b.date || '').localeCompare(a.date || ''))[0];
       const fallbackPrice = lastTx ? Number(lastTx.price) : 0;
       return acc + (fallbackPrice * quantity);
@@ -1688,6 +2254,7 @@ export function History() {
     let income = 0;
     let expense = 0;
     filteredTransactions.forEach(t => {
+      if (t.payment_status === 'pending') return;
       const amt = Number((t as any).rawAmount !== undefined ? (t as any).rawAmount : t.amount);
       if (t.type === 'income') {
         income += amt;
@@ -1703,6 +2270,7 @@ export function History() {
     let total = 0;
     filteredTransactions.forEach(t => {
       if (selectedIds.has(t.id)) {
+        if (t.payment_status === 'pending') return;
         const amt = Number((t as any).rawAmount !== undefined ? (t as any).rawAmount : t.amount);
         total += t.type === 'income' ? amt : -amt;
       }
@@ -1812,31 +2380,44 @@ export function History() {
     if (chipId === 'all') {
       setFilterType('all');
       setFilterCategory('all');
+      setFilterPaymentStatus('all');
       setIncludeCash(true);
       setIncludeReserves(true);
       setIncludeInvestments(true);
       setSearchTerm('');
+    } else if (chipId === 'pending_expenses') {
+      setFilterType('all');
+      setFilterCategory('all');
+      setFilterPaymentStatus('pending');
+      setIncludeCash(true);
+      setIncludeReserves(true);
+      setIncludeInvestments(false);
+      setSearchTerm('');
     } else if (chipId === 'income') {
       setFilterType('income');
       setFilterCategory('all');
+      setFilterPaymentStatus('all');
       setIncludeCash(true);
       setIncludeReserves(true);
       setIncludeInvestments(true);
     } else if (chipId === 'expense') {
       setFilterType('expense');
       setFilterCategory('all');
+      setFilterPaymentStatus('all');
       setIncludeCash(true);
       setIncludeReserves(true);
       setIncludeInvestments(true);
     } else if (chipId === 'combustivel') {
       setFilterCategory('Combustível');
       setFilterType('all');
+      setFilterPaymentStatus('all');
       setIncludeCash(true);
       setIncludeReserves(true);
       setIncludeInvestments(true);
     } else if (chipId === 'uber_ifood') {
       setFilterType('all');
       setFilterCategory('all');
+      setFilterPaymentStatus('all');
       setIncludeCash(true);
       setIncludeReserves(true);
       setIncludeInvestments(true);
@@ -1844,18 +2425,21 @@ export function History() {
     } else if (chipId === 'pizzaria') {
       setFilterCategory('Pizzaria');
       setFilterType('all');
+      setFilterPaymentStatus('all');
       setIncludeCash(true);
       setIncludeReserves(true);
       setIncludeInvestments(true);
     } else if (chipId === 'reservas') {
       setFilterType('all');
       setFilterCategory('all');
+      setFilterPaymentStatus('all');
       setIncludeCash(false);
       setIncludeReserves(true);
       setIncludeInvestments(false);
     } else if (chipId === 'investimentos') {
       setFilterType('all');
       setFilterCategory('all');
+      setFilterPaymentStatus('all');
       setIncludeCash(false);
       setIncludeReserves(false);
       setIncludeInvestments(true);
@@ -2083,6 +2667,35 @@ export function History() {
                   </span>
                 )}
 
+                {/* Status de Pagamento / Pendente */}
+                {t.payment_status === 'pending' && (() => {
+                  const statusMeta = getPaymentStatusMeta(t.payment_status, t.due_date, t.date);
+                  return (
+                    <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-md uppercase tracking-wider border flex items-center gap-1 ${statusMeta.bgColor} ${statusMeta.color} ${statusMeta.borderColor}`}>
+                      <span>{statusMeta.icon}</span>
+                      <span>{statusMeta.label}</span>
+                      {t.due_date && (
+                        <span className="font-mono text-[8.5px] opacity-90">
+                          ({format(parseLocalDate(t.due_date), 'dd/MM')})
+                        </span>
+                      )}
+                    </span>
+                  );
+                })()}
+
+                {/* Recorrência Badge */}
+                {t.is_recurring && (
+                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-md bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 border border-indigo-500/20 flex items-center gap-1">
+                    <span>🔄</span>
+                    <span>{formatRecurrenceFrequency(t.recurrence_frequency)}</span>
+                    {t.installment_index && t.total_installments && (
+                      <span className="font-mono">
+                        ({t.installment_index}/{t.total_installments})
+                      </span>
+                    )}
+                  </span>
+                )}
+
                 {t.start_km != null && t.end_km != null && (
                   <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-md bg-muted/60 text-muted-foreground border border-border/40">
                     {Number(t.end_km) - Number(t.start_km)} km
@@ -2104,8 +2717,23 @@ export function History() {
             </div>
           </div>
 
-          {/* Right Amount & Expand Toggle */}
-          <div className="flex items-center gap-3 shrink-0">
+          {/* Right Amount & Quick Settle & Expand Toggle */}
+          <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+            {t.payment_status === 'pending' && !selectMode && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleOpenSettle(t);
+                }}
+                className="px-2 py-1 text-[10px] font-black rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 transition-all flex items-center gap-1 cursor-pointer shadow-2xs"
+                title="Quitar / Marcar como Pago"
+              >
+                <Check className="w-3 h-3 stroke-[3]" />
+                <span className="hidden xs:inline">Quitar</span>
+              </button>
+            )}
+
             <div className="text-right">
               <span className={`text-xs sm:text-sm font-mono font-black block tracking-tight ${
                 isReserveTx 
@@ -2145,6 +2773,7 @@ export function History() {
               askDelete={askDelete}
               calculateFuel={calculateFuel}
               getTransactionReserveContributions={getTransactionReserveContributions}
+              onSettlePending={handleOpenSettle}
             />
           </div>
         )}
@@ -2519,6 +3148,11 @@ export function History() {
           <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none pb-1 pt-1 border-t border-border/30">
             {[
               { id: 'all', label: 'Tudo' },
+              { 
+                id: 'pending_expenses', 
+                label: `Pendentes ⏳${pendingSummary.pendingCount > 0 ? ` (${pendingSummary.pendingCount})` : ''}`,
+                highlight: pendingSummary.pendingCount > 0
+              },
               { id: 'income', label: 'Receitas 🟢' },
               { id: 'expense', label: 'Despesas 🔴' },
               { id: 'combustivel', label: 'Combustível ⛽' },
@@ -2533,13 +3167,15 @@ export function History() {
                   key={chip.id}
                   type="button"
                   onClick={() => handleQuickChipClick(chip.id)}
-                  className={`px-3 py-1.5 text-xs font-extrabold rounded-xl shrink-0 transition-all cursor-pointer border ${
+                  className={`px-3 py-1.5 text-xs font-extrabold rounded-xl shrink-0 transition-all cursor-pointer border flex items-center gap-1.5 ${
                     isActive
                       ? 'bg-primary text-primary-foreground border-primary shadow-xs'
-                      : 'bg-muted/30 text-muted-foreground border-border/60 hover:bg-muted hover:text-foreground'
+                      : (chip as any).highlight
+                        ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30 hover:bg-amber-500/20'
+                        : 'bg-muted/30 text-muted-foreground border-border/60 hover:bg-muted hover:text-foreground'
                   }`}
                 >
-                  {chip.label}
+                  <span>{chip.label}</span>
                 </button>
               );
             })}
@@ -2604,7 +3240,7 @@ export function History() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
                   {/* Tipo Geral */}
                   <div className="space-y-1.5">
                     <label className="text-[10px] font-extrabold uppercase tracking-widest text-muted-foreground">
@@ -2656,77 +3292,51 @@ export function History() {
                     </Select>
                   </div>
 
-                  {/* Specific Reserve Filter */}
-                  {includeReserves && (
-                    <div className="space-y-1.5 animate-in fade-in duration-200">
-                      <label className="text-[10px] font-extrabold uppercase tracking-widest text-muted-foreground">
-                        Filtrar por Reserva
-                      </label>
-                      <Select value={filterReserveId} onValueChange={setFilterReserveId}>
-                        <SelectTrigger className="w-full h-10 text-xs font-semibold border-border bg-card rounded-xl">
-                          <div className="flex items-center gap-2 truncate text-foreground">
-                            <PiggyBank className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                            <span>
-                              {filterReserveId === 'all' 
-                                ? 'Todas as Reservas' 
-                                : ((reserves || []).find(r => r.id === filterReserveId)?.name || 'Reserva')}
-                            </span>
-                          </div>
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="all">Todas as Reservas</SelectItem>
-                          {(reserves || []).map(r => (
-                            <SelectItem key={r.id} value={r.id}>{r.name}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  )}
-
-                  {/* Specific Ticker Filter */}
-                  {includeInvestments && (
-                    <div className="space-y-1.5 animate-in fade-in duration-200">
-                      <label className="text-[10px] font-extrabold uppercase tracking-widest text-muted-foreground">
-                        Filtrar por Ativo (Ticker)
-                      </label>
-                      <Select value={filterTicker} onValueChange={setFilterTicker}>
-                        <SelectTrigger className="w-full h-10 text-xs font-semibold border-border bg-card rounded-xl">
-                          <div className="flex items-center gap-2 truncate text-foreground">
-                            <TrendingUp className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                            <span>
-                              {filterTicker === 'all' ? 'Todos os Ativos' : filterTicker}
-                            </span>
-                          </div>
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="all">Todos os Ativos</SelectItem>
-                          {uniqueTickers.map(tk => (
-                            <SelectItem key={tk} value={tk}>{tk}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  )}
-
-                  {/* Status da Transação */}
+                  {/* Status de Pagamento / Quitação */}
                   <div className="space-y-1.5">
                     <label className="text-[10px] font-extrabold uppercase tracking-widest text-muted-foreground">
-                      Status da Transação
+                      Pagamento / Quitação
+                    </label>
+                    <Select value={filterPaymentStatus} onValueChange={setFilterPaymentStatus}>
+                      <SelectTrigger className="w-full h-10 text-xs font-semibold border-border bg-card rounded-xl">
+                        <div className="flex items-center gap-2 truncate text-foreground">
+                          <CalendarClock className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                          <span>
+                            {filterPaymentStatus === 'all' && 'Todos (Pagos e Pendentes)'}
+                            {filterPaymentStatus === 'pending' && '⏳ Somente Pendentes'}
+                            {filterPaymentStatus === 'overdue' && '⚠️ Vencidos / Em Atraso'}
+                            {filterPaymentStatus === 'paid' && '✅ Somente Pagos'}
+                          </span>
+                        </div>
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">Todos (Pagos e Pendentes)</SelectItem>
+                        <SelectItem value="pending">⏳ Somente Pendentes</SelectItem>
+                        <SelectItem value="overdue">⚠️ Vencidos / Em Atraso</SelectItem>
+                        <SelectItem value="paid">✅ Somente Pagos</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {/* Status da Transação (Data Futura) */}
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-extrabold uppercase tracking-widest text-muted-foreground">
+                      Data (Ativo vs Futuro)
                     </label>
                     <Select value={filterStatus} onValueChange={setFilterStatus}>
                       <SelectTrigger className="w-full h-10 text-xs font-semibold border-border bg-card rounded-xl">
                         <div className="flex items-center gap-2 truncate text-[#e0e0e0] dark:text-[#ffffff]">
                           <Clock className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                           <span>
-                            {filterStatus === 'all' && 'Todos os Status'}
-                            {filterStatus === 'confirmed' && 'Confirmados (Ativos)'}
-                            {filterStatus === 'scheduled' && 'Agendados/Futuros'}
+                            {filterStatus === 'all' && 'Todas as Datas'}
+                            {filterStatus === 'confirmed' && 'Hoje e Passados'}
+                            {filterStatus === 'scheduled' && 'Agendados (Futuros)'}
                           </span>
                         </div>
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="all">Todos os Status</SelectItem>
-                        <SelectItem value="confirmed">Confirmados (Ativos)</SelectItem>
+                        <SelectItem value="all">Todas as Datas</SelectItem>
+                        <SelectItem value="confirmed">Hoje e Passados</SelectItem>
                         <SelectItem value="scheduled">Agendados (Futuros)</SelectItem>
                       </SelectContent>
                     </Select>
@@ -2846,6 +3456,7 @@ export function History() {
                 setSearchTerm('');
                 setFilterType('all');
                 setFilterCategory('all');
+                setFilterPaymentStatus('all');
                 setFilterStatus('all');
                 setMinAmount('');
                 setMaxAmount('');
@@ -2860,6 +3471,69 @@ export function History() {
               className="h-8 text-xs font-bold text-rose-500 hover:bg-rose-500/10 rounded-xl px-2.5 cursor-pointer"
             >
               Limpar Filtros
+            </Button>
+          </div>
+        </motion.div>
+      )}
+
+      {/* Pending Expenses Summary Banner */}
+      {pendingSummary.pendingCount > 0 && filterPaymentStatus !== 'pending' && filterPaymentStatus !== 'overdue' && (
+        <motion.div
+          initial={{ opacity: 0, y: -4 }}
+          animate={{ opacity: 1, y: 0 }}
+          className={`p-3.5 sm:p-4 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs ${
+            pendingSummary.overdueCount > 0
+              ? 'bg-rose-500/10 border-rose-500/30 dark:bg-rose-950/20'
+              : 'bg-amber-500/10 border-amber-500/30 dark:bg-amber-950/20'
+          }`}
+        >
+          <div className="flex items-start sm:items-center gap-3">
+            <div className={`p-2.5 rounded-xl shrink-0 ${
+              pendingSummary.overdueCount > 0
+                ? 'bg-rose-500/20 text-rose-600 dark:text-rose-400'
+                : 'bg-amber-500/20 text-amber-600 dark:text-amber-400'
+            }`}>
+              {pendingSummary.overdueCount > 0 ? (
+                <AlertCircle className="w-5 h-5" />
+              ) : (
+                <CalendarClock className="w-5 h-5" />
+              )}
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs font-extrabold uppercase tracking-wider text-foreground">
+                  {pendingSummary.pendingCount} Despesa(s) Pendente(s) (Próximos 30 dias)
+                </span>
+                {pendingSummary.overdueCount > 0 && (
+                  <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-rose-500 text-white">
+                    {pendingSummary.overdueCount} vencida(s)!
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground font-medium mt-0.5">
+                Total a pagar: <strong className="font-mono text-foreground">{formatCurrency(pendingSummary.totalPendingAmount)}</strong>
+                {pendingSummary.overdueCount > 0 && (
+                  <span className="text-rose-600 dark:text-rose-400 font-semibold ml-1.5">
+                    (sendo {formatCurrency(pendingSummary.overdueAmount)} em atraso)
+                  </span>
+                )}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => handleQuickChipClick('pending_expenses')}
+              className={`h-8 px-3 text-xs font-extrabold rounded-xl shadow-xs cursor-pointer ${
+                pendingSummary.overdueCount > 0
+                  ? 'bg-rose-600 hover:bg-rose-700 text-white'
+                  : 'bg-amber-600 hover:bg-amber-700 text-white'
+              }`}
+            >
+              <Filter className="w-3.5 h-3.5 mr-1" />
+              Ver Pendentes
             </Button>
           </div>
         </motion.div>
@@ -3994,6 +4668,226 @@ export function History() {
                 />
               </div>
 
+              {/* Payment Status & Due Date Section for Reserve Utilização */}
+              {editReserveTxType === 'utilizacao' && (
+                <div className="space-y-3 pt-2 border-t border-border/60">
+                  <div className="p-3 bg-muted/20 border border-border/80 rounded-xl space-y-3">
+                    <div className="flex items-center justify-between">
+                      <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground/90 flex items-center gap-1.5">
+                        <CalendarClock className="w-3.5 h-3.5 text-primary" /> Status do Pagamento
+                      </label>
+                      <span className="text-[10px] text-muted-foreground">
+                        {editPaymentStatus === 'paid' ? 'Liquidado no caixa' : 'Pendente de quitação'}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setEditPaymentStatus('paid')}
+                        className={`py-2 px-3 rounded-lg border text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                          editPaymentStatus === 'paid'
+                            ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-600 dark:text-emerald-400 shadow-xs'
+                            : 'bg-card border-border text-muted-foreground hover:bg-muted/40'
+                        }`}
+                      >
+                        <CheckCircle2 className="w-3.5 h-3.5" /> Efetivado / Pago
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEditPaymentStatus('pending')}
+                        className={`py-2 px-3 rounded-lg border text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                          editPaymentStatus === 'pending'
+                            ? 'bg-amber-500/15 border-amber-500/40 text-amber-600 dark:text-amber-400 shadow-xs'
+                            : 'bg-card border-border text-muted-foreground hover:bg-muted/40'
+                        }`}
+                      >
+                        <Clock className="w-3.5 h-3.5" /> Pendente ⏳
+                      </button>
+                    </div>
+
+                    {editPaymentStatus === 'pending' ? (
+                      <div className="space-y-1.5 animate-in fade-in duration-150">
+                        <label className="text-[10px] font-extrabold uppercase tracking-wider text-amber-600 dark:text-amber-400">
+                          Data de Vencimento
+                        </label>
+                        <Input
+                          type="date"
+                          value={editDueDate || editDate}
+                          onChange={(e) => setEditDueDate(e.target.value)}
+                          className="h-9 rounded-lg border-amber-500/30 bg-card text-xs font-semibold focus:ring-amber-500"
+                          required
+                        />
+                        <p className="text-[9.5px] text-amber-600/90 dark:text-amber-400/90 leading-tight">
+                          Resgates pendentes aparecem na seção <strong>"A Pagar / Pendentes"</strong> até a quitação.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="space-y-1.5 animate-in fade-in duration-150">
+                        <label className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
+                          Data Efetiva de Pagamento
+                        </label>
+                        <Input
+                          type="date"
+                          value={editPaymentDate || editDate}
+                          onChange={(e) => setEditPaymentDate(e.target.value)}
+                          className="h-9 rounded-lg border-emerald-500/30 bg-card text-xs font-semibold focus:ring-emerald-500"
+                          required
+                        />
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Recurrence & Installments Section for Reserve Utilização */}
+              {editReserveTxType === 'utilizacao' && (
+                <div className="p-3.5 bg-primary/[0.03] border border-primary/20 rounded-xl space-y-3.5">
+                  <div 
+                    className="flex items-center justify-between cursor-pointer select-none"
+                    onClick={() => setEditIsRecurring(!editIsRecurring)}
+                  >
+                    <div className="flex items-center gap-2">
+                      <div className={`p-1.5 rounded-lg transition-colors ${editIsRecurring ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}`}>
+                        <RefreshCw className={`w-3.5 h-3.5 ${editIsRecurring ? 'animate-spin-slow' : ''}`} />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-extrabold text-foreground leading-tight">
+                          {editItem?.is_recurring ? 'Configurações de Recorrência' : 'Tornar Resgate Recorrente / Parcelado'}
+                        </h4>
+                        <p className="text-[9.5px] text-muted-foreground leading-tight">
+                          {editItem?.is_recurring 
+                            ? `Parcela atual: ${editItem.installment_number || 1} de ${editItem.installment_total || editItem.recurrence_installments || '?'}`
+                            : 'Gera parcelas periódicas de uso de reserva no extrato'}
+                        </p>
+                      </div>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={editIsRecurring}
+                      onChange={(e) => setEditIsRecurring(e.target.checked)}
+                      className="h-4 w-4 rounded border-border text-primary focus:ring-primary cursor-pointer"
+                    />
+                  </div>
+
+                  {editIsRecurring && (
+                    <div className="space-y-3.5 pt-2 border-t border-primary/10 animate-in fade-in duration-200">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground/90">
+                            Frequência
+                          </label>
+                          <Select
+                            value={editRecurrenceFrequency}
+                            onValueChange={(val: RecurrenceFrequency) => setEditRecurrenceFrequency(val)}
+                          >
+                            <SelectTrigger className="h-9 rounded-xl border-border bg-card text-xs font-semibold">
+                              <SelectValue placeholder="Selecione a frequência" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="daily">Diário</SelectItem>
+                              <SelectItem value="weekly">Semanal</SelectItem>
+                              <SelectItem value="biweekly">Quinzenal (14 dias)</SelectItem>
+                              <SelectItem value="monthly">Mensal</SelectItem>
+                              <SelectItem value="bimonthly">Bimestral (2 meses)</SelectItem>
+                              <SelectItem value="quarterly">Trimestral (3 meses)</SelectItem>
+                              <SelectItem value="semiannual">Semestral (6 meses)</SelectItem>
+                              <SelectItem value="yearly">Anual</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground/90">
+                            Qtd. Parcelas / Repetições
+                          </label>
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => setEditRecurrenceInstallments(String(Math.max(2, (Number(editRecurrenceInstallments) || 12) - 1)))}
+                              className="h-9 w-9 shrink-0 rounded-lg bg-card border border-border flex items-center justify-center font-black text-sm hover:bg-muted cursor-pointer"
+                            >
+                              -
+                            </button>
+                            <Input
+                              type="number"
+                              min="2"
+                              max="60"
+                              value={editRecurrenceInstallments}
+                              onChange={(e) => setEditRecurrenceInstallments(e.target.value)}
+                              className="h-9 rounded-lg font-black text-center border-border bg-card text-xs"
+                              placeholder="12"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setEditRecurrenceInstallments(String(Math.min(60, (Number(editRecurrenceInstallments) || 12) + 1)))}
+                              className="h-9 w-9 shrink-0 rounded-lg bg-primary text-primary-foreground flex items-center justify-center font-black text-sm hover:bg-primary/90 cursor-pointer"
+                            >
+                              +
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Quick Presets */}
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-[9px] font-bold text-muted-foreground mr-1">Atalhos:</span>
+                        {['2', '3', '6', '12', '24', '36'].map((preset) => (
+                          <button
+                            key={preset}
+                            type="button"
+                            onClick={() => setEditRecurrenceInstallments(preset)}
+                            className={`px-2 py-0.5 rounded-lg text-[10px] font-bold transition-colors cursor-pointer border ${
+                              editRecurrenceInstallments === preset
+                                ? 'bg-primary text-primary-foreground border-primary'
+                                : 'bg-card text-muted-foreground border-border hover:bg-muted'
+                            }`}
+                          >
+                            {preset}x
+                          </button>
+                        ))}
+                      </div>
+
+                      {!editItem?.is_recurring ? (
+                        <label className="flex items-start gap-2 p-2.5 bg-primary/5 rounded-lg border border-primary/15 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={editGenerateFuture}
+                            onChange={(e) => setEditGenerateFuture(e.target.checked)}
+                            className="h-4 w-4 mt-0.5 rounded border-border text-primary focus:ring-primary cursor-pointer"
+                          />
+                          <div className="space-y-0.5">
+                            <span className="text-xs font-bold text-foreground">
+                              Gerar as próximas parcelas automaticamente no extrato
+                            </span>
+                            <p className="text-[9.5px] text-muted-foreground leading-snug">
+                              Cria as {(Number(editRecurrenceInstallments) || 12) - 1} parcelas futuras com status "Pendente" e vencimentos programados por {getFrequencyLabel(editRecurrenceFrequency)}.
+                            </p>
+                          </div>
+                        </label>
+                      ) : (
+                        <label className="flex items-start gap-2 p-2.5 bg-primary/5 rounded-lg border border-primary/15 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={editApplyToFuture}
+                            onChange={(e) => setEditApplyToFuture(e.target.checked)}
+                            className="h-4 w-4 mt-0.5 rounded border-border text-primary focus:ring-primary cursor-pointer"
+                          />
+                          <div className="space-y-0.5">
+                            <span className="text-xs font-bold text-foreground">
+                              Aplicar valor e categoria às próximas parcelas deste grupo
+                            </span>
+                            <p className="text-[9.5px] text-muted-foreground leading-snug">
+                              Mantém todas as parcelas futuras sincronizadas com as novas configurações.
+                            </p>
+                          </div>
+                        </label>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
               <Button type="submit" className="w-full h-12 mt-4 font-bold rounded-xl" disabled={saving}>
                 {saving ? <Loader2 className="w-5 h-5 animate-spin mr-2" /> : null}
                 {saving ? 'Guardando alterações...' : 'Salvar Alterações'}
@@ -4137,11 +5031,229 @@ export function History() {
                 </div>
               )}
 
+              {/* Payment Status Fields for Expense */}
+              {editType === 'expense' && (
+                <div className="p-3.5 bg-muted/20 border border-border/70 rounded-xl space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                      <Clock className="w-3.5 h-3.5 text-primary" />
+                      <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">
+                        Status de Pagamento
+                      </label>
+                    </div>
+                    <div className="flex items-center gap-1 bg-muted/60 p-0.5 rounded-lg border border-border/60">
+                      <button
+                        type="button"
+                        onClick={() => setEditPaymentStatus('paid')}
+                        className={`px-2.5 py-1 text-[10px] font-extrabold rounded-md transition-all cursor-pointer ${
+                          editPaymentStatus === 'paid'
+                            ? 'bg-emerald-500 text-white shadow-xs'
+                            : 'text-muted-foreground hover:text-foreground'
+                        }`}
+                      >
+                        Pago ✅
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEditPaymentStatus('pending')}
+                        className={`px-2.5 py-1 text-[10px] font-extrabold rounded-md transition-all cursor-pointer ${
+                          editPaymentStatus === 'pending'
+                            ? 'bg-amber-500 text-white shadow-xs'
+                            : 'text-muted-foreground hover:text-foreground'
+                        }`}
+                      >
+                        Pendente ⏳
+                      </button>
+                    </div>
+                  </div>
+
+                  {editPaymentStatus === 'pending' ? (
+                    <div className="space-y-1.5 animate-in fade-in duration-150">
+                      <label className="text-[10px] font-extrabold uppercase tracking-wider text-amber-600 dark:text-amber-400">
+                        Data de Vencimento
+                      </label>
+                      <Input
+                        type="date"
+                        value={editDueDate || editDate}
+                        onChange={(e) => setEditDueDate(e.target.value)}
+                        className="h-9 rounded-lg border-amber-500/30 bg-card text-xs font-semibold focus:ring-amber-500"
+                        required
+                      />
+                      <p className="text-[9.5px] text-amber-600/90 dark:text-amber-400/90 leading-tight">
+                        Despesas pendentes aparecem na seção <strong>"A Pagar / Pendentes"</strong> até a quitação.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-1.5 animate-in fade-in duration-150">
+                      <label className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
+                        Data Efetiva de Pagamento
+                      </label>
+                      <Input
+                        type="date"
+                        value={editPaymentDate || editDate}
+                        onChange={(e) => setEditPaymentDate(e.target.value)}
+                        className="h-9 rounded-lg border-emerald-500/30 bg-card text-xs font-semibold focus:ring-emerald-500"
+                        required
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Recurrence & Installments Section for Expense */}
+              {editType === 'expense' && (
+                <div className="p-3.5 bg-primary/[0.03] border border-primary/20 rounded-xl space-y-3.5">
+                  <div 
+                    className="flex items-center justify-between cursor-pointer select-none"
+                    onClick={() => setEditIsRecurring(!editIsRecurring)}
+                  >
+                    <div className="flex items-center gap-2">
+                      <div className={`p-1.5 rounded-lg transition-colors ${editIsRecurring ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}`}>
+                        <RefreshCw className={`w-3.5 h-3.5 ${editIsRecurring ? 'animate-spin-slow' : ''}`} />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-extrabold text-foreground leading-tight">
+                          {editItem?.is_recurring ? 'Configurações de Recorrência' : 'Tornar Despesa Recorrente'}
+                        </h4>
+                        <p className="text-[9.5px] text-muted-foreground leading-tight">
+                          {editItem?.is_recurring 
+                            ? `Parcela atual: ${editItem.installment_number || 1} de ${editItem.installment_total || editItem.recurrence_installments || '?'}`
+                            : 'Gera parcelas periódicas (mensal, semanal, etc.) no extrato'}
+                        </p>
+                      </div>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={editIsRecurring}
+                      onChange={(e) => setEditIsRecurring(e.target.checked)}
+                      className="h-4 w-4 rounded border-border text-primary focus:ring-primary cursor-pointer"
+                    />
+                  </div>
+
+                  {editIsRecurring && (
+                    <div className="space-y-3.5 pt-2 border-t border-primary/10 animate-in fade-in duration-200">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground/90">
+                            Frequência
+                          </label>
+                          <Select
+                            value={editRecurrenceFrequency}
+                            onValueChange={(val: RecurrenceFrequency) => setEditRecurrenceFrequency(val)}
+                          >
+                            <SelectTrigger className="h-9 rounded-xl border-border bg-card text-xs font-semibold">
+                              <SelectValue placeholder="Selecione a frequência" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="daily">Diário</SelectItem>
+                              <SelectItem value="weekly">Semanal</SelectItem>
+                              <SelectItem value="biweekly">Quinzenal (14 dias)</SelectItem>
+                              <SelectItem value="monthly">Mensal</SelectItem>
+                              <SelectItem value="bimonthly">Bimestral (2 meses)</SelectItem>
+                              <SelectItem value="quarterly">Trimestral (3 meses)</SelectItem>
+                              <SelectItem value="semiannual">Semestral (6 meses)</SelectItem>
+                              <SelectItem value="yearly">Anual</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground/90">
+                            Qtd. Parcelas / Repetições
+                          </label>
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => setEditRecurrenceInstallments(String(Math.max(2, (Number(editRecurrenceInstallments) || 12) - 1)))}
+                              className="h-9 w-9 shrink-0 rounded-lg bg-card border border-border flex items-center justify-center font-black text-sm hover:bg-muted cursor-pointer"
+                            >
+                              -
+                            </button>
+                            <Input
+                              type="number"
+                              min="2"
+                              max="60"
+                              value={editRecurrenceInstallments}
+                              onChange={(e) => setEditRecurrenceInstallments(e.target.value)}
+                              className="h-9 rounded-lg font-black text-center border-border bg-card text-xs"
+                              placeholder="12"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setEditRecurrenceInstallments(String(Math.min(60, (Number(editRecurrenceInstallments) || 12) + 1)))}
+                              className="h-9 w-9 shrink-0 rounded-lg bg-primary text-primary-foreground flex items-center justify-center font-black text-sm hover:bg-primary/90 cursor-pointer"
+                            >
+                              +
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Quick Presets for Installments */}
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-[9px] font-bold text-muted-foreground mr-1">Atalhos:</span>
+                        {['2', '3', '6', '12', '24', '36'].map((preset) => (
+                          <button
+                            key={preset}
+                            type="button"
+                            onClick={() => setEditRecurrenceInstallments(preset)}
+                            className={`px-2 py-0.5 rounded-lg text-[10px] font-bold transition-colors cursor-pointer border ${
+                              editRecurrenceInstallments === preset
+                                ? 'bg-primary text-primary-foreground border-primary'
+                                : 'bg-card text-muted-foreground border-border hover:bg-muted'
+                            }`}
+                          >
+                            {preset}x
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* Action Scope: New recurring vs Existing recurring */}
+                      {!editItem?.is_recurring ? (
+                        <label className="flex items-start gap-2 p-2.5 bg-primary/5 rounded-lg border border-primary/15 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={editGenerateFuture}
+                            onChange={(e) => setEditGenerateFuture(e.target.checked)}
+                            className="h-4 w-4 mt-0.5 rounded border-border text-primary focus:ring-primary cursor-pointer"
+                          />
+                          <div className="space-y-0.5">
+                            <span className="text-xs font-bold text-foreground">
+                              Gerar as próximas parcelas automaticamente no extrato
+                            </span>
+                            <p className="text-[9.5px] text-muted-foreground leading-snug">
+                              Cria as {(Number(editRecurrenceInstallments) || 12) - 1} parcelas futuras com status "Pendente" e vencimentos programados por {getFrequencyLabel(editRecurrenceFrequency)}.
+                            </p>
+                          </div>
+                        </label>
+                      ) : (
+                        <label className="flex items-start gap-2 p-2.5 bg-primary/5 rounded-lg border border-primary/15 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={editApplyToFuture}
+                            onChange={(e) => setEditApplyToFuture(e.target.checked)}
+                            className="h-4 w-4 mt-0.5 rounded border-border text-primary focus:ring-primary cursor-pointer"
+                          />
+                          <div className="space-y-0.5">
+                            <span className="text-xs font-bold text-foreground">
+                              Aplicar valor e categoria às próximas parcelas deste grupo
+                            </span>
+                            <p className="text-[9.5px] text-muted-foreground leading-snug">
+                              Mantém todas as parcelas futuras sincronizadas com as novas configurações.
+                            </p>
+                          </div>
+                        </label>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div className="space-y-1">
                 <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground/90">Descrição</label>
                 <Input
                   type="text"
-                  placeholder="Ex: Corrida extra..."
+                  placeholder="Ex: Corrida extra, Mensalidade..."
                   className="h-10 rounded-xl border-border"
                   value={editDesc}
                   onChange={(e) => setEditDesc(e.target.value)}
@@ -4156,6 +5268,78 @@ export function History() {
           )}
         </SheetContent>
       </Sheet>
+
+      {/* Quick Settle Confirmation Modal */}
+      <Dialog open={!!settleItem} onOpenChange={(open) => !open && setSettleItem(null)}>
+        <DialogContent className="max-w-md p-6 bg-card border border-border/80 rounded-2xl shadow-2xl">
+          <DialogHeader className="space-y-2">
+            <DialogTitle className="text-lg font-extrabold text-foreground tracking-tight flex items-center gap-2">
+              <div className="p-2 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                <CheckCircle2 className="w-5 h-5" />
+              </div>
+              Quitar / Registrar Pagamento
+            </DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground">
+              Confirme a quitação da despesa para debitá-la do saldo e atualizar seu extrato.
+            </DialogDescription>
+          </DialogHeader>
+
+          {settleItem && (
+            <div className="my-3 p-4 bg-muted/20 border border-border/70 rounded-xl space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-extrabold text-foreground">{settleItem.category}</span>
+                <span className="text-sm font-mono font-black text-rose-600 dark:text-rose-400">
+                  {formatCurrency(settleItem.amount)}
+                </span>
+              </div>
+              {settleItem.description && (
+                <p className="text-xs text-muted-foreground line-clamp-2">
+                  {settleItem.description}
+                </p>
+              )}
+              {settleItem.due_date && (
+                <div className="text-[11px] text-muted-foreground flex items-center gap-1.5">
+                  <CalendarClock className="w-3.5 h-3.5" />
+                  <span>Vencimento original: <strong className="text-foreground">{format(parseLocalDate(settleItem.due_date), 'dd/MM/yyyy')}</strong></span>
+                </div>
+              )}
+
+              <div className="space-y-1.5 pt-2 border-t border-border/60">
+                <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground block">
+                  Data em que foi pago:
+                </label>
+                <Input
+                  type="date"
+                  value={settlePaymentDate}
+                  onChange={(e) => setSettlePaymentDate(e.target.value)}
+                  className="h-10 rounded-xl border-border bg-card font-semibold text-xs"
+                  required
+                />
+              </div>
+            </div>
+          )}
+
+          <DialogFooter className="flex flex-col-reverse sm:flex-row gap-2 mt-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setSettleItem(null)}
+              className="h-10 rounded-xl text-xs font-bold border-border"
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              onClick={handleConfirmSettle}
+              disabled={isSettling}
+              className="h-10 rounded-xl text-xs font-extrabold bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs flex items-center gap-1.5"
+            >
+              {isSettling ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4 stroke-[3]" />}
+              {isSettling ? 'Quitando...' : 'Confirmar Pagamento'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={!!deleteConfirmId} onOpenChange={(open) => !open && setDeleteConfirmId(null)}>
         <DialogContent className="max-w-md p-6 bg-card border border-border/70 rounded-2xl shadow-xl">

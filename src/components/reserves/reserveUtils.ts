@@ -525,3 +525,59 @@ export const getEffectiveAportesInPeriod = (
     .reduce((sum, rt) => sum + Number(rt.amount || 0), 0);
   return Math.round(total * 100) / 100;
 };
+
+export const generateUUID = (): string => {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+};
+
+export type RecurrenceFrequency = 'daily' | 'weekly' | 'biweekly' | 'monthly' | 'bimonthly' | 'quarterly' | 'semiannual' | 'yearly';
+
+export const calculateNextOccurrence = (baseDateStr: string, frequency: RecurrenceFrequency, index: number): string => {
+  const parts = baseDateStr.split('-');
+  const year = parseInt(parts[0], 10);
+  const month = parseInt(parts[1], 10) - 1;
+  const day = parseInt(parts[2], 10);
+  const d = new Date(year, month, day);
+
+  switch (frequency) {
+    case 'daily':
+      d.setDate(d.getDate() + index);
+      break;
+    case 'weekly':
+      d.setDate(d.getDate() + index * 7);
+      break;
+    case 'biweekly':
+      d.setDate(d.getDate() + index * 14);
+      break;
+    case 'monthly':
+      d.setMonth(d.getMonth() + index);
+      break;
+    case 'bimonthly':
+      d.setMonth(d.getMonth() + index * 2);
+      break;
+    case 'quarterly':
+      d.setMonth(d.getMonth() + index * 3);
+      break;
+    case 'semiannual':
+      d.setMonth(d.getMonth() + index * 6);
+      break;
+    case 'yearly':
+      d.setFullYear(d.getFullYear() + index);
+      break;
+    default:
+      d.setMonth(d.getMonth() + index);
+      break;
+  }
+
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const dayStr = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${dayStr}`;
+};

@@ -45,8 +45,12 @@ import {
   Target,
   DollarSign,
   Building2,
-  Info
+  Info,
+  CalendarClock,
+  RefreshCw,
+  AlertCircle
 } from 'lucide-react';
+import { getPaymentStatusMeta, formatRecurrenceFrequency } from '../../lib/recurrenceUtils';
 
 const iconOptions = {
   PiggyBank,
@@ -88,6 +92,7 @@ interface TransactionDetailViewProps {
   askDelete: (id: string, type: 'transaction' | 'reserve_transaction' | 'investment_transaction' | 'dividend') => void;
   calculateFuel: (start: string | number | null, end: string | number | null) => number;
   getTransactionReserveContributions: (t: Transaction) => { reserve: Reserve; amount: number }[];
+  onSettlePending?: (t: Transaction) => void;
 }
 
 export function TransactionDetailView({
@@ -102,6 +107,7 @@ export function TransactionDetailView({
   askDelete,
   calculateFuel,
   getTransactionReserveContributions,
+  onSettlePending,
 }: TransactionDetailViewProps) {
   const isReserveTx = (t as any).isReserveTx;
   const isInvestmentTx = (t as any).isInvestmentTx;
@@ -653,6 +659,81 @@ export function TransactionDetailView({
     <div className="space-y-2.5">
       {/* Custom layout for specific transaction type */}
       {renderCustomTypeContent()}
+
+      {/* Payment Status & Recurrence Card (For Expenses & Reserves) */}
+      {(t.type === 'expense' || isReserveTx) && (
+        <div className="p-2.5 rounded-xl bg-card border border-border/60 space-y-2">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-1.5">
+              <CalendarClock className="w-3.5 h-3.5 text-primary" />
+              <span className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">
+                Situação do Pagamento
+              </span>
+            </div>
+            {(() => {
+              const meta = getPaymentStatusMeta(t.payment_status, t.due_date);
+              const StatusIcon = t.payment_status === 'pending' ? (meta.isOverdue ? AlertCircle : Clock) : CheckCircle2;
+              return (
+                <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full flex items-center gap-1 border ${meta.bgColor} ${meta.color} ${meta.borderColor}`}>
+                  <StatusIcon className="w-3 h-3" />
+                  {meta.label}
+                </span>
+              );
+            })()}
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
+            <div className="p-1.5 rounded-lg bg-muted/20 border border-border/40">
+              <span className="text-[8.5px] text-muted-foreground uppercase font-bold block">Status</span>
+              <span className="font-bold text-foreground">
+                {t.payment_status === 'pending' ? 'Pendente de Pagamento' : 'Pago / Liquidado'}
+              </span>
+            </div>
+
+            {t.payment_status === 'pending' ? (
+              <div className="p-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20">
+                <span className="text-[8.5px] text-amber-700 dark:text-amber-300 uppercase font-bold block">Vencimento</span>
+                <span className="font-bold font-mono text-amber-700 dark:text-amber-300">
+                  {t.due_date ? format(parseISO(t.due_date), "dd/MM/yyyy") : format(parseISO(t.date), "dd/MM/yyyy")}
+                </span>
+              </div>
+            ) : (
+              <div className="p-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
+                <span className="text-[8.5px] text-emerald-700 dark:text-emerald-300 uppercase font-bold block">Data Pagamento</span>
+                <span className="font-bold font-mono text-emerald-700 dark:text-emerald-300">
+                  {t.payment_date ? format(parseISO(t.payment_date), "dd/MM/yyyy") : format(parseISO(t.date), "dd/MM/yyyy")}
+                </span>
+              </div>
+            )}
+
+            {t.is_recurring && (
+              <div className="p-1.5 rounded-lg bg-primary/10 border border-primary/20 col-span-2 sm:col-span-1">
+                <span className="text-[8.5px] text-primary uppercase font-bold block flex items-center gap-1">
+                  <RefreshCw className="w-2.5 h-2.5" /> Recorrência
+                </span>
+                <span className="font-bold text-primary">
+                  {t.installment_number && t.installment_total ? `${t.installment_number}/${t.installment_total} ` : ''}
+                  ({formatRecurrenceFrequency(t.recurrence_frequency)})
+                </span>
+              </div>
+            )}
+          </div>
+
+          {t.payment_status === 'pending' && onSettlePending && (
+            <div className="pt-1 flex justify-end">
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => onSettlePending(t)}
+                className="h-7 px-3 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg flex items-center gap-1.5 shadow-xs cursor-pointer"
+              >
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                <span>Quitar / Marcar como Pago</span>
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Common Footer Actions Bar */}
       <div className="flex items-center justify-between border-t border-border/40 pt-2.5">

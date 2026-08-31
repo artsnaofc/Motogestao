@@ -156,6 +156,15 @@ export function ReservesProvider({
     if (rtObj.category) supabasePayload.category = rtObj.category;
     if (rtObj.linked_investment_id) supabasePayload.linked_investment_id = rtObj.linked_investment_id;
     if (rtObj.transaction_id) supabasePayload.transaction_id = rtObj.transaction_id;
+    if (rtObj.payment_status) supabasePayload.payment_status = rtObj.payment_status;
+    if (rtObj.payment_date) supabasePayload.payment_date = rtObj.payment_date;
+    if (rtObj.due_date) supabasePayload.due_date = rtObj.due_date;
+    if (rtObj.is_recurring !== undefined) supabasePayload.is_recurring = rtObj.is_recurring;
+    if (rtObj.recurrence_frequency) supabasePayload.recurrence_frequency = rtObj.recurrence_frequency;
+    if (rtObj.recurrence_installments !== undefined) supabasePayload.recurrence_installments = rtObj.recurrence_installments;
+    if (rtObj.recurrence_group_id) supabasePayload.recurrence_group_id = rtObj.recurrence_group_id;
+    if (rtObj.installment_number !== undefined) supabasePayload.installment_number = rtObj.installment_number;
+    if (rtObj.installment_total !== undefined) supabasePayload.installment_total = rtObj.installment_total;
 
     setReserveTransactions(prev => {
       const filtered = prev.filter(item => item.id !== rtObj.id);
@@ -215,13 +224,15 @@ export function ReservesProvider({
     toast.success('Movimentação de reserva atualizada!');
   }, []);
 
-  // Dynamically calculate computed balances for reserves
+  // Dynamically calculate computed balances for reserves (only counting settled/paid transactions)
   const computedReserves = useMemo(() => {
     return reserves.map(r => {
       const rts = reserveTransactions.filter(rt => rt.reserve_id === r.id);
-      const totalAporte = rts.filter(rt => rt.type === 'aporte').reduce((sum, rt) => sum + Number(rt.amount), 0);
-      const totalRendimento = rts.filter(rt => rt.type === 'rendimento').reduce((sum, rt) => sum + Number(rt.amount), 0);
-      const totalUtilizacao = rts.filter(rt => rt.type === 'utilizacao').reduce((sum, rt) => sum + Number(rt.amount), 0);
+      // Filter out pending items for actual liquid balance
+      const settledRts = rts.filter(rt => rt.payment_status !== 'pending');
+      const totalAporte = settledRts.filter(rt => rt.type === 'aporte').reduce((sum, rt) => sum + Number(rt.amount), 0);
+      const totalRendimento = settledRts.filter(rt => rt.type === 'rendimento').reduce((sum, rt) => sum + Number(rt.amount), 0);
+      const totalUtilizacao = settledRts.filter(rt => rt.type === 'utilizacao').reduce((sum, rt) => sum + Number(rt.amount), 0);
       return {
         ...r,
         saldo_atual: Number(r.saldo_inicial || 0) + totalAporte + totalRendimento - totalUtilizacao

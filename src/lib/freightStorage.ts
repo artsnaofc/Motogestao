@@ -139,14 +139,14 @@ export const freightStorage = {
 
     try {
       localStorage.setItem(`${STORAGE_KEY_PREFIX}${userId}`, JSON.stringify(updated));
+      localStorage.setItem(`${STORAGE_KEY_PREFIX}default`, JSON.stringify(updated));
     } catch (e) {
       console.error('Erro ao salvar orçamento de frete:', e);
     }
 
     // Auto save client
-    if (quote.client_name?.trim()) {
+    if (quote.client_name?.trim() && quote.client_name.trim().length >= 2) {
       this.autoSaveClient({
-        id: quote.client_name.trim().toLowerCase().replace(/\s+/g, '_'),
         name: quote.client_name.trim(),
         phone: quote.client_phone?.trim(),
         company: quote.client_company?.trim(),
@@ -155,10 +155,21 @@ export const freightStorage = {
       }, userId);
     }
 
+    // Broadcast instant update across UI
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('freight_quotes_updated', { detail: quote }));
+    }
+
     // Async save to Supabase with precise payload mapping
     (async () => {
       try {
         const effectiveId = await getEffectiveUserId(userId);
+        if (effectiveId && effectiveId !== userId && effectiveId !== 'default') {
+          try {
+            localStorage.setItem(`${STORAGE_KEY_PREFIX}${effectiveId}`, JSON.stringify(updated));
+          } catch (e) {}
+        }
+
         const quotePayload = {
           id: quote.id,
           user_id: effectiveId,
@@ -256,8 +267,13 @@ export const freightStorage = {
     const updated = list.filter(q => q.id !== id);
     try {
       localStorage.setItem(`${STORAGE_KEY_PREFIX}${userId}`, JSON.stringify(updated));
+      localStorage.setItem(`${STORAGE_KEY_PREFIX}default`, JSON.stringify(updated));
     } catch (e) {
       console.error('Erro ao excluir orçamento:', e);
+    }
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('freight_quotes_updated', { detail: { id, deleted: true } }));
     }
 
     // Async delete from Supabase
@@ -278,8 +294,14 @@ export const freightStorage = {
   },
 
   updateQuoteStatus(id: string, status: FreightQuote['status'], userId: string = 'default'): FreightQuote | null {
-    const list = this.getQuotes(userId);
-    const target = list.find(q => q.id === id);
+    let list = this.getQuotes(userId);
+    let target = list.find(q => q.id === id);
+
+    if (!target && userId !== 'default') {
+      list = this.getQuotes('default');
+      target = list.find(q => q.id === id);
+    }
+
     if (!target) return null;
 
     const updatedQuote: FreightQuote = {
@@ -288,6 +310,25 @@ export const freightStorage = {
     };
 
     this.saveQuote(updatedQuote, userId);
+
+    // Direct status update to Supabase to guarantee instantaneous sync
+    (async () => {
+      try {
+        const { error } = await supabase
+          .from('freight_quotes')
+          .update({ status })
+          .eq('id', id);
+        
+        if (error) {
+          console.warn('[freightStorage] Supabase status direct update error:', error.message);
+        } else {
+          console.log(`[freightStorage] Quote status ${id} updated to ${status} in Supabase.`);
+        }
+      } catch (err) {
+        console.warn('[freightStorage] Supabase status direct update exception:', err);
+      }
+    })();
+
     return updatedQuote;
   },
 
@@ -492,13 +533,104 @@ export const freightStorage = {
   // CLIENTS & AUTOCOMPLETE
   getClients(userId: string = 'default'): FreightClient[] {
     try {
-      let raw = localStorage.getItem(`${CLIENTS_KEY_PREFIX}${userId}`);
-      if (!raw && userId !== 'default') {
-        raw = localStorage.getItem(`${CLIENTS_KEY_PREFIX}default`);
+      const clientMap = new Map<string, FreightClient>();
+
+      const addOrMerge = (c: Partial<FreightClient> & { name: string }) => {
+        if (!c.name || c.name.trim().length < 2) return;
+        const key = c.name.trim().toLowerCase();
+        const existing = clientMap.get(key);
+        if (!existing) {
+          clientMap.set(key, {
+            id: c.id || `cli_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+            user_id: userId,
+            name: c.name.trim(),
+            phone: c.phone?.trim() || '',
+            company: c.company?.trim() || '',
+            document: c.document?.trim() || '',
+            email: c.email?.trim() || '',
+            created_at: c.created_at || new Date().toISOString(),
+            updated_at: c.updated_at || new Date().toISOString(),
+          });
+        } else {
+          // Enrich missing fields
+          clientMap.set(key, {
+            ...existing,
+            phone: existing.phone || c.phone?.trim() || '',
+            company: existing.company || c.company?.trim() || '',
+            document: existing.document || c.document?.trim() || '',
+            email: existing.email || c.email?.trim() || '',
+            updated_at: c.updated_at || existing.updated_at,
+          });
+        }
+      };
+
+      // 1. Load from primary user key
+      const rawUser = localStorage.getItem(`${CLIENTS_KEY_PREFIX}${userId}`);
+      if (rawUser) {
+        try {
+          const parsed = JSON.parse(rawUser);
+          if (Array.isArray(parsed)) {
+            parsed.forEach(addOrMerge);
+          }
+        } catch (e) {}
       }
-      if (!raw) return [];
-      const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed : [];
+
+      // 2. Load from default / other client keys
+      if (userId !== 'default') {
+        const rawDefault = localStorage.getItem(`${CLIENTS_KEY_PREFIX}default`);
+        if (rawDefault) {
+          try {
+            const parsed = JSON.parse(rawDefault);
+            if (Array.isArray(parsed)) {
+              parsed.forEach(addOrMerge);
+            }
+          } catch (e) {}
+        }
+      }
+
+      // 3. Scan all localStorage keys for freight_clients
+      try {
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k && k.startsWith(CLIENTS_KEY_PREFIX)) {
+            const val = localStorage.getItem(k);
+            if (val) {
+              const parsed = JSON.parse(val);
+              if (Array.isArray(parsed)) {
+                parsed.forEach(addOrMerge);
+              }
+            }
+          }
+        }
+      } catch (e) {}
+
+      // 4. Auto-harvest clients from all saved quotes
+      const allQuotes = [
+        ...this.getQuotes(userId),
+        ...(userId !== 'default' ? this.getQuotes('default') : [])
+      ];
+
+      for (const q of allQuotes) {
+        if (q.client_name && q.client_name.trim().length >= 2) {
+          addOrMerge({
+            name: q.client_name,
+            phone: q.client_phone,
+            company: q.client_company,
+            document: q.client_document,
+            email: q.client_email,
+            created_at: q.created_at,
+          });
+        }
+      }
+
+      const unifiedList = Array.from(clientMap.values()).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
+
+      // Persist unified list to current user cache
+      try {
+        localStorage.setItem(`${CLIENTS_KEY_PREFIX}${userId}`, JSON.stringify(unifiedList));
+      } catch (e) {}
+
+      return unifiedList;
     } catch (e) {
       return [];
     }
@@ -559,6 +691,9 @@ export const freightStorage = {
 
     try {
       localStorage.setItem(`${CLIENTS_KEY_PREFIX}${userId}`, JSON.stringify(newList));
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('freight_clients_updated', { detail: updatedClient }));
+      }
     } catch (e) {
       console.error('Erro ao salvar cliente local:', e);
     }
@@ -585,11 +720,18 @@ export const freightStorage = {
     return updatedClient;
   },
 
+  saveClient(client: Partial<FreightClient> & { name: string }, userId: string = 'default'): FreightClient {
+    return this.autoSaveClient(client, userId);
+  },
+
   deleteClient(id: string, userId: string = 'default'): void {
     const list = this.getClients(userId);
     const updated = list.filter(c => c.id !== id);
     try {
       localStorage.setItem(`${CLIENTS_KEY_PREFIX}${userId}`, JSON.stringify(updated));
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('freight_clients_updated', { detail: { id, deleted: true } }));
+      }
     } catch (e) {
       console.error('Erro ao excluir cliente:', e);
     }

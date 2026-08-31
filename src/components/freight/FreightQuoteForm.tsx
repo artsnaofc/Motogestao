@@ -46,6 +46,8 @@ import {
   Sliders,
   AlertCircle,
   Edit,
+  Share2,
+  Loader2,
   X
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -60,16 +62,17 @@ import {
   VehicleConfigItem 
 } from '../../types/freight';
 import { freightStorage, DEFAULT_VEHICLES, DEFAULT_PRESET } from '../../lib/freightStorage';
+import { shareFreightQuotePDF } from '../../lib/freightPdfGenerator';
 import { useData } from '../../contexts/DataContext';
 import { AddressAutocompleteInput } from './AddressAutocompleteInput';
 import { ClientAutocompleteInput } from './ClientAutocompleteInput';
 import { maskPhone, maskCpfCnpj } from '@/lib/brazilianFormatters';
 
 interface FreightQuoteFormProps {
-  initialQuote?: FreightQuote | null;
+  initialQuote?: Partial<FreightQuote> | null;
   isBaseMode?: boolean;
   onSaveQuote: (quote: FreightQuote) => void;
-  onOpenWhatsApp: (quote: FreightQuote) => void;
+  onOpenWhatsApp?: (quote: FreightQuote) => void;
   onOpenProposal: (quote: FreightQuote) => void;
   onCancelEdit?: () => void;
   onOpenSettings?: () => void;
@@ -383,6 +386,14 @@ export function FreightQuoteForm({
     freightStorage.syncClientsFromDatabase(userId).then(clients => {
       setSavedClients(clients);
     });
+
+    const handleClientsUpdated = () => {
+      setSavedClients(freightStorage.getClients(userId));
+    };
+    window.addEventListener('freight_clients_updated', handleClientsUpdated);
+    return () => {
+      window.removeEventListener('freight_clients_updated', handleClientsUpdated);
+    };
   }, [userId, applyPresetData]);
 
   // Client Selection Handler
@@ -534,14 +545,15 @@ export function FreightQuoteForm({
     const validUntilDate = new Date();
     validUntilDate.setDate(validUntilDate.getDate() + (validDays || 2));
 
-    const quoteId = initialQuote?.id || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `frt_${Date.now()}`);
-    const code = initialQuote?.code || freightStorage.generateNextCode(userId);
+    const isEditMode = !isBaseMode && !!initialQuote?.id && !initialQuote?.is_client_preset;
+    const quoteId = isEditMode && initialQuote?.id ? initialQuote.id : (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `frt_${Date.now()}`);
+    const code = isEditMode && initialQuote?.code ? initialQuote.code : freightStorage.generateNextCode(userId);
 
     return {
       id: quoteId,
       user_id: userId,
       code,
-      created_at: initialQuote?.created_at || new Date().toISOString(),
+      created_at: isEditMode && initialQuote?.created_at ? initialQuote.created_at : new Date().toISOString(),
       valid_until: validUntilDate.toISOString(),
       status,
 
@@ -620,14 +632,26 @@ export function FreightQuoteForm({
     toast.success(`Orçamento ${quote.code} salvo com sucesso!`);
   };
 
-  const handleQuickWhatsApp = () => {
+  const [isSharingPdf, setIsSharingPdf] = useState(false);
+
+  const handleQuickSharePDF = async () => {
     if (!originAddress || !destinationAddress) {
       toast.error('Preencha ao menos os endereços de coleta e entrega.');
       return;
     }
     const quote = buildQuoteObject();
     onSaveQuote(quote);
-    onOpenWhatsApp(quote);
+    try {
+      setIsSharingPdf(true);
+      const shared = await shareFreightQuotePDF(quote, userId);
+      if (shared) {
+        toast.success(`Proposta comercial em PDF (${quote.code}) pronta para envio com mensagem de anexo!`);
+      }
+    } catch (err: any) {
+      toast.error('Erro ao compartilhar PDF: ' + (err?.message || 'Tente novamente.'));
+    } finally {
+      setIsSharingPdf(false);
+    }
   };
 
   const handleQuickProposal = () => {
@@ -680,7 +704,7 @@ export function FreightQuoteForm({
       )}
 
       {/* STANDARD EDIT MODE BANNER */}
-      {!isBaseMode && initialQuote && (
+      {!isBaseMode && initialQuote && !initialQuote.is_client_preset && initialQuote.id && (
         <div className="bg-amber-500/10 border border-amber-500/30 rounded-3xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs shadow-xs animate-in fade-in-50">
           <div className="flex items-center gap-3">
             <div className="p-2.5 rounded-2xl bg-amber-500 text-white shrink-0 shadow-xs">
@@ -708,6 +732,36 @@ export function FreightQuoteForm({
             >
               <X className="w-4 h-4" />
               Cancelar Edição
+            </Button>
+          )}
+        </div>
+      )}
+
+      {/* CLIENT PRESET BANNER */}
+      {initialQuote?.is_client_preset && (
+        <div className="bg-primary/10 border border-primary/30 rounded-3xl p-3.5 sm:p-4 flex items-center justify-between gap-3 text-xs shadow-xs animate-in fade-in-50">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-2xl bg-primary text-primary-foreground shrink-0 shadow-xs">
+              <Users className="w-4 h-4" />
+            </div>
+            <div>
+              <h4 className="font-black text-foreground text-xs sm:text-sm flex items-center gap-2">
+                Novo Orçamento para: <span className="text-primary">{clientName || initialQuote.client_name}</span>
+              </h4>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                Os dados do cliente foram preenchidos automaticamente. Insira os endereços e taxas para calcular a proposta.
+              </p>
+            </div>
+          </div>
+          {onCancelEdit && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={onCancelEdit}
+              className="rounded-xl text-xs font-bold h-8 px-2.5 text-muted-foreground hover:text-foreground shrink-0 cursor-pointer"
+            >
+              Limpar
             </Button>
           )}
         </div>
@@ -1751,13 +1805,18 @@ export function FreightQuoteForm({
 
             <Button
               type="button"
-              onClick={handleQuickWhatsApp}
+              onClick={handleQuickSharePDF}
+              disabled={isSharingPdf}
               size="sm"
               className="rounded-xl h-8.5 sm:h-9 px-2.5 sm:px-3.5 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white gap-1.5 cursor-pointer shadow-xs"
-              title="Enviar Orçamento no WhatsApp"
+              title="Compartilhar Proposta PDF com mensagem de anexo"
             >
-              <MessageSquare className="w-3.5 h-3.5" />
-              <span className="hidden xs:inline">WhatsApp</span>
+              {isSharingPdf ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Share2 className="w-3.5 h-3.5" />
+              )}
+              <span className="hidden xs:inline">{isSharingPdf ? 'Gerando...' : 'Compartilhar PDF'}</span>
             </Button>
 
             <Button
@@ -1765,10 +1824,10 @@ export function FreightQuoteForm({
               onClick={handleQuickProposal}
               size="sm"
               className="rounded-xl h-8.5 sm:h-9 px-2.5 sm:px-3.5 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white gap-1.5 cursor-pointer shadow-xs"
-              title="Gerar Proposta Comercial em PDF"
+              title="Visualizar Proposta Comercial em PDF"
             >
               <FileText className="w-3.5 h-3.5" />
-              <span className="hidden xs:inline">PDF</span>
+              <span className="hidden xs:inline">Ver PDF</span>
             </Button>
 
             <Button

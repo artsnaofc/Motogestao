@@ -569,10 +569,11 @@ export async function downloadFreightQuotePDF(quote: FreightQuote, userId: strin
 }
 
 /**
- * Shares the PDF using Mobile Share API (WhatsApp, Telegram, etc.) if available, or falls back to direct download.
+ * Shares the PDF with mandatory PDF file attachment using Mobile Share API (WhatsApp, etc.) or downloads and opens WhatsApp with attachment message.
  */
 export async function shareFreightQuotePDF(quote: FreightQuote, userId: string = 'default'): Promise<boolean> {
   const { blob, filename } = await generateFreightQuotePDF(quote, { userId, action: 'share' });
+  const messageText = `Olá! Segue em anexo a proposta comercial formal em PDF do frete ${quote.code} (${formatBRL(quote.total_price)}).`;
 
   if (typeof navigator !== 'undefined' && navigator.share && navigator.canShare) {
     try {
@@ -581,18 +582,20 @@ export async function shareFreightQuotePDF(quote: FreightQuote, userId: string =
         await navigator.share({
           files: [file],
           title: `Orçamento de Frete ${quote.code}`,
-          text: `Olá! Segue em anexo a proposta comercial formal do frete ${quote.code} (${formatBRL(quote.total_price)}).`,
+          text: messageText,
         });
         return true;
       }
     } catch (err: any) {
       if (err.name !== 'AbortError') {
-        console.warn('Share API failed, fallback to download:', err);
+        console.warn('Share API failed, fallback to download & WhatsApp:', err);
+      } else {
+        return false;
       }
     }
   }
 
-  // Fallback: direct download
+  // Fallback: direct download PDF and open WhatsApp if phone exists
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -601,5 +604,16 @@ export async function shareFreightQuotePDF(quote: FreightQuote, userId: string =
   a.click();
   document.body.removeChild(a);
   setTimeout(() => URL.revokeObjectURL(url), 3000);
+
+  // If client phone exists, open WhatsApp with attachment message
+  const rawPhone = (quote.client_phone || '').replace(/\D/g, '');
+  const cleanPhone = rawPhone.startsWith('55') ? rawPhone : (rawPhone ? `55${rawPhone}` : '');
+  const encodedMsg = encodeURIComponent(messageText);
+
+  if (cleanPhone && cleanPhone.length >= 10) {
+    const waUrl = `https://wa.me/${cleanPhone}?text=${encodedMsg}`;
+    window.open(waUrl, '_blank');
+  }
+
   return true;
 }

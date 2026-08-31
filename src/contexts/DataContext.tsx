@@ -33,7 +33,9 @@ export interface DataContextType {
 
   // Reserves
   reserves: Reserve[];
+  setReserves: React.Dispatch<React.SetStateAction<Reserve[]>>;
   reserveTransactions: ReserveTransaction[];
+  setReserveTransactions: React.Dispatch<React.SetStateAction<ReserveTransaction[]>>;
   addReserve: (reserve: Omit<Reserve, 'id' | 'user_id' | 'created_at' | 'updated_at'>) => Promise<void>;
   updateReserve: (id: string, reserve: Partial<Reserve>) => Promise<void>;
   deleteReserve: (id: string) => Promise<void>;
@@ -153,7 +155,9 @@ function DataContextBridge({ children }: { children: ReactNode }) {
 
     // Reserves
     reserves: resCtx.reserves,
+    setReserves: resCtx.setReserves,
     reserveTransactions: resCtx.reserveTransactions,
+    setReserveTransactions: resCtx.setReserveTransactions,
     addReserve: resCtx.addReserve,
     updateReserve: resCtx.updateReserve,
     deleteReserve: resCtx.deleteReserve,

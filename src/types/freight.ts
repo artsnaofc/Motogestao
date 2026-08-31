@@ -43,6 +43,7 @@ export interface FreightClient {
   company?: string;
   document?: string;
   email?: string;
+  created_at?: string;
   updated_at?: string;
 }
 
@@ -125,6 +126,7 @@ export interface FreightQuote {
   payment_method: PaymentMethod;
   observations?: string;
   terms_and_conditions?: string;
+  is_client_preset?: boolean;
 
   // Integração com o Financeiro
   converted_to_transaction_id?: string;
