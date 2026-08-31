@@ -42,6 +42,7 @@ interface MassAporteConsolidatorProps {
     description: string;
   }) => Promise<void>;
   onClose?: () => void;
+  onAuditSuggestion?: (reserve: Reserve) => void;
   isModal?: boolean;
 }
 
@@ -54,6 +55,7 @@ export function MassAporteConsolidator({
   isSubmitting,
   onExecuteBatch,
   onClose,
+  onAuditSuggestion,
   isModal = false
 }: MassAporteConsolidatorProps) {
   // Selection state
@@ -599,6 +601,16 @@ export function MassAporteConsolidator({
                     <div className="flex items-center justify-between sm:justify-end gap-1.5 shrink-0 pt-1 sm:pt-0 border-t sm:border-t-0 border-border/50">
                       {/* Shortcut buttons */}
                       <div className="flex items-center gap-1">
+                        {onAuditSuggestion && (
+                          <button
+                            type="button"
+                            onClick={() => onAuditSuggestion(r)}
+                            title="Auditar cálculo da sugestão"
+                            className="p-1 rounded text-muted-foreground hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-muted transition-colors cursor-pointer"
+                          >
+                            <Calculator className="w-3 h-3" />
+                          </button>
+                        )}
                         {metric.pending > 0 && (
                           <button
                             type="button"

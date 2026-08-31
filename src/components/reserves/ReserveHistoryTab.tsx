@@ -208,6 +208,7 @@ export function ReserveHistoryTab({
 
       const thirtyDaysAgo = subDays(new Date(), 30);
       const recentTxs = (transactions || []).filter(t => {
+        if (t.payment_status === 'pending' || (t as any).status === 'pending') return false;
         const d = parseLocalDate(t.date);
         return d >= thirtyDaysAgo;
       });
@@ -2678,6 +2679,24 @@ export function ReserveHistoryTab({
                 <IconComp className="w-3 h-3" />
                 {info.label}
               </span>
+
+              {/* Payment Status Tag */}
+              {tx.payment_status === 'pending' ? (
+                <span className="px-1.5 py-0.2 text-[9px] font-bold rounded-md bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
+                  ⏳ Pendente
+                </span>
+              ) : tx.payment_status === 'paid' && (
+                <span className="px-1.5 py-0.2 text-[9px] font-bold rounded-md bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                  ✓ Pago
+                </span>
+              )}
+
+              {/* Recurring Tag */}
+              {tx.is_recurring && (
+                <span className="px-1.5 py-0.2 text-[9px] font-bold rounded-md bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20">
+                  🔄 {tx.installment_number || 1}/{tx.recurrence_installments || tx.installment_total || 1}
+                </span>
+              )}
 
               {/* Mass Contribution Tag */}
               {info.isMass && (

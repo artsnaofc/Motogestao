@@ -342,12 +342,20 @@ export const getLatestWithdrawalDate = (
   res: Reserve,
   reserveTransactions: ReserveTransaction[]
 ): string | null => {
+  // Only consider withdrawals (utilizações) that have already been marked as paid/settled
   const utilizacoes = (reserveTransactions || []).filter(
-    rt => rt.reserve_id === res.id && rt.type === 'utilizacao'
+    rt => rt.reserve_id === res.id && 
+          rt.type === 'utilizacao' && 
+          rt.payment_status !== 'pending' &&
+          (rt as any).status !== 'pending'
   );
   if (utilizacoes.length === 0) return null;
-  const sorted = [...utilizacoes].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
-  return sorted[0].date;
+  const sorted = [...utilizacoes].sort((a, b) => {
+    const dateA = a.payment_date || a.date || '';
+    const dateB = b.payment_date || b.date || '';
+    return dateB.localeCompare(dateA);
+  });
+  return sorted[0].payment_date || sorted[0].date;
 };
 
 export const calculateSuggestion = (
@@ -368,6 +376,8 @@ export const calculateSuggestion = (
 
   const lastWDate = getLatestWithdrawalDate(res, reserveTransactions);
   const periodTxs = (transactions || []).filter(t => {
+    // Ignore pending revenue or expense transactions for contribution suggestions
+    if (t.payment_status === 'pending' || (t as any).status === 'pending') return false;
     const inPeriod = isTxInPeriod(t.date, globalPeriod, customDateRange);
     if (!inPeriod) return false;
     const isDefaultRes = res.name === 'Reserva de Manutenção' || res.name === 'Reserva de Emergência';
@@ -447,15 +457,46 @@ export const calculateSuggestion = (
   return Math.round(totalSuggestion * 100) / 100;
 };
 
+export interface SuggestionAuditResult {
+  ruleType: string;
+  ruleValue: number;
+  categories: string[];
+  details: string[];
+  totalSuggested: number;
+  effectiveAportes: number;
+  pendingSuggestion: number;
+  txCount: number;
+  eligibleTxs: Array<{ id: string; date: string; description: string; category: string; amount: number; km?: number }>;
+  lastWithdrawalDate: string | null;
+  pendingWithdrawalsIgnored: number;
+  grossRevenue: number;
+  totalExpense: number;
+  netProfit: number;
+  totalKm: number;
+  workedDays: number;
+  formulaExplanation: string;
+  isGoalReached: boolean;
+  isPaused: boolean;
+}
+
 export const getSuggestionAudit = (
   res: Reserve,
   transactions: Transaction[],
   reserveTransactions: ReserveTransaction[],
   globalPeriod: string,
   customDateRange: { start: string; end: string }
-) => {
+): SuggestionAuditResult => {
   const lastWDate = getLatestWithdrawalDate(res, reserveTransactions);
+  
+  // Count pending withdrawals that were correctly ignored
+  const pendingWithdrawalsIgnored = (reserveTransactions || []).filter(
+    rt => rt.reserve_id === res.id && 
+          rt.type === 'utilizacao' && 
+          (rt.payment_status === 'pending' || (rt as any).status === 'pending')
+  ).length;
+
   const periodTxs = (transactions || []).filter(t => {
+    if (t.payment_status === 'pending' || (t as any).status === 'pending') return false;
     const inPeriod = isTxInPeriod(t.date, globalPeriod, customDateRange);
     if (!inPeriod) return false;
     const isDefaultRes = res.name === 'Reserva de Manutenção' || res.name === 'Reserva de Emergência';
@@ -467,41 +508,108 @@ export const getSuggestionAudit = (
     return true;
   });
 
-  const historyRules = res.rule_history || [];
   const roundedBalance = Math.round((res.saldo_atual || 0) * 100) / 100;
   const roundedGoal = Math.round((res.meta_objetivo || 0) * 100) / 100;
   const isGoalReached = Boolean(roundedGoal > 0 && roundedBalance >= roundedGoal);
-  const isPaused = res.status === 'inactive' || res.is_paused;
+  const isPaused = res.status === 'inactive' || Boolean(res.is_paused);
 
-  let auditDetails = {
+  const calculated = calculateSuggestion(res, transactions, reserveTransactions, globalPeriod, customDateRange);
+  const effectiveAportes = getEffectiveAportesInPeriod(res, reserveTransactions, globalPeriod, customDateRange);
+  const pendingSuggestion = Math.round(Math.max(0, calculated - effectiveAportes) * 100) / 100;
+
+  // Calculate breakdown stats for eligible transactions based on current active rule
+  const ruleCats = res.regra_categorias || [];
+  let grossRevenue = 0;
+  let totalExpense = 0;
+  let totalKm = 0;
+  const eligibleTxs: Array<{ id: string; date: string; description: string; category: string; amount: number; km?: number }> = [];
+
+  periodTxs.forEach(t => {
+    const matchesCategory = ruleCats.length === 0 || ruleCats.includes(t.category);
+    const distance = (Number(t.end_km) || 0) - (Number(t.start_km) || 0);
+    const validDistance = distance > 0 ? distance : 0;
+    
+    if (t.type === 'income' && matchesCategory) {
+      grossRevenue += Number(t.amount || 0);
+      totalKm += validDistance;
+      eligibleTxs.push({
+        id: t.id,
+        date: t.date,
+        description: t.description || 'Receita',
+        category: t.category,
+        amount: Number(t.amount || 0),
+        km: validDistance > 0 ? validDistance : undefined,
+      });
+    } else if (t.type === 'expense') {
+      const isReserveUse = (t as any).isReserveTx === true || t.category === 'Aporte Reserva';
+      if (!isReserveUse) {
+        totalExpense += Number(t.amount || 0);
+      }
+    }
+  });
+
+  const netProfit = Math.max(0, grossRevenue - totalExpense);
+  const uniqueDays = new Set(eligibleTxs.map(t => t.date));
+  const workedDays = uniqueDays.size;
+
+  let formulaExplanation = '';
+  const details: string[] = [];
+
+  if (isPaused) {
+    details.push('Reserva está pausada ou inativa no momento.');
+    formulaExplanation = 'Cálculo desativado (reserva em pausa).';
+  } else if (isGoalReached) {
+    details.push(`Meta de ${formatCurrency(res.meta_objetivo || 0)} atingida com sucesso.`);
+    formulaExplanation = `Meta atingida: Saldo de ${formatCurrency(roundedBalance)} ≥ Meta de ${formatCurrency(roundedGoal)}.`;
+  } else if (res.regra_tipo === 'km') {
+    const val = Number(res.regra_valor || 0);
+    details.push(`Regra: R$ ${val.toFixed(2)} por KM rodado (${totalKm.toLocaleString('pt-BR')} km apurados).`);
+    formulaExplanation = `${totalKm.toLocaleString('pt-BR')} km × R$ ${val.toFixed(2)} = ${formatCurrency(calculated)}`;
+  } else if (res.regra_tipo === 'bruto') {
+    const val = Number(res.regra_valor || 0);
+    details.push(`Regra: ${val}% sobre o faturamento bruto elegível (${formatCurrency(grossRevenue)}).`);
+    formulaExplanation = `${formatCurrency(grossRevenue)} (Bruto) × ${val}% = ${formatCurrency(calculated)}`;
+  } else if (res.regra_tipo === 'liquido') {
+    const val = Number(res.regra_valor || 0);
+    details.push(`Regra: ${val}% sobre o lucro líquido do período (${formatCurrency(netProfit)}).`);
+    formulaExplanation = `Lucro Líquido (${formatCurrency(grossRevenue)} - ${formatCurrency(totalExpense)} = ${formatCurrency(netProfit)}) × ${val}% = ${formatCurrency(calculated)}`;
+  } else if (res.regra_tipo === 'fixo') {
+    const val = Number(res.regra_valor || 0);
+    details.push(`Regra: R$ ${val.toFixed(2)} fixos por dia trabalhado (${workedDays} dias com receitas).`);
+    formulaExplanation = `${workedDays} dia(s) com receita × R$ ${val.toFixed(2)} = ${formatCurrency(calculated)}`;
+  } else {
+    details.push('Nenhuma regra configurada ou ativa.');
+    formulaExplanation = 'Sem regra de cálculo ativa.';
+  }
+
+  if (lastWDate) {
+    details.push(`Contagem reiniciada após o último resgate pago em ${new Date(lastWDate + 'T00:00:00').toLocaleDateString('pt-BR')}.`);
+  }
+  if (pendingWithdrawalsIgnored > 0) {
+    details.push(`${pendingWithdrawalsIgnored} resgate(s) recorrente(s) pendente(s) foram desconsiderados até a sua quitação.`);
+  }
+
+  return {
     ruleType: res.regra_tipo || '',
     ruleValue: Number(res.regra_valor) || 0,
     categories: res.regra_categorias || [],
-    details: [] as string[],
-    totalSuggested: 0,
-    txCount: periodTxs.length,
+    details,
+    totalSuggested: calculated,
+    effectiveAportes,
+    pendingSuggestion,
+    txCount: eligibleTxs.length,
+    eligibleTxs,
+    lastWithdrawalDate: lastWDate,
+    pendingWithdrawalsIgnored,
+    grossRevenue,
+    totalExpense,
+    netProfit,
+    totalKm,
+    workedDays,
+    formulaExplanation,
     isGoalReached,
     isPaused
   };
-
-  const calculated = calculateSuggestion(res, transactions, reserveTransactions, globalPeriod, customDateRange);
-  auditDetails.totalSuggested = calculated;
-
-  if (isPaused) {
-    auditDetails.details.push('Reserva está pausada ou inativa no momento.');
-  } else if (isGoalReached) {
-    auditDetails.details.push(`Meta de ${formatCurrency(res.meta_objetivo)} atingida com sucesso.`);
-  } else if (res.regra_tipo === 'km') {
-    auditDetails.details.push(`Regra: R$ ${res.regra_valor?.toFixed(2)} por KM rodado.`);
-  } else if (res.regra_tipo === 'bruto') {
-    auditDetails.details.push(`Regra: ${res.regra_valor}% sobre o faturamento bruto das categorias selecionadas.`);
-  } else if (res.regra_tipo === 'liquido') {
-    auditDetails.details.push(`Regra: ${res.regra_valor}% sobre o lucro líquido do período.`);
-  } else if (res.regra_tipo === 'fixo') {
-    auditDetails.details.push(`Regra: R$ ${res.regra_valor?.toFixed(2)} fixos por dia trabalhado.`);
-  }
-
-  return auditDetails;
 };
 
 export const getEffectiveAportesInPeriod = (
@@ -515,6 +623,8 @@ export const getEffectiveAportesInPeriod = (
     .filter(rt => {
       const matches = rt.reserve_id === res.id && 
                       rt.type === 'aporte' && 
+                      rt.payment_status !== 'pending' &&
+                      (rt as any).status !== 'pending' &&
                       isTxInPeriod(rt.date, globalPeriod, customDateRange) && 
                       rt.category !== 'Aporte Extra' && 
                       rt.category !== 'Rendimento';

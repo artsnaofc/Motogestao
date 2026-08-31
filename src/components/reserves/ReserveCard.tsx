@@ -19,7 +19,9 @@ import {
   Clock,
   ArrowUpRight,
   ArrowDownLeft,
-  ChevronRight
+  ChevronRight,
+  Calculator,
+  Info
 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -48,6 +50,7 @@ interface ReserveCardProps {
   onDelete: (reserve: Reserve) => void;
   onViewRuleHistory?: (reserve: Reserve) => void;
   onApplyDirectSuggestion: (reserve: Reserve, amount: number) => void;
+  onAuditSuggestion?: (reserve: Reserve) => void;
   hideValues?: boolean;
 }
 
@@ -67,6 +70,7 @@ export function ReserveCard({
   onDelete,
   onViewRuleHistory,
   onApplyDirectSuggestion,
+  onAuditSuggestion,
   hideValues
 }: ReserveCardProps) {
   const [showMenu, setShowMenu] = useState(false);
@@ -200,6 +204,19 @@ export function ReserveCard({
                     className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left text-indigo-600 dark:text-indigo-400 font-bold hover:bg-indigo-500/10 transition-colors cursor-pointer"
                   >
                     <Sparkles className="w-3.5 h-3.5 text-indigo-600" /> Atualizar Regra
+                  </button>
+                )}
+
+                {onAuditSuggestion && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowMenu(false);
+                      onAuditSuggestion(reserve);
+                    }}
+                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left text-indigo-600 dark:text-indigo-400 font-bold hover:bg-indigo-500/10 transition-colors cursor-pointer"
+                  >
+                    <Calculator className="w-3.5 h-3.5 text-indigo-600" /> Auditoria da Sugestão
                   </button>
                 )}
 
@@ -341,19 +358,42 @@ export function ReserveCard({
                 <span className="text-[10px] font-bold text-foreground truncate">
                   Sugerido no período:
                 </span>
+                {onAuditSuggestion && (
+                  <button
+                    type="button"
+                    onClick={() => onAuditSuggestion(reserve)}
+                    title="Auditar cálculo da sugestão"
+                    className="p-0.5 text-muted-foreground hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors cursor-pointer"
+                  >
+                    <Info className="w-3 h-3" />
+                  </button>
+                )}
               </div>
               <p className="text-xs font-black text-amber-600 dark:text-amber-400 font-mono">
                 {hideValues ? 'R$ •••••' : formatCurrency(pendingSuggestion)}
               </p>
             </div>
 
-            <Button
-              size="sm"
-              onClick={() => onApplyDirectSuggestion(reserve, pendingSuggestion)}
-              className="h-6 px-2 text-[9px] font-black uppercase tracking-wider bg-amber-600 hover:bg-amber-700 text-white rounded-md shadow-2xs shrink-0 cursor-pointer"
-            >
-              Aportar
-            </Button>
+            <div className="flex items-center gap-1">
+              {onAuditSuggestion && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => onAuditSuggestion(reserve)}
+                  title="Ver auditoria detalhada"
+                  className="h-6 px-1.5 text-[10px] text-muted-foreground hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-amber-500/10 rounded-md cursor-pointer"
+                >
+                  <Calculator className="w-3.5 h-3.5" />
+                </Button>
+              )}
+              <Button
+                size="sm"
+                onClick={() => onApplyDirectSuggestion(reserve, pendingSuggestion)}
+                className="h-6 px-2 text-[9px] font-black uppercase tracking-wider bg-amber-600 hover:bg-amber-700 text-white rounded-md shadow-2xs shrink-0 cursor-pointer"
+              >
+                Aportar
+              </Button>
+            </div>
           </div>
         )}
 

@@ -29,6 +29,7 @@ import { MassAporteConsolidator } from '../components/reserves/MassAporteConsoli
 import { ReserveHistoryTab } from '../components/reserves/ReserveHistoryTab';
 import { ReserveModal } from '../components/reserves/ReserveModal';
 import { UpdateRuleModal } from '../components/reserves/UpdateRuleModal';
+import { SuggestionAuditModal } from '../components/reserves/SuggestionAuditModal';
 import { 
   AporteManualModal, 
   WithdrawModal, 
@@ -73,6 +74,8 @@ export function Reserves() {
 
   const [showUpdateRuleModal, setShowUpdateRuleModal] = useState(false);
   const [reserveToUpdateRule, setReserveToUpdateRule] = useState<Reserve | null>(null);
+
+  const [auditReserve, setAuditReserve] = useState<Reserve | null>(null);
 
   const [selectedReserveForAction, setSelectedReserveForAction] = useState<Reserve | null>(null);
   const [actionModalType, setActionModalType] = useState<'aporte_manual' | 'withdraw' | 'update_balance' | 'rule_history' | null>(null);
@@ -683,6 +686,7 @@ export function Reserves() {
                   onFinalize={handleFinalize}
                   onDelete={handleDeleteReserve}
                   onApplyDirectSuggestion={handleApplyDirectSuggestion}
+                  onAuditSuggestion={r => setAuditReserve(r)}
                   hideValues={hideValues}
                 />
               ))}
@@ -720,11 +724,24 @@ export function Reserves() {
               isSubmitting={isSubmittingBatch}
               onExecuteBatch={handleExecuteBatch}
               onClose={() => setShowMassAporteModal(false)}
+              onAuditSuggestion={r => setAuditReserve(r)}
               isModal={true}
             />
           </div>
         </div>
       )}
+
+      {/* 1b. Modal Auditoria da Sugestão de Aportes */}
+      <SuggestionAuditModal
+        isOpen={Boolean(auditReserve)}
+        onClose={() => setAuditReserve(null)}
+        reserve={auditReserve}
+        transactions={transactions}
+        reserveTransactions={reserveTransactions}
+        globalPeriod={FIXED_SUGGESTION_PERIOD}
+        customDateRange={FIXED_CUSTOM_RANGE}
+        onApplyAporte={(res, amt) => handleApplyDirectSuggestion(res, amt)}
+      />
 
       {/* 2. Modal Criar / Editar Reserva */}
       <ReserveModal
