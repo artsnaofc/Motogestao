@@ -37,7 +37,8 @@ export default function FreightQuotePage() {
   const { settings } = useData();
   const userId = settings?.user_id || 'default';
 
-  const [activeTab, setActiveTab] = useState<'create' | 'list' | 'clients'>('create');
+  const [activeTab, setActiveTab] = useState<'create' | 'list' | 'clients'>('list');
+  const [highlightedQuoteId, setHighlightedQuoteId] = useState<string | null>(null);
   const [quotes, setQuotes] = useState<FreightQuote[]>([]);
   const [editingQuote, setEditingQuote] = useState<Partial<FreightQuote> | null>(null);
   const [isBaseMode, setIsBaseMode] = useState(false);
@@ -79,6 +80,8 @@ export default function FreightQuotePage() {
     loadQuotes();
     setEditingQuote(null);
     setIsBaseMode(false);
+    setHighlightedQuoteId(quote.id);
+    setActiveTab('list');
   };
 
   const handleEditQuote = (quote: FreightQuote) => {
@@ -354,6 +357,7 @@ export default function FreightQuotePage() {
             <FreightQuotesList
               quotes={quotes}
               userId={userId}
+              highlightedQuoteId={highlightedQuoteId}
               onEditQuote={handleEditQuote}
               onUseAsBaseQuote={handleUseAsBaseQuote}
               onOpenProposal={(quote) => setProposalModalQuote(quote)}

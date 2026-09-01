@@ -62,6 +62,7 @@ interface FreightQuotesListProps {
   onQuotesChanged: () => void;
   onNewQuote?: () => void;
   userId?: string;
+  highlightedQuoteId?: string | null;
 }
 
 export function FreightQuotesList({
@@ -73,6 +74,7 @@ export function FreightQuotesList({
   onQuotesChanged,
   onNewQuote,
   userId = 'default',
+  highlightedQuoteId,
 }: FreightQuotesListProps) {
   const navigate = useNavigate();
   const { refreshData, settings } = useData();
@@ -81,6 +83,18 @@ export function FreightQuotesList({
   const [isSharingId, setIsSharingId] = useState<string | null>(null);
   const [quoteToDelete, setQuoteToDelete] = useState<FreightQuote | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+
+  useEffect(() => {
+    if (highlightedQuoteId) {
+      const timer = setTimeout(() => {
+        const el = document.getElementById(`quote-card-${highlightedQuoteId}`);
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      }, 150);
+      return () => clearTimeout(timer);
+    }
+  }, [highlightedQuoteId]);
 
   // Escutar atualizações globais de orçamentos para manter a lista 100% síncrona
   useEffect(() => {
@@ -331,12 +345,24 @@ export function FreightQuotesList({
           {filteredQuotes.map((quote) => {
             const statusInfo = statusConfig[quote.status] || statusConfig.pending;
             const StatusIcon = statusInfo.icon;
+            const isHighlighted = highlightedQuoteId === quote.id;
 
             return (
               <Card
                 key={quote.id}
-                className="border-border/70 bg-card hover:border-border/90 transition-all shadow-2xs hover:shadow-xs rounded-3xl overflow-hidden group"
+                id={`quote-card-${quote.id}`}
+                className={`border transition-all duration-500 rounded-3xl overflow-hidden group ${
+                  isHighlighted
+                    ? 'border-2 border-indigo-500 ring-4 ring-indigo-500/30 bg-indigo-500/10 dark:bg-indigo-950/40 shadow-xl scale-[1.01]'
+                    : 'border-border/70 bg-card hover:border-border/90 shadow-2xs hover:shadow-xs'
+                }`}
               >
+                {isHighlighted && (
+                  <div className="bg-gradient-to-r from-indigo-600 to-violet-600 text-white text-[10.5px] font-black px-3 py-1 text-center flex items-center justify-center gap-1.5 tracking-wider uppercase shadow-xs">
+                    <Sparkles className="w-3.5 h-3.5 text-amber-300 animate-spin" />
+                    Orçamento Salvo & Destacado
+                  </div>
+                )}
                 <CardContent className="p-4 sm:p-5 space-y-3.5">
                   {/* Top Bar: Code, Status & Price */}
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border/40 pb-3">
