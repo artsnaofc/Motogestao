@@ -144,10 +144,11 @@ export const freightStorage = {
       console.error('Erro ao salvar orçamento de frete:', e);
     }
 
-    // Auto save client
-    if (quote.client_name?.trim() && quote.client_name.trim().length >= 2) {
+    // Auto save client if not empty or generic "cliente"
+    const trimmedName = quote.client_name?.trim();
+    if (trimmedName && trimmedName.length >= 2 && trimmedName.toLowerCase() !== 'cliente') {
       this.autoSaveClient({
-        name: quote.client_name.trim(),
+        name: trimmedName,
         phone: quote.client_phone?.trim(),
         company: quote.client_company?.trim(),
         document: quote.client_document?.trim(),
@@ -665,15 +666,20 @@ export const freightStorage = {
   },
 
   autoSaveClient(client: Partial<FreightClient> & { name: string }, userId: string = 'default'): FreightClient {
+    const rawName = client.name?.trim() || '';
+    if (!rawName || rawName.length < 2 || rawName.toLowerCase() === 'cliente') {
+      return client as FreightClient;
+    }
+
     const list = this.getClients(userId);
     const existingIndex = list.findIndex(
-      c => c.name.toLowerCase().trim() === client.name.toLowerCase().trim()
+      c => c.name.toLowerCase().trim() === rawName.toLowerCase()
     );
 
     const updatedClient: FreightClient = {
       id: existingIndex >= 0 ? list[existingIndex].id : (client.id || `cli_${Date.now()}`),
       user_id: userId,
-      name: client.name.trim(),
+      name: rawName,
       phone: client.phone?.trim() || (existingIndex >= 0 ? list[existingIndex].phone : ''),
       company: client.company?.trim() || (existingIndex >= 0 ? list[existingIndex].company : ''),
       document: client.document?.trim() || (existingIndex >= 0 ? list[existingIndex].document : ''),
@@ -691,6 +697,7 @@ export const freightStorage = {
 
     try {
       localStorage.setItem(`${CLIENTS_KEY_PREFIX}${userId}`, JSON.stringify(newList));
+      localStorage.setItem(`${CLIENTS_KEY_PREFIX}default`, JSON.stringify(newList));
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('freight_clients_updated', { detail: updatedClient }));
       }
@@ -705,12 +712,20 @@ export const freightStorage = {
         const { error } = await supabase
           .from('freight_clients')
           .upsert({
-            ...updatedClient,
+            id: updatedClient.id,
             user_id: effectiveId,
+            name: updatedClient.name,
+            phone: updatedClient.phone || '',
+            company: updatedClient.company || '',
+            document: updatedClient.document || '',
+            email: updatedClient.email || '',
+            updated_at: updatedClient.updated_at,
           });
 
         if (error) {
           console.warn('[freightStorage] Supabase client save error:', error.message);
+        } else {
+          console.log(`[freightStorage] Cliente "${updatedClient.name}" cadastrado com sucesso.`);
         }
       } catch (err) {
         console.warn('[freightStorage] Supabase client save exception:', err);

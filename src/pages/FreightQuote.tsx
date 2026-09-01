@@ -21,7 +21,10 @@ import {
   RotateCcw,
   Users,
   Percent,
-  X
+  X,
+  ArrowLeft,
+  ChevronRight,
+  UserCheck
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { FreightQuote, DriverFreightPreset, FreightClient } from '../types/freight';
@@ -40,6 +43,7 @@ export default function FreightQuotePage() {
   const [activeTab, setActiveTab] = useState<'create' | 'list' | 'clients'>('list');
   const [highlightedQuoteId, setHighlightedQuoteId] = useState<string | null>(null);
   const [quotes, setQuotes] = useState<FreightQuote[]>([]);
+  const [clientsCount, setClientsCount] = useState<number>(() => freightStorage.getClients(userId).length);
   const [editingQuote, setEditingQuote] = useState<Partial<FreightQuote> | null>(null);
   const [isBaseMode, setIsBaseMode] = useState(false);
 
@@ -51,13 +55,16 @@ export default function FreightQuotePage() {
   const loadQuotes = () => {
     const loaded = freightStorage.getQuotes(userId);
     setQuotes(loaded);
+    setClientsCount(freightStorage.getClients(userId).length);
   };
 
   useEffect(() => {
     loadQuotes();
     // Sync presets, vehicles, clients and quotes from Supabase on mount
     freightStorage.syncPresetFromDatabase(userId);
-    freightStorage.syncClientsFromDatabase(userId);
+    freightStorage.syncClientsFromDatabase(userId).then(c => {
+      if (c && c.length >= 0) setClientsCount(c.length);
+    });
     freightStorage.syncQuotesFromDatabase(userId).then((synced) => {
       if (synced && synced.length > 0) {
         setQuotes(synced);
@@ -68,9 +75,15 @@ export default function FreightQuotePage() {
       loadQuotes();
     };
 
+    const handleClientsUpdated = () => {
+      setClientsCount(freightStorage.getClients(userId).length);
+    };
+
     window.addEventListener('freight_quotes_updated', handleQuotesUpdated);
+    window.addEventListener('freight_clients_updated', handleClientsUpdated);
     return () => {
       window.removeEventListener('freight_quotes_updated', handleQuotesUpdated);
+      window.removeEventListener('freight_clients_updated', handleClientsUpdated);
     };
   }, [userId]);
 
@@ -158,8 +171,8 @@ export default function FreightQuotePage() {
 
   return (
     <div className="w-full max-w-7xl mx-auto p-3.5 sm:p-6 lg:p-8 space-y-6">
-      {/* HEADER WITH TITLE & ACTION BUTTONS */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-border/50 pb-5">
+      {/* HEADER WITH TITLE & PRIMARY ACTION BUTTONS */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-border/50 pb-5">
         <div className="flex items-center gap-3.5">
           <div className="h-12 w-12 rounded-2xl bg-gradient-to-tr from-primary to-indigo-600 flex items-center justify-center text-primary-foreground shadow-md shadow-primary/20 shrink-0">
             <Bike className="w-6 h-6" />
@@ -177,154 +190,244 @@ export default function FreightQuotePage() {
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2.5 flex-wrap">
+          <Button
+            onClick={() => {
+              setEditingQuote(null);
+              setIsBaseMode(false);
+              setActiveTab('create');
+            }}
+            className="bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white font-extrabold rounded-2xl h-11 px-5 text-xs gap-2 cursor-pointer shadow-md shadow-indigo-500/20 transition-all hover:scale-[1.02]"
+          >
+            <PlusCircle className="w-4 h-4" />
+            Novo Orçamento
+          </Button>
+
           <Button
             variant="outline"
             onClick={() => setIsSettingsOpen(true)}
-            className="rounded-2xl h-10 px-4 text-xs font-bold border-border/80 hover:bg-muted gap-2 cursor-pointer shadow-2xs"
+            className="rounded-2xl h-11 px-4 text-xs font-bold border-border/80 hover:bg-muted gap-2 cursor-pointer shadow-2xs"
           >
             <Settings className="w-4 h-4 text-muted-foreground" />
-            Configurar Tarifas & PIX
+            Tarifas & PIX
           </Button>
         </div>
       </div>
 
       {/* KPI STATS CARDS (FINANCIAL COCKPIT) */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
         {/* Total Quotes & Conversion */}
-        <Card className="rounded-3xl border-border/70 bg-card p-4 sm:p-5 shadow-2xs space-y-1.5">
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">
+        <Card className="rounded-xl border-border/70 bg-card p-2.5 shadow-2xs">
+          <div className="flex items-center justify-between gap-1 mb-0.5">
+            <span className="text-[9px] font-extrabold uppercase tracking-wide text-muted-foreground truncate">
               Total Emitido
             </span>
-            <div className="p-1.5 rounded-xl bg-primary/10 text-primary">
-              <FileText className="w-4 h-4" />
+            <div className="p-1 rounded-md bg-primary/10 text-primary shrink-0">
+              <FileText className="w-3 h-3" />
             </div>
           </div>
-          <p className="text-xl sm:text-2xl font-black text-foreground">
-            {stats.totalCount} <span className="text-xs font-semibold text-muted-foreground">propostas</span>
-          </p>
-          <span className="text-[11px] text-muted-foreground block">
-            Taxa de Conversão: <strong className="text-emerald-600 dark:text-emerald-400 font-bold">{stats.conversionRate.toFixed(0)}%</strong>
-          </span>
+          <div className="flex items-baseline justify-between gap-1">
+            <p className="text-base sm:text-lg font-black text-foreground leading-tight">
+              {stats.totalCount} <span className="text-[10px] font-medium text-muted-foreground">prop.</span>
+            </p>
+            <span className="text-[9.5px] text-muted-foreground shrink-0">
+              Conv: <strong className="text-emerald-600 dark:text-emerald-400 font-bold">{stats.conversionRate.toFixed(0)}%</strong>
+            </span>
+          </div>
         </Card>
 
         {/* Pending Pipeline */}
-        <Card className="rounded-3xl border-border/70 bg-card p-4 sm:p-5 shadow-2xs space-y-1.5">
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] font-extrabold uppercase tracking-wider text-amber-600 dark:text-amber-400">
+        <Card className="rounded-xl border-border/70 bg-card p-2.5 shadow-2xs">
+          <div className="flex items-center justify-between gap-1 mb-0.5">
+            <span className="text-[9px] font-extrabold uppercase tracking-wide text-amber-600 dark:text-amber-400 truncate">
               Pipeline Aberto
             </span>
-            <div className="p-1.5 rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400">
-              <Clock className="w-4 h-4" />
+            <div className="p-1 rounded-md bg-amber-500/10 text-amber-600 dark:text-amber-400 shrink-0">
+              <Clock className="w-3 h-3" />
             </div>
           </div>
-          <p className="text-xl sm:text-2xl font-black text-amber-600 dark:text-amber-400">
-            {formatBRL(stats.totalPipelineValue)}
-          </p>
-          <span className="text-[11px] text-muted-foreground block">
-            {stats.pendingCount} proposta(s) aguardando
-          </span>
+          <div className="flex items-baseline justify-between gap-1">
+            <p className="text-base sm:text-lg font-black text-amber-600 dark:text-amber-400 leading-tight truncate">
+              {formatBRL(stats.totalPipelineValue)}
+            </p>
+            <span className="text-[9.5px] text-muted-foreground shrink-0">
+              {stats.pendingCount} pend.
+            </span>
+          </div>
         </Card>
 
         {/* Confirmed Revenue */}
-        <Card className="rounded-3xl border-border/70 bg-card p-4 sm:p-5 shadow-2xs space-y-1.5">
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] font-extrabold uppercase tracking-wider text-indigo-600 dark:text-indigo-400">
+        <Card className="rounded-xl border-border/70 bg-card p-2.5 shadow-2xs">
+          <div className="flex items-center justify-between gap-1 mb-0.5">
+            <span className="text-[9px] font-extrabold uppercase tracking-wide text-indigo-600 dark:text-indigo-400 truncate">
               Receita Confirmada
             </span>
-            <div className="p-1.5 rounded-xl bg-indigo-500/10 text-indigo-600 dark:text-indigo-400">
-              <CheckCircle2 className="w-4 h-4" />
+            <div className="p-1 rounded-md bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 shrink-0">
+              <CheckCircle2 className="w-3 h-3" />
             </div>
           </div>
-          <p className="text-xl sm:text-2xl font-black text-indigo-600 dark:text-indigo-400">
-            {formatBRL(stats.approvedRevenue)}
-          </p>
-          <span className="text-[11px] text-muted-foreground block">
-            Ticket médio: <strong className="text-foreground">{formatBRL(stats.avgTicket)}</strong>
-          </span>
+          <div className="flex items-baseline justify-between gap-1">
+            <p className="text-base sm:text-lg font-black text-indigo-600 dark:text-indigo-400 leading-tight truncate">
+              {formatBRL(stats.approvedRevenue)}
+            </p>
+            <span className="text-[9.5px] text-muted-foreground shrink-0 truncate">
+              Méd: <strong className="text-foreground">{formatBRL(stats.avgTicket)}</strong>
+            </span>
+          </div>
         </Card>
 
         {/* Net Driver Profit */}
-        <Card className="rounded-3xl border-emerald-500/30 bg-emerald-500/5 dark:bg-emerald-500/10 p-4 sm:p-5 shadow-2xs space-y-1.5">
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-700 dark:text-emerald-300">
-              Lucro Líquido Estimado
+        <Card className="rounded-xl border-emerald-500/30 bg-emerald-500/5 dark:bg-emerald-500/10 p-2.5 shadow-2xs">
+          <div className="flex items-center justify-between gap-1 mb-0.5">
+            <span className="text-[9px] font-extrabold uppercase tracking-wide text-emerald-700 dark:text-emerald-300 truncate">
+              Lucro Estimado
             </span>
-            <div className="p-1.5 rounded-xl bg-emerald-500/20 text-emerald-600 dark:text-emerald-300">
-              <TrendingUp className="w-4 h-4" />
+            <div className="p-1 rounded-md bg-emerald-500/20 text-emerald-600 dark:text-emerald-300 shrink-0">
+              <TrendingUp className="w-3 h-3" />
             </div>
           </div>
-          <p className="text-xl sm:text-2xl font-black text-emerald-600 dark:text-emerald-400">
-            {formatBRL(stats.expectedProfit)}
-          </p>
-          <span className="text-[11px] text-emerald-700/80 dark:text-emerald-300/80 font-semibold block">
-            {stats.completedCount} frete(s) concluído(s)
-          </span>
+          <div className="flex items-baseline justify-between gap-1">
+            <p className="text-base sm:text-lg font-black text-emerald-600 dark:text-emerald-400 leading-tight truncate">
+              {formatBRL(stats.expectedProfit)}
+            </p>
+            <span className="text-[9.5px] text-emerald-700/80 dark:text-emerald-300/80 font-semibold shrink-0">
+              {stats.completedCount} conc.
+            </span>
+          </div>
         </Card>
       </div>
 
-      {/* NAVIGATION TABS */}
-      <div className="flex items-center gap-2 border-b border-border/50 pb-2 overflow-x-auto">
-        <Button
-          variant={activeTab === 'create' ? 'default' : 'ghost'}
-          onClick={() => setActiveTab('create')}
-          className={`rounded-2xl h-10 px-4 font-extrabold text-xs cursor-pointer gap-2 shrink-0 ${
-            activeTab === 'create' ? 'shadow-xs' : 'text-muted-foreground hover:text-foreground'
-          }`}
-        >
-          <PlusCircle className="w-4 h-4" />
-          {editingQuote ? (isBaseMode ? `Base (${editingQuote.code})` : `Editando (${editingQuote.code})`) : 'Novo Orçamento'}
-        </Button>
+      {/* MODERN CONTROL & NAVIGATION BAR */}
+      {activeTab === 'create' ? (
+        /* CONTEXTUAL SLIM HEADER WHEN CREATING OR EDITING */
+        <div className="flex items-center justify-between gap-3 bg-card border border-border/80 px-3.5 py-2.5 rounded-2xl shadow-2xs">
+          <div className="flex items-center gap-2.5 overflow-hidden">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setEditingQuote(null);
+                setIsBaseMode(false);
+                setActiveTab('list');
+              }}
+              className="rounded-xl h-8 px-2.5 text-xs font-bold gap-1.5 cursor-pointer hover:bg-muted text-muted-foreground hover:text-foreground shrink-0 border border-border/50"
+            >
+              <ArrowLeft className="w-3.5 h-3.5 text-indigo-500" />
+              <span>Voltar</span>
+            </Button>
 
-        {editingQuote && (
+            <div className="h-4 w-px bg-border/60 shrink-0" />
+
+            <span className="text-xs font-black truncate text-foreground flex items-center gap-1.5">
+              {editingQuote ? (
+                <>
+                  <span className="text-indigo-600 dark:text-indigo-400">
+                    {isBaseMode ? '📋 Novo com Base' : '✏️ Edição'}
+                  </span>
+                  <span className="text-muted-foreground font-mono text-[11px]">({editingQuote.code})</span>
+                </>
+              ) : (
+                <span className="text-indigo-600 dark:text-indigo-400">✨ Emissão de Orçamento</span>
+              )}
+            </span>
+          </div>
+
+          {editingQuote && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setEditingQuote(null);
+                setIsBaseMode(false);
+                setActiveTab('list');
+                toast.info('Edição cancelada.');
+              }}
+              className="text-xs font-bold text-rose-500 hover:text-rose-600 hover:bg-rose-500/10 rounded-xl h-8 px-2.5 gap-1 shrink-0 cursor-pointer"
+            >
+              <X className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Cancelar</span>
+            </Button>
+          )}
+        </div>
+      ) : activeTab === 'clients' ? (
+        /* CONTEXTUAL SLIM HEADER WHEN MANAGING CLIENTS */
+        <div className="flex items-center justify-between gap-3 bg-card border border-border/80 px-3.5 py-2.5 rounded-2xl shadow-2xs">
+          <div className="flex items-center gap-2.5">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setActiveTab('list')}
+              className="rounded-xl h-8 px-2.5 text-xs font-bold gap-1.5 cursor-pointer hover:bg-muted text-muted-foreground hover:text-foreground shrink-0 border border-border/50"
+            >
+              <ArrowLeft className="w-3.5 h-3.5 text-emerald-500" />
+              <span>Voltar</span>
+            </Button>
+
+            <div className="h-4 w-px bg-border/60 shrink-0" />
+
+            <span className="text-xs font-black text-foreground flex items-center gap-1.5">
+              👥 Gestão de Clientes
+            </span>
+          </div>
+
           <Button
-            variant="outline"
             size="sm"
             onClick={() => {
               setEditingQuote(null);
               setIsBaseMode(false);
-              toast.info('Edição cancelada. Modo novo orçamento ativado.');
+              setActiveTab('create');
             }}
-            className="rounded-2xl h-10 px-3 text-xs font-bold text-rose-600 dark:text-rose-400 border-rose-500/30 hover:bg-rose-500/10 cursor-pointer gap-1.5 shrink-0"
-            title="Cancelar edição e voltar ao modo Novo Orçamento"
+            className="bg-gradient-to-r from-indigo-600 to-violet-600 text-white font-extrabold rounded-xl h-8 px-3 text-xs gap-1.5 cursor-pointer shadow-xs shrink-0"
           >
-            <X className="w-4 h-4" />
-            Cancelar Edição
+            <PlusCircle className="w-3.5 h-3.5" />
+            <span>Novo Orçamento</span>
           </Button>
-        )}
+        </div>
+      ) : (
+        /* SEGMENTED TOGGLE WHEN IN MAIN LIST VIEW */
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-card/60 border border-border/70 p-2 rounded-3xl shadow-2xs">
+          {/* SEGMENTED SWITCHER */}
+          <div className="flex items-center gap-1.5 p-1 bg-muted/50 rounded-2xl w-full sm:w-auto">
+            <Button
+              variant="ghost"
+              onClick={() => setActiveTab('list')}
+              className={`rounded-xl h-9 px-4 font-black text-xs cursor-pointer gap-2 transition-all flex-1 sm:flex-initial ${
+                activeTab === 'list'
+                  ? 'bg-background text-foreground shadow-xs ring-1 ring-border/50'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              <List className="w-4 h-4 text-indigo-500" />
+              Orçamentos Salvos
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-indigo-500/10 text-indigo-600 dark:text-indigo-400">
+                {quotes.length}
+              </span>
+            </Button>
 
-        <Button
-          variant={activeTab === 'list' ? 'default' : 'ghost'}
-          onClick={() => setActiveTab('list')}
-          className={`rounded-2xl h-10 px-4 font-extrabold text-xs cursor-pointer gap-2 shrink-0 ${
-            activeTab === 'list' ? 'shadow-xs' : 'text-muted-foreground hover:text-foreground'
-          }`}
-        >
-          <List className="w-4 h-4" />
-          Orçamentos Salvos
-          {quotes.length > 0 && (
-            <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
-              activeTab === 'list' ? 'bg-primary-foreground text-primary' : 'bg-muted text-muted-foreground'
-            }`}>
-              {quotes.length}
-            </span>
-          )}
-        </Button>
+            <Button
+              variant="ghost"
+              onClick={() => setActiveTab('clients')}
+              className={`rounded-xl h-9 px-4 font-black text-xs cursor-pointer gap-2 transition-all flex-1 sm:flex-initial ${
+                activeTab === 'clients'
+                  ? 'bg-background text-foreground shadow-xs ring-1 ring-border/50'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              <Users className="w-4 h-4 text-emerald-500" />
+              Clientes
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                {clientsCount}
+              </span>
+            </Button>
+          </div>
 
-        <Button
-          variant={activeTab === 'clients' ? 'default' : 'ghost'}
-          onClick={() => setActiveTab('clients')}
-          className={`rounded-2xl h-10 px-4 font-extrabold text-xs cursor-pointer gap-2 shrink-0 ${
-            activeTab === 'clients' ? 'shadow-xs' : 'text-muted-foreground hover:text-foreground'
-          }`}
-        >
-          <Users className="w-4 h-4" />
-          Clientes Frequentes
-        </Button>
-      </div>
+          <div className="text-xs text-muted-foreground font-medium px-3 hidden md:block">
+            Selecione ou edite orçamentos existentes ou emita uma nova proposta
+          </div>
+        </div>
+      )}
 
-      {/* TAB CONTENT */}
+      {/* VIEW CONTENT */}
       <AnimatePresence mode="wait">
         {activeTab === 'create' && (
           <motion.div
@@ -340,7 +443,7 @@ export default function FreightQuotePage() {
               userId={userId}
               onSaveQuote={handleSaveQuote}
               onOpenProposal={(quote) => setProposalModalQuote(quote)}
-              onCancelEdit={editingQuote ? () => { setEditingQuote(null); setIsBaseMode(false); } : undefined}
+              onCancelEdit={editingQuote ? () => { setEditingQuote(null); setIsBaseMode(false); setActiveTab('list'); } : undefined}
               onOpenSettings={() => setIsSettingsOpen(true)}
             />
           </motion.div>
