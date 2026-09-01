@@ -21,8 +21,13 @@ import {
   Sparkles,
   Zap,
   X,
-  Calendar
+  Calendar,
+  Fuel,
+  Heart,
+  PiggyBank,
+  TrendingDown
 } from 'lucide-react';
+import { parseLocalDate, isOperationalCategory } from '@/components/reserves/reserveUtils';
 
 interface DailyProductivityHeatmapProps {
   transactions: Transaction[];
@@ -45,10 +50,12 @@ export const DailyProductivityHeatmap: React.FC<DailyProductivityHeatmapProps> =
     dateStr: string;
     formattedDate: string;
     income: number;
-    expense: number;
-    opExpense: number;
-    profit: number;
-    cashBalance: number;
+    opExpensePuro: number;
+    reserveAporte: number;
+    perExpense: number;
+    reserveExpense: number;
+    profit: number;       // Líq. Real (Faturamento padrão - Despesas Operacionais Puras - Despesas Pessoais)
+    cashBalance: number;  // Caixa Liq (Caixa Líquido do dia)
     km: number;
     deliveries: number;
     txCount: number;
@@ -63,58 +70,39 @@ export const DailyProductivityHeatmap: React.FC<DailyProductivityHeatmapProps> =
 
   const now = useMemo(() => new Date(), []);
 
-  // 1. Agrupamento diário de transações com métricas consolidadas
+  // 1. Agrupamento diário de transações idêntico ao groupedTransactions do Extrato (History.tsx)
   const dailyStatsMap = useMemo(() => {
     const map: Record<string, {
       income: number;
-      expense: number;
       opExpense: number;
+      opExpensePuro: number;
+      reserveAporte: number;
       perExpense: number;
-      profit: number;       // Lucro Líquido
-      cashBalance: number;  // Balanço do Caixa
+      reserveExpense: number;
+      profit: number;       // Líq. Real
+      cashBalance: number;  // Caixa Liq.
       km: number;
       deliveries: number;
       txCount: number;
       txs: Transaction[];
     }> = Object.create(null);
 
-    const personalCats = settings?.personal_expense_categories || ['Alimentação', 'Mercado', 'Lazer', 'Saúde', 'Pessoal'];
     const opCats = settings?.operational_expense_categories || ['Combustível', 'Pedágio', 'Manutenção'];
 
-    const isFuelCategory = (cat: string) => {
-      if (!cat) return false;
-      const normalized = cat.toLowerCase().trim();
-      return normalized === 'combustível' || normalized === 'combustivel';
-    };
-
-    const isMaintCategory = (cat: string) => {
-      if (!cat) return false;
-      const normalized = cat.toLowerCase().trim();
-      return normalized === 'manutenção' || normalized === 'manutencao';
-    };
-
-    const isTollCategory = (cat: string) => {
-      if (!cat) return false;
-      const normalized = cat.toLowerCase().trim();
-      return normalized === 'pedágio' || normalized === 'pedagio';
-    };
-
-    const isOpCategory = (cat: string) => {
-      if (!cat) return false;
-      return opCats.includes(cat) || isFuelCategory(cat) || isMaintCategory(cat) || isTollCategory(cat);
-    };
-
     (transactions || []).forEach(t => {
-      if (!t || !t.date) return;
-      const dateStr = String(t.date).split('T')[0];
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return;
+      if (!t) return;
+      const dateObj = parseLocalDate(t.date);
+      const dateKey = format(dateObj, 'yyyy-MM-dd');
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) return;
 
-      if (!map[dateStr]) {
-        map[dateStr] = {
+      if (!map[dateKey]) {
+        map[dateKey] = {
           income: 0,
-          expense: 0,
           opExpense: 0,
+          opExpensePuro: 0,
+          reserveAporte: 0,
           perExpense: 0,
+          reserveExpense: 0,
           profit: 0,
           cashBalance: 0,
           km: 0,
@@ -124,19 +112,20 @@ export const DailyProductivityHeatmap: React.FC<DailyProductivityHeatmapProps> =
         };
       }
 
-      const entry = map[dateStr];
-      entry.txCount += 1;
-      entry.txs = [...entry.txs, t];
+      map[dateKey].txs.push(t);
+      map[dateKey].txCount += 1;
     });
 
-    // 2. Calcular os valores diários de cada dia de forma imutável
+    // 2. Calcular os valores diários aplicando exatamente as mesmas regras de fechamento do Extrato
     const computedMap: Record<string, {
       income: number;
-      expense: number;
       opExpense: number;
+      opExpensePuro: number;
+      reserveAporte: number;
       perExpense: number;
-      profit: number;       // Lucro Líquido
-      cashBalance: number;  // Balanço do Caixa
+      reserveExpense: number;
+      profit: number;
+      cashBalance: number;
       km: number;
       deliveries: number;
       txCount: number;
@@ -147,115 +136,152 @@ export const DailyProductivityHeatmap: React.FC<DailyProductivityHeatmapProps> =
       const entry = map[dateStr];
       const dayTxs = entry.txs;
 
-      const inc = dayTxs.filter(t => t.type === 'income').reduce((acc, t) => acc + Number(t.amount || 0), 0);
-      const rendimentosReserva = dayTxs
-        .filter(t => (t as any).reserveTxType === 'rendimento' || (t as any).isDividendTx)
+      // Métricas de Investimentos & Proventos (mesma regra do Extrato)
+      const totalCompraInvestimento = dayTxs
+        .filter(t => (t as any).isInvestmentTx && t.type === 'expense' && (t as any).payment_status !== 'pending')
         .reduce((acc, t) => acc + Number(t.amount || 0), 0);
-      
-      let totalVendaInvestimento = 0;
-      let totalCompraInvestimento = 0;
-      let fuelExpense = 0;
-      let maintenanceExpense = 0;
-      let km = 0;
-      let deliveries = 0;
 
-      dayTxs.forEach(t => {
-        if ((t as any).isInvestmentTx) {
-          if (t.type === 'income') {
-            totalVendaInvestimento += Number(t.amount || 0);
-          } else {
-            totalCompraInvestimento += Number(t.amount || 0);
-          }
-          return;
-        }
+      const totalVendaInvestimento = dayTxs
+        .filter(t => (t as any).isInvestmentTx && t.type === 'income' && (t as any).payment_status !== 'pending')
+        .reduce((acc, t) => acc + Number(t.amount || 0), 0);
 
-        // Quilometragem robusta
-        const startKm = t.start_km !== undefined && t.start_km !== null ? Number(t.start_km) : NaN;
-        const endKm = t.end_km !== undefined && t.end_km !== null ? Number(t.end_km) : NaN;
-        
-        if (!isNaN(startKm) && !isNaN(endKm) && endKm >= startKm) {
-          km += (endKm - startKm);
-        } else if ((t as any).km) {
-          km += Number((t as any).km) || 0;
-        }
+      const incStandard = dayTxs
+        .filter(t => 
+          t.type === 'income' && 
+          (t as any).payment_status !== 'pending' &&
+          t.category !== 'Resgate Reserva' && 
+          (!(t as any).isReserveTx || (t as any).reserveTxType === 'rendimento') && 
+          !(t as any).isInvestmentTx
+        )
+        .reduce((acc, t) => acc + Number(t.amount || 0), 0);
 
-        // Entregas realizadas: Apenas aquelas que vêm do lançamento da pizzaria
-        const isPizzariaCategory = t.category?.trim().toLowerCase() === 'pizzaria';
-        if (isPizzariaCategory) {
-          if (t.deliveries !== undefined && t.deliveries !== null && Number(t.deliveries) > 0) {
-            deliveries += Number(t.deliveries);
-          } else {
-            const desc = t.description || '';
-            const match = desc.match(/(\d+)\s*(entregas?|corridas?|pedidos?)/i);
-            if (match && match[1]) {
-              deliveries += parseInt(match[1], 10);
-            } else {
-              deliveries += 1;
-            }
-          }
-        }
-
-        if (t.category === 'Aporte Reserva' || (t as any).isReserveAporte) {
-          return;
-        }
-
-        const rawAmt = (t as any).rawAmount !== undefined ? Number((t as any).rawAmount) : Number(t.amount || 0);
-        if (t.type === 'expense') {
-          if (isFuelCategory(t.category)) {
-            fuelExpense += rawAmt;
-          } else if (isMaintCategory(t.category)) {
-            maintenanceExpense += rawAmt;
-          }
-        }
-      });
+      const dailyReserveRendimento = dayTxs
+        .filter(t => 
+          (t as any).payment_status !== 'pending' &&
+          (((t as any).isReserveTx && (t as any).reserveTxType === 'rendimento') || (t as any).isDividendTx)
+        )
+        .reduce((acc, t) => acc + Number(t.amount || 0), 0);
 
       let opExpPuro = 0;
       let perExpPuro = 0;
       let reserveSpending = 0;
       let rawReserveAporte = 0;
+      let km = 0;
+      let deliveries = 0;
 
-      dayTxs.filter(t => t.type === 'expense').forEach(t => {
-        if ((t as any).isInvestmentTx) return;
+      // Processamento de Despesas (exatamente como em History.tsx)
+      dayTxs.forEach(t => {
+        const isPending = (t as any).payment_status === 'pending';
 
-        const isReserveAporteVal = (t as any).isReserveAporte === true || t.category === 'Aporte Reserva';
-        const isReserveUse = (t as any).isReserveTx === true && (t as any).reserveTxType === 'utilizacao';
-        const rawAmt = (t as any).rawAmount !== undefined ? Number((t as any).rawAmount) : Number(t.amount || 0);
-
-        if (isReserveAporteVal) {
-          rawReserveAporte += rawAmt;
-        } else if (isReserveUse) {
-          reserveSpending += rawAmt;
-          if (isOpCategory(t.category)) {
-            opExpPuro += rawAmt;
-          } else {
-            perExpPuro += rawAmt;
+        // Km e Entregas (apenas transações realizadas)
+        if (!isPending) {
+          const startKm = t.start_km !== undefined && t.start_km !== null ? Number(t.start_km) : NaN;
+          const endKm = t.end_km !== undefined && t.end_km !== null ? Number(t.end_km) : NaN;
+          if (!isNaN(startKm) && !isNaN(endKm) && endKm >= startKm) {
+            km += (endKm - startKm);
+          } else if ((t as any).km) {
+            km += Number((t as any).km) || 0;
           }
-        } else {
-          if (isOpCategory(t.category)) {
-            opExpPuro += rawAmt;
+
+          const isPizzariaCategory = t.category?.trim().toLowerCase() === 'pizzaria';
+          if (isPizzariaCategory) {
+            if (t.deliveries !== undefined && t.deliveries !== null && Number(t.deliveries) > 0) {
+              deliveries += Number(t.deliveries);
+            } else {
+              const desc = t.description || '';
+              const match = desc.match(/(\d+)\s*(entregas?|corridas?|pedidos?)/i);
+              if (match && match[1]) {
+                deliveries += parseInt(match[1], 10);
+              } else {
+                deliveries += 1;
+              }
+            }
+          }
+        }
+
+        if (!isPending) {
+          const isReserveAporteCheck = Boolean(
+            (t as any).isReserveAporte === true || 
+            (t as any).reserveTxType === 'aporte' || 
+            t.category === 'Aporte Reserva' || 
+            t.category === 'Aporte Extra' || 
+            t.category === 'Aporte' || 
+            (t.category && t.category.toLowerCase().includes('aporte')) ||
+            t.description?.toLowerCase().includes('aporte')
+          );
+          if (isReserveAporteCheck) {
+            const rawAmt = (t as any).rawAmount !== undefined ? Number((t as any).rawAmount) : Number(t.amount || 0);
+            rawReserveAporte += rawAmt;
+          }
+        }
+
+        if (t.type === 'expense' && !isPending) {
+          if ((t as any).isInvestmentTx) {
+            // Asset purchases convert cash into investment assets, so they do not reduce net worth or net profit
+            return;
+          }
+
+          const isInvestmentReserveUse = (t as any).isReserveTx === true && (t as any).reserveTxType === 'utilizacao' && (
+            (t as any).originalCategory === 'Investimentos' || 
+            (t as any).linkedInvestmentId || 
+            t.description?.includes('Investimento:')
+          );
+          if (isInvestmentReserveUse) {
+            return;
+          }
+
+          const isReserveAporteVal = Boolean(
+            (t as any).isReserveAporte === true || 
+            (t as any).reserveTxType === 'aporte' || 
+            t.category === 'Aporte Reserva' || 
+            t.category === 'Aporte Extra' || 
+            t.category === 'Aporte' || 
+            (t.category && t.category.toLowerCase().includes('aporte')) ||
+            t.description?.toLowerCase().includes('aporte')
+          );
+          const isReserveUse = t.is_reserve_use === true || (t as any).isReserveUseOriginal === true || t.description?.includes('[Reserva]') || ((t as any).isReserveTx === true && (t as any).reserveTxType === 'utilizacao');
+          const amt = Number(t.amount || 0);
+
+          if (isReserveAporteVal) {
+            // Already counted in rawReserveAporte
+          } else if (isReserveUse) {
+            const rawAmt = (t as any).rawAmount !== undefined ? Number((t as any).rawAmount) : amt;
+            reserveSpending += rawAmt;
+
+            const effectiveCat = (t as any).originalCategory || t.category;
+            if (isOperationalCategory(effectiveCat, opCats)) {
+              opExpPuro += amt;
+            } else {
+              perExpPuro += amt;
+            }
           } else {
-            perExpPuro += rawAmt;
+            if (isOperationalCategory(t.category, opCats)) {
+              opExpPuro += amt;
+            } else {
+              perExpPuro += amt;
+            }
           }
         }
       });
 
-      const incomeNoRendimento = inc - rendimentosReserva - totalVendaInvestimento;
-      const reserveAporte = rawReserveAporte - reserveSpending;
-      const realExpense = opExpPuro + perExpPuro;
-      const standardExpense = opExpPuro + perExpPuro + reserveAporte;
+      const netReserveAporte = rawReserveAporte - reserveSpending;
+      const standardExpense = opExpPuro + perExpPuro + netReserveAporte;
 
-      // Balanço de Caixa
-      const cashBalance = incomeNoRendimento + totalVendaInvestimento - standardExpense;
-      // Lucro Líquido
-      const profit = incomeNoRendimento - opExpPuro - perExpPuro;
+      // Caixa Liq (Caixa Líquido do dia): cash in - standard cash out (plus investment sales). Asset purchases are excluded.
+      const dailyNet = (incStandard - dailyReserveRendimento) + totalVendaInvestimento - standardExpense;
+      
+      // Líquido Real (Lucro Líquido Real do dia): Standard operating profit
+      const dailyNetReal = incStandard - opExpPuro - perExpPuro;
 
       computedMap[dateStr] = {
-        income: inc,
-        expense: realExpense,
-        opExpense: opExpPuro,
+        income: incStandard,
+        opExpense: opExpPuro + rawReserveAporte,
+        opExpensePuro: opExpPuro,
+        reserveAporte: rawReserveAporte,
         perExpense: perExpPuro,
-        profit,
-        cashBalance,
+        reserveExpense: reserveSpending,
+        profit: dailyNetReal,
+        cashBalance: dailyNet,
         km,
         deliveries,
         txCount: entry.txCount,
@@ -942,12 +968,15 @@ export const DailyProductivityHeatmap: React.FC<DailyProductivityHeatmapProps> =
 
         {/* Detalhe do Dia Selecionado (se houver clique) */}
         {selectedDayDetails && (
-          <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-xl p-3 space-y-2 animate-in fade-in slide-in-from-top-1 duration-200">
+          <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-xl p-3 space-y-3 animate-in fade-in slide-in-from-top-1 duration-200">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Calendar className="w-4 h-4 text-emerald-500" />
                 <span className="text-xs font-black uppercase text-foreground">
                   Detalhamento de {selectedDayDetails.formattedDate}
+                </span>
+                <span className="text-[10px] font-bold text-muted-foreground bg-muted/60 px-2 py-0.5 rounded-full border border-border/50">
+                  {selectedDayDetails.txs.length} lançamento{selectedDayDetails.txs.length !== 1 ? 's' : ''}
                 </span>
               </div>
               <button
@@ -959,7 +988,7 @@ export const DailyProductivityHeatmap: React.FC<DailyProductivityHeatmapProps> =
               </button>
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 text-xs">
+            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2 text-xs">
               <div className="bg-card/70 p-2 rounded-lg border border-border/40">
                 <span className="text-[9.5px] font-bold text-muted-foreground uppercase block">Faturamento</span>
                 <span className="font-mono font-black text-foreground text-sm">
@@ -967,36 +996,121 @@ export const DailyProductivityHeatmap: React.FC<DailyProductivityHeatmapProps> =
                 </span>
               </div>
               <div className="bg-card/70 p-2 rounded-lg border border-border/40">
-                <span className="text-[9.5px] font-bold text-muted-foreground uppercase block">Desp. Operacional</span>
+                <span className="text-[9.5px] font-bold text-muted-foreground uppercase block">Gasto Op. Puro</span>
+                <span className="font-mono font-black text-amber-500 text-sm">
+                  {hideValues ? 'R$ •••••' : formatCurrency(selectedDayDetails.opExpensePuro)}
+                </span>
+              </div>
+              <div className="bg-card/70 p-2 rounded-lg border border-border/40">
+                <span className="text-[9.5px] font-bold text-muted-foreground uppercase block">Gasto Pessoal</span>
                 <span className="font-mono font-black text-rose-500 text-sm">
-                  {hideValues ? 'R$ •••••' : formatCurrency(selectedDayDetails.opExpense)}
+                  {hideValues ? 'R$ •••••' : formatCurrency(selectedDayDetails.perExpense)}
                 </span>
               </div>
               <div className="bg-card/70 p-2 rounded-lg border border-border/40">
-                <span className="text-[9.5px] font-bold text-muted-foreground uppercase block">Lucro Líquido</span>
-                <span className={`font-mono font-black text-sm ${selectedDayDetails.profit >= 0 ? "text-emerald-500" : "text-rose-500"}`}>
-                  {hideValues ? 'R$ •••••' : formatCurrency(selectedDayDetails.profit)}
+                <span className="text-[9.5px] font-bold text-muted-foreground uppercase block">Total Gasto</span>
+                <span className="font-mono font-black text-rose-600 dark:text-rose-400 text-sm">
+                  {hideValues ? 'R$ •••••' : formatCurrency(selectedDayDetails.opExpensePuro + selectedDayDetails.perExpense)}
                 </span>
               </div>
               <div className="bg-card/70 p-2 rounded-lg border border-border/40">
-                <span className="text-[9.5px] font-bold text-muted-foreground uppercase block">Balanço do Caixa</span>
+                <span className="text-[9.5px] font-bold text-muted-foreground uppercase block">Líq. Real (Dia)</span>
+                <span className={`font-mono font-black text-sm ${selectedDayDetails.profit >= 0 ? "text-indigo-500 dark:text-indigo-400" : "text-rose-500"}`}>
+                  {hideValues ? 'R$ •••••' : `${selectedDayDetails.profit >= 0 ? '+' : ''}${formatCurrency(selectedDayDetails.profit)}`}
+                </span>
+              </div>
+              <div className="bg-card/70 p-2 rounded-lg border border-border/40">
+                <span className="text-[9.5px] font-bold text-muted-foreground uppercase block">Caixa Liq. (Dia)</span>
                 <span className={`font-mono font-black text-sm ${selectedDayDetails.cashBalance >= 0 ? "text-emerald-500" : "text-rose-500"}`}>
-                  {hideValues ? 'R$ •••••' : formatCurrency(selectedDayDetails.cashBalance)}
+                  {hideValues ? 'R$ •••••' : `${selectedDayDetails.cashBalance >= 0 ? '+' : ''}${formatCurrency(selectedDayDetails.cashBalance)}`}
                 </span>
               </div>
               <div className="bg-card/70 p-2 rounded-lg border border-border/40">
-                <span className="text-[9.5px] font-bold text-muted-foreground uppercase block">Km & Eficiência</span>
-                <span className="font-mono font-black text-foreground text-sm">
-                  {selectedDayDetails.km > 0 ? `${selectedDayDetails.km} km (${formatCurrency(selectedDayDetails.income / selectedDayDetails.km)}/km)` : 'N/A'}
+                <span className="text-[9.5px] font-bold text-muted-foreground uppercase block">Total Aportes</span>
+                <span className="font-mono font-black text-pink-500 text-sm">
+                  {hideValues ? 'R$ •••••' : formatCurrency(selectedDayDetails.reserveAporte)}
                 </span>
               </div>
               <div className="bg-card/70 p-2 rounded-lg border border-border/40">
-                <span className="text-[9.5px] font-bold text-muted-foreground uppercase block">Entregas</span>
-                <span className="font-mono font-black text-foreground text-sm">
-                  {selectedDayDetails.deliveries > 0 ? `${selectedDayDetails.deliveries} entregas` : '0'}
+                <span className="text-[9.5px] font-bold text-muted-foreground uppercase block">Km & Entregas</span>
+                <span className="font-mono font-black text-foreground text-sm truncate block" title={`${selectedDayDetails.km} km, ${selectedDayDetails.deliveries} entregas`}>
+                  {selectedDayDetails.km > 0 || selectedDayDetails.deliveries > 0 ? (
+                    `${selectedDayDetails.km > 0 ? `${selectedDayDetails.km} km` : ''}${selectedDayDetails.km > 0 && selectedDayDetails.deliveries > 0 ? ' ' : ''}${selectedDayDetails.deliveries > 0 ? `(${selectedDayDetails.deliveries} entr.)` : ''}`
+                  ) : (
+                    '0'
+                  )}
                 </span>
               </div>
             </div>
+
+            {/* Listagem transparente de todas as transações que compõem o dia */}
+            {selectedDayDetails.txs.length > 0 && (
+              <div className="bg-card/90 rounded-lg border border-border/60 p-2.5 space-y-1.5 max-h-48 overflow-y-auto scrollbar-thin">
+                <div className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground flex justify-between px-1">
+                  <span>Lançamentos Registrados no Dia</span>
+                  <span>Valor & Classificação</span>
+                </div>
+                <div className="space-y-1">
+                  {selectedDayDetails.txs.map((t, idx) => {
+                    const isPending = (t as any).payment_status === 'pending';
+                    const isInv = (t as any).isInvestmentTx === true || t.category === 'Investimentos';
+                    const isDiv = (t as any).isDividendTx === true || (t as any).reserveTxType === 'rendimento' || t.category === 'Dividendos' || t.category === 'Rendimentos';
+                    const isAporte = Boolean(
+                      (t as any).isReserveAporte === true || 
+                      (t as any).reserveTxType === 'aporte' || 
+                      t.category === 'Aporte Reserva' || 
+                      t.category === 'Aporte Extra' || 
+                      t.category === 'Aporte' || 
+                      (t.category && t.category.toLowerCase().includes('aporte'))
+                    );
+                    const isUse = t.is_reserve_use === true || (t as any).isReserveUseOriginal === true || t.description?.includes('[Reserva]') || ((t as any).isReserveTx === true && (t as any).reserveTxType === 'utilizacao');
+                    const rawAmt = (t as any).rawAmount !== undefined ? Number((t as any).rawAmount) : Number(t.amount || 0);
+
+                    const opCats = settings?.operational_expense_categories || ['Combustível', 'Pedágio', 'Manutenção'];
+                    const effectiveCat = (t as any).originalCategory || t.category;
+                    const isOp = isOperationalCategory(effectiveCat, opCats);
+
+                    return (
+                      <div 
+                        key={t.id || idx} 
+                        className="flex items-center justify-between p-1.5 rounded-md bg-muted/40 hover:bg-muted/70 text-xs transition-colors"
+                      >
+                        <div className="flex items-center gap-2 min-w-0 pr-2">
+                          <span className={`w-2 h-2 rounded-full shrink-0 ${
+                            t.type === 'income' ? 'bg-emerald-500' : isAporte ? 'bg-pink-500' : isInv ? 'bg-blue-500' : isOp ? 'bg-rose-500' : 'bg-amber-500'
+                          }`} />
+                          <div className="truncate">
+                            <span className="font-semibold text-foreground block truncate">
+                              {t.description || t.category || 'Sem descrição'}
+                            </span>
+                            <div className="flex items-center gap-1 text-[9.5px] text-muted-foreground flex-wrap">
+                              <span className="font-medium">{t.category}</span>
+                              {isPending && <span className="text-amber-500 font-bold px-1 bg-amber-500/10 rounded">Pendente</span>}
+                              {isAporte && <span className="text-pink-500 font-bold px-1 bg-pink-500/10 rounded">Aporte Reserva (Patrimonial)</span>}
+                              {isUse && <span className="text-indigo-500 font-bold px-1 bg-indigo-500/10 rounded">Uso de Reserva</span>}
+                              {isInv && <span className="text-blue-500 font-bold px-1 bg-blue-500/10 rounded">Investimento</span>}
+                              {isDiv && <span className="text-purple-500 font-bold px-1 bg-purple-500/10 rounded">Provento/Rendimento</span>}
+                              {!isPending && !isAporte && !isInv && !isDiv && (
+                                <span className={isOp ? "text-amber-500 font-medium" : "text-rose-500 font-medium"}>
+                                  {isOp ? 'Gasto Op. Puro' : 'Gasto Pessoal'}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <span className={`font-mono font-bold text-xs ${
+                            t.type === 'income' ? 'text-emerald-500' : 'text-rose-500'
+                          }`}>
+                            {t.type === 'income' ? '+' : '-'}{hideValues ? 'R$ •••••' : formatCurrency(rawAmt)}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </CardContent>

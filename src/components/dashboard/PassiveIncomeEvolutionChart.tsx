@@ -51,6 +51,8 @@ export const PassiveIncomeEvolutionChart: React.FC<PassiveIncomeEvolutionChartPr
     const events: { monthStr: string; type: 'dividend' | 'reserve'; amount: number }[] = [];
 
     dividends.forEach(d => {
+      if ((d as any).payment_status === 'pending') return;
+      if (d.status && d.status !== 'received' && !(d as any).transaction_id) return;
       const payDate = d.date || (d as any).payment_date;
       const amt = Number(d.amount) || Number((d as any).total_amount) || 0;
       if (payDate && amt > 0) {
@@ -63,6 +65,7 @@ export const PassiveIncomeEvolutionChart: React.FC<PassiveIncomeEvolutionChartPr
     });
 
     investmentTransactions.forEach(it => {
+      if ((it as any).payment_status === 'pending') return;
       const amt = Number(it.amount) || 0;
       if ((it as any).operation === 'dividend' && it.date && amt > 0) {
         events.push({
@@ -74,6 +77,7 @@ export const PassiveIncomeEvolutionChart: React.FC<PassiveIncomeEvolutionChartPr
     });
 
     reserveTransactions.forEach(rt => {
+      if (rt.payment_status === 'pending') return;
       const amt = Number(rt.amount) || 0;
       if (rt.type === 'rendimento' && rt.date && amt > 0) {
         events.push({
@@ -132,12 +136,15 @@ export const PassiveIncomeEvolutionChart: React.FC<PassiveIncomeEvolutionChartPr
 
       // Proventos de Investimentos (Dividendos, JCP, FIIs)
       const b3Dividends = dividends.filter(d => {
+        if ((d as any).payment_status === 'pending') return false;
+        if (d.status && d.status !== 'received' && !(d as any).transaction_id) return false;
         const payDate = d.date || (d as any).payment_date;
         if (!payDate) return false;
         return payDate.startsWith(monthStr);
       }).reduce((sum, d) => sum + (Number(d.amount) || Number((d as any).total_amount) || 0), 0);
 
       const invDividends = investmentTransactions.filter(it => {
+        if ((it as any).payment_status === 'pending') return false;
         if ((it as any).operation !== 'dividend' || !it.date) return false;
         return it.date.startsWith(monthStr);
       }).reduce((sum, it) => sum + (Number(it.amount) || 0), 0);
@@ -146,6 +153,7 @@ export const PassiveIncomeEvolutionChart: React.FC<PassiveIncomeEvolutionChartPr
 
       // Rendimentos de Reservas (CDI, Selic)
       const reserveRendimentos = reserveTransactions.filter(rt => {
+        if (rt.payment_status === 'pending') return false;
         if (rt.type !== 'rendimento' || !rt.date) return false;
         return rt.date.startsWith(monthStr);
       }).reduce((sum, rt) => sum + (Number(rt.amount) || 0), 0);
