@@ -215,84 +215,84 @@ export default function FreightQuotePage() {
       </div>
 
       {/* KPI STATS CARDS (FINANCIAL COCKPIT) */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-1.5 sm:gap-2">
         {/* Total Quotes & Conversion */}
-        <Card className="rounded-xl border-border/70 bg-card p-2.5 shadow-2xs">
-          <div className="flex items-center justify-between gap-1 mb-0.5">
-            <span className="text-[9px] font-extrabold uppercase tracking-wide text-muted-foreground truncate">
+        <Card className="rounded-xl border-border/70 bg-card px-2.5 py-1.5 shadow-2xs">
+          <div className="flex items-center justify-between gap-1">
+            <span className="text-[8.5px] font-black uppercase tracking-wider text-muted-foreground truncate">
               Total Emitido
             </span>
-            <div className="p-1 rounded-md bg-primary/10 text-primary shrink-0">
-              <FileText className="w-3 h-3" />
-            </div>
-          </div>
-          <div className="flex items-baseline justify-between gap-1">
-            <p className="text-base sm:text-lg font-black text-foreground leading-tight">
-              {stats.totalCount} <span className="text-[10px] font-medium text-muted-foreground">prop.</span>
-            </p>
-            <span className="text-[9.5px] text-muted-foreground shrink-0">
+            <span className="text-[9px] text-muted-foreground font-medium shrink-0">
               Conv: <strong className="text-emerald-600 dark:text-emerald-400 font-bold">{stats.conversionRate.toFixed(0)}%</strong>
             </span>
+          </div>
+          <div className="flex items-center justify-between gap-1 mt-0.5">
+            <p className="text-sm sm:text-base font-black text-foreground leading-none">
+              {stats.totalCount} <span className="text-[10px] font-normal text-muted-foreground">prop.</span>
+            </p>
+            <div className="p-0.5 rounded bg-primary/10 text-primary shrink-0">
+              <FileText className="w-3 h-3" />
+            </div>
           </div>
         </Card>
 
         {/* Pending Pipeline */}
-        <Card className="rounded-xl border-border/70 bg-card p-2.5 shadow-2xs">
-          <div className="flex items-center justify-between gap-1 mb-0.5">
-            <span className="text-[9px] font-extrabold uppercase tracking-wide text-amber-600 dark:text-amber-400 truncate">
+        <Card className="rounded-xl border-border/70 bg-card px-2.5 py-1.5 shadow-2xs">
+          <div className="flex items-center justify-between gap-1">
+            <span className="text-[8.5px] font-black uppercase tracking-wider text-amber-600 dark:text-amber-400 truncate">
               Pipeline Aberto
             </span>
-            <div className="p-1 rounded-md bg-amber-500/10 text-amber-600 dark:text-amber-400 shrink-0">
-              <Clock className="w-3 h-3" />
-            </div>
-          </div>
-          <div className="flex items-baseline justify-between gap-1">
-            <p className="text-base sm:text-lg font-black text-amber-600 dark:text-amber-400 leading-tight truncate">
-              {formatBRL(stats.totalPipelineValue)}
-            </p>
-            <span className="text-[9.5px] text-muted-foreground shrink-0">
+            <span className="text-[9px] text-muted-foreground font-medium shrink-0">
               {stats.pendingCount} pend.
             </span>
+          </div>
+          <div className="flex items-center justify-between gap-1 mt-0.5">
+            <p className="text-sm sm:text-base font-black text-amber-600 dark:text-amber-400 leading-none truncate">
+              {formatBRL(stats.totalPipelineValue)}
+            </p>
+            <div className="p-0.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400 shrink-0">
+              <Clock className="w-3 h-3" />
+            </div>
           </div>
         </Card>
 
         {/* Confirmed Revenue */}
-        <Card className="rounded-xl border-border/70 bg-card p-2.5 shadow-2xs">
-          <div className="flex items-center justify-between gap-1 mb-0.5">
-            <span className="text-[9px] font-extrabold uppercase tracking-wide text-indigo-600 dark:text-indigo-400 truncate">
+        <Card className="rounded-xl border-border/70 bg-card px-2.5 py-1.5 shadow-2xs">
+          <div className="flex items-center justify-between gap-1">
+            <span className="text-[8.5px] font-black uppercase tracking-wider text-indigo-600 dark:text-indigo-400 truncate">
               Receita Confirmada
             </span>
-            <div className="p-1 rounded-md bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 shrink-0">
-              <CheckCircle2 className="w-3 h-3" />
-            </div>
-          </div>
-          <div className="flex items-baseline justify-between gap-1">
-            <p className="text-base sm:text-lg font-black text-indigo-600 dark:text-indigo-400 leading-tight truncate">
-              {formatBRL(stats.approvedRevenue)}
-            </p>
-            <span className="text-[9.5px] text-muted-foreground shrink-0 truncate">
+            <span className="text-[9px] text-muted-foreground font-medium shrink-0 truncate">
               Méd: <strong className="text-foreground">{formatBRL(stats.avgTicket)}</strong>
             </span>
+          </div>
+          <div className="flex items-center justify-between gap-1 mt-0.5">
+            <p className="text-sm sm:text-base font-black text-indigo-600 dark:text-indigo-400 leading-none truncate">
+              {formatBRL(stats.approvedRevenue)}
+            </p>
+            <div className="p-0.5 rounded bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 shrink-0">
+              <CheckCircle2 className="w-3 h-3" />
+            </div>
           </div>
         </Card>
 
         {/* Net Driver Profit */}
-        <Card className="rounded-xl border-emerald-500/30 bg-emerald-500/5 dark:bg-emerald-500/10 p-2.5 shadow-2xs">
-          <div className="flex items-center justify-between gap-1 mb-0.5">
-            <span className="text-[9px] font-extrabold uppercase tracking-wide text-emerald-700 dark:text-emerald-300 truncate">
+        <Card className="rounded-xl border-emerald-500/30 bg-emerald-500/5 dark:bg-emerald-500/10 px-2.5 py-1.5 shadow-2xs">
+          <div className="flex items-center justify-between gap-1">
+            <span className="text-[8.5px] font-black uppercase tracking-wider text-emerald-700 dark:text-emerald-300 truncate">
               Lucro Estimado
             </span>
-            <div className="p-1 rounded-md bg-emerald-500/20 text-emerald-600 dark:text-emerald-300 shrink-0">
-              <TrendingUp className="w-3 h-3" />
-            </div>
-          </div>
-          <div className="flex items-baseline justify-between gap-1">
-            <p className="text-base sm:text-lg font-black text-emerald-600 dark:text-emerald-400 leading-tight truncate">
-              {formatBRL(stats.expectedProfit)}
-            </p>
-            <span className="text-[9.5px] text-emerald-700/80 dark:text-emerald-300/80 font-semibold shrink-0">
+            <span className="text-[9px] text-emerald-700/80 dark:text-emerald-300/80 font-medium shrink-0 truncate">
               {stats.completedCount} conc.
             </span>
+          </div>
+          <div className="flex items-center justify-between gap-1 mt-0.5">
+            <p className="text-sm sm:text-base font-black text-emerald-600 dark:text-emerald-400 leading-none truncate">
+              {formatBRL(stats.expectedProfit)}
+            </p>
+            <div className="p-0.5 rounded bg-emerald-500/20 text-emerald-600 dark:text-emerald-300 shrink-0">
+              <TrendingUp className="w-3 h-3" />
+            </div>
           </div>
         </Card>
       </div>
@@ -391,11 +391,7 @@ export default function FreightQuotePage() {
             <Button
               variant="ghost"
               onClick={() => setActiveTab('list')}
-              className={`rounded-xl h-9 px-4 font-black text-xs cursor-pointer gap-2 transition-all flex-1 sm:flex-initial ${
-                activeTab === 'list'
-                  ? 'bg-background text-foreground shadow-xs ring-1 ring-border/50'
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
+              className="rounded-xl h-9 px-4 font-black text-xs cursor-pointer gap-2 transition-all flex-1 sm:flex-initial bg-background text-foreground shadow-xs ring-1 ring-border/50"
             >
               <List className="w-4 h-4 text-indigo-500" />
               Orçamentos Salvos
@@ -407,11 +403,7 @@ export default function FreightQuotePage() {
             <Button
               variant="ghost"
               onClick={() => setActiveTab('clients')}
-              className={`rounded-xl h-9 px-4 font-black text-xs cursor-pointer gap-2 transition-all flex-1 sm:flex-initial ${
-                activeTab === 'clients'
-                  ? 'bg-background text-foreground shadow-xs ring-1 ring-border/50'
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
+              className="rounded-xl h-9 px-4 font-black text-xs cursor-pointer gap-2 transition-all flex-1 sm:flex-initial text-muted-foreground hover:text-foreground"
             >
               <Users className="w-4 h-4 text-emerald-500" />
               Clientes

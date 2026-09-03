@@ -518,7 +518,13 @@ export const DailyProductivityHeatmap: React.FC<DailyProductivityHeatmapProps> =
     let totalCashBalance = 0;
     let totalKm = 0;
     let totalDeliveries = 0;
+    let profitDays = 0;
+    let lossDays = 0;
+    let neutralDays = 0;
+    let totalProfitFromPositiveDays = 0;
+    let totalLossFromNegativeDays = 0;
     let bestDay = { date: '', profit: 0, cashBalance: 0 };
+    let worstDay = { date: '', profit: 0, cashBalance: 0 };
 
     allDays.forEach(day => {
       const dateStr = format(day, 'yyyy-MM-dd');
@@ -530,8 +536,23 @@ export const DailyProductivityHeatmap: React.FC<DailyProductivityHeatmapProps> =
         totalCashBalance += data.cashBalance;
         totalKm += data.km;
         totalDeliveries += data.deliveries;
+
+        // Classificação do dia por resultado líquido
+        if (data.profit > 0) {
+          profitDays += 1;
+          totalProfitFromPositiveDays += data.profit;
+        } else if (data.profit < 0) {
+          lossDays += 1;
+          totalLossFromNegativeDays += Math.abs(data.profit);
+        } else {
+          neutralDays += 1;
+        }
+
         if (data.profit > bestDay.profit) {
           bestDay = { date: dateStr, profit: data.profit, cashBalance: data.cashBalance };
+        }
+        if (data.profit < worstDay.profit) {
+          worstDay = { date: dateStr, profit: data.profit, cashBalance: data.cashBalance };
         }
       }
     });
@@ -540,6 +561,8 @@ export const DailyProductivityHeatmap: React.FC<DailyProductivityHeatmapProps> =
     const avgDailyIncome = activeDays > 0 ? totalIncome / activeDays : 0;
     const avgDailyProfit = activeDays > 0 ? totalProfit / activeDays : 0;
     const consistencyRate = allDays.length > 0 ? (activeDays / allDays.length) * 100 : 0;
+    const profitRate = activeDays > 0 ? (profitDays / activeDays) * 100 : 0;
+    const lossRate = activeDays > 0 ? (lossDays / activeDays) * 100 : 0;
 
     return {
       activeDays,
@@ -550,9 +573,17 @@ export const DailyProductivityHeatmap: React.FC<DailyProductivityHeatmapProps> =
       totalCashBalance,
       totalKm,
       totalDeliveries,
+      profitDays,
+      lossDays,
+      neutralDays,
+      totalProfitFromPositiveDays,
+      totalLossFromNegativeDays,
+      profitRate,
+      lossRate,
       avgDailyIncome,
       avgDailyProfit,
-      bestDay
+      bestDay,
+      worstDay
     };
   }, [allDays, dailyStatsMap]);
 
@@ -592,7 +623,13 @@ export const DailyProductivityHeatmap: React.FC<DailyProductivityHeatmapProps> =
                     ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20'
                     : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20'
                 }`}>
-                  {selectedMetric === 'deliveries' ? 'Entregas' : selectedMetric === 'km' ? 'Quilometragem' : selectedMetric === 'income' ? 'Faturamento' : 'Lucro Líquido'}
+                  {selectedMetric === 'deliveries' 
+                    ? 'Entregas' 
+                    : selectedMetric === 'km' 
+                    ? 'Quilometragem' 
+                    : selectedMetric === 'income' 
+                    ? 'Faturamento' 
+                    : `Lucro Líquido (${summaryStats.profitDays}L / ${summaryStats.lossDays}P)`}
                 </span>
               </div>
               <CardDescription className="text-xs">
@@ -701,6 +738,8 @@ export const DailyProductivityHeatmap: React.FC<DailyProductivityHeatmapProps> =
                   ? 'text-amber-500'
                   : selectedMetric === 'km'
                   ? 'text-blue-500'
+                  : selectedMetric === 'profit' && summaryStats.totalProfit < 0
+                  ? 'text-rose-500'
                   : 'text-emerald-500'
               }`}>
                 {hideValues && selectedMetric !== 'deliveries' && selectedMetric !== 'km'
@@ -714,9 +753,13 @@ export const DailyProductivityHeatmap: React.FC<DailyProductivityHeatmapProps> =
                   : formatCurrency(summaryStats.totalProfit)}
               </span>
             </div>
-            <TrendingUp className={`w-4 h-4 ${
-              selectedMetric === 'deliveries' ? 'text-amber-500/80' : selectedMetric === 'km' ? 'text-blue-500/80' : 'text-emerald-500/80'
-            }`} />
+            {selectedMetric === 'profit' && summaryStats.totalProfit < 0 ? (
+              <TrendingDown className="w-4 h-4 text-rose-500/80" />
+            ) : (
+              <TrendingUp className={`w-4 h-4 ${
+                selectedMetric === 'deliveries' ? 'text-amber-500/80' : selectedMetric === 'km' ? 'text-blue-500/80' : 'text-emerald-500/80'
+              }`} />
+            )}
           </div>
 
           <div className="bg-muted/30 border border-border/50 rounded-xl p-2.5 flex items-center justify-between">
@@ -727,6 +770,8 @@ export const DailyProductivityHeatmap: React.FC<DailyProductivityHeatmapProps> =
                   ? 'text-amber-500'
                   : selectedMetric === 'km'
                   ? 'text-blue-500'
+                  : selectedMetric === 'profit' && summaryStats.avgDailyProfit < 0
+                  ? 'text-rose-500'
                   : 'text-foreground'
               }`}>
                 {hideValues && selectedMetric !== 'deliveries' && selectedMetric !== 'km'
@@ -743,20 +788,117 @@ export const DailyProductivityHeatmap: React.FC<DailyProductivityHeatmapProps> =
             <Zap className="w-4 h-4 text-amber-500/70" />
           </div>
 
-          <div className="bg-muted/30 border border-border/50 rounded-xl p-2.5 flex items-center justify-between">
-            <div>
-              <span className="text-[10px] font-bold text-muted-foreground uppercase block">
-                {selectedMetric === 'deliveries' ? 'Total Rodado' : 'Total Entregas'}
-              </span>
-              <span className="font-mono font-black text-foreground text-sm">
-                {selectedMetric === 'deliveries'
-                  ? `${summaryStats.totalKm.toLocaleString('pt-BR')} km`
-                  : `${summaryStats.totalDeliveries} entregas`}
-              </span>
+          {selectedMetric === 'profit' ? (
+            <div className="bg-muted/30 border border-border/50 rounded-xl p-2.5 flex items-center justify-between">
+              <div>
+                <span className="text-[10px] font-bold text-muted-foreground uppercase block">Dias Lucro x Prejuízo</span>
+                <div className="flex items-center gap-1.5 font-mono font-black text-sm mt-0.5">
+                  <span className="text-emerald-500 flex items-center gap-0.5" title={`${summaryStats.profitDays} dias no lucro`}>
+                    <TrendingUp className="w-3.5 h-3.5" />
+                    {summaryStats.profitDays}d
+                  </span>
+                  <span className="text-muted-foreground font-normal text-xs">/</span>
+                  <span className="text-rose-500 flex items-center gap-0.5" title={`${summaryStats.lossDays} dias no prejuízo`}>
+                    <TrendingDown className="w-3.5 h-3.5" />
+                    {summaryStats.lossDays}d
+                  </span>
+                </div>
+              </div>
+              <div className="text-right">
+                <span className={`text-[10px] font-extrabold ${summaryStats.profitDays >= summaryStats.lossDays ? 'text-emerald-500' : 'text-rose-500'}`}>
+                  {summaryStats.activeDays > 0 ? `${summaryStats.profitRate.toFixed(0)}%` : '0%'}
+                </span>
+                <span className="text-[9px] text-muted-foreground block">no lucro</span>
+              </div>
             </div>
-            <Bike className="w-4 h-4 text-indigo-500/70" />
-          </div>
+          ) : (
+            <div className="bg-muted/30 border border-border/50 rounded-xl p-2.5 flex items-center justify-between">
+              <div>
+                <span className="text-[10px] font-bold text-muted-foreground uppercase block">
+                  {selectedMetric === 'deliveries' ? 'Total Rodado' : 'Total Entregas'}
+                </span>
+                <span className="font-mono font-black text-foreground text-sm">
+                  {selectedMetric === 'deliveries'
+                    ? `${summaryStats.totalKm.toLocaleString('pt-BR')} km`
+                    : `${summaryStats.totalDeliveries} entregas`}
+                </span>
+              </div>
+              <Bike className="w-4 h-4 text-indigo-500/70" />
+            </div>
+          )}
         </div>
+
+        {/* Banner de Lucro x Prejuízo Diário (Aparece na opção Lucro Líquido) */}
+        {selectedMetric === 'profit' && (
+          <div className="p-2.5 sm:p-3 rounded-xl bg-muted/20 dark:bg-muted/15 border border-border/70 shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-[10px] font-black uppercase tracking-wider text-muted-foreground shrink-0">
+                Balanço dos Dias:
+              </span>
+
+              {/* Tag Dias de Lucro */}
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/25 text-emerald-700 dark:text-emerald-300 font-black text-xs">
+                <TrendingUp className="w-3.5 h-3.5 text-emerald-500" />
+                <span>
+                  {summaryStats.profitDays} {summaryStats.profitDays === 1 ? 'dia de Lucro' : 'dias de Lucro'}
+                </span>
+                {!hideValues && summaryStats.totalProfitFromPositiveDays > 0 && (
+                  <span className="text-emerald-600/90 dark:text-emerald-400/90 font-mono font-bold text-[11px] ml-0.5">
+                    (+{formatCurrency(summaryStats.totalProfitFromPositiveDays)})
+                  </span>
+                )}
+              </div>
+
+              {/* Tag Dias de Prejuízo */}
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-rose-500/10 border border-rose-500/25 text-rose-700 dark:text-rose-300 font-black text-xs">
+                <TrendingDown className="w-3.5 h-3.5 text-rose-500" />
+                <span>
+                  {summaryStats.lossDays} {summaryStats.lossDays === 1 ? 'dia de Prejuízo' : 'dias de Prejuízo'}
+                </span>
+                {!hideValues && summaryStats.totalLossFromNegativeDays > 0 && (
+                  <span className="text-rose-600/90 dark:text-rose-400/90 font-mono font-bold text-[11px] ml-0.5">
+                    (-{formatCurrency(summaryStats.totalLossFromNegativeDays)})
+                  </span>
+                )}
+              </div>
+
+              {/* Tag Dias Neutros se houver */}
+              {summaryStats.neutralDays > 0 && (
+                <div className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-muted/60 border border-border/50 text-muted-foreground font-bold text-[11px]">
+                  <span>{summaryStats.neutralDays} {summaryStats.neutralDays === 1 ? 'dia neutro (R$ 0)' : 'dias neutros (R$ 0)'}</span>
+                </div>
+              )}
+            </div>
+
+            {/* Barra visual de proporção (Verde vs Vermelho) */}
+            {summaryStats.activeDays > 0 && (
+              <div className="flex items-center gap-2 self-stretch sm:self-auto justify-between sm:justify-end shrink-0 pt-1 sm:pt-0 border-t sm:border-t-0 border-border/30">
+                <div className="w-28 sm:w-36 h-2.5 rounded-full bg-muted overflow-hidden flex shadow-inner">
+                  <div 
+                    className="bg-emerald-500 h-full transition-all duration-500" 
+                    style={{ width: `${(summaryStats.profitDays / summaryStats.activeDays) * 100}%` }}
+                    title={`${summaryStats.profitDays} dias de lucro (${summaryStats.profitRate.toFixed(0)}%)`}
+                  />
+                  {summaryStats.neutralDays > 0 && (
+                    <div 
+                      className="bg-muted-foreground/30 h-full transition-all duration-500" 
+                      style={{ width: `${(summaryStats.neutralDays / summaryStats.activeDays) * 100}%` }}
+                      title={`${summaryStats.neutralDays} dias neutros`}
+                    />
+                  )}
+                  <div 
+                    className="bg-rose-500 h-full transition-all duration-500" 
+                    style={{ width: `${(summaryStats.lossDays / summaryStats.activeDays) * 100}%` }}
+                    title={`${summaryStats.lossDays} dias de prejuízo (${summaryStats.lossRate.toFixed(0)}%)`}
+                  />
+                </div>
+                <span className="text-[10.5px] font-mono font-black text-foreground shrink-0">
+                  {summaryStats.profitRate.toFixed(0)}% verde
+                </span>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Heatmap Grid Principal */}
         <div className="overflow-x-auto pb-2 scrollbar-thin relative">
@@ -843,7 +985,7 @@ export const DailyProductivityHeatmap: React.FC<DailyProductivityHeatmapProps> =
                               ? `${data.km} km` 
                               : selectedMetric === 'income' 
                               ? `Fat: R$ ${data.income.toFixed(2)}` 
-                              : `Lucro: R$ ${data.profit.toFixed(2)}`
+                              : `Lucro Líquido: R$ ${data.profit.toFixed(2)} (${data.profit > 0 ? 'Lucro' : data.profit < 0 ? 'Prejuízo' : 'Neutro'})`
                           }` : ''}`}
                           className={`w-3.5 h-3.5 rounded-[3px] border transition-all duration-150 relative cursor-pointer ${
                             getCellColor(intensity)
@@ -877,8 +1019,21 @@ export const DailyProductivityHeatmap: React.FC<DailyProductivityHeatmapProps> =
         {/* Hover Tooltip Flutuante */}
         {hoveredDay && !selectedDayDetails && (
           <div className="p-2.5 bg-popover border border-border/80 shadow-lg rounded-xl text-xs space-y-1 max-w-xs animate-in fade-in duration-150">
-            <div className="font-extrabold text-foreground border-b border-border/40 pb-1 flex justify-between capitalize">
-              <span>{hoveredDay.formattedDate}</span>
+            <div className="font-extrabold text-foreground border-b border-border/40 pb-1 flex justify-between items-center capitalize">
+              <div className="flex items-center gap-1.5">
+                <span>{hoveredDay.formattedDate}</span>
+                {selectedMetric === 'profit' && (
+                  <span className={`text-[8.5px] px-1.5 py-0.5 rounded font-black uppercase ${
+                    hoveredDay.data.profit > 0 
+                      ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30' 
+                      : hoveredDay.data.profit < 0 
+                      ? 'bg-rose-500/20 text-rose-600 dark:text-rose-400 border border-rose-500/30' 
+                      : 'bg-muted text-muted-foreground border border-border/40'
+                  }`}>
+                    {hoveredDay.data.profit > 0 ? 'Lucro' : hoveredDay.data.profit < 0 ? 'Prejuízo' : 'Neutro'}
+                  </span>
+                )}
+              </div>
               <span className={`font-mono font-bold ${
                 selectedMetric === 'deliveries' 
                   ? 'text-amber-500' 
@@ -916,7 +1071,15 @@ export const DailyProductivityHeatmap: React.FC<DailyProductivityHeatmapProps> =
           <div className="flex items-center gap-3 flex-wrap">
             {/* Legenda Positiva Dinâmica de Acordo com a Métrica Selecionada */}
             <div className="flex items-center gap-1.5">
-              <span>{selectedMetric === 'deliveries' ? 'Entregas:' : selectedMetric === 'km' ? 'Quilometragem:' : 'Rendimento:'}</span>
+              <span>
+                {selectedMetric === 'profit' 
+                  ? `Dias de Lucro (${summaryStats.profitDays}d):` 
+                  : selectedMetric === 'deliveries' 
+                  ? 'Entregas:' 
+                  : selectedMetric === 'km' 
+                  ? 'Quilometragem:' 
+                  : 'Rendimento:'}
+              </span>
               <div className="flex items-center gap-1">
                 <span className="w-3 h-3 rounded-[3px] bg-muted/30 dark:bg-muted/20 border border-border/60" title="Sem atividade" />
                 {selectedMetric === 'deliveries' ? (
@@ -947,7 +1110,7 @@ export const DailyProductivityHeatmap: React.FC<DailyProductivityHeatmapProps> =
             {/* Legenda Vermelha/Negativos (Apenas para métrica de lucro líquido que pode ser negativa) */}
             {selectedMetric === 'profit' && (
               <div className="flex items-center gap-1.5 border-l border-border/40 pl-3">
-                <span className="text-rose-500 font-bold">Prejuízo:</span>
+                <span className="text-rose-500 font-bold">Dias de Prejuízo ({summaryStats.lossDays}d):</span>
                 <div className="flex items-center gap-1">
                   <span className="w-3 h-3 rounded-[3px] bg-rose-100 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-800" title="Leve" />
                   <span className="w-3 h-3 rounded-[3px] bg-rose-300/90 dark:bg-rose-800/60 border border-rose-450 dark:border-rose-650" title="Médio" />
@@ -970,10 +1133,19 @@ export const DailyProductivityHeatmap: React.FC<DailyProductivityHeatmapProps> =
         {selectedDayDetails && (
           <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-xl p-3 space-y-3 animate-in fade-in slide-in-from-top-1 duration-200">
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <Calendar className="w-4 h-4 text-emerald-500" />
                 <span className="text-xs font-black uppercase text-foreground">
                   Detalhamento de {selectedDayDetails.formattedDate}
+                </span>
+                <span className={`text-[10px] font-black px-2 py-0.5 rounded-full border ${
+                  selectedDayDetails.profit > 0 
+                    ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30' 
+                    : selectedDayDetails.profit < 0 
+                    ? 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30' 
+                    : 'bg-muted text-muted-foreground border-border/50'
+                }`}>
+                  {selectedDayDetails.profit > 0 ? 'Dia de Lucro' : selectedDayDetails.profit < 0 ? 'Dia de Prejuízo' : 'Dia Neutro'}
                 </span>
                 <span className="text-[10px] font-bold text-muted-foreground bg-muted/60 px-2 py-0.5 rounded-full border border-border/50">
                   {selectedDayDetails.txs.length} lançamento{selectedDayDetails.txs.length !== 1 ? 's' : ''}
