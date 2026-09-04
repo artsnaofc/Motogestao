@@ -123,8 +123,8 @@ export function QuoteProviderSelectorModal({ open, onOpenChange }: QuoteProvider
       const cleanToken = brapiToken.trim();
       toast.info(`Testando conexão via ${selectedProvider.toUpperCase()}...`);
       
-      // Execute test quote fetch passing current selected provider and token
-      const res = await fetchQuotes(selectedProvider, cleanToken);
+      // Execute test quote fetch passing current selected provider, token and forceRefresh
+      const res = await fetchQuotes(selectedProvider, cleanToken, undefined, true);
       if (res) {
         setLocalTestResult(res);
         if (res.successCount > 0) {
@@ -175,7 +175,7 @@ export function QuoteProviderSelectorModal({ open, onOpenChange }: QuoteProvider
       }
 
       toast.success('Fonte de cotações salva! Atualizando preços...');
-      await fetchQuotes(selectedProvider, brapiToken.trim());
+      await fetchQuotes(selectedProvider, brapiToken.trim(), undefined, true);
       onOpenChange(false);
     } catch (e: any) {
       toast.error('Erro ao salvar preferências de cotação: ' + (e?.message || e));

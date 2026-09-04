@@ -40,6 +40,7 @@ export interface AssetAllocationTarget {
   maxPct: number;      // Faixa Máxima (ex: 8%)
   locked?: boolean;    // Bloquear novos aportes neste ativo
   notes?: string;
+  lastPrice?: number;  // Cotação conhecida/recente do ativo
 }
 
 export interface PositionForRebalance {

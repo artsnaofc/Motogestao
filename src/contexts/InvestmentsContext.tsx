@@ -713,6 +713,33 @@ export function InvestmentsProvider({
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
+        const remainingTickers = Object.keys(newTargets);
+        if (remainingTickers.length > 0) {
+          const { data: existingRows } = await supabase
+            .from('portfolio_target_allocations')
+            .select('ticker')
+            .eq('user_id', user.id);
+
+          if (existingRows && existingRows.length > 0) {
+            const tickersToDelete = existingRows
+              .map((r: any) => r.ticker)
+              .filter((tk: string) => !newTargets[tk]);
+
+            if (tickersToDelete.length > 0) {
+              await supabase
+                .from('portfolio_target_allocations')
+                .delete()
+                .eq('user_id', user.id)
+                .in('ticker', tickersToDelete);
+            }
+          }
+        } else {
+          await supabase
+            .from('portfolio_target_allocations')
+            .delete()
+            .eq('user_id', user.id);
+        }
+
         const rows = Object.values(newTargets).map(t => ({
           user_id: user.id,
           ticker: t.ticker,

@@ -6,11 +6,15 @@ export interface QuoteDetail {
   provider: string;
   updatedAt: string;
   change?: number;
+  previousClose?: number;
   error?: string;
+  isStale?: boolean;
 }
 
 export interface QuoteFetchResult {
   quotes: Record<string, number>;
+  variations?: Record<string, number>;
+  timestamps?: Record<string, string>;
   providerUsed: string;
   durationMs: number;
   successCount: number;
@@ -24,6 +28,16 @@ export interface FetchQuotesOptions {
   hgKey?: string;
   existingQuotes?: Record<string, number>;
   timeoutMs?: number;
+  forceRefresh?: boolean;
+}
+
+// Normalize ticker and base ticker for fractional B3 shares (e.g. PETR4F -> PETR4)
+export function getBaseTicker(raw: string): string {
+  const clean = raw.trim().toUpperCase();
+  if (clean.length === 6 && clean.endsWith('F') && /\dF$/.test(clean)) {
+    return clean.slice(0, 5);
+  }
+  return clean;
 }
 
 // Helper to fetch with timeout
@@ -40,13 +54,13 @@ async function fetchWithTimeout(url: string, timeoutMs: number = 6000): Promise<
   }
 }
 
-// 0. Primary Full-Stack API (/api/quotes - Server Proxy with Yahoo, mFinance, Brapi)
+// 0. Primary Full-Stack API (/api/quotes - Server Proxy with Yahoo Spark, mFinance, Brapi)
 async function fetchServerQuotes(
   tickers: string[],
   options: FetchQuotesOptions = {}
 ): Promise<QuoteFetchResult | null> {
   try {
-    const cleanTickers = tickers.map(t => t.trim().toUpperCase()).filter(Boolean);
+    const cleanTickers = Array.from(new Set(tickers.map(t => t.trim().toUpperCase()))).filter(Boolean);
     if (cleanTickers.length === 0) return null;
 
     const queryParams = new URLSearchParams({
@@ -56,6 +70,9 @@ async function fetchServerQuotes(
 
     if (options.brapiToken) {
       queryParams.append('token', options.brapiToken);
+    }
+    if (options.forceRefresh) {
+      queryParams.append('force', 'true');
     }
 
     const res = await fetchWithTimeout(`/api/quotes?${queryParams.toString()}`, options.timeoutMs || 8000);
@@ -77,12 +94,14 @@ async function fetchBrapiQuotes(
   tickers: string[],
   token?: string,
   timeoutMs: number = 6000
-): Promise<{ quotes: Record<string, number>; details: QuoteDetail[] }> {
+): Promise<{ quotes: Record<string, number>; variations: Record<string, number>; timestamps: Record<string, string>; details: QuoteDetail[] }> {
   const quotes: Record<string, number> = {};
+  const variations: Record<string, number> = {};
+  const timestamps: Record<string, string> = {};
   const details: QuoteDetail[] = [];
-  const cleanTickers = tickers.map(t => t.trim().toUpperCase()).filter(Boolean);
+  const cleanTickers = Array.from(new Set(tickers.map(t => t.trim().toUpperCase()))).filter(Boolean);
 
-  if (cleanTickers.length === 0) return { quotes, details };
+  if (cleanTickers.length === 0) return { quotes, variations, timestamps, details };
 
   const BATCH_SIZE = 10;
   const batches: string[][] = [];
@@ -92,7 +111,9 @@ async function fetchBrapiQuotes(
 
   await Promise.all(
     batches.map(async (batch) => {
-      const tickerQuery = batch.join(',');
+      // Query base tickers for fractional shares
+      const queryList = batch.map(getBaseTicker);
+      const tickerQuery = Array.from(new Set(queryList)).join(',');
       const tokenParam = token ? `?token=${encodeURIComponent(token)}` : '';
       const url = `https://brapi.dev/api/quote/${tickerQuery}${tokenParam}`;
 
@@ -106,13 +127,23 @@ async function fetchBrapiQuotes(
           const symbol = (item.symbol || '').toUpperCase();
           const price = item.regularMarketPrice || item.price;
           if (symbol && typeof price === 'number' && price > 0) {
-            quotes[symbol] = price;
-            details.push({
-              ticker: symbol,
-              price,
-              change: item.regularMarketChangePercent,
-              provider: 'Brapi (Direto)',
-              updatedAt: new Date().toISOString(),
+            const now = item.regularMarketTime ? new Date(item.regularMarketTime).toISOString() : new Date().toISOString();
+            const change = item.regularMarketChangePercent !== undefined ? Number(item.regularMarketChangePercent.toFixed(2)) : 0;
+            
+            // Map to original requested tickers that match this base
+            batch.forEach(reqTicker => {
+              if (getBaseTicker(reqTicker) === symbol || reqTicker === symbol) {
+                quotes[reqTicker] = Number(price.toFixed(4));
+                variations[reqTicker] = change;
+                timestamps[reqTicker] = now;
+                details.push({
+                  ticker: reqTicker,
+                  price: quotes[reqTicker],
+                  change,
+                  provider: 'Brapi (Direto)',
+                  updatedAt: now,
+                });
+              }
             });
           }
         });
@@ -120,20 +151,25 @@ async function fetchBrapiQuotes(
         // Try individual tickers as fallback
         for (const singleTicker of batch) {
           try {
-            const singleUrl = `https://brapi.dev/api/quote/${singleTicker}${tokenParam}`;
+            const base = getBaseTicker(singleTicker);
+            const singleUrl = `https://brapi.dev/api/quote/${base}${tokenParam}`;
             const res = await fetchWithTimeout(singleUrl, Math.floor(timeoutMs / 2));
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const data = await res.json();
             const item = data.results?.[0];
             const price = item?.regularMarketPrice || item?.price;
             if (typeof price === 'number' && price > 0) {
-              quotes[singleTicker] = price;
+              const now = new Date().toISOString();
+              const change = item?.regularMarketChangePercent !== undefined ? Number(item.regularMarketChangePercent.toFixed(2)) : 0;
+              quotes[singleTicker] = Number(price.toFixed(4));
+              variations[singleTicker] = change;
+              timestamps[singleTicker] = now;
               details.push({
                 ticker: singleTicker,
-                price,
-                change: item?.regularMarketChangePercent,
+                price: quotes[singleTicker],
+                change,
                 provider: 'Brapi (Single)',
-                updatedAt: new Date().toISOString(),
+                updatedAt: now,
               });
             }
           } catch (e: any) {
@@ -150,27 +186,32 @@ async function fetchBrapiQuotes(
     })
   );
 
-  return { quotes, details };
+  return { quotes, variations, timestamps, details };
 }
 
 // 2. MFINANCE Provider (Client Fallback - Specialized for FIIs & B3 Stocks)
 async function fetchMFinanceQuotes(
   tickers: string[],
   timeoutMs: number = 6000
-): Promise<{ quotes: Record<string, number>; details: QuoteDetail[] }> {
+): Promise<{ quotes: Record<string, number>; variations: Record<string, number>; timestamps: Record<string, string>; details: QuoteDetail[] }> {
   const quotes: Record<string, number> = {};
+  const variations: Record<string, number> = {};
+  const timestamps: Record<string, string> = {};
   const details: QuoteDetail[] = [];
 
   await Promise.all(
     tickers.map(async (t) => {
       const cleanTicker = t.trim().toUpperCase();
-      const isFii = cleanTicker.endsWith('11');
+      const baseTicker = getBaseTicker(cleanTicker);
+      const isFii = baseTicker.endsWith('11');
+
+      // Fixed: Active mFinance URLs are /api/v1/fiis/TICKER and /api/v1/stocks/TICKER (NOT /quote/)
       const primaryUrl = isFii
-        ? `https://mfinance.com.br/api/v1/fiis/quote/${cleanTicker}`
-        : `https://mfinance.com.br/api/v1/stocks/quote/${cleanTicker}`;
+        ? `https://mfinance.com.br/api/v1/fiis/${baseTicker}`
+        : `https://mfinance.com.br/api/v1/stocks/${baseTicker}`;
       const fallbackUrl = isFii
-        ? `https://mfinance.com.br/api/v1/stocks/quote/${cleanTicker}`
-        : `https://mfinance.com.br/api/v1/fiis/quote/${cleanTicker}`;
+        ? `https://mfinance.com.br/api/v1/stocks/${baseTicker}`
+        : `https://mfinance.com.br/api/v1/fiis/${baseTicker}`;
 
       try {
         let res = await fetchWithTimeout(primaryUrl, Math.floor(timeoutMs / 2)).catch(() => null);
@@ -182,13 +223,25 @@ async function fetchMFinanceQuotes(
           const data = await res.json();
           const price = data?.lastPrice || data?.closingPrice || data?.price;
           if (typeof price === 'number' && price > 0) {
-            quotes[cleanTicker] = price;
+            const now = new Date().toISOString();
+            const change = typeof data?.change === 'number' ? Number(data.change.toFixed(2)) : 0;
+
+            quotes[cleanTicker] = Number(price.toFixed(4));
+            variations[cleanTicker] = change;
+            timestamps[cleanTicker] = now;
+
+            if (cleanTicker !== baseTicker) {
+              quotes[baseTicker] = quotes[cleanTicker];
+              variations[baseTicker] = change;
+              timestamps[baseTicker] = now;
+            }
+
             details.push({
               ticker: cleanTicker,
-              price,
-              change: data?.change,
+              price: quotes[cleanTicker],
+              change,
               provider: isFii ? 'mFinance (FII)' : 'mFinance (Ações)',
-              updatedAt: new Date().toISOString(),
+              updatedAt: now,
             });
             return;
           }
@@ -206,22 +259,25 @@ async function fetchMFinanceQuotes(
     })
   );
 
-  return { quotes, details };
+  return { quotes, variations, timestamps, details };
 }
 
 // 3. YAHOO FINANCE Provider (Client Proxy Fallback)
 async function fetchYahooQuotes(
   tickers: string[],
   timeoutMs: number = 7000
-): Promise<{ quotes: Record<string, number>; details: QuoteDetail[] }> {
+): Promise<{ quotes: Record<string, number>; variations: Record<string, number>; timestamps: Record<string, string>; details: QuoteDetail[] }> {
   const quotes: Record<string, number> = {};
+  const variations: Record<string, number> = {};
+  const timestamps: Record<string, string> = {};
   const details: QuoteDetail[] = [];
 
   await Promise.all(
     tickers.map(async (t) => {
       const cleanTicker = t.trim().toUpperCase();
-      const yahooSymbol = cleanTicker.includes('.') ? cleanTicker : `${cleanTicker}.SA`;
-      const targetUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${yahooSymbol}`;
+      const baseTicker = getBaseTicker(cleanTicker);
+      const yahooSymbol = baseTicker.includes('.') || baseTicker.includes('-') ? baseTicker : `${baseTicker}.SA`;
+      const targetUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${yahooSymbol}?interval=1d&range=1d`;
       
       const proxies = [
         `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`,
@@ -243,15 +299,32 @@ async function fetchYahooQuotes(
             parsedData = await res.json();
           }
 
-          const price = parsedData?.chart?.result?.[0]?.meta?.regularMarketPrice || parsedData?.chart?.result?.[0]?.meta?.chartPreviousClose;
+          const meta = parsedData?.chart?.result?.[0]?.meta;
+          const price = meta?.regularMarketPrice || meta?.chartPreviousClose;
+          const prevClose = meta?.chartPreviousClose;
+          let change = 0;
+          if (typeof price === 'number' && typeof prevClose === 'number' && prevClose > 0) {
+            change = Number((((price - prevClose) / prevClose) * 100).toFixed(2));
+          }
 
           if (typeof price === 'number' && price > 0) {
-            quotes[cleanTicker] = price;
+            const now = meta?.regularMarketTime ? new Date(meta.regularMarketTime * 1000).toISOString() : new Date().toISOString();
+            quotes[cleanTicker] = Number(price.toFixed(4));
+            variations[cleanTicker] = change;
+            timestamps[cleanTicker] = now;
+
+            if (cleanTicker !== baseTicker) {
+              quotes[baseTicker] = quotes[cleanTicker];
+              variations[baseTicker] = change;
+              timestamps[baseTicker] = now;
+            }
+
             details.push({
               ticker: cleanTicker,
-              price,
+              price: quotes[cleanTicker],
+              change,
               provider: 'Yahoo Finance (Proxy)',
-              updatedAt: new Date().toISOString(),
+              updatedAt: now,
             });
             priceFound = true;
             break;
@@ -273,7 +346,7 @@ async function fetchYahooQuotes(
     })
   );
 
-  return { quotes, details };
+  return { quotes, variations, timestamps, details };
 }
 
 // 4. HG BRASIL FINANCE Provider
@@ -288,23 +361,27 @@ async function fetchHGBrasilQuotes(
   await Promise.all(
     tickers.map(async (t) => {
       const cleanTicker = t.trim().toUpperCase();
+      const baseTicker = getBaseTicker(cleanTicker);
       const apiKey = key || '5d0c2e91';
-      const url = `https://api.hgbrasil.com/finance/stock_price?key=${apiKey}&symbol=${cleanTicker}&format=json-cors`;
+      const url = `https://api.hgbrasil.com/finance/stock_price?key=${apiKey}&symbol=${baseTicker}&format=json-cors`;
 
       try {
         const res = await fetchWithTimeout(url, timeoutMs);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
-        const stockData = data?.results?.[cleanTicker];
+        const stockData = data?.results?.[baseTicker];
         const price = stockData?.price;
 
         if (typeof price === 'number' && price > 0) {
-          quotes[cleanTicker] = price;
+          const now = new Date().toISOString();
+          quotes[cleanTicker] = Number(price.toFixed(4));
+          quotes[baseTicker] = quotes[cleanTicker];
           details.push({
             ticker: cleanTicker,
-            price,
+            price: quotes[cleanTicker],
+            change: stockData?.change_percent,
             provider: 'HG Brasil',
-            updatedAt: new Date().toISOString(),
+            updatedAt: now,
           });
         } else {
           throw new Error('Símbolo não retornado na HG Brasil');
@@ -332,12 +409,19 @@ export async function executeQuoteFetch(
   const startTime = performance.now();
   const cleanTickers = Array.from(new Set(tickers.map(t => t.trim().toUpperCase()))).filter(Boolean);
 
-  let finalQuotes: Record<string, number> = { ...(options.existingQuotes || {}) };
+  // CRITICAL FIX: Do NOT initialize finalQuotes with existingQuotes!
+  // Doing so creates a poisoned cache bug where stale quotes trick the engine
+  // into believing all tickers are fresh, bypassing all live fetches and fallbacks.
+  const freshQuotes: Record<string, number> = {};
+  const freshVariations: Record<string, number> = {};
+  const freshTimestamps: Record<string, string> = {};
   let allDetails: QuoteDetail[] = [];
 
   if (cleanTickers.length === 0) {
     return {
-      quotes: finalQuotes,
+      quotes: options.existingQuotes || {},
+      variations: {},
+      timestamps: {},
       providerUsed: 'Nenhum Ativo',
       durationMs: 0,
       successCount: 0,
@@ -346,61 +430,102 @@ export async function executeQuoteFetch(
     };
   }
 
-  console.log(`[QuoteService] Buscando cotações para ${cleanTickers.length} ativos (Ações/FIIs/BDRs)...`);
+  console.log(`[QuoteService] Buscando cotações atualizadas para ${cleanTickers.length} ativos (Ações/FIIs/BDRs/Crypto)...`);
 
-  // STEP 1: Attempt Server-Side Full-Stack API (Fastest, zero CORS, covers Yahoo, mFinance, Brapi)
+  // STEP 1: Attempt Server-Side Full-Stack API (Fastest, zero CORS, covers Yahoo Spark, mFinance, Brapi)
   const serverResult = await fetchServerQuotes(cleanTickers, options);
   if (serverResult && serverResult.successCount > 0) {
-    Object.assign(finalQuotes, serverResult.quotes);
-    allDetails = serverResult.details;
+    Object.assign(freshQuotes, serverResult.quotes);
+    if (serverResult.variations) Object.assign(freshVariations, serverResult.variations);
+    if (serverResult.timestamps) Object.assign(freshTimestamps, serverResult.timestamps);
+    allDetails = serverResult.details || [];
 
-    // If all or most tickers are resolved, return immediately
-    const missing = cleanTickers.filter(t => !finalQuotes[t] || finalQuotes[t] <= 0);
+    // Check if any fractional tickers can be satisfied from base ticker
+    cleanTickers.forEach(t => {
+      const base = getBaseTicker(t);
+      if (!freshQuotes[t] && freshQuotes[base]) {
+        freshQuotes[t] = freshQuotes[base];
+        if (freshVariations[base] !== undefined) freshVariations[t] = freshVariations[base];
+        if (freshTimestamps[base]) freshTimestamps[t] = freshTimestamps[base];
+      }
+    });
+
+    // If all tickers are freshly resolved, return immediately with fresh data
+    const missing = cleanTickers.filter(t => !freshQuotes[t] || freshQuotes[t] <= 0);
     if (missing.length === 0) {
       return {
         ...serverResult,
-        quotes: finalQuotes,
+        quotes: freshQuotes,
+        variations: freshVariations,
+        timestamps: freshTimestamps,
       };
     }
   }
 
   // STEP 2: Client Fallbacks for any remaining missing tickers
-  const pendingTickers = cleanTickers.filter(t => !finalQuotes[t] || finalQuotes[t] <= 0);
+  const pendingTickers = cleanTickers.filter(t => !freshQuotes[t] || freshQuotes[t] <= 0);
   
   if (pendingTickers.length > 0) {
     console.log(`[QuoteService] Executando fallback cliente para ${pendingTickers.length} ativos pendentes...`);
 
-    // 2.1 Try mFinance for FIIs & stocks
+    // 2.1 Try mFinance for FIIs & stocks (fixed active routes)
     const mfinanceRes = await fetchMFinanceQuotes(pendingTickers, 4000);
-    Object.assign(finalQuotes, mfinanceRes.quotes);
+    Object.assign(freshQuotes, mfinanceRes.quotes);
+    Object.assign(freshVariations, mfinanceRes.variations);
+    Object.assign(freshTimestamps, mfinanceRes.timestamps);
     allDetails = [...allDetails.filter(d => !mfinanceRes.quotes[d.ticker]), ...mfinanceRes.details];
 
     // 2.2 Try Brapi (with user token if available)
-    const stillPending = cleanTickers.filter(t => !finalQuotes[t] || finalQuotes[t] <= 0);
+    const stillPending = cleanTickers.filter(t => !freshQuotes[t] || freshQuotes[t] <= 0);
     if (stillPending.length > 0) {
       const brapiRes = await fetchBrapiQuotes(stillPending, options.brapiToken, 4000);
-      Object.assign(finalQuotes, brapiRes.quotes);
+      Object.assign(freshQuotes, brapiRes.quotes);
+      Object.assign(freshVariations, brapiRes.variations);
+      Object.assign(freshTimestamps, brapiRes.timestamps);
       allDetails = [...allDetails.filter(d => !brapiRes.quotes[d.ticker]), ...brapiRes.details];
     }
 
     // 2.3 Try Yahoo Finance via Proxy
-    const lastPending = cleanTickers.filter(t => !finalQuotes[t] || finalQuotes[t] <= 0);
+    const lastPending = cleanTickers.filter(t => !freshQuotes[t] || freshQuotes[t] <= 0);
     if (lastPending.length > 0) {
       const yahooRes = await fetchYahooQuotes(lastPending, 5000);
-      Object.assign(finalQuotes, yahooRes.quotes);
+      Object.assign(freshQuotes, yahooRes.quotes);
+      Object.assign(freshVariations, yahooRes.variations);
+      Object.assign(freshTimestamps, yahooRes.timestamps);
       allDetails = [...allDetails.filter(d => !yahooRes.quotes[d.ticker]), ...yahooRes.details];
     }
   }
 
-  const durationMs = Math.round(performance.now() - startTime);
-  const successCount = cleanTickers.filter(t => typeof finalQuotes[t] === 'number' && finalQuotes[t] > 0).length;
-  const failedCount = cleanTickers.length - successCount;
-  const providerUsedName = serverResult?.providerUsed || 'Multi-Fonte Automático';
+  // STEP 3: Handle any tickers that truly could not be found anywhere
+  // Only now do we apply existingQuotes as a graceful fallback (marked as isStale: true)
+  const finalQuotes: Record<string, number> = { ...freshQuotes };
+  cleanTickers.forEach(t => {
+    if (!finalQuotes[t] || finalQuotes[t] <= 0) {
+      const cached = options.existingQuotes?.[t];
+      if (cached && cached > 0) {
+        finalQuotes[t] = cached;
+        allDetails.push({
+          ticker: t,
+          price: cached,
+          provider: 'Cache Local (Último Conhecido)',
+          updatedAt: new Date().toISOString(),
+          isStale: true,
+        });
+      }
+    }
+  });
 
-  console.log(`[QuoteService Concluído] ${successCount}/${cleanTickers.length} cotações atualizadas em ${durationMs}ms.`);
+  const durationMs = Math.round(performance.now() - startTime);
+  const successCount = cleanTickers.filter(t => typeof freshQuotes[t] === 'number' && freshQuotes[t] > 0).length;
+  const failedCount = cleanTickers.length - successCount;
+  const providerUsedName = serverResult?.providerUsed || 'Multi-Fonte B3 Automático';
+
+  console.log(`[QuoteService Concluído] ${successCount}/${cleanTickers.length} cotações atualizadas em tempo real (${durationMs}ms).`);
 
   return {
     quotes: finalQuotes,
+    variations: freshVariations,
+    timestamps: freshTimestamps,
     providerUsed: providerUsedName,
     durationMs,
     successCount,

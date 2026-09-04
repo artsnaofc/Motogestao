@@ -194,6 +194,8 @@ export interface ValuationTarget {
   asset_type?: 'Ação' | 'FII';
   cnpj?: string;
   calc_current_price?: number;
+  targetPrice?: number;
+  notes?: string;
   bazin_dpa?: number;
   bazin_target_yield?: number;
   graham_lpa?: number;

@@ -88,6 +88,9 @@ export function Investments() {
     hideValues,
     setHideValues,
     quotes,
+    quoteVariations,
+    quoteTimestamps,
+    lastQuoteUpdatedAt,
     isFetchingQuotes,
     lastQuoteFetchResult,
     fetchQuotes,
@@ -180,19 +183,31 @@ export function Investments() {
     }
   }, [settings?.default_investment_reserve_id]);
 
-  // Fetch quotes only when entering the Investments page (on component mount)
+  // Fetch fresh live quotes when entering the Investments page (on component mount)
   useEffect(() => {
     if (investmentTransactions.length > 0) {
       const tickers = Array.from(new Set(investmentTransactions.map(it => it.ticker.toUpperCase().trim()))).filter(Boolean);
       if (tickers.length > 0) {
-        toast.promise(fetchQuotes(undefined, undefined, tickers), {
-          loading: 'Atualizando cotações do portfólio de investimentos...',
-          success: 'Cotações de investimento atualizadas!',
-          error: 'Falha ao atualizar cotações de investimento.'
-        });
+        // Silently fetch fresh live quotes in background with fallback to cache
+        fetchQuotes(undefined, undefined, tickers, true);
       }
     }
   }, []);
+
+  // Manual refresh handler with notification
+  const handleManualRefreshQuotes = async () => {
+    const tickers = Array.from(new Set(investmentTransactions.map(it => it.ticker.toUpperCase().trim()))).filter(Boolean);
+    if (tickers.length === 0) {
+      toast.info('Nenhum ativo na carteira para atualizar.');
+      return;
+    }
+
+    toast.promise(fetchQuotes(undefined, undefined, tickers, true), {
+      loading: 'Buscando cotações em tempo real (Yahoo Spark + B3)...',
+      success: (data) => `Cotações atualizadas com sucesso (${data?.successCount || tickers.length} ativos)!`,
+      error: 'Falha ao atualizar cotações de investimento.'
+    });
+  };
 
   // Helper to fetch live quote for modal
   const handleFetchQuoteForTicker = async (targetTicker: string, force = false) => {
@@ -206,12 +221,18 @@ export function Investments() {
 
     setIsLoadingQuote(true);
     try {
-      const result = await fetchSingleQuote(clean, settings?.brapi_token);
-      if (result && result.price > 0) {
-        setPrice(result.price.toString().replace('.', ','));
-        toast.info(`Preço de mercado de ${clean} atualizado: R$ ${result.price.toFixed(2).replace('.', ',')}`);
-      } else if (force) {
-        toast.error(`Cotação para ${clean} não encontrada online.`);
+      const res = await fetchQuotes(undefined, undefined, [clean], true);
+      if (res && res.quotes && res.quotes[clean] > 0) {
+        setPrice(res.quotes[clean].toString().replace('.', ','));
+        toast.info(`Preço de mercado de ${clean} atualizado: R$ ${res.quotes[clean].toFixed(2).replace('.', ',')}`);
+      } else {
+        const result = await fetchSingleQuote(clean, settings?.brapi_token);
+        if (result && result.price > 0) {
+          setPrice(result.price.toString().replace('.', ','));
+          toast.info(`Preço de mercado de ${clean} atualizado: R$ ${result.price.toFixed(2).replace('.', ',')}`);
+        } else if (force) {
+          toast.error(`Cotação para ${clean} não encontrada online.`);
+        }
       }
     } catch (err) {
       console.warn('Erro ao buscar cotação de', clean, err);
@@ -427,13 +448,14 @@ export function Investments() {
     }
   };
 
-  // Batch Buy execution from RebalanceWizard
-  const handleBatchBuy = async (items: Array<{ ticker: string; type: 'Ação' | 'FII' | string; quantity: number; price: number; costs?: number }>) => {
+  // Batch Buy execution from Rebalance Engine
+  const handleBatchBuy = async (items: Array<{ ticker: string; type: 'Ação' | 'FII' | string; quantity: number; price: number; costs?: number; reserve_id?: string; date?: string }>) => {
     const today = new Date().toISOString().split('T')[0];
     const defaultResId = settings?.default_investment_reserve_id || undefined;
 
     for (const item of items) {
       const itemCosts = item.costs || 0;
+      const targetReserveId = item.reserve_id !== undefined ? item.reserve_id : defaultResId;
       const payload = {
         operation: 'buy' as const,
         type: item.type,
@@ -442,8 +464,8 @@ export function Investments() {
         quantity: item.quantity,
         costs: itemCosts,
         amount: Math.round(((item.price * item.quantity) + itemCosts) * 100) / 100,
-        reserve_id: defaultResId,
-        date: today
+        reserve_id: targetReserveId || undefined,
+        date: item.date || today
       };
       await addInvestmentTransaction(payload);
     }
@@ -854,13 +876,16 @@ export function Investments() {
           {/* Refresh Quotes & Provider Selector */}
           <div className="flex items-center bg-card border border-border/60 rounded-xl p-0.5 shadow-sm">
             <button
-              onClick={() => fetchQuotes()}
+              onClick={handleManualRefreshQuotes}
               disabled={isFetchingQuotes}
               className="p-2 sm:px-3 sm:py-1.5 text-xs font-bold rounded-lg hover:bg-muted/80 text-muted-foreground hover:text-foreground transition-all flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
-              title="Atualizar cotações do mercado"
+              title={lastQuoteUpdatedAt ? `Última atualização: ${new Date(lastQuoteUpdatedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}` : "Atualizar cotações em tempo real"}
             >
               <RefreshCw className={`w-3.5 h-3.5 text-indigo-500 ${isFetchingQuotes ? 'animate-spin' : ''}`} />
               <span className="hidden sm:inline">Cotações</span>
+              {lastQuoteUpdatedAt && (
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 hidden md:inline-block" title="Cotações sincronizadas" />
+              )}
             </button>
 
             <button
@@ -1570,9 +1595,26 @@ export function Investments() {
                         <p className="text-base sm:text-lg font-black tracking-tight text-foreground">
                           {p.currentPrice ? formatCurrency(p.currentPrice) : formatCurrency(p.averagePrice)}
                         </p>
-                        <div className={`text-[10.5px] font-extrabold flex items-center justify-end gap-0.5 ${isPos ? 'text-emerald-500' : 'text-rose-500'}`}>
-                          {isPos ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
-                          <span>{isPos ? '+' : ''}{profitPerc.toFixed(2)}%</span>
+                        <div className="flex items-center justify-end gap-1.5 mt-0.5">
+                          {(() => {
+                            const dayVar = quoteVariations[cleanTicker];
+                            if (dayVar !== undefined && dayVar !== 0) {
+                              const isDayPos = dayVar >= 0;
+                              return (
+                                <span 
+                                  className={`text-[9.5px] font-extrabold px-1.5 py-0.2 rounded ${isDayPos ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' : 'bg-rose-500/10 text-rose-500'}`}
+                                  title="Variação de mercado hoje"
+                                >
+                                  {isDayPos ? '+' : ''}{dayVar.toFixed(2)}% dia
+                                </span>
+                              );
+                            }
+                            return null;
+                          })()}
+                          <div className={`text-[10.5px] font-extrabold flex items-center justify-end gap-0.5 ${isPos ? 'text-emerald-500' : 'text-rose-500'}`} title="Rentabilidade acumulada da sua posição">
+                            {isPos ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+                            <span>{isPos ? '+' : ''}{profitPerc.toFixed(2)}%</span>
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -1748,7 +1790,18 @@ export function Investments() {
                           <td className="px-4 py-3 text-right font-bold">{p.totalQuantity}</td>
                           <td className="px-4 py-3 text-right text-muted-foreground">{formatCurrency(p.averagePrice)}</td>
                           <td className="px-4 py-3 text-right font-bold">
-                            {p.currentPrice ? formatCurrency(p.currentPrice) : formatCurrency(p.averagePrice)}
+                            <div>{p.currentPrice ? formatCurrency(p.currentPrice) : formatCurrency(p.averagePrice)}</div>
+                            {(() => {
+                              const dayVar = quoteVariations[cleanTicker];
+                              if (dayVar !== undefined && dayVar !== 0) {
+                                return (
+                                  <span className={`text-[9.5px] font-extrabold ${dayVar >= 0 ? 'text-emerald-500' : 'text-rose-500'}`} title="Variação diária do ativo">
+                                    {dayVar >= 0 ? '+' : ''}{dayVar.toFixed(2)}%
+                                  </span>
+                                );
+                              }
+                              return null;
+                            })()}
                           </td>
                           <td className="px-4 py-3 text-right text-muted-foreground">{formatCurrency(p.totalInvested)}</td>
                           <td className="px-4 py-3 text-right font-bold text-foreground">{formatCurrency(curVal)}</td>
@@ -1845,6 +1898,7 @@ export function Investments() {
           hideValues={hideValues}
           onBatchBuy={handleBatchBuy}
           onFetchQuote={handleFetchQuoteForTicker}
+          onOpenRaioX={(ticker) => handleOpenRaioXModal(ticker, 'fundamentos')}
         />
       )}
 

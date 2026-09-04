@@ -63,13 +63,18 @@ export interface DataContextType {
 
   // Market Quotes
   quotes: Record<string, number>;
+  quoteVariations: Record<string, number>;
+  quoteTimestamps: Record<string, string>;
+  lastQuoteUpdatedAt: string | null;
   isFetchingQuotes: boolean;
   lastQuoteFetchResult: QuoteFetchResult | null;
   fetchQuotes: (
     overrideProvider?: QuoteProvider,
     overrideToken?: string,
-    customTickers?: string[]
+    customTickers?: string[],
+    forceRefresh?: boolean
   ) => Promise<QuoteFetchResult | undefined>;
+  getQuoteAgeMinutes: (ticker: string) => number | null;
 }
 
 export const DataContext = createContext<DataContextType | undefined>(undefined);
@@ -117,7 +122,8 @@ function DataContextBridge({ children }: { children: ReactNode }) {
   const handleFetchQuotes = useCallback(async (
     overrideProvider?: QuoteProvider,
     overrideToken?: string,
-    customTickers?: string[]
+    customTickers?: string[],
+    forceRefresh?: boolean
   ) => {
     const portfolioTickers = invCtx.investmentTransactions.map(it => it.ticker);
     let tickersToUse = customTickers && customTickers.length > 0 
@@ -129,7 +135,7 @@ function DataContextBridge({ children }: { children: ReactNode }) {
       tickersToUse = ['PETR4', 'MXRF11', 'VALE3', 'ITUB4'];
     }
 
-    return quotesCtx.fetchQuotes(tickersToUse, overrideProvider, transCtx.settings, overrideToken);
+    return quotesCtx.fetchQuotes(tickersToUse, overrideProvider, transCtx.settings, overrideToken, forceRefresh);
   }, [invCtx.investmentTransactions, quotesCtx, transCtx.settings]);
 
   // Auto-fetch quotes on load has been removed to respect user request and save API calls.
@@ -185,9 +191,13 @@ function DataContextBridge({ children }: { children: ReactNode }) {
 
     // Quotes
     quotes: quotesCtx.quotes,
+    quoteVariations: quotesCtx.quoteVariations,
+    quoteTimestamps: quotesCtx.quoteTimestamps,
+    lastQuoteUpdatedAt: quotesCtx.lastQuoteUpdatedAt,
     isFetchingQuotes: quotesCtx.isFetchingQuotes,
     lastQuoteFetchResult: quotesCtx.lastQuoteFetchResult,
     fetchQuotes: handleFetchQuotes,
+    getQuoteAgeMinutes: quotesCtx.getQuoteAgeMinutes,
   }), [
     transCtx,
     resCtx,

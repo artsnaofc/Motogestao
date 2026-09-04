@@ -6,16 +6,25 @@ import { cacheManager } from '../lib/cacheManager';
 
 export interface QuotesContextType {
   quotes: Record<string, number>;
+  quoteVariations: Record<string, number>;
+  quoteTimestamps: Record<string, string>;
+  lastQuoteUpdatedAt: string | null;
   isFetchingQuotes: boolean;
   lastQuoteFetchResult: QuoteFetchResult | null;
   fetchQuotes: (
     tickers?: string[],
     overrideProvider?: QuoteProvider,
     settings?: UserSettings | null,
-    overrideToken?: string
+    overrideToken?: string,
+    forceRefresh?: boolean
   ) => Promise<QuoteFetchResult | undefined>;
   setQuotes: React.Dispatch<React.SetStateAction<Record<string, number>>>;
-  updateQuoteCache: (newQuotes: Record<string, number>) => Promise<void>;
+  updateQuoteCache: (
+    newQuotes: Record<string, number>,
+    newVariations?: Record<string, number>,
+    newTimestamps?: Record<string, string>
+  ) => Promise<void>;
+  getQuoteAgeMinutes: (ticker: string) => number | null;
 }
 
 const QuotesContext = createContext<QuotesContextType | undefined>(undefined);
@@ -24,6 +33,16 @@ export function QuotesProvider({ children }: { children: ReactNode }) {
   const [quotes, setQuotes] = useState<Record<string, number>>(() => {
     return cacheManager.get<Record<string, number>>('cached_quotes') || {};
   });
+  const [quoteVariations, setQuoteVariations] = useState<Record<string, number>>(() => {
+    return cacheManager.get<Record<string, number>>('cached_quote_variations') || {};
+  });
+  const [quoteTimestamps, setQuoteTimestamps] = useState<Record<string, string>>(() => {
+    return cacheManager.get<Record<string, string>>('cached_quote_timestamps') || {};
+  });
+  const [lastQuoteUpdatedAt, setLastQuoteUpdatedAt] = useState<string | null>(() => {
+    return cacheManager.get<string>('last_quote_update_time') || null;
+  });
+
   const [isFetchingQuotes, setIsFetchingQuotes] = useState(false);
   const [lastQuoteFetchResult, setLastQuoteFetchResult] = useState<QuoteFetchResult | null>(null);
 
@@ -55,12 +74,37 @@ export function QuotesProvider({ children }: { children: ReactNode }) {
     syncQuotesFromDb();
   }, []);
 
-  const updateQuoteCache = useCallback(async (newQuotes: Record<string, number>) => {
+  const updateQuoteCache = useCallback(async (
+    newQuotes: Record<string, number>,
+    newVariations?: Record<string, number>,
+    newTimestamps?: Record<string, string>
+  ) => {
+    const nowIso = new Date().toISOString();
+    setLastQuoteUpdatedAt(nowIso);
+    cacheManager.set('last_quote_update_time', nowIso, undefined, 'quotes');
+
     setQuotes(prev => {
       const merged = { ...prev, ...newQuotes };
       cacheManager.set('cached_quotes', merged, undefined, 'quotes');
       return merged;
     });
+
+    if (newVariations && Object.keys(newVariations).length > 0) {
+      setQuoteVariations(prev => {
+        const merged = { ...prev, ...newVariations };
+        cacheManager.set('cached_quote_variations', merged, undefined, 'quotes');
+        return merged;
+      });
+    }
+
+    if (newTimestamps && Object.keys(newTimestamps).length > 0) {
+      setQuoteTimestamps(prev => {
+        const merged = { ...prev, ...newTimestamps };
+        cacheManager.set('cached_quote_timestamps', merged, undefined, 'quotes');
+        return merged;
+      });
+    }
+
     try {
       const { data: userData } = await supabase.auth.getUser();
       if (userData?.user) {
@@ -74,11 +118,21 @@ export function QuotesProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const getQuoteAgeMinutes = useCallback((ticker: string): number | null => {
+    const tk = ticker.trim().toUpperCase();
+    const timeStr = quoteTimestamps[tk] || lastQuoteUpdatedAt;
+    if (!timeStr) return null;
+    const diffMs = Date.now() - new Date(timeStr).getTime();
+    if (isNaN(diffMs) || diffMs < 0) return 0;
+    return Math.round(diffMs / 60000);
+  }, [quoteTimestamps, lastQuoteUpdatedAt]);
+
   const fetchQuotes = useCallback(async (
     tickers: string[] = [],
     overrideProvider?: QuoteProvider,
     settings?: UserSettings | null,
-    overrideToken?: string
+    overrideToken?: string,
+    forceRefresh?: boolean
   ): Promise<QuoteFetchResult | undefined> => {
     if (isFetchingQuotes || tickers.length === 0) return;
     
@@ -91,14 +145,21 @@ export function QuotesProvider({ children }: { children: ReactNode }) {
       const result = await executeQuoteFetch(cleanTickers, {
         provider: providerToUse,
         brapiToken: tokenToUse,
-        existingQuotes: quotes,
+        existingQuotes: forceRefresh ? undefined : quotes,
+        forceRefresh,
       });
 
       setLastQuoteFetchResult(result);
-      if (result && result.quotes) {
+      if (result && result.quotes && Object.keys(result.quotes).length > 0) {
         setQuotes(prev => ({ ...prev, ...result.quotes }));
-        // Asynchronously update cache in db
-        updateQuoteCache(result.quotes);
+        if (result.variations) {
+          setQuoteVariations(prev => ({ ...prev, ...result.variations }));
+        }
+        if (result.timestamps) {
+          setQuoteTimestamps(prev => ({ ...prev, ...result.timestamps }));
+        }
+        // Asynchronously update cache in db & localStorage
+        updateQuoteCache(result.quotes, result.variations, result.timestamps);
       }
 
       return result;
@@ -111,12 +172,26 @@ export function QuotesProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<QuotesContextType>(() => ({
     quotes,
+    quoteVariations,
+    quoteTimestamps,
+    lastQuoteUpdatedAt,
     isFetchingQuotes,
     lastQuoteFetchResult,
     fetchQuotes,
     setQuotes,
     updateQuoteCache,
-  }), [quotes, isFetchingQuotes, lastQuoteFetchResult, fetchQuotes, updateQuoteCache]);
+    getQuoteAgeMinutes,
+  }), [
+    quotes,
+    quoteVariations,
+    quoteTimestamps,
+    lastQuoteUpdatedAt,
+    isFetchingQuotes,
+    lastQuoteFetchResult,
+    fetchQuotes,
+    updateQuoteCache,
+    getQuoteAgeMinutes,
+  ]);
 
   return (
     <QuotesContext.Provider value={value}>
