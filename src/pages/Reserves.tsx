@@ -1,4 +1,5 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
+import { useSearchParams, useLocation } from 'react-router-dom';
 import { useData } from '../contexts/DataContext';
 import { supabase } from '../lib/supabase';
 import { 
@@ -60,8 +61,47 @@ export function Reserves() {
     setHideValues
   } = useData();
 
+  const [searchParams, setSearchParams] = useSearchParams();
+  const location = useLocation();
+
+  const getInitialTab = (): 'cards' | 'history' => {
+    const tabParam = searchParams.get('tab') || (location.state as any)?.tab;
+    if (tabParam) {
+      const norm = String(tabParam).toLowerCase().trim();
+      if (norm === 'history' || norm === 'movimentacoes' || norm === 'movimentações' || norm === 'extrato') {
+        return 'history';
+      }
+    }
+    return 'cards';
+  };
+
   // Active view tab: 'cards' or 'history'
-  const [activeTab, setActiveTab] = useState<'cards' | 'history'>('cards');
+  const [activeTab, setActiveTab] = useState<'cards' | 'history'>(getInitialTab);
+
+  useEffect(() => {
+    const tabParam = searchParams.get('tab') || (location.state as any)?.tab;
+    if (tabParam) {
+      const norm = String(tabParam).toLowerCase().trim();
+      if (norm === 'history' || norm === 'movimentacoes' || norm === 'movimentações' || norm === 'extrato') {
+        setActiveTab('history');
+      } else if (norm === 'cards' || norm === 'reservas') {
+        setActiveTab('cards');
+      }
+    }
+  }, [searchParams, location.state]);
+
+  const handleTabChange = (tab: 'cards' | 'history') => {
+    setActiveTab(tab);
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev);
+      if (tab === 'cards') {
+        next.delete('tab');
+      } else {
+        next.set('tab', tab);
+      }
+      return next;
+    }, { replace: true });
+  };
 
   // Search & Filter in Cards
   const [searchTerm, setSearchTerm] = useState('');
@@ -576,7 +616,7 @@ export function Reserves() {
         totalYield={totals.totalYield}
         activeCount={totals.activeCount}
         activeTab={activeTab}
-        setActiveTab={setActiveTab}
+        setActiveTab={handleTabChange}
         onOpenCreate={() => {
           setReserveToEdit(null);
           setShowCreateEditModal(true);

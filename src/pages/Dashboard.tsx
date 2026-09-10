@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import { motion } from 'motion/react';
 import { cacheManager } from '../lib/cacheManager';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -94,6 +94,7 @@ import { ExecutiveReportModal } from '../components/ExecutiveReportModal';
 import { PatrimonyEvolution } from '../components/PatrimonyEvolution';
 import { DailyProductivityHeatmap } from '../components/dashboard/DailyProductivityHeatmap';
 import { PassiveIncomeEvolutionChart } from '../components/dashboard/PassiveIncomeEvolutionChart';
+import { PersonalExpenseBarConfigDialog } from '../components/dashboard/PersonalExpenseBarConfigDialog';
 import {
   BarChart,
   Bar,
@@ -333,6 +334,84 @@ export function Dashboard() {
     setKmTargets(updated);
     cacheManager.set('km_targets', updated, undefined, 'settings');
     setShowKmConfig(false);
+  };
+
+  // State for Personal Expense Bar Configuration
+  const [showPersonalBarConfig, setShowPersonalBarConfig] = useState(false);
+  const [personalBarCategories, setPersonalBarCategories] = useState<string[]>(() => {
+    const cached = cacheManager.get<string[]>('personal_expense_bar_categories');
+    if (cached && Array.isArray(cached) && cached.length > 0) {
+      return cached;
+    }
+    try {
+      const raw = localStorage.getItem('financas_pro_personal_expense_bar_categories');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (e) {}
+    return [];
+  });
+
+  const [groupUnselectedCategories, setGroupUnselectedCategories] = useState<boolean>(() => {
+    const cached = cacheManager.get<boolean>('personal_expense_bar_group_others');
+    if (cached !== undefined && cached !== null) return Boolean(cached);
+    try {
+      const raw = localStorage.getItem('financas_pro_personal_expense_bar_group_others');
+      if (raw !== null) return raw === 'true';
+    } catch (e) {}
+    return true;
+  });
+
+  const handleSavePersonalBarConfig = (cats: string[], groupOthers: boolean) => {
+    setPersonalBarCategories(cats);
+    setGroupUnselectedCategories(groupOthers);
+    cacheManager.set('personal_expense_bar_categories', cats, undefined, 'settings');
+    cacheManager.set('personal_expense_bar_group_others', groupOthers, undefined, 'settings');
+    try {
+      localStorage.setItem('financas_pro_personal_expense_bar_categories', JSON.stringify(cats));
+      localStorage.setItem('financas_pro_personal_expense_bar_group_others', String(groupOthers));
+    } catch (e) {}
+  };
+
+  const getCategoryBarColor = (categoryName: string, index: number) => {
+    const norm = categoryName.toLowerCase();
+    if (norm.includes('aliment') || norm.includes('lanche') || norm.includes('refeição') || norm.includes('almoço') || norm.includes('jantar')) {
+      return { color: 'bg-orange-500', textColor: 'text-orange-500', textBoldColor: 'text-orange-600 dark:text-orange-400', dotColor: 'bg-orange-500' };
+    }
+    if (norm.includes('internet') || norm.includes('celular') || norm.includes('plano') || norm.includes('telefone')) {
+      return { color: 'bg-violet-500', textColor: 'text-violet-500', textBoldColor: 'text-violet-600 dark:text-violet-400', dotColor: 'bg-violet-500' };
+    }
+    if (norm.includes('equipamento') || norm.includes('bag') || norm.includes('ferramenta') || norm.includes('capacete')) {
+      return { color: 'bg-slate-500', textColor: 'text-slate-500', textBoldColor: 'text-slate-600 dark:text-slate-400', dotColor: 'bg-slate-500' };
+    }
+    if (norm.includes('moradia') || norm.includes('casa') || norm.includes('aluguel') || norm.includes('condom')) {
+      return { color: 'bg-sky-500', textColor: 'text-sky-500', textBoldColor: 'text-sky-600 dark:text-sky-400', dotColor: 'bg-sky-500' };
+    }
+    if (norm.includes('saúde') || norm.includes('saude') || norm.includes('farmácia') || norm.includes('farmacia') || norm.includes('médic') || norm.includes('medic')) {
+      return { color: 'bg-emerald-500', textColor: 'text-emerald-500', textBoldColor: 'text-emerald-600 dark:text-emerald-400', dotColor: 'bg-emerald-500' };
+    }
+    if (norm.includes('lazer') || norm.includes('viagem') || norm.includes('cinema') || norm.includes('festa')) {
+      return { color: 'bg-pink-500', textColor: 'text-pink-500', textBoldColor: 'text-pink-600 dark:text-pink-400', dotColor: 'bg-pink-500' };
+    }
+    if (norm.includes('educa') || norm.includes('curso') || norm.includes('livro') || norm.includes('escola')) {
+      return { color: 'bg-blue-500', textColor: 'text-blue-500', textBoldColor: 'text-blue-600 dark:text-blue-400', dotColor: 'bg-blue-500' };
+    }
+    if (norm.includes('transporte') || norm.includes('uber') || norm.includes('ônibus') || norm.includes('onibus') || norm.includes('metrô') || norm.includes('metro')) {
+      return { color: 'bg-amber-500', textColor: 'text-amber-500', textBoldColor: 'text-amber-600 dark:text-amber-400', dotColor: 'bg-amber-500' };
+    }
+    if (norm.includes('outr') || norm.includes('demais')) {
+      return { color: 'bg-zinc-400 dark:bg-zinc-500', textColor: 'text-zinc-500', textBoldColor: 'text-zinc-600 dark:text-zinc-400', dotColor: 'bg-zinc-400 dark:bg-zinc-500' };
+    }
+    const fallbackPalette = [
+      { color: 'bg-rose-500', textColor: 'text-rose-500', textBoldColor: 'text-rose-600 dark:text-rose-400', dotColor: 'bg-rose-500' },
+      { color: 'bg-teal-500', textColor: 'text-teal-500', textBoldColor: 'text-teal-600 dark:text-teal-400', dotColor: 'bg-teal-500' },
+      { color: 'bg-indigo-500', textColor: 'text-indigo-500', textBoldColor: 'text-indigo-600 dark:text-indigo-400', dotColor: 'bg-indigo-500' },
+      { color: 'bg-purple-500', textColor: 'text-purple-500', textBoldColor: 'text-purple-600 dark:text-purple-400', dotColor: 'bg-purple-500' },
+      { color: 'bg-cyan-500', textColor: 'text-cyan-500', textBoldColor: 'text-cyan-600 dark:text-cyan-400', dotColor: 'bg-cyan-500' },
+      { color: 'bg-fuchsia-500', textColor: 'text-fuchsia-500', textBoldColor: 'text-fuchsia-600 dark:text-fuchsia-400', dotColor: 'bg-fuchsia-500' },
+    ];
+    return fallbackPalette[index % fallbackPalette.length];
   };
 
   const handleLogout = async () => {
@@ -853,6 +932,57 @@ export function Dashboard() {
   const pastPeriodDivSum = useMemo(() => {
     return pastPeriodDividends.reduce((acc, t) => acc + Number(t.amount), 0);
   }, [pastPeriodDividends]);
+
+  const isPersonalOpCategory = useCallback((cat: string) => {
+    if (!cat) return false;
+    const opCats = settings?.operational_expense_categories || ['Combustível', 'Pedágio', 'Manutenção'];
+    const norm = cat.toLowerCase().trim();
+    return opCats.includes(cat) || 
+      norm === 'combustível' || norm === 'combustivel' || 
+      norm === 'manutenção' || norm === 'manutencao' || 
+      norm === 'pedágio' || norm === 'pedagio';
+  }, [settings?.operational_expense_categories]);
+
+  const availablePersonalCategories = useMemo(() => {
+    const defaultCats = settings?.personal_expense_categories || [
+      'Alimentação',
+      'Plano de Internet',
+      'Equipamento',
+      'Moradia',
+      'Lazer',
+      'Saúde',
+      'Transporte Pessoal',
+      'Outras Despesas',
+      'Outros'
+    ];
+
+    const txCats = new Set<string>();
+    (allTransactionsAdjusted || []).forEach(t => {
+      if (t.type === 'expense' && !isPersonalOpCategory(t.category) && t.category !== 'Aporte Reserva' && !(t as any).isInvestmentTx) {
+        if (t.category && t.category.trim()) {
+          txCats.add(t.category.trim());
+        }
+      }
+    });
+
+    return Array.from(new Set([...defaultCats, ...Array.from(txCats)]));
+  }, [settings?.personal_expense_categories, allTransactionsAdjusted, isPersonalOpCategory]);
+
+  const currentPeriodPersonalCategoryAmounts = useMemo(() => {
+    const amounts: Record<string, number> = {};
+    (currentPeriodTx || []).forEach(t => {
+      if (t.type !== 'expense') return;
+      if ((t as any).payment_status === 'pending') return;
+      if ((t as any).isInvestmentTx) return;
+      if (t.category === 'Aporte Reserva' || (t as any).isReserveAporte) return;
+      if (isPersonalOpCategory(t.category)) return;
+
+      const cat = t.category || 'Outros';
+      const rawAmt = (t as any).rawAmount !== undefined ? Number((t as any).rawAmount) : Number(t.amount);
+      amounts[cat] = (amounts[cat] || 0) + rawAmt;
+    });
+    return amounts;
+  }, [currentPeriodTx, isPersonalOpCategory]);
 
   const calcTotals = (txs: Transaction[]) => {
     const inc = txs.filter(t => t.type === 'income' && (t as any).payment_status !== 'pending').reduce((acc, t) => acc + Number(t.amount), 0);
@@ -2908,7 +3038,11 @@ export function Dashboard() {
             </Card>
 
             {/* Total dos investimentos */}
-            <Card className="border border-border/70 hover:border-blue-500/30 shadow-2xs hover:shadow-sm transition-all duration-200 overflow-hidden relative group rounded-2xl bg-card/95">
+            <Card 
+              onClick={() => navigate('/investments?tab=carteira', { state: { tab: 'carteira' } })}
+              className="border border-border/70 hover:border-blue-500/40 shadow-2xs hover:shadow-sm transition-all duration-200 overflow-hidden relative group cursor-pointer rounded-2xl bg-card/95 active:scale-[0.98]"
+              title="Abrir Carteira de Investimentos"
+            >
               <div className="absolute top-0 right-0 w-24 h-24 bg-blue-500/5 rounded-full blur-2xl group-hover:bg-blue-500/10 transition-all pointer-events-none" />
               <CardContent className="p-4 sm:p-4.5 flex flex-col justify-between h-full space-y-2">
                 <div className="flex items-center justify-between">
@@ -3482,6 +3616,53 @@ export function Dashboard() {
           );
         })()}
 
+        {/* indicator 5: Op Expense (Puro) */}
+        {(() => {
+          const valReserve = Math.max(0, summary.opExpReserve - summary.fuelReserve);
+          const valCaixa = Math.max(0, summary.opExpensePuro - valReserve);
+
+          const segments = [
+            { label: 'Caixa', val: valCaixa, pct: summary.opExpensePuro > 0 ? (valCaixa / summary.opExpensePuro) * 100 : 0, color: 'bg-amber-500', textColor: 'text-amber-500', textBoldColor: 'text-amber-600 dark:text-amber-400', format: formatCurrency(valCaixa) },
+            { label: 'Resgate', val: valReserve, pct: summary.opExpensePuro > 0 ? (valReserve / summary.opExpensePuro) * 100 : 0, color: 'bg-pink-500', textColor: 'text-pink-500', textBoldColor: 'text-pink-600 dark:text-pink-400', format: formatCurrency(valReserve) }
+          ].filter(s => s.val > 0).sort((a, b) => b.val - a.val);
+
+          return (
+            <Card className="border border-border/70 hover:border-amber-500/30 shadow-2xs hover:shadow-sm transition-all duration-200 bg-card/95 flex flex-col justify-between rounded-xl overflow-hidden group">
+              <CardHeader className="p-2.5 pb-1 sm:p-3 sm:pb-1 flex flex-row items-center justify-between space-y-0">
+                <CardTitle className="text-[10px] sm:text-[10.5px] font-extrabold uppercase tracking-wider text-amber-500 w-[85%] truncate">
+                  Operacional (Puro)
+                </CardTitle>
+                <div className="p-1 bg-amber-500/10 border border-amber-500/20 rounded-lg shrink-0 group-hover:scale-105 transition-transform">
+                  <Fuel className="w-3 h-3 text-amber-500" />
+                </div>
+              </CardHeader>
+              <CardContent className="p-2.5 pt-0 sm:p-3 sm:pt-0 flex-1 flex flex-col justify-between space-y-1.5">
+                <div>
+                  <div className="text-base sm:text-lg font-black text-amber-600 dark:text-amber-500 tracking-tight font-mono leading-tight">
+                    {formatCurrency(summary.opExpensePuro || 0)}
+                  </div>
+                  {renderTrend(summary.opPuroTrend, true)}
+                </div>
+                
+                <div className="pt-1.5 border-t border-border/40 space-y-1">
+                  <div className="w-full h-1 bg-muted/80 rounded-full overflow-hidden flex">
+                    {segments.map((s, i) => <div key={i} className={`${s.color} h-full transition-all duration-300`} style={{ width: `${s.pct}%` }} />)}
+                  </div>
+
+                  <div className="grid gap-0.5 text-center leading-tight" style={{ gridTemplateColumns: `repeat(${segments.length || 1}, minmax(0, 1fr))` }}>
+                    {segments.map((s, i) => (
+                      <div key={i} className={i > 0 ? "border-l border-border/40 pl-0.5" : ""}>
+                        <span className={`text-[6.5px] sm:text-[7px] uppercase font-black ${s.textColor} block truncate`}>{s.label} ({Math.round(s.pct)}%)</span>
+                        <span className={`text-[8px] sm:text-[8.5px] font-mono font-bold ${s.textBoldColor} block truncate`}>{s.format}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          );
+        })()}
+
         {/* indicator 3: Lucro Líquido */}
         {(() => {
           const valEntradas = summary.totalIncome;
@@ -3604,98 +3785,174 @@ export function Dashboard() {
           );
         })()}
 
-        {/* indicator 5: Op Expense (Puro) */}
-        {(() => {
-          const valReserve = Math.max(0, summary.opExpReserve - summary.fuelReserve);
-          const valCaixa = Math.max(0, summary.opExpensePuro - valReserve);
-
-          const segments = [
-            { label: 'Caixa', val: valCaixa, pct: summary.opExpensePuro > 0 ? (valCaixa / summary.opExpensePuro) * 100 : 0, color: 'bg-amber-500', textColor: 'text-amber-500', textBoldColor: 'text-amber-600 dark:text-amber-400', format: formatCurrency(valCaixa) },
-            { label: 'Resgate', val: valReserve, pct: summary.opExpensePuro > 0 ? (valReserve / summary.opExpensePuro) * 100 : 0, color: 'bg-pink-500', textColor: 'text-pink-500', textBoldColor: 'text-pink-600 dark:text-pink-400', format: formatCurrency(valReserve) }
-          ].filter(s => s.val > 0).sort((a, b) => b.val - a.val);
-
-          return (
-            <Card className="border border-border/70 hover:border-amber-500/30 shadow-2xs hover:shadow-sm transition-all duration-200 bg-card/95 flex flex-col justify-between rounded-xl overflow-hidden group">
-              <CardHeader className="p-2.5 pb-1 sm:p-3 sm:pb-1 flex flex-row items-center justify-between space-y-0">
-                <CardTitle className="text-[10px] sm:text-[10.5px] font-extrabold uppercase tracking-wider text-amber-500 w-[85%] truncate">
-                  Operacional (Puro)
-                </CardTitle>
-                <div className="p-1 bg-amber-500/10 border border-amber-500/20 rounded-lg shrink-0 group-hover:scale-105 transition-transform">
-                  <Fuel className="w-3 h-3 text-amber-500" />
-                </div>
-              </CardHeader>
-              <CardContent className="p-2.5 pt-0 sm:p-3 sm:pt-0 flex-1 flex flex-col justify-between space-y-1.5">
-                <div>
-                  <div className="text-base sm:text-lg font-black text-amber-600 dark:text-amber-500 tracking-tight font-mono leading-tight">
-                    {formatCurrency(summary.opExpensePuro || 0)}
-                  </div>
-                  {renderTrend(summary.opPuroTrend, true)}
-                </div>
-                
-                <div className="pt-1.5 border-t border-border/40 space-y-1">
-                  <div className="w-full h-1 bg-muted/80 rounded-full overflow-hidden flex">
-                    {segments.map((s, i) => <div key={i} className={`${s.color} h-full transition-all duration-300`} style={{ width: `${s.pct}%` }} />)}
-                  </div>
-
-                  <div className="grid gap-0.5 text-center leading-tight" style={{ gridTemplateColumns: `repeat(${segments.length || 1}, minmax(0, 1fr))` }}>
-                    {segments.map((s, i) => (
-                      <div key={i} className={i > 0 ? "border-l border-border/40 pl-0.5" : ""}>
-                        <span className={`text-[6.5px] sm:text-[7px] uppercase font-black ${s.textColor} block truncate`}>{s.label} ({Math.round(s.pct)}%)</span>
-                        <span className={`text-[8px] sm:text-[8.5px] font-mono font-bold ${s.textBoldColor} block truncate`}>{s.format}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          );
-        })()}
-
-        {/* indicator 7: Per Expense */}
+        {/* indicator 7: Per Expense (Span 2 columns & Configurable Category Bar) */}
         {(() => {
           const valReserva = summary.perExpReserve || 0;
           const valCaixa = Math.max(0, summary.perExpense - valReserva);
           const totalExcludingAtivos = valCaixa + valReserva;
-          const segments = [
-            { label: 'Caixa', val: valCaixa, pct: totalExcludingAtivos > 0 ? (valCaixa / totalExcludingAtivos) * 100 : 0, color: 'bg-rose-500', textColor: 'text-rose-500', textBoldColor: 'text-rose-600 dark:text-rose-400', format: formatCurrency(valCaixa) },
-            { label: 'Resgate', val: valReserva, pct: totalExcludingAtivos > 0 ? (valReserva / totalExcludingAtivos) * 100 : 0, color: 'bg-pink-500', textColor: 'text-pink-500', textBoldColor: 'text-pink-600 dark:text-pink-400', format: formatCurrency(valReserva) }
-          ].filter(s => s.val > 0).sort((a, b) => b.val - a.val);
 
           const currentPerExcludingAtivos = summary.perExpense;
           const pastPerExcludingAtivos = past.perExp;
           const trendExcludingAtivos = getTrend(currentPerExcludingAtivos, pastPerExcludingAtivos);
 
+          // Determine which categories to display
+          const categoriesWithExpense = Object.keys(currentPeriodPersonalCategoryAmounts).filter(
+            c => (currentPeriodPersonalCategoryAmounts[c] || 0) > 0
+          );
+
+          const categoriesToConsider = personalBarCategories.length > 0
+            ? personalBarCategories
+            : (categoriesWithExpense.length > 0
+                ? categoriesWithExpense
+                : availablePersonalCategories.slice(0, 5));
+
+          let segments: Array<{
+            label: string;
+            val: number;
+            pct: number;
+            color: string;
+            textColor: string;
+            textBoldColor: string;
+            dotColor: string;
+            format: string;
+          }> = [];
+
+          let sumSelected = 0;
+          categoriesToConsider.forEach((cat, idx) => {
+            const amt = currentPeriodPersonalCategoryAmounts[cat] || 0;
+            if (amt > 0 || (personalBarCategories.length > 0 && personalBarCategories.includes(cat))) {
+              sumSelected += amt;
+              const colorInfo = getCategoryBarColor(cat, idx);
+              segments.push({
+                label: cat,
+                val: amt,
+                pct: totalExcludingAtivos > 0 ? (amt / totalExcludingAtivos) * 100 : 0,
+                color: colorInfo.color,
+                textColor: colorInfo.textColor,
+                textBoldColor: colorInfo.textBoldColor,
+                dotColor: colorInfo.dotColor,
+                format: formatCurrency(amt)
+              });
+            }
+          });
+
+          // Group unselected personal expenses in "Outros / Demais" if enabled and there are leftovers
+          if (groupUnselectedCategories && totalExcludingAtivos > sumSelected) {
+            const remainingAmt = Math.max(0, totalExcludingAtivos - sumSelected);
+            if (remainingAmt > 0) {
+              const otherColor = getCategoryBarColor('Outros', segments.length);
+              segments.push({
+                label: 'Outros',
+                val: remainingAmt,
+                pct: totalExcludingAtivos > 0 ? (remainingAmt / totalExcludingAtivos) * 100 : 0,
+                color: otherColor.color,
+                textColor: otherColor.textColor,
+                textBoldColor: otherColor.textBoldColor,
+                dotColor: otherColor.dotColor,
+                format: formatCurrency(remainingAmt)
+              });
+            }
+          }
+
+          // Sort segments descending by value, keeping Outros at end
+          segments.sort((a, b) => {
+            const isAOther = a.label.includes('Outros') || a.label.includes('Demais');
+            const isBOther = b.label.includes('Outros') || b.label.includes('Demais');
+            if (isAOther && !isBOther) return 1;
+            if (!isAOther && isBOther) return -1;
+            return b.val - a.val;
+          });
+
           return (
-            <Card className="border border-border/70 hover:border-rose-500/30 shadow-2xs hover:shadow-sm transition-all duration-200 bg-card/95 flex flex-col justify-between rounded-xl overflow-hidden group">
+            <Card className="col-span-2 border border-border/70 hover:border-rose-500/30 shadow-2xs hover:shadow-sm transition-all duration-200 bg-card/95 flex flex-col justify-between rounded-xl overflow-hidden group">
               <CardHeader className="p-2.5 pb-1 sm:p-3 sm:pb-1 flex flex-row items-center justify-between space-y-0">
-                <CardTitle className="text-[10px] sm:text-[10.5px] font-extrabold uppercase tracking-wider text-rose-500 w-[85%] truncate">
-                  Pessoal
-                </CardTitle>
-                <div className="p-1 bg-rose-500/10 border border-rose-500/20 rounded-lg shrink-0 group-hover:scale-105 transition-transform">
-                  <Home className="w-3 h-3 text-rose-500" />
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <CardTitle className="text-[10px] sm:text-[10.5px] font-extrabold uppercase tracking-wider text-rose-500 truncate">
+                    Gasto Pessoal
+                  </CardTitle>
+                  <span className="text-[7px] sm:text-[7.5px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-md bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20 shrink-0">
+                    {segments.length} {segments.length === 1 ? 'categoria' : 'categorias'}
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setShowPersonalBarConfig(true);
+                    }}
+                    className="p-1 rounded-md border border-border/60 hover:border-rose-500/40 bg-muted/40 hover:bg-rose-500/10 text-muted-foreground hover:text-rose-500 transition-colors cursor-pointer"
+                    title="Configurar categorias da barra de gastos pessoais"
+                  >
+                    <SlidersHorizontal className="w-3 h-3 text-muted-foreground hover:text-rose-500" />
+                  </button>
+                  <div className="p-1 bg-rose-500/10 border border-rose-500/20 rounded-lg shrink-0 group-hover:scale-105 transition-transform">
+                    <Home className="w-3 h-3 text-rose-500" />
+                  </div>
                 </div>
               </CardHeader>
-              <CardContent className="p-2.5 pt-0 sm:p-3 sm:pt-0 flex-1 flex flex-col justify-between space-y-1.5">
-                <div>
-                  <div className="text-base sm:text-lg font-black text-rose-500 tracking-tight font-mono leading-tight">
-                    {formatCurrency(totalExcludingAtivos)}
+              <CardContent className="p-2.5 pt-0 sm:p-3 sm:pt-0 flex-1 flex flex-col justify-between space-y-2">
+                <div className="flex flex-col sm:flex-row sm:items-baseline justify-between gap-1">
+                  <div className="flex items-baseline gap-2">
+                    <div className="text-base sm:text-lg font-black text-rose-500 tracking-tight font-mono leading-tight">
+                      {hideValues ? '•••••' : formatCurrency(totalExcludingAtivos)}
+                    </div>
+                    {renderTrend(trendExcludingAtivos, true)}
                   </div>
-                  {renderTrend(trendExcludingAtivos, true)}
+                  <div className="text-[8px] sm:text-[8.5px] text-muted-foreground font-semibold flex items-center gap-1.5">
+                    <span>Caixa: <strong className="text-foreground font-mono">{hideValues ? '•••' : formatCurrency(valCaixa)}</strong></span>
+                    <span>•</span>
+                    <span>Resgate: <strong className="text-foreground font-mono">{hideValues ? '•••' : formatCurrency(valReserva)}</strong></span>
+                  </div>
                 </div>
                 
-                <div className="pt-1.5 border-t border-border/40 space-y-1">
-                  <div className="w-full h-1 bg-muted/80 rounded-full overflow-hidden flex">
-                    {segments.map((s, i) => <div key={i} className={`${s.color} h-full transition-all duration-300`} style={{ width: `${s.pct}%` }} />)}
+                <div className="pt-1.5 border-t border-border/40 space-y-1.5">
+                  <div className="w-full h-1.5 bg-muted/80 rounded-full overflow-hidden flex shadow-inner">
+                    {segments.length > 0 ? (
+                      segments.map((s, i) => (
+                        <div
+                          key={i}
+                          className={`${s.color} h-full transition-all duration-300 hover:brightness-110`}
+                          style={{ width: `${s.pct}%` }}
+                          title={`${s.label}: ${s.format} (${s.pct.toFixed(1)}%)`}
+                        />
+                      ))
+                    ) : (
+                      <div className="w-full h-full bg-muted/60" />
+                    )}
                   </div>
 
-                  <div className="grid gap-0.5 text-center leading-tight" style={{ gridTemplateColumns: `repeat(${segments.length || 1}, minmax(0, 1fr))` }}>
-                    {segments.map((s, i) => (
-                      <div key={i} className={i > 0 ? "border-l border-border/40 pl-0.5" : ""}>
-                        <span className={`text-[6.5px] sm:text-[7px] uppercase font-black ${s.textColor} block truncate`}>{s.label} ({Math.round(s.pct)}%)</span>
-                        <span className={`text-[8px] sm:text-[8.5px] font-mono font-bold ${s.textBoldColor} block truncate`}>{s.format}</span>
-                      </div>
-                    ))}
-                  </div>
+                  {segments.length > 0 ? (
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-1 pt-0.5">
+                      {segments.map((s, i) => (
+                        <div
+                          key={i}
+                          className="flex flex-col min-w-0 p-1 rounded-md bg-muted/20 hover:bg-muted/40 transition-colors"
+                          title={`${s.label}: ${s.format} (${s.pct.toFixed(1)}%)`}
+                        >
+                          <div className="flex items-center justify-between gap-1 min-w-0">
+                            <div className="flex items-center gap-1 min-w-0">
+                              <span className={`w-1.5 h-1.5 rounded-full ${s.dotColor} shrink-0`} />
+                              <span className={`text-[6.5px] sm:text-[7px] uppercase font-black ${s.textColor} truncate`}>
+                                {s.label}
+                              </span>
+                            </div>
+                            <span className="text-[6.5px] sm:text-[7px] font-mono text-muted-foreground font-bold shrink-0">
+                              {Math.round(s.pct)}%
+                            </span>
+                          </div>
+                          <span className={`text-[8px] sm:text-[8.5px] font-mono font-bold ${s.textBoldColor} truncate mt-0.5`}>
+                            {hideValues ? '•••••' : s.format}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-[7.5px] sm:text-[8px] text-muted-foreground italic text-center py-1">
+                      Nenhum gasto pessoal registrado no período.
+                    </div>
+                  )}
                 </div>
               </CardContent>
             </Card>
@@ -3703,7 +3960,11 @@ export function Dashboard() {
         })()}
 
         {/* indicator 6: Reservas (Usadas) */}
-        <Card className="border border-border/70 hover:border-pink-500/30 shadow-2xs hover:shadow-sm transition-all duration-200 bg-card/95 flex flex-col justify-between rounded-xl overflow-hidden group">
+        <Card 
+          onClick={() => navigate('/reserves?tab=history', { state: { tab: 'history' } })}
+          className="border border-border/70 hover:border-pink-500/40 shadow-2xs hover:shadow-sm transition-all duration-200 bg-card/95 flex flex-col justify-between rounded-xl overflow-hidden group cursor-pointer active:scale-[0.99]"
+          title="Ver Extrato e Movimentações das Reservas"
+        >
           <CardHeader className="p-2.5 pb-1 sm:p-3 sm:pb-1 flex flex-row items-center justify-between space-y-0">
             <CardTitle className="text-[10px] sm:text-[10.5px] font-extrabold uppercase tracking-wider text-pink-500 w-[85%] truncate">
               Reservas (Despesas)
@@ -3734,8 +3995,9 @@ export function Dashboard() {
 
         {/* indicator 6.5: Investimentos (Aportes & Ativos) */}
         <Card 
-          onClick={() => navigate('/investments')}
+          onClick={() => navigate('/investments?tab=historico', { state: { tab: 'historico' } })}
           className="border border-border/70 hover:border-indigo-500/40 shadow-2xs hover:shadow-sm transition-all duration-200 bg-card/95 flex flex-col justify-between rounded-xl overflow-hidden group cursor-pointer active:scale-[0.99]"
+          title="Ver Lançamentos de Investimentos"
         >
           <CardHeader className="p-2.5 pb-1 sm:p-3 sm:pb-1 flex flex-row items-center justify-between space-y-0">
             <CardTitle className="text-[10px] sm:text-[10.5px] font-extrabold uppercase tracking-wider text-indigo-500 w-[85%] truncate flex items-center gap-1">
@@ -6187,6 +6449,18 @@ export function Dashboard() {
           </div>
         </DialogContent>
       </Dialog>
+
+      <PersonalExpenseBarConfigDialog
+        open={showPersonalBarConfig}
+        onOpenChange={setShowPersonalBarConfig}
+        availableCategories={availablePersonalCategories}
+        categoryAmounts={currentPeriodPersonalCategoryAmounts}
+        selectedCategories={personalBarCategories}
+        groupOthers={groupUnselectedCategories}
+        onSave={handleSavePersonalBarConfig}
+        formatCurrency={formatCurrency}
+        totalPersonalExpense={summary.perExpense}
+      />
     </div>
   );
 }

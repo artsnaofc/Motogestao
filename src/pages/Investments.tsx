@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { useSearchParams, useLocation } from 'react-router-dom';
 import { useData } from '../contexts/DataContext';
 import { useInvestments } from '../contexts/InvestmentsContext';
 import { CurrencyInput } from '../components/CurrencyInput';
@@ -114,7 +115,54 @@ export function Investments() {
   const [isQuoteProviderModalOpen, setIsQuoteProviderModalOpen] = useState(false);
 
   // Navigation & Tabs
-  const [activeTab, setActiveTab] = useState<'carteira' | 'fundamentalista' | 'rebalanceamento' | 'proventos' | 'historico' | 'analise'>('carteira');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const location = useLocation();
+
+  const getInitialInvestmentTab = (): 'carteira' | 'fundamentalista' | 'rebalanceamento' | 'proventos' | 'historico' | 'analise' => {
+    const tabParam = searchParams.get('tab') || (location.state as any)?.tab;
+    if (tabParam) {
+      const norm = String(tabParam).toLowerCase().trim();
+      if (norm === 'historico' || norm === 'history' || norm === 'lancamentos' || norm === 'lançamentos' || norm === 'movimentacoes' || norm === 'movimentações') {
+        return 'historico';
+      }
+      if (norm === 'carteira' || norm === 'portfolio') {
+        return 'carteira';
+      }
+      if (['fundamentalista', 'rebalanceamento', 'proventos', 'analise'].includes(norm)) {
+        return norm as any;
+      }
+    }
+    return 'carteira';
+  };
+
+  const [activeTab, setActiveTab] = useState<'carteira' | 'fundamentalista' | 'rebalanceamento' | 'proventos' | 'historico' | 'analise'>(getInitialInvestmentTab);
+
+  useEffect(() => {
+    const tabParam = searchParams.get('tab') || (location.state as any)?.tab;
+    if (tabParam) {
+      const norm = String(tabParam).toLowerCase().trim();
+      if (norm === 'historico' || norm === 'history' || norm === 'lancamentos' || norm === 'lançamentos' || norm === 'movimentacoes' || norm === 'movimentações') {
+        setActiveTab('historico');
+      } else if (norm === 'carteira' || norm === 'portfolio') {
+        setActiveTab('carteira');
+      } else if (['fundamentalista', 'rebalanceamento', 'proventos', 'analise'].includes(norm)) {
+        setActiveTab(norm as any);
+      }
+    }
+  }, [searchParams, location.state]);
+
+  const handleTabChange = (tab: 'carteira' | 'fundamentalista' | 'rebalanceamento' | 'proventos' | 'historico' | 'analise') => {
+    setActiveTab(tab);
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev);
+      if (tab === 'carteira') {
+        next.delete('tab');
+      } else {
+        next.set('tab', tab);
+      }
+      return next;
+    }, { replace: true });
+  };
   const [carteiraSubTab, setCarteiraSubTab] = useState<'carteira' | 'geral' | 'alocacao'>('carteira');
   const [analyticsTicker, setAnalyticsTicker] = useState<string>('PETR4');
   const [tirMode, setTirMode] = useState<'dynamic' | 'period' | 'annual'>('dynamic');
@@ -933,7 +981,7 @@ export function Investments() {
       {/* NAVIGATION TABS */}
       <div className="flex p-1 bg-muted/40 rounded-2xl border border-border/40 w-full overflow-x-auto custom-scrollbar gap-1">
         <button
-          onClick={() => setActiveTab('carteira')}
+          onClick={() => handleTabChange('carteira')}
           className={`px-3 py-2 text-xs font-black rounded-xl transition-all flex items-center justify-center gap-2 whitespace-nowrap flex-1 min-w-[130px] ${
             activeTab === 'carteira' || activeTab === 'analise'
               ? 'bg-card text-foreground shadow-xs border border-border/50' 
@@ -950,7 +998,7 @@ export function Investments() {
         </button>
 
         <button
-          onClick={() => setActiveTab('fundamentalista')}
+          onClick={() => handleTabChange('fundamentalista')}
           className={`px-3 py-2 text-xs font-black rounded-xl transition-all flex items-center justify-center gap-2 whitespace-nowrap flex-1 min-w-[165px] ${
             activeTab === 'fundamentalista' 
               ? 'bg-card text-foreground shadow-xs border border-border/50' 
@@ -965,7 +1013,7 @@ export function Investments() {
         </button>
 
         <button
-          onClick={() => setActiveTab('rebalanceamento')}
+          onClick={() => handleTabChange('rebalanceamento')}
           className={`px-3 py-2 text-xs font-black rounded-xl transition-all flex items-center justify-center gap-2 whitespace-nowrap flex-1 min-w-[155px] ${
             activeTab === 'rebalanceamento' 
               ? 'bg-card text-foreground shadow-xs border border-border/50' 
@@ -977,7 +1025,7 @@ export function Investments() {
         </button>
 
         <button
-          onClick={() => setActiveTab('proventos')}
+          onClick={() => handleTabChange('proventos')}
           className={`px-3 py-2 text-xs font-black rounded-xl transition-all flex items-center justify-center gap-2 whitespace-nowrap flex-1 min-w-[120px] ${
             activeTab === 'proventos' 
               ? 'bg-card text-foreground shadow-xs border border-border/50' 
@@ -994,7 +1042,7 @@ export function Investments() {
         </button>
 
         <button
-          onClick={() => setActiveTab('historico')}
+          onClick={() => handleTabChange('historico')}
           className={`px-3 py-2 text-xs font-black rounded-xl transition-all flex items-center justify-center gap-2 whitespace-nowrap flex-1 min-w-[130px] ${
             activeTab === 'historico' 
               ? 'bg-card text-foreground shadow-xs border border-border/50' 
@@ -2144,7 +2192,7 @@ export function Investments() {
           Provento
         </button>
         <button
-          onClick={() => setActiveTab('rebalanceamento')}
+          onClick={() => handleTabChange('rebalanceamento')}
           className="px-3.5 py-2 text-xs font-bold rounded-xl bg-indigo-500/10 text-indigo-500 flex items-center gap-1.5"
         >
           <Scale className="w-4 h-4" />
