@@ -5,15 +5,13 @@ import { useInvestments } from '../contexts/InvestmentsContext';
 import { CurrencyInput } from '../components/CurrencyInput';
 import { InvestmentAnalytics } from '../components/InvestmentAnalytics';
 import { CvmDocumentButton } from '../components/CvmDocumentButton';
-import { RebalanceWizard } from '../components/investments/RebalanceWizard';
 import { PortfolioDiagnosisDashboard } from '../components/investments/PortfolioDiagnosisDashboard';
-import { FundamentalAnalysisView } from '../components/investments/FundamentalAnalysisView';
-import { ProfessionalRebalanceEngineView } from '../components/investments/ProfessionalRebalanceEngineView';
 import { runPortfolioDiagnosis } from '../lib/portfolioDiagnosis';
 import { AssetRaioXModal } from '../components/investments/AssetRaioXModal';
 import { DividendSummaryCards } from '../components/investments/DividendSummaryCards';
 import { PortfolioReportModal } from '../components/investments/PortfolioReportModal';
 import { QuoteProviderSelectorModal } from '../components/investments/QuoteProviderSelectorModal';
+import { EditAssetMetadataModal } from '../components/investments/EditAssetMetadataModal';
 import { getAssetCnpj, formatCnpj, fetchCnpjOnline } from '../lib/cnpjUtils';
 import { parseNumericValue } from '../lib/numberUtils';
 import { fetchSingleQuote } from '../lib/quoteService';
@@ -49,7 +47,6 @@ import {
   Edit3,
   PieChart as PieIcon,
   Award,
-  Scale,
   History,
   Sliders,
   Zap,
@@ -113,12 +110,13 @@ export function Investments() {
 
   // Quote Provider Modal State
   const [isQuoteProviderModalOpen, setIsQuoteProviderModalOpen] = useState(false);
+  const [editingAssetTicker, setEditingAssetTicker] = useState<string | null>(null);
 
   // Navigation & Tabs
   const [searchParams, setSearchParams] = useSearchParams();
   const location = useLocation();
 
-  const getInitialInvestmentTab = (): 'carteira' | 'fundamentalista' | 'rebalanceamento' | 'proventos' | 'historico' | 'analise' => {
+  const getInitialInvestmentTab = (): 'carteira' | 'proventos' | 'historico' | 'analise' => {
     const tabParam = searchParams.get('tab') || (location.state as any)?.tab;
     if (tabParam) {
       const norm = String(tabParam).toLowerCase().trim();
@@ -128,14 +126,14 @@ export function Investments() {
       if (norm === 'carteira' || norm === 'portfolio') {
         return 'carteira';
       }
-      if (['fundamentalista', 'rebalanceamento', 'proventos', 'analise'].includes(norm)) {
+      if (['proventos', 'analise'].includes(norm)) {
         return norm as any;
       }
     }
     return 'carteira';
   };
 
-  const [activeTab, setActiveTab] = useState<'carteira' | 'fundamentalista' | 'rebalanceamento' | 'proventos' | 'historico' | 'analise'>(getInitialInvestmentTab);
+  const [activeTab, setActiveTab] = useState<'carteira' | 'proventos' | 'historico' | 'analise'>(getInitialInvestmentTab);
 
   useEffect(() => {
     const tabParam = searchParams.get('tab') || (location.state as any)?.tab;
@@ -145,13 +143,13 @@ export function Investments() {
         setActiveTab('historico');
       } else if (norm === 'carteira' || norm === 'portfolio') {
         setActiveTab('carteira');
-      } else if (['fundamentalista', 'rebalanceamento', 'proventos', 'analise'].includes(norm)) {
+      } else if (['proventos', 'analise'].includes(norm)) {
         setActiveTab(norm as any);
       }
     }
   }, [searchParams, location.state]);
 
-  const handleTabChange = (tab: 'carteira' | 'fundamentalista' | 'rebalanceamento' | 'proventos' | 'historico' | 'analise') => {
+  const handleTabChange = (tab: 'carteira' | 'proventos' | 'historico' | 'analise') => {
     setActiveTab(tab);
     setSearchParams(prev => {
       const next = new URLSearchParams(prev);
@@ -903,7 +901,7 @@ export function Investments() {
                 Investimentos & Carteira
               </h1>
               <p className="text-muted-foreground text-xs sm:text-sm font-medium mt-0.5">
-                Gestão de ativos, rebalanceamento inteligente, proventos e valuation.
+                Gestão de ativos, proventos e valuation.
               </p>
             </div>
           </div>
@@ -995,33 +993,6 @@ export function Investments() {
               {positions.length}
             </span>
           )}
-        </button>
-
-        <button
-          onClick={() => handleTabChange('fundamentalista')}
-          className={`px-3 py-2 text-xs font-black rounded-xl transition-all flex items-center justify-center gap-2 whitespace-nowrap flex-1 min-w-[165px] ${
-            activeTab === 'fundamentalista' 
-              ? 'bg-card text-foreground shadow-xs border border-border/50' 
-              : 'text-muted-foreground hover:text-foreground'
-          }`}
-        >
-          <Award className="w-4 h-4 text-amber-500" />
-          <span>Ranking Ativos</span>
-          <span className="px-1.5 py-0.5 text-[10px] rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 font-extrabold">
-            Score
-          </span>
-        </button>
-
-        <button
-          onClick={() => handleTabChange('rebalanceamento')}
-          className={`px-3 py-2 text-xs font-black rounded-xl transition-all flex items-center justify-center gap-2 whitespace-nowrap flex-1 min-w-[155px] ${
-            activeTab === 'rebalanceamento' 
-              ? 'bg-card text-foreground shadow-xs border border-border/50' 
-              : 'text-muted-foreground hover:text-foreground'
-          }`}
-        >
-          <Scale className="w-4 h-4 text-indigo-500" />
-          <span>Rebalancear & Aportes</span>
         </button>
 
         <button
@@ -1599,28 +1570,28 @@ export function Investments() {
                   <div 
                     key={p.ticker}
                     onClick={() => setSelectedAssetDetail(p)}
-                    className="p-5 rounded-2xl border border-border/50 bg-card/65 backdrop-blur-xs hover:border-primary/50 hover:shadow-lg transition-all duration-300 flex flex-col justify-between gap-4 group relative cursor-pointer"
+                    className="p-3.5 rounded-2xl border border-border/50 bg-card/65 backdrop-blur-xs hover:border-primary/50 hover:shadow-md transition-all duration-300 flex flex-col justify-between gap-2.5 group relative cursor-pointer"
                     role="button"
                     tabIndex={0}
                     onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelectedAssetDetail(p); } }}
                   >
                     {/* Header: Ticker, Type, CNPJ, Price & Variation */}
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex items-center gap-3">
-                        <div className={`w-12 h-12 rounded-xl flex flex-col items-center justify-center font-black text-xs tracking-wider border shadow-2xs shrink-0 ${getTypeColor(p.type)}`}>
-                          <span className="text-[10px] opacity-75">{p.type.slice(0, 3).toUpperCase()}</span>
-                          <span className="text-[11px] font-black">{p.ticker.slice(0, 4)}</span>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <div className={`w-10 h-10 rounded-xl flex flex-col items-center justify-center font-black tracking-wider border shadow-2xs shrink-0 ${getTypeColor(p.type)}`}>
+                          <span className="text-[8px] opacity-75">{p.type.slice(0, 3).toUpperCase()}</span>
+                          <span className="text-[10px] font-black">{p.ticker.slice(0, 4)}</span>
                         </div>
-                        <div>
+                        <div className="min-w-0">
                           <div className="flex items-center gap-1.5 flex-wrap">
-                            <h4 className="text-base sm:text-lg font-black tracking-tight group-hover:text-primary transition-colors">
+                            <h4 className="text-sm sm:text-base font-black tracking-tight group-hover:text-primary transition-colors">
                               {p.ticker}
                             </h4>
-                            <span className="text-[8.5px] font-black px-1.5 py-0.5 rounded-md bg-secondary text-secondary-foreground uppercase tracking-wide">
+                            <span className="text-[8px] font-black px-1.5 py-0.2 rounded-md bg-secondary text-secondary-foreground uppercase tracking-wide">
                               {p.type}
                             </span>
                             {currentAssetCnpj && (
-                              <span className="text-[8.5px] font-bold text-muted-foreground hidden sm:inline">
+                              <span className="text-[8px] font-bold text-muted-foreground hidden sm:inline">
                                 {formatCnpj(currentAssetCnpj)}
                               </span>
                             )}
@@ -1628,10 +1599,10 @@ export function Investments() {
                           {(() => {
                             const meta = b3AssetsMetadata[cleanTicker];
                             const subtitleText = meta
-                              ? (p.type === 'Ação' || p.type === 'BDR' ? meta.sector : meta.fiiSegment)
+                              ? (p.type === 'Ação' || p.type === 'BDR' ? meta.sector : (meta.fii_segment || meta.fiiSegment))
                               : null;
                             return (
-                              <p className="text-[11px] text-muted-foreground font-semibold mt-0.5 truncate max-w-[200px]">
+                              <p className="text-[10px] text-muted-foreground font-semibold truncate max-w-[150px] sm:max-w-[180px]">
                                 {subtitleText || 'Ativo da B3'}
                               </p>
                             );
@@ -1640,17 +1611,17 @@ export function Investments() {
                       </div>
 
                       <div className="text-right shrink-0">
-                        <p className="text-base sm:text-lg font-black tracking-tight text-foreground">
+                        <p className="text-sm sm:text-base font-black tracking-tight text-foreground">
                           {p.currentPrice ? formatCurrency(p.currentPrice) : formatCurrency(p.averagePrice)}
                         </p>
-                        <div className="flex items-center justify-end gap-1.5 mt-0.5">
+                        <div className="flex items-center justify-end gap-1.5">
                           {(() => {
                             const dayVar = quoteVariations[cleanTicker];
                             if (dayVar !== undefined && dayVar !== 0) {
                               const isDayPos = dayVar >= 0;
                               return (
                                 <span 
-                                  className={`text-[9.5px] font-extrabold px-1.5 py-0.2 rounded ${isDayPos ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' : 'bg-rose-500/10 text-rose-500'}`}
+                                  className={`text-[8.5px] font-extrabold px-1.5 py-0.2 rounded ${isDayPos ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' : 'bg-rose-500/10 text-rose-500'}`}
                                   title="Variação de mercado hoje"
                                 >
                                   {isDayPos ? '+' : ''}{dayVar.toFixed(2)}% dia
@@ -1659,54 +1630,54 @@ export function Investments() {
                             }
                             return null;
                           })()}
-                          <div className={`text-[10.5px] font-extrabold flex items-center justify-end gap-0.5 ${isPos ? 'text-emerald-500' : 'text-rose-500'}`} title="Rentabilidade acumulada da sua posição">
-                            {isPos ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
-                            <span>{isPos ? '+' : ''}{profitPerc.toFixed(2)}%</span>
+                          <div className={`text-[9.5px] font-extrabold flex items-center justify-end gap-0.5 ${isPos ? 'text-emerald-500' : 'text-rose-500'}`} title="Rentabilidade acumulada da sua posição">
+                            {isPos ? <TrendingUp className="w-2.5 h-2.5" /> : <TrendingDown className="w-2.5 h-2.5" />}
+                            <span>{isPos ? '+' : ''}{profitPerc.toFixed(1)}%</span>
                           </div>
                         </div>
                       </div>
                     </div>
 
                     {/* Financial Metrics Box - Structured Row & Columns */}
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-3 rounded-xl bg-muted/20 border border-border/30 text-xs">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 p-2 rounded-xl bg-muted/20 border border-border/30 text-xs">
                       {/* Custódia */}
-                      <div className="space-y-0.5">
-                        <span className="text-[9.5px] font-bold text-muted-foreground uppercase tracking-wider block">Custódia</span>
-                        <p className="font-extrabold text-foreground text-xs sm:text-sm">{p.totalQuantity} <span className="text-[10px] text-muted-foreground">un.</span></p>
-                        <p className="text-[10px] text-muted-foreground font-medium truncate">PM: {formatCurrency(p.averagePrice)}</p>
+                      <div className="space-y-0">
+                        <span className="text-[8px] font-black text-muted-foreground uppercase tracking-wider block">Custódia</span>
+                        <p className="font-black text-foreground text-xs">{p.totalQuantity} <span className="text-[9px] text-muted-foreground font-normal">un.</span></p>
+                        <p className="text-[9.5px] text-muted-foreground font-semibold truncate">PM: {formatCurrency(p.averagePrice)}</p>
                       </div>
 
                       {/* Patrimônio */}
-                      <div className="space-y-0.5">
-                        <span className="text-[9.5px] font-bold text-muted-foreground uppercase tracking-wider block">Patrimônio</span>
-                        <p className="font-extrabold text-foreground text-xs sm:text-sm">{formatCurrency(curVal)}</p>
-                        <p className="text-[10px] text-muted-foreground font-medium truncate">Aplicado: {formatCurrency(p.totalInvested)}</p>
+                      <div className="space-y-0">
+                        <span className="text-[8px] font-black text-muted-foreground uppercase tracking-wider block">Patrimônio</span>
+                        <p className="font-black text-foreground text-xs">{formatCurrency(curVal)}</p>
+                        <p className="text-[9.5px] text-muted-foreground font-semibold truncate">Apl.: {formatCurrency(p.totalInvested)}</p>
                       </div>
 
                       {/* Retorno */}
-                      <div className="space-y-0.5">
-                        <span className="text-[9.5px] font-bold text-muted-foreground uppercase tracking-wider block">Retorno</span>
-                        <p className={`font-extrabold text-xs sm:text-sm ${isPos ? 'text-emerald-500' : 'text-rose-500'}`}>
+                      <div className="space-y-0">
+                        <span className="text-[8px] font-black text-muted-foreground uppercase tracking-wider block">Retorno</span>
+                        <p className={`font-black text-xs ${isPos ? 'text-emerald-500' : 'text-rose-500'}`}>
                           {isPos ? '+' : ''}{formatCurrency(profitR$)}
                         </p>
-                        <p className={`text-[10px] font-semibold ${isPos ? 'text-emerald-500/90' : 'text-rose-500/90'}`}>
+                        <p className={`text-[9.5px] font-bold ${isPos ? 'text-emerald-500/90' : 'text-rose-500/90'}`}>
                           {isPos ? '+' : ''}{profitPerc.toFixed(1)}%
                         </p>
                       </div>
 
                       {/* Proventos */}
-                      <div className="space-y-0.5">
-                        <span className="text-[9.5px] font-bold text-muted-foreground uppercase tracking-wider block">Proventos</span>
-                        <p className="font-extrabold text-amber-500 text-xs sm:text-sm">
-                          {proj.projectedDividendYield.toFixed(2)}% <span className="text-[8.5px] font-bold text-muted-foreground">DY</span>
+                      <div className="space-y-0">
+                        <span className="text-[8px] font-black text-muted-foreground uppercase tracking-wider block">Proventos</span>
+                        <p className="font-black text-amber-500 text-xs">
+                          {proj.projectedDividendYield.toFixed(2)}% <span className="text-[8px] font-bold text-muted-foreground">DY</span>
                         </p>
-                        <p className="text-[10px] text-muted-foreground font-medium truncate">Pago: {formatCurrency(p.dividendsReceived)}</p>
+                        <p className="text-[9.5px] text-muted-foreground font-semibold truncate">Pago: {formatCurrency(p.dividendsReceived)}</p>
                       </div>
                     </div>
 
                     {/* Portfolio Weight Bar */}
                     <div className="space-y-1">
-                      <div className="flex justify-between text-[10px] text-muted-foreground font-bold">
+                      <div className="flex justify-between text-[9px] text-muted-foreground font-bold">
                         <span>Alocação na Carteira: {portfolioWeight.toFixed(1)}%</span>
                         <span className="text-primary font-bold group-hover:underline flex items-center gap-0.5">
                           Raio-X do Ativo <ArrowRight className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" />
@@ -1720,10 +1691,8 @@ export function Investments() {
                       </div>
                     </div>
 
-                    <div className="h-px w-full bg-border/40"></div>
-
                     {/* Action Buttons */}
-                    <div className="flex items-center justify-between gap-2 text-xs">
+                    <div className="flex items-center justify-between gap-1.5 pt-1.5 border-t border-border/30 text-xs">
                       <div className="flex items-center gap-1.5 flex-wrap">
                         <button
                           type="button"
@@ -1731,10 +1700,10 @@ export function Investments() {
                             e.stopPropagation();
                             openAddModal(p.ticker, 'buy', p.type);
                           }}
-                          className="px-2.5 py-1 text-[10.5px] font-bold rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 transition-all flex items-center gap-1 border border-emerald-500/20 min-h-[28px]"
+                          className="px-2 py-0.5 text-[9.5px] font-bold rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 transition-all flex items-center gap-1 border border-emerald-500/20 min-h-[24px]"
                           title={`Adicionar novo aporte em ${p.ticker}`}
                         >
-                          <PlusCircle className="w-3.5 h-3.5" />
+                          <PlusCircle className="w-3 h-3" />
                           + Aporte
                         </button>
 
@@ -1744,10 +1713,10 @@ export function Investments() {
                             e.stopPropagation();
                             openAddDivModal(p.ticker);
                           }}
-                          className="px-2.5 py-1 text-[10.5px] font-bold rounded-lg bg-sky-500/10 text-sky-600 dark:text-sky-400 hover:bg-sky-500/20 transition-all flex items-center gap-1 border border-sky-500/20 min-h-[28px]"
+                          className="px-2 py-0.5 text-[9.5px] font-bold rounded-lg bg-sky-500/10 text-sky-600 dark:text-sky-400 hover:bg-sky-500/20 transition-all flex items-center gap-1 border border-sky-500/20 min-h-[24px]"
                           title={`Lançar provento para ${p.ticker}`}
                         >
-                          <DollarSign className="w-3.5 h-3.5" />
+                          <DollarSign className="w-3 h-3" />
                           + Provento
                         </button>
 
@@ -1756,8 +1725,8 @@ export function Investments() {
                         </div>
                       </div>
 
-                      <div className="text-[10.5px] font-extrabold text-muted-foreground group-hover:text-primary transition-colors flex items-center gap-0.5">
-                        Ver Detalhes ↗
+                      <div className="text-[10px] font-black text-muted-foreground group-hover:text-primary transition-colors flex items-center gap-0.5">
+                        Detalhes ↗
                       </div>
                     </div>
                   </div>
@@ -1826,7 +1795,7 @@ export function Investments() {
                                 if (meta) {
                                   const sector = p.type === 'Ação' || p.type === 'BDR' 
                                     ? meta.sector || meta.subsector 
-                                    : meta.fiiSegment;
+                                    : (meta.fii_segment || meta.fiiSegment);
                                   if (sector) {
                                     return <span className="text-[10px] text-muted-foreground font-semibold mt-0.5 truncate max-w-[150px]" title={sector}>{sector}</span>;
                                   }
@@ -1921,36 +1890,7 @@ export function Investments() {
         </div>
       )}
 
-      {/* TAB 3: ANÁLISE FUNDAMENTALISTA & SCORING B3 */}
-      {activeTab === 'fundamentalista' && (
-        <FundamentalAnalysisView
-          positions={positions}
-          quotes={quotes}
-          valuationTargets={valuationTargets}
-          hideValues={hideValues}
-          onSelectAsset={(p) => setSelectedAssetDetail(p)}
-          onOpenRaioX={(ticker) => handleOpenRaioXModal(ticker, 'fundamentos')}
-        />
-      )}
-
-      {/* TAB 4: REBALANCEAMENTO PROFISSIONAL & MOTOR DE APORTES */}
-      {activeTab === 'rebalanceamento' && (
-        <ProfessionalRebalanceEngineView
-          positions={positions}
-          quotes={quotes}
-          valuationTargets={valuationTargets}
-          targetAllocations={targetAllocations}
-          onSaveTargets={saveTargetAllocations}
-          rulesConfig={rulesConfig}
-          onSaveRulesConfig={saveRulesConfig}
-          hideValues={hideValues}
-          onBatchBuy={handleBatchBuy}
-          onFetchQuote={handleFetchQuoteForTicker}
-          onOpenRaioX={(ticker) => handleOpenRaioXModal(ticker, 'fundamentos')}
-        />
-      )}
-
-      {/* TAB 5: PROVENTOS */}
+      {/* TAB 3: PROVENTOS */}
       {activeTab === 'proventos' && (
         <div className="space-y-6">
           <DividendSummaryCards
@@ -2190,13 +2130,6 @@ export function Investments() {
         >
           <DollarSign className="w-4 h-4" />
           Provento
-        </button>
-        <button
-          onClick={() => handleTabChange('rebalanceamento')}
-          className="px-3.5 py-2 text-xs font-bold rounded-xl bg-indigo-500/10 text-indigo-500 flex items-center gap-1.5"
-        >
-          <Scale className="w-4 h-4" />
-          Rebalancear
         </button>
       </div>
 
@@ -2686,10 +2619,19 @@ export function Investments() {
           onSelectAnalytics={handleSelectAssetForAnalytics}
           onEditTx={openEditModal}
           onDeleteTx={handleOpenDelete}
+          onOpenEditMetadata={(ticker) => setEditingAssetTicker(ticker)}
           formatCurrency={formatCurrency}
           formatPercent={formatPercent}
           analysisMode={dividendAnalysisMode}
           initialTab={raioXInitialTab as any}
+        />
+      )}
+
+      {/* MODAL: EDITAR CNPJ / SEGMENTO DO ATIVO */}
+      {editingAssetTicker && (
+        <EditAssetMetadataModal
+          ticker={editingAssetTicker}
+          onClose={() => setEditingAssetTicker(null)}
         />
       )}
 

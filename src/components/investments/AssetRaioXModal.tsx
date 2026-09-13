@@ -6,8 +6,6 @@ import { calculateAssetDividendProjection } from '../../lib/investmentCalculatio
 import { getAssetCnpj, formatCnpj } from '../../lib/cnpjUtils';
 import { useData } from '../../contexts/DataContext';
 import { useInvestments } from '../../contexts/InvestmentsContext';
-import { getB3AssetFundamental, B3StockFundamental, B3FiiFundamental } from '../../lib/b3Fundamentals';
-import { calculateUniversalAssetScore, getScoreColor } from '../../lib/scoringEngine';
 import { toast } from 'sonner';
 import { 
   X, 
@@ -17,27 +15,21 @@ import {
   Calculator, 
   TrendingUp, 
   TrendingDown, 
-  Award, 
   Edit3, 
   Trash2, 
   Briefcase,
-  CheckCircle2,
-  AlertTriangle,
-  Clock,
   Copy,
   Check,
-  Percent,
-  Layers,
+  History,
+  Building2,
   Sparkles,
   ArrowUpRight,
   ArrowDownRight,
-  History,
-  Scale,
   Wallet,
-  Building2,
-  BookOpen,
-  Activity,
-  FileText
+  Scale,
+  Award,
+  CheckCircle2,
+  Clock
 } from 'lucide-react';
 
 interface Position {
@@ -63,10 +55,11 @@ interface AssetRaioXModalProps {
   onSelectAnalytics: (ticker: string) => void;
   onEditTx: (tx: InvestmentTransaction) => void;
   onDeleteTx: (tx: InvestmentTransaction) => void;
+  onOpenEditMetadata?: (ticker: string) => void;
   formatCurrency: (val: number) => string;
   formatPercent: (val: number) => string;
   analysisMode?: 'received_only' | 'include_provisioned';
-  initialTab?: 'geral' | 'proventos' | 'historico' | 'fundamentos';
+  initialTab?: 'geral' | 'proventos' | 'historico';
 }
 
 export function AssetRaioXModal({
@@ -79,6 +72,7 @@ export function AssetRaioXModal({
   onSelectAnalytics,
   onEditTx,
   onDeleteTx,
+  onOpenEditMetadata,
   formatCurrency,
   formatPercent,
   analysisMode = 'received_only',
@@ -86,26 +80,15 @@ export function AssetRaioXModal({
 }: AssetRaioXModalProps) {
   const { settings } = useData();
   const { b3AssetsMetadata, loadAssetHistory } = useInvestments();
-  const [activeTab, setActiveTab] = useState<'geral' | 'proventos' | 'historico' | 'fundamentos'>(initialTab);
+  const [activeTab, setActiveTab] = useState<'geral' | 'proventos' | 'historico'>(
+    initialTab === ('fundamentos' as any) ? 'geral' : initialTab
+  );
   const [copiedCnpj, setCopiedCnpj] = useState(false);
   const [historyRecords, setHistoryRecords] = useState<any[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
 
   const cleanTicker = position.ticker.toUpperCase().trim();
   const cnpj = getAssetCnpj(cleanTicker, settings);
-
-  const fundamental = useMemo(() => {
-    return getB3AssetFundamental(
-      cleanTicker,
-      position.type,
-      position.currentPrice || position.averagePrice || 10,
-      b3AssetsMetadata
-    );
-  }, [cleanTicker, position.type, position.currentPrice, position.averagePrice, b3AssetsMetadata]);
-
-  const scoreResult = useMemo(() => {
-    return calculateUniversalAssetScore(fundamental);
-  }, [fundamental]);
 
   React.useEffect(() => {
     let isMounted = true;
@@ -256,6 +239,7 @@ export function AssetRaioXModal({
                 { label: 'Aporte', icon: PlusCircle, color: 'bg-indigo-600/90 hover:bg-indigo-600 text-white hover:shadow-indigo-500/10', action: () => { onClose(); onOpenAddModal(position.ticker, 'buy', position.type); } },
                 { label: 'Venda', icon: MinusCircle, color: 'bg-slate-800/95 hover:bg-slate-800 text-slate-300 border border-slate-700/50', action: () => { onClose(); onOpenAddModal(position.ticker, 'sell', position.type); } },
                 { label: 'Provento', icon: DollarSign, color: 'bg-emerald-600/90 hover:bg-emerald-600 text-white hover:shadow-emerald-500/10', action: () => { onClose(); onOpenAddDivModal(position.ticker); } },
+                ...(onOpenEditMetadata ? [{ label: 'Editar CNPJ / Segmento', icon: Edit3, color: 'bg-amber-600/90 hover:bg-amber-600 text-white hover:shadow-amber-500/10', action: () => { onClose(); onOpenEditMetadata(position.ticker); } }] : [])
               ].map((btn, i) => (
                 <button
                   key={i}
@@ -276,7 +260,6 @@ export function AssetRaioXModal({
                 { id: 'geral', label: 'Dashboard', icon: Briefcase, color: 'text-indigo-400', activeBg: 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30' },
                 { id: 'proventos', label: 'Proventos', icon: DollarSign, color: 'text-emerald-400', count: assetDivs.length, activeBg: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30' },
                 { id: 'historico', label: 'Histórico', icon: History, color: 'text-sky-400', count: assetTxs.length, activeBg: 'bg-sky-500/15 text-sky-300 border-sky-500/30' },
-                { id: 'fundamentos', label: 'Fundamentos', icon: Award, color: 'text-amber-400', activeBg: 'bg-amber-500/15 text-amber-300 border-amber-500/30' },
               ].map((tab) => {
                 const isActive = activeTab === tab.id;
                 return (
@@ -600,268 +583,6 @@ export function AssetRaioXModal({
                             ))}
                           </tbody>
                         </table>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {activeTab === 'fundamentos' && (
-                  <div className="space-y-5 sm:space-y-8">
-                    {/* SCORE CARD */}
-                    <div className="p-5 sm:p-8 rounded-2xl sm:rounded-3xl bg-gradient-to-br from-slate-800/80 to-slate-900 border border-slate-700/50 shadow-xl relative overflow-hidden group">
-                      <div className="absolute top-0 right-0 p-8 sm:p-12 opacity-[0.03] group-hover:opacity-[0.06] transition-opacity">
-                        <Award className="w-32 sm:w-48 h-32 sm:h-48 text-white" />
-                      </div>
-
-                      <div className="relative z-10 flex flex-col lg:flex-row items-center gap-6 sm:gap-10">
-                        <div className="relative">
-                          <div 
-                            className="w-24 h-24 sm:w-32 sm:h-32 rounded-2xl sm:rounded-3xl flex flex-col items-center justify-center shadow-xl border-2 sm:border-3"
-                            style={{
-                              backgroundColor: `${getScoreColor(scoreResult.totalScore)}15`,
-                              borderColor: `${getScoreColor(scoreResult.totalScore)}40`,
-                              color: getScoreColor(scoreResult.totalScore)
-                            }}
-                          >
-                            <span className="text-3xl sm:text-5xl font-black tracking-tighter">{scoreResult.totalScore}</span>
-                            <span className="text-[8px] sm:text-[10px] font-black uppercase tracking-[0.2em] opacity-70">PONTOS</span>
-                          </div>
-                          <div 
-                            className="absolute -bottom-3 left-1/2 -translate-x-1/2 px-3 sm:px-4 py-1 rounded-lg sm:rounded-xl text-[8px] sm:text-[10px] font-black uppercase tracking-[0.2em] shadow-xl border border-white/10 whitespace-nowrap"
-                            style={{
-                              backgroundColor: getScoreColor(scoreResult.totalScore),
-                              color: '#fff'
-                            }}
-                          >
-                            {scoreResult.grade}
-                          </div>
-                        </div>
-
-                        <div className="flex-1 space-y-4 sm:space-y-6 w-full text-center lg:text-left">
-                          <div>
-                            <h4 className="text-xl sm:text-2xl font-black text-white tracking-tighter">Score B3 & Qualidade</h4>
-                            <p className="text-[10px] sm:text-xs text-slate-400 font-medium mt-1 max-w-xl mx-auto lg:mx-0">
-                              Algoritmo de avaliação de rentabilidade e saúde financeira.
-                            </p>
-                          </div>
-
-                          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
-                            {scoreResult.pillars.map((pillar, i) => (
-                              <div key={i} className="space-y-1.5 sm:space-y-2">
-                                <div className="flex justify-between text-[7px] sm:text-[9px] font-black uppercase tracking-widest text-slate-500">
-                                  <span>{pillar.name}</span>
-                                  <span className="text-white">{pillar.score.toFixed(0)}</span>
-                                </div>
-                                <div className="h-1 sm:h-1.5 w-full bg-slate-800 rounded-full overflow-hidden">
-                                  <motion.div 
-                                    initial={{ width: 0 }}
-                                    animate={{ width: `${pillar.score}%` }}
-                                    transition={{ duration: 1, delay: i * 0.1 }}
-                                    className="h-full rounded-full"
-                                    style={{ backgroundColor: getScoreColor(scoreResult.totalScore) }}
-                                  />
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* INDICATORS GRID */}
-                    {(() => {
-                      const isStock = fundamental.type === 'Ação';
-                      const stockFund = isStock ? (fundamental as B3StockFundamental) : null;
-                      const fiiFund = !isStock ? (fundamental as B3FiiFundamental) : null;
-
-                      const formatB3Money = (val: number | undefined, forceMillion: boolean = false) => {
-                        if (val === undefined || val === null || isNaN(val) || val === 0) return '-';
-                        const isMillion = forceMillion || val < 100000;
-                        const absoluteVal = isMillion ? val * 1000000 : val;
-                        if (absoluteVal >= 1000000000) {
-                          return `R$ ${(absoluteVal / 1000000000).toFixed(2)} Bi`;
-                        }
-                        if (absoluteVal >= 1000000) {
-                          return `R$ ${(absoluteVal / 1000000).toFixed(2)} Mi`;
-                        }
-                        return `R$ ${absoluteVal.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-                      };
-
-                      const renderMetricRow = (label: string, value: string | number) => (
-                        <div key={label} className="flex items-center justify-between py-1.5 border-b border-slate-800/40 last:border-0 hover:bg-slate-800/10 px-1 rounded transition-colors duration-150">
-                          <span className="text-[10px] sm:text-[11px] font-bold text-slate-400 tracking-wide">{label}</span>
-                          <span className="text-xs sm:text-sm font-black text-white">{value}</span>
-                        </div>
-                      );
-
-                      const stockGroups = [
-                        {
-                          title: 'Perfil Corporativo',
-                          icon: Briefcase,
-                          color: 'border-indigo-500/10 bg-indigo-500/[0.02]',
-                          metrics: [
-                            { label: 'Setor', value: stockFund?.sector || '-' },
-                            { label: 'Subsetor', value: stockFund?.subsector || '-' },
-                            { label: 'Segmento', value: stockFund?.segment || '-' },
-                            { label: 'CNPJ', value: stockFund?.cnpj ? formatCnpj(stockFund.cnpj) : '-' },
-                            { label: 'Valor de Mercado', value: formatB3Money(stockFund?.marketCap) },
-                            { label: 'Liquidez Diária Média', value: formatB3Money(stockFund?.dailyLiquidity) }
-                          ]
-                        },
-                        {
-                          title: 'Valuation & Preço',
-                          icon: Calculator,
-                          color: 'border-emerald-500/10 bg-emerald-500/[0.02]',
-                          metrics: [
-                            { label: 'P/L (Preço / Lucro)', value: stockFund?.pl ? `${stockFund.pl.toFixed(2)}x` : '-' },
-                            { label: 'P/VP (Preço / Vl. Patr.)', value: stockFund?.pvp ? `${stockFund.pvp.toFixed(2)}x` : '-' },
-                            { label: 'PSR (Price to Sales)', value: stockFund?.psr ? `${stockFund.psr.toFixed(2)}x` : '-' },
-                            { label: 'LPA (Lucro por Ação)', value: stockFund?.lpa ? formatCurrency(stockFund.lpa) : '-' },
-                            { label: 'VPA (Vl. Patr. por Ação)', value: stockFund?.vpa ? formatCurrency(stockFund.vpa) : '-' },
-                            { label: 'Payout Médio', value: stockFund?.payout ? `${stockFund.payout.toFixed(1)}%` : '-' }
-                          ]
-                        },
-                        {
-                          title: 'Eficiência & Rentabilidade',
-                          icon: TrendingUp,
-                          color: 'border-amber-500/10 bg-amber-500/[0.02]',
-                          metrics: [
-                            { label: 'Margem Bruta', value: stockFund?.grossMargin ? `${stockFund.grossMargin.toFixed(1)}%` : '-' },
-                            { label: 'Margem EBITDA', value: stockFund?.ebitdaMargin ? `${stockFund.ebitdaMargin.toFixed(1)}%` : '-' },
-                            { label: 'Margem EBIT', value: stockFund?.ebitMargin ? `${stockFund.ebitMargin.toFixed(1)}%` : '-' },
-                            { label: 'Margem Líquida', value: stockFund?.netMargin ? `${stockFund.netMargin.toFixed(1)}%` : '-' },
-                            { label: 'ROE (Ret. s/ Patrimônio)', value: stockFund?.roe ? `${stockFund.roe.toFixed(1)}%` : '-' },
-                            { label: 'ROIC (Ret. s/ Cap. Inv.)', value: stockFund?.roic ? `${stockFund.roic.toFixed(1)}%` : '-' }
-                          ]
-                        },
-                        {
-                          title: 'Endividamento & Caixa',
-                          icon: Scale,
-                          color: 'border-rose-500/10 bg-rose-500/[0.02]',
-                          metrics: [
-                            { label: 'Dív. Líquida / EBITDA', value: stockFund?.netDebtOverEbitda !== undefined ? `${stockFund.netDebtOverEbitda.toFixed(2)}x` : '-' },
-                            { label: 'Dív. Líquida / PL', value: stockFund?.netDebtOverEquity !== undefined ? `${stockFund.netDebtOverEquity.toFixed(2)}x` : '-' },
-                            { label: 'Liquidez Corrente', value: stockFund?.currentLiquidity !== undefined ? `${stockFund.currentLiquidity.toFixed(2)}` : '-' },
-                            { label: 'CAGR Receita (5 anos)', value: stockFund?.revenueCagr5y ? `${stockFund.revenueCagr5y.toFixed(1)}%` : '-' },
-                            { label: 'CAGR Lucro (5 anos)', value: stockFund?.profitCagr5y ? `${stockFund.profitCagr5y.toFixed(1)}%` : '-' }
-                          ]
-                        }
-                      ];
-
-                      const fiiGroups = [
-                        {
-                          title: 'Perfil do Fundo',
-                          icon: Building2,
-                          color: 'border-indigo-500/10 bg-indigo-500/[0.02]',
-                          metrics: [
-                            { label: 'Segmento', value: fiiFund?.fiiSegment || '-' },
-                            { label: 'Tipo de Gestão', value: fiiFund?.fiiType || '-' },
-                            { label: 'Administrador', value: fiiFund?.administrator || '-' },
-                            { label: 'CNPJ', value: fiiFund?.cnpj ? formatCnpj(fiiFund.cnpj) : '-' },
-                            { label: 'Patrimônio Líquido', value: formatB3Money(fiiFund?.netWorth, true) },
-                            { label: 'Valor de Mercado', value: formatB3Money(fiiFund?.marketCap, true) },
-                            { label: 'Liquidez Diária Média', value: formatB3Money(fiiFund?.dailyLiquidity) }
-                          ]
-                        },
-                        {
-                          title: 'Indicadores & Dividendos',
-                          icon: Calculator,
-                          color: 'border-emerald-500/10 bg-emerald-500/[0.02]',
-                          metrics: [
-                            { label: 'P/VP (Preço / Vl. Patr.)', value: fiiFund?.pvp ? `${fiiFund.pvp.toFixed(2)}x` : '-' },
-                            { label: 'Dividend Yield (12M)', value: fiiFund?.dividendYield ? `${fiiFund.dividendYield.toFixed(2)}%` : '-' },
-                            { label: 'Último Dividendo', value: fiiFund?.lastDividend ? formatCurrency(fiiFund.lastDividend) : '-' },
-                            { label: 'Cap Rate Estimado', value: fiiFund?.capRate ? `${fiiFund.capRate.toFixed(2)}%` : '-' },
-                            { label: 'FFO Yield', value: fiiFund?.ffoYield ? `${fiiFund.ffoYield.toFixed(2)}%` : '-' }
-                          ]
-                        },
-                        {
-                          title: 'Portfólio & Vacância',
-                          icon: Layers,
-                          color: 'border-amber-500/10 bg-amber-500/[0.02]',
-                          metrics: [
-                            { label: 'Quantidade de Imóveis', value: fiiFund?.propertiesCount !== undefined ? `${fiiFund.propertiesCount} ativos` : '-' },
-                            { label: 'Vacância Física', value: fiiFund?.physicalVacancy !== undefined ? `${fiiFund.physicalVacancy.toFixed(2)}%` : '-' },
-                            { label: 'Vacância Financeira', value: fiiFund?.financialVacancy !== undefined ? `${fiiFund.financialVacancy.toFixed(2)}%` : '-' },
-                            { label: 'ABL (Área Bruta Locável)', value: fiiFund?.grossLettableArea ? `${fiiFund.grossLettableArea.toLocaleString('pt-BR')} m²` : '-' },
-                            { label: 'Concentração Maiores Inquilinos', value: fiiFund?.topTenantsShare ? `${fiiFund.topTenantsShare.toFixed(1)}%` : '-' }
-                          ]
-                        },
-                        {
-                          title: 'Métricas por m²',
-                          icon: Wallet,
-                          color: 'border-rose-500/10 bg-rose-500/[0.02]',
-                          metrics: [
-                            { label: 'Preço Médio por m²', value: fiiFund?.pricePerSqm ? formatCurrency(fiiFund.pricePerSqm) : '-' },
-                            { label: 'Aluguel Médio por m²', value: fiiFund?.rentPerSqm ? formatCurrency(fiiFund.rentPerSqm) : '-' }
-                          ]
-                        }
-                      ];
-
-                      return (
-                        <div className="space-y-4">
-                          {/* DESCRIPTION CARD */}
-                          {fundamental.description && (
-                            <div className="p-4 sm:p-5 rounded-2xl bg-slate-800/10 border border-slate-800/40 space-y-2">
-                              <div className="flex items-center gap-2 text-indigo-400">
-                                <BookOpen className="w-4 h-4" />
-                                <h5 className="text-[10px] sm:text-xs font-black uppercase tracking-wider">Perfil do Ativo</h5>
-                              </div>
-                              <p className="text-[11px] sm:text-xs text-slate-300 leading-relaxed font-semibold">
-                                {fundamental.description}
-                              </p>
-                            </div>
-                          )}
-
-                          {/* CATEGORIZED METRICS GRID */}
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            {(isStock ? stockGroups : fiiGroups).map((group, gIdx) => (
-                              <div key={gIdx} className={`p-4 sm:p-5 rounded-2xl border ${group.color} border-slate-800/50 space-y-3 shadow-md`}>
-                                <div className="flex items-center gap-2 border-b border-slate-800/40 pb-2">
-                                  <group.icon className="w-4 h-4 text-slate-400" />
-                                  <h5 className="text-[11px] sm:text-xs font-black uppercase tracking-wider text-slate-200">{group.title}</h5>
-                                </div>
-                                <div className="space-y-1">
-                                  {group.metrics.map((m) => renderMetricRow(m.label, m.value))}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      );
-                    })()}
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
-                      <div className="p-4 sm:p-6 rounded-2xl sm:rounded-3xl bg-emerald-500/5 border border-emerald-500/10 space-y-3 sm:space-y-4">
-                        <h5 className="text-[9px] sm:text-[10px] font-black text-emerald-400 uppercase tracking-widest flex items-center gap-2">
-                          <CheckCircle2 className="w-4 sm:w-5 h-4 sm:h-5" />
-                          Fortalezas
-                        </h5>
-                        <div className="space-y-2 sm:space-y-3">
-                          {scoreResult.strengths.map((s, i) => (
-                            <div key={i} className="flex items-start gap-2 sm:gap-3 text-[10px] sm:text-[11px] font-bold text-slate-300">
-                              <div className="w-1 sm:w-1.5 h-1 sm:h-1.5 rounded-full bg-emerald-500 mt-1 sm:mt-1.5 shrink-0" />
-                              <p className="leading-relaxed">{s}</p>
-                            </div>
-                          ))}
-                          {scoreResult.strengths.length === 0 && <p className="text-[10px] text-slate-600 italic">Nenhum ponto forte identificado.</p>}
-                        </div>
-                      </div>
-
-                      <div className="p-4 sm:p-6 rounded-2xl sm:rounded-3xl bg-amber-500/5 border border-amber-500/10 space-y-3 sm:space-y-4">
-                        <h5 className="text-[9px] sm:text-[10px] font-black text-amber-400 uppercase tracking-widest flex items-center gap-2">
-                          <AlertTriangle className="w-4 sm:w-5 h-4 sm:h-5" />
-                          Pontos de Atenção
-                        </h5>
-                        <div className="space-y-2 sm:space-y-3">
-                          {scoreResult.warnings.map((w, i) => (
-                            <div key={i} className="flex items-start gap-2 sm:gap-3 text-[10px] sm:text-[11px] font-bold text-slate-300">
-                              <div className="w-1 sm:w-1.5 h-1 sm:h-1.5 rounded-full bg-amber-500 mt-1 sm:mt-1.5 shrink-0" />
-                              <p className="leading-relaxed">{w}</p>
-                            </div>
-                          ))}
-                          {scoreResult.warnings.length === 0 && <p className="text-[10px] text-slate-600 italic">Nenhum risco relevante identificado.</p>}
-                        </div>
                       </div>
                     </div>
                   </div>

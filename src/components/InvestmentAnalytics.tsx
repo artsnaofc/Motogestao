@@ -6,6 +6,7 @@ import { supabase } from '../lib/supabase';
 import { fetchSingleQuote } from '../lib/quoteService';
 import { toast } from 'sonner';
 import { CvmDocumentButton } from './CvmDocumentButton';
+import { EditAssetMetadataModal } from './investments/EditAssetMetadataModal';
 import { 
   ResponsiveContainer, 
   PieChart, 
@@ -55,7 +56,8 @@ import {
   Clock,
   AlertCircle,
   Edit3,
-  RefreshCw
+  RefreshCw,
+  Search
 } from 'lucide-react';
 
 interface InvestmentAnalyticsProps {
@@ -300,6 +302,11 @@ export function InvestmentAnalytics({
   const [showTooltipInfo, setShowTooltipInfo] = useState<string | null>(null);
   const [isSavingValuation, setIsSavingValuation] = useState<boolean>(false);
   const [tirMode, setTirMode] = useState<'dynamic' | 'period' | 'annual'>('dynamic');
+  
+  // Allocation View Mode State
+  const [allocationViewMode, setAllocationViewMode] = useState<'charts' | 'sectors' | 'risk' | 'table'>('charts');
+  const [allocationSearch, setAllocationSearch] = useState('');
+  const [editingMetadataTicker, setEditingMetadataTicker] = useState<string | null>(null);
   
   // State for considering provisioned (pending) dividends in analytics
   const [internalIncludeProvisioned, setInternalIncludeProvisioned] = useState<boolean>(false);
@@ -895,12 +902,22 @@ export function InvestmentAnalytics({
   const allocationData = useMemo(() => {
     const { activePositions, totalCurrentPortfolio } = analyticsData;
 
-    const typeMap: Record<string, number> = {};
-    const sectorMap: Record<string, number> = {};
+    const typeMap: Record<string, { value: number; count: number }> = {};
+    const sectorMap: Record<string, { 
+      value: number; 
+      count: number; 
+      assets: Array<{ ticker: string; value: number; percent: number; type: string; quantity: number }> 
+    }> = {};
+    const fiiTypeMap: Record<string, { value: number; count: number }> = {};
+    let totalFiiValue = 0;
+
+    let unclassifiedCount = 0;
 
     activePositions.forEach(p => {
       const type = p.type || 'Ação';
-      typeMap[type] = (typeMap[type] || 0) + p.currentValue;
+      if (!typeMap[type]) typeMap[type] = { value: 0, count: 0 };
+      typeMap[type].value += p.currentValue;
+      typeMap[type].count += 1;
 
       const meta = b3AssetsMetadata[p.ticker.toUpperCase().trim()];
       let sectorName = 'Não Classificado';
@@ -908,10 +925,35 @@ export function InvestmentAnalytics({
         if (type === 'Ação' || type === 'BDR') {
           sectorName = meta.sector || meta.subsector || 'Outros Setores';
         } else if (type === 'FII' || type === 'Fundo Imobiliário' || type === 'Fiagro') {
-          sectorName = meta.fiiSegment || 'Outros Segmentos';
+          sectorName = meta.fii_segment || meta.fiiSegment || 'Outros Segmentos';
+        } else {
+          sectorName = type;
         }
+      } else {
+        unclassifiedCount += 1;
       }
-      sectorMap[sectorName] = (sectorMap[sectorName] || 0) + p.currentValue;
+
+      const isFii = type === 'FII' || type === 'Fundo Imobiliário' || type === 'Fiagro';
+      if (isFii) {
+        const fiiType = meta ? (meta.fii_type || meta.fiiType || 'Outros') : 'Não Classificado';
+        if (!fiiTypeMap[fiiType]) fiiTypeMap[fiiType] = { value: 0, count: 0 };
+        fiiTypeMap[fiiType].value += p.currentValue;
+        fiiTypeMap[fiiType].count += 1;
+        totalFiiValue += p.currentValue;
+      }
+
+      if (!sectorMap[sectorName]) sectorMap[sectorName] = { value: 0, count: 0, assets: [] };
+      sectorMap[sectorName].value += p.currentValue;
+      sectorMap[sectorName].count += 1;
+      
+      const pct = totalCurrentPortfolio > 0 ? (p.currentValue / totalCurrentPortfolio) * 100 : 0;
+      sectorMap[sectorName].assets.push({
+        ticker: p.ticker,
+        value: p.currentValue,
+        percent: pct,
+        type: p.type,
+        quantity: p.quantity
+      });
     });
 
     const categoryColors: Record<string, string> = {
@@ -924,42 +966,121 @@ export function InvestmentAnalytics({
       'Outro': '#64748b'
     };
 
-    const byCategory = Object.entries(typeMap).map(([name, value]) => ({
+    const byCategory = Object.entries(typeMap).map(([name, item]) => ({
       name,
-      value,
-      percent: totalCurrentPortfolio > 0 ? (value / totalCurrentPortfolio) * 100 : 0,
+      value: item.value,
+      count: item.count,
+      percent: totalCurrentPortfolio > 0 ? (item.value / totalCurrentPortfolio) * 100 : 0,
       color: categoryColors[name] || '#6366f1'
+    })).sort((a, b) => b.value - a.value);
+
+    const fiiTypeColors: Record<string, string> = {
+      'Tijolo': '#e11d48',
+      'Papel': '#2563eb',
+      'Híbrido': '#d97706',
+      'Fiagro': '#16a34a',
+      'Fundo de Fundos': '#7c3aed',
+      'Outros': '#4b5563',
+      'Não Classificado': '#6b7280'
+    };
+
+    const byFiiType = Object.entries(fiiTypeMap).map(([name, item]) => ({
+      name,
+      value: item.value,
+      count: item.count,
+      percent: totalFiiValue > 0 ? (item.value / totalFiiValue) * 100 : 0,
+      color: fiiTypeColors[name] || '#10b981'
     })).sort((a, b) => b.value - a.value);
 
     const tickerColors = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16', '#f97316', '#a855f7', '#ef4444', '#14b8a6', '#f43f5e'];
 
-    const bySector = Object.entries(sectorMap).map(([name, value], idx) => ({
+    const bySector = Object.entries(sectorMap).map(([name, item], idx) => ({
       name,
-      value,
-      percent: totalCurrentPortfolio > 0 ? (value / totalCurrentPortfolio) * 100 : 0,
+      value: item.value,
+      count: item.count,
+      percent: totalCurrentPortfolio > 0 ? (item.value / totalCurrentPortfolio) * 100 : 0,
+      assets: item.assets.sort((a, b) => b.value - a.value),
       color: tickerColors[idx % tickerColors.length]
     })).sort((a, b) => b.value - a.value);
 
-    const sortedPositions = [...activePositions].sort((a, b) => b.currentValue - a.currentValue);
+    const sortedPositions = [...activePositions].map(p => {
+      const meta = b3AssetsMetadata[p.ticker.toUpperCase().trim()];
+      let sector = 'Não Classificado';
+      if (meta) {
+        sector = (p.type === 'FII' || p.type === 'Fundo Imobiliário' || p.type === 'Fiagro') ? (meta.fii_segment || meta.fiiSegment || 'FII') : (meta.sector || meta.subsector || 'Ação');
+      }
+      return {
+        ...p,
+        sector,
+        cnpj: meta?.cnpj || '',
+        percent: totalCurrentPortfolio > 0 ? (p.currentValue / totalCurrentPortfolio) * 100 : 0
+      };
+    }).sort((a, b) => b.currentValue - a.currentValue);
 
-    const topTickers = sortedPositions.slice(0, 7).map((p, idx) => ({
+    const topTickers = sortedPositions.slice(0, 10).map((p, idx) => ({
       name: p.ticker,
       value: p.currentValue,
-      percent: totalCurrentPortfolio > 0 ? (p.currentValue / totalCurrentPortfolio) * 100 : 0,
+      percent: p.percent,
+      type: p.type,
       color: tickerColors[idx % tickerColors.length]
     }));
 
-    if (sortedPositions.length > 7) {
-      const othersVal = sortedPositions.slice(7).reduce((sum, p) => sum + p.currentValue, 0);
+    if (sortedPositions.length > 10) {
+      const othersVal = sortedPositions.slice(10).reduce((sum, p) => sum + p.currentValue, 0);
       topTickers.push({
         name: 'Outros',
         value: othersVal,
         percent: totalCurrentPortfolio > 0 ? (othersVal / totalCurrentPortfolio) * 100 : 0,
+        type: 'Outros',
         color: '#64748b'
       });
     }
 
-    return { byCategory, topTickers, bySector };
+    // Herfindahl-Hirschman Index calculation for diversification score
+    let sumSquaredWeights = 0;
+    sortedPositions.forEach(p => {
+      sumSquaredWeights += Math.pow(p.percent, 2);
+    });
+    const hhiScore = Math.round(sumSquaredWeights);
+    
+    let diversificationGrade = 'Alta Diversificação';
+    let diversificationColor = 'text-emerald-500';
+    let diversificationBg = 'bg-emerald-500/10 border-emerald-500/20';
+
+    if (hhiScore > 2500) {
+      diversificationGrade = 'Alta Concentração';
+      diversificationColor = 'text-rose-500';
+      diversificationBg = 'bg-rose-500/10 border-rose-500/20';
+    } else if (hhiScore > 1500) {
+      diversificationGrade = 'Concentração Moderada';
+      diversificationColor = 'text-amber-500';
+      diversificationBg = 'bg-amber-500/10 border-amber-500/20';
+    } else if (hhiScore > 800) {
+      diversificationGrade = 'Boa Diversificação';
+      diversificationColor = 'text-sky-500';
+      diversificationBg = 'bg-sky-500/10 border-sky-500/20';
+    }
+
+    const topAsset = sortedPositions[0] || null;
+    const topSector = bySector[0] || null;
+
+    return { 
+      byCategory, 
+      byFiiType,
+      totalFiiValue,
+      topTickers, 
+      bySector, 
+      sortedPositions, 
+      hhiScore, 
+      diversificationGrade, 
+      diversificationColor, 
+      diversificationBg,
+      topAsset, 
+      topSector,
+      unclassifiedCount,
+      totalPortfolio: totalCurrentPortfolio,
+      activePositionsCount: activePositions.length
+    };
   }, [analyticsData, b3AssetsMetadata]);
 
   // 4. MONTHLY DIVIDENDS EVOLUTION
@@ -2133,152 +2254,696 @@ export function InvestmentAnalytics({
 
       {/* SUB TAB 2: ALOCAÇÃO */}
       {activeSubTab === 'alocacao' && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <div className="p-5 rounded-3xl border border-border/50 bg-card shadow-xs space-y-4 flex flex-col justify-between">
-            <div>
-              <h3 className="text-sm font-bold tracking-tight flex items-center gap-2">
-                <PieIcon className="w-4 h-4 text-primary" />
-                Alocação por Classe de Ativo
-              </h3>
-              <p className="text-xs text-muted-foreground">Distribuição percentual da carteira por categoria</p>
+        <div className="space-y-6">
+          {/* TOP KPI SUMMARY BAR */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {/* CARD 1: TOTAL ALOCADO */}
+            <div className="p-4 rounded-3xl border border-border/50 bg-card shadow-xs flex items-center gap-3.5">
+              <div className="p-3 rounded-2xl bg-primary/10 text-primary">
+                <Wallet className="w-5 h-5" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-[10px] font-black uppercase tracking-wider text-muted-foreground">Patrimônio Alocado</p>
+
+                <p className="text-base font-black text-foreground truncate">
+                  {hideValues ? '••••••' : formatCurrency(allocationData.totalPortfolio)}
+                </p>
+
+                <p className="text-[10px] text-muted-foreground font-semibold">
+                  {allocationData.activePositionsCount} posições ativas
+                </p>
+              </div>
             </div>
 
-            {allocationData.byCategory.length > 0 ? (
-              <div className="space-y-4">
-                <div className="h-52 w-full">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie
-                        data={allocationData.byCategory}
-                        cx="50%"
-                        cy="50%"
-                        innerRadius={55}
-                        outerRadius={80}
-                        paddingAngle={4}
-                        dataKey="value"
-                      >
-                        {allocationData.byCategory.map((entry, index) => (
-                          <Cell key={`cell-${index}`} fill={entry.color} />
-                        ))}
-                      </Pie>
-                      <Tooltip formatter={(val: any) => [formatCurrency(Number(val)), 'Valor']} />
-                    </PieChart>
-                  </ResponsiveContainer>
+            {/* CARD 2: DIVERSIFICAÇÃO */}
+            <div className="p-4 rounded-3xl border border-border/50 bg-card shadow-xs flex items-center gap-3.5">
+              <div className="p-3 rounded-2xl bg-emerald-500/10 text-emerald-500">
+                <ShieldCheck className="w-5 h-5" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-[10px] font-black uppercase tracking-wider text-muted-foreground">Índice HHI / Diversificação</p>
+
+                <div className="flex items-center gap-2 mt-0.5">
+                  <span className={`text-xs font-black px-2 py-0.5 rounded-lg border ${allocationData.diversificationBg} ${allocationData.diversificationColor}`}>
+                    {allocationData.diversificationGrade}
+                  </span>
                 </div>
 
-                <div className="space-y-2">
-                  {allocationData.byCategory.map(c => (
-                    <div key={c.name} className="flex items-center justify-between text-xs">
-                      <div className="flex items-center gap-2">
-                        <span className="w-3 h-3 rounded-full" style={{ backgroundColor: c.color }}></span>
-                        <span className="font-semibold text-foreground">{c.name}</span>
-                      </div>
-                      <div className="text-right flex items-center gap-3">
-                        <span className="text-muted-foreground font-medium">{formatCurrency(c.value)}</span>
-                        <span className="font-bold text-foreground w-12 text-right">{c.percent.toFixed(1)}%</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                <p className="text-[10px] text-muted-foreground font-semibold mt-1">
+                  Índice HHI: <strong className="text-foreground">{allocationData.hhiScore}</strong> pts
+                </p>
               </div>
-            ) : (
-              <div className="py-12 text-center text-xs text-muted-foreground border border-dashed border-border/50 rounded-2xl">
-                Sem posições ativas para exibir alocação.
+            </div>
+
+            {/* CARD 3: MAIOR ATIVO */}
+            <div className="p-4 rounded-3xl border border-border/50 bg-card shadow-xs flex items-center gap-3.5">
+              <div className="p-3 rounded-2xl bg-amber-500/10 text-amber-500">
+                <Target className="w-5 h-5" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-[10px] font-black uppercase tracking-wider text-muted-foreground">Maior Posição</p>
+
+                <p className="text-sm font-black text-foreground truncate">
+                  {allocationData.topAsset ? allocationData.topAsset.ticker : 'N/A'}
+                  {allocationData.topAsset && (
+                    <span className="text-xs font-bold text-muted-foreground ml-1.5">
+                      ({allocationData.topAsset.percent.toFixed(1)}%)
+                    </span>
+                  )}
+                </p>
+
+                <p className="text-[10px] text-muted-foreground font-semibold truncate">
+                  {allocationData.topAsset ? formatCurrency(allocationData.topAsset.currentValue) : '-'}
+                </p>
+              </div>
+            </div>
+
+            {/* CARD 4: MAIOR SETOR */}
+            <div className="p-4 rounded-3xl border border-border/50 bg-card shadow-xs flex items-center gap-3.5">
+              <div className="p-3 rounded-2xl bg-indigo-500/10 text-indigo-500">
+                <Building2 className="w-5 h-5" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-[10px] font-black uppercase tracking-wider text-muted-foreground">Maior Setor / Segmento</p>
+
+                <p className="text-sm font-black text-foreground truncate" title={allocationData.topSector?.name}>
+                  {allocationData.topSector ? allocationData.topSector.name : 'N/A'}
+                </p>
+
+                <p className="text-[10px] text-muted-foreground font-semibold">
+                  {allocationData.topSector ? `${allocationData.topSector.percent.toFixed(1)}% da carteira (${allocationData.topSector.count} ativos)` : '-'}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* UNCLASSIFIED ASSETS BANNER */}
+          {allocationData.unclassifiedCount > 0 && (
+            <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs">
+              <div className="flex items-center gap-2.5 text-amber-600 dark:text-amber-400 font-bold">
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+                <span>
+                  Existem <strong>{allocationData.unclassifiedCount} ativos</strong> sem CNPJ ou setor B3 classificado na sua carteira.
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAllocationViewMode('table')}
+                className="px-3 py-1.5 rounded-xl bg-amber-500 text-slate-950 font-black text-[11px] hover:bg-amber-400 transition-colors shrink-0 shadow-xs cursor-pointer"
+              >
+                Categorizar Ativos Pendentes
+              </button>
+            </div>
+          )}
+
+          {/* NAVIGATION SUB-TABS FOR ALLOCATION */}
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-muted/30 p-1.5 rounded-2xl border border-border/40">
+            <div className="flex items-center gap-1 overflow-x-auto pb-1 sm:pb-0">
+              <button
+                type="button"
+                onClick={() => setAllocationViewMode('charts')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
+                  allocationViewMode === 'charts'
+                    ? 'bg-card text-foreground shadow-xs border border-border/50'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                <PieIcon className="w-3.5 h-3.5 text-primary" />
+                Gráficos Donut
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setAllocationViewMode('sectors')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
+                  allocationViewMode === 'sectors'
+                    ? 'bg-card text-foreground shadow-xs border border-border/50'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                <Building2 className="w-3.5 h-3.5 text-emerald-500" />
+                Setores & Segmentos ({allocationData.bySector.length})
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setAllocationViewMode('risk')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
+                  allocationViewMode === 'risk'
+                    ? 'bg-card text-foreground shadow-xs border border-border/50'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                <Target className="w-3.5 h-3.5 text-amber-500" />
+                Concentração & Risco
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setAllocationViewMode('table')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
+                  allocationViewMode === 'table'
+                    ? 'bg-card text-foreground shadow-xs border border-border/50'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                <Layers className="w-3.5 h-3.5 text-indigo-500" />
+                Tabela de Posições ({allocationData.sortedPositions.length})
+              </button>
+            </div>
+
+            {allocationViewMode === 'table' && (
+              <div className="relative min-w-[180px]">
+                <Search className="w-3.5 h-3.5 text-muted-foreground absolute left-3 top-2.5" />
+                <input
+                  type="text"
+                  value={allocationSearch}
+                  onChange={(e) => setAllocationSearch(e.target.value)}
+                  placeholder="Buscar ticker ou setor..."
+                  className="w-full bg-card border border-border/50 rounded-xl pl-8 pr-3 py-1 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-primary/20"
+                />
               </div>
             )}
           </div>
 
-          <div className="p-5 rounded-3xl border border-border/50 bg-card shadow-xs space-y-4 flex flex-col justify-between">
-            <div>
-              <h3 className="text-sm font-bold tracking-tight flex items-center gap-2">
-                <PieIcon className="w-4 h-4 text-emerald-500" />
-                Alocação por Setor
-              </h3>
-              <p className="text-xs text-muted-foreground">Distribuição segmentada baseada nos dados do Ranking</p>
-            </div>
-
-            {allocationData.bySector.length > 0 ? (
-              <div className="space-y-4">
-                <div className="h-52 w-full">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie
-                        data={allocationData.bySector}
-                        cx="50%"
-                        cy="50%"
-                        innerRadius={55}
-                        outerRadius={80}
-                        paddingAngle={4}
-                        dataKey="value"
-                      >
-                        {allocationData.bySector.map((entry, index) => (
-                          <Cell key={`cell-${index}`} fill={entry.color} />
-                        ))}
-                      </Pie>
-                      <Tooltip formatter={(val: any) => [formatCurrency(Number(val)), 'Valor']} />
-                    </PieChart>
-                  </ResponsiveContainer>
+          {/* VIEW 1: CHARTS (DONUTS & TOP TICKERS) */}
+          {allocationViewMode === 'charts' && (
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
+              {/* DONUT 1: CATEGORY */}
+              <div className="p-5 rounded-3xl border border-border/50 bg-card shadow-xs space-y-4 flex flex-col justify-between">
+                <div>
+                  <h3 className="text-sm font-bold tracking-tight flex items-center gap-2">
+                    <PieIcon className="w-4 h-4 text-primary" />
+                    Classe de Ativos
+                  </h3>
+                  <p className="text-xs text-muted-foreground">Distribuição percentual por categoria principal</p>
                 </div>
 
-                <div className="space-y-2">
-                  {allocationData.bySector.map(c => (
-                    <div key={c.name} className="flex items-center justify-between text-xs">
-                      <div className="flex items-center gap-2 truncate max-w-[120px]" title={c.name}>
-                        <span className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: c.color }}></span>
-                        <span className="font-semibold text-foreground truncate">{c.name}</span>
-                      </div>
-                      <div className="text-right flex items-center gap-3 shrink-0">
-                        <span className="text-muted-foreground font-medium">{formatCurrency(c.value)}</span>
-                        <span className="font-bold text-foreground w-12 text-right">{c.percent.toFixed(1)}%</span>
+                {allocationData.byCategory.length > 0 ? (
+                  <div className="space-y-4">
+                    <div className="h-48 w-full relative">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                          <Pie
+                            data={allocationData.byCategory}
+                            cx="50%"
+                            cy="50%"
+                            innerRadius={55}
+                            outerRadius={75}
+                            paddingAngle={4}
+                            dataKey="value"
+                          >
+                            {allocationData.byCategory.map((entry, index) => (
+                              <Cell key={`cell-cat-${index}`} fill={entry.color} />
+                            ))}
+                          </Pie>
+                          <Tooltip formatter={(val: any) => [formatCurrency(Number(val)), 'Valor']} />
+                        </PieChart>
+                      </ResponsiveContainer>
+                      <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                        <span className="text-[10px] font-bold text-muted-foreground uppercase">Categorias</span>
+                        <span className="text-sm font-black text-foreground">{allocationData.byCategory.length}</span>
                       </div>
                     </div>
-                  ))}
+
+                    <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                      {allocationData.byCategory.map(c => (
+                        <div key={c.name} className="flex items-center justify-between text-xs py-0.5">
+                          <div className="flex items-center gap-2">
+                            <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: c.color }}></span>
+                            <span className="font-semibold text-foreground">{c.name}</span>
+                            <span className="text-[10px] text-muted-foreground">({c.count})</span>
+                          </div>
+                          <div className="text-right flex items-center gap-2">
+                            <span className="text-muted-foreground font-medium text-[11px]">{formatCurrency(c.value)}</span>
+                            <span className="font-bold text-foreground w-12 text-right">{c.percent.toFixed(1)}%</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="py-12 text-center text-xs text-muted-foreground border border-dashed border-border/50 rounded-2xl">
+                    Sem posições ativas para exibir.
+                  </div>
+                )}
+              </div>
+
+              {/* DONUT 2: SECTOR */}
+              <div className="p-5 rounded-3xl border border-border/50 bg-card shadow-xs space-y-4 flex flex-col justify-between">
+                <div>
+                  <h3 className="text-sm font-bold tracking-tight flex items-center gap-2">
+                    <Building2 className="w-4 h-4 text-emerald-500" />
+                    Setores B3 / Segmentos
+                  </h3>
+                  <p className="text-xs text-muted-foreground">Diversificação setorial dos ativos na B3</p>
                 </div>
-              </div>
-            ) : (
-              <div className="py-12 text-center text-xs text-muted-foreground border border-dashed border-border/50 rounded-2xl">
-                Sem dados de setor para exibir.
-              </div>
-            )}
-          </div>
 
-          <div className="p-5 rounded-3xl border border-border/50 bg-card shadow-xs space-y-4 flex flex-col justify-between">
-            <div>
-              <h3 className="text-sm font-bold tracking-tight flex items-center gap-2">
-                <BarChart3 className="w-4 h-4 text-indigo-500" />
-                Concentração por Ativo (Top 7)
-              </h3>
-              <p className="text-xs text-muted-foreground">Maiores posições na carteira</p>
-            </div>
-
-            {allocationData.topTickers.length > 0 ? (
-              <div className="space-y-3">
-                {allocationData.topTickers.map(t => (
-                  <div key={t.name} className="space-y-1">
-                    <div className="flex justify-between text-xs font-semibold">
-                      <span className="flex items-center gap-1.5">
-                        <span className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: t.color }}></span>
-                        {t.name}
-                      </span>
-                      <span className="text-muted-foreground">
-                        {formatCurrency(t.value)} ({t.percent.toFixed(1)}%)
-                      </span>
+                {allocationData.bySector.length > 0 ? (
+                  <div className="space-y-4">
+                    <div className="h-48 w-full relative">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                          <Pie
+                            data={allocationData.bySector}
+                            cx="50%"
+                            cy="50%"
+                            innerRadius={55}
+                            outerRadius={75}
+                            paddingAngle={4}
+                            dataKey="value"
+                          >
+                            {allocationData.bySector.map((entry, index) => (
+                              <Cell key={`cell-sec-${index}`} fill={entry.color} />
+                            ))}
+                          </Pie>
+                          <Tooltip formatter={(val: any) => [formatCurrency(Number(val)), 'Valor']} />
+                        </PieChart>
+                      </ResponsiveContainer>
+                      <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                        <span className="text-[10px] font-bold text-muted-foreground uppercase">Setores</span>
+                        <span className="text-sm font-black text-foreground">{allocationData.bySector.length}</span>
+                      </div>
                     </div>
+
+                    <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                      {allocationData.bySector.map(c => (
+                        <div key={c.name} className="flex items-center justify-between text-xs py-0.5">
+                          <div className="flex items-center gap-2 truncate max-w-[130px]" title={c.name}>
+                            <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: c.color }}></span>
+                            <span className="font-semibold text-foreground truncate">{c.name}</span>
+                          </div>
+                          <div className="text-right flex items-center gap-2 shrink-0">
+                            <span className="text-muted-foreground font-medium text-[11px]">{formatCurrency(c.value)}</span>
+                            <span className="font-bold text-foreground w-12 text-right">{c.percent.toFixed(1)}%</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="py-12 text-center text-xs text-muted-foreground border border-dashed border-border/50 rounded-2xl">
+                    Sem dados de setor para exibir.
+                  </div>
+                )}
+              </div>
+
+              {/* DONUT 3: FII TYPE */}
+              <div className="p-5 rounded-3xl border border-border/50 bg-card shadow-xs space-y-4 flex flex-col justify-between">
+                <div>
+                  <h3 className="text-sm font-bold tracking-tight flex items-center gap-2">
+                    <PieIcon className="w-4 h-4 text-rose-500" />
+                    Segmentação por Tipo de FII
+                  </h3>
+                  <p className="text-xs text-muted-foreground">Distribuição por papel, tijolo, híbrido, etc.</p>
+                </div>
+
+                {allocationData.totalFiiValue > 0 ? (
+                  <div className="space-y-4">
+                    <div className="h-48 w-full relative">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                          <Pie
+                            data={allocationData.byFiiType}
+                            cx="50%"
+                            cy="50%"
+                            innerRadius={55}
+                            outerRadius={75}
+                            paddingAngle={4}
+                            dataKey="value"
+                          >
+                            {allocationData.byFiiType.map((entry, index) => (
+                              <Cell key={`cell-fii-type-${index}`} fill={entry.color} />
+                            ))}
+                          </Pie>
+                          <Tooltip formatter={(val: any) => [formatCurrency(Number(val)), 'Valor']} />
+                        </PieChart>
+                      </ResponsiveContainer>
+                      <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                        <span className="text-[10px] font-bold text-muted-foreground uppercase">FIIs</span>
+                        <span className="text-sm font-black text-foreground">{allocationData.byFiiType.length}</span>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                      {allocationData.byFiiType.map(c => (
+                        <div key={c.name} className="flex items-center justify-between text-xs py-0.5">
+                          <div className="flex items-center gap-2">
+                            <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: c.color }}></span>
+                            <span className="font-semibold text-foreground">{c.name}</span>
+                            <span className="text-[10px] text-muted-foreground">({c.count})</span>
+                          </div>
+                          <div className="text-right flex items-center gap-2">
+                            <span className="text-muted-foreground font-medium text-[11px]">{formatCurrency(c.value)}</span>
+                            <span className="font-bold text-foreground w-12 text-right">{c.percent.toFixed(1)}%</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="py-12 px-4 text-center text-xs text-muted-foreground border border-dashed border-border/50 rounded-2xl flex-1 flex flex-col items-center justify-center gap-2 min-h-[220px]">
+                    <span className="font-bold text-muted-foreground">Sem FIIs na Carteira</span>
+                    <p className="text-[10px] leading-relaxed text-muted-foreground/80 max-w-[180px]">
+                      A segmentação por tipo (Tijolo, Papel, Híbrido) estará disponível ao adicionar fundos imobiliários.
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* PROGRESS BAR: TOP TICKERS */}
+              <div className="p-5 rounded-3xl border border-border/50 bg-card shadow-xs space-y-4 flex flex-col justify-between">
+                <div>
+                  <h3 className="text-sm font-bold tracking-tight flex items-center gap-2">
+                    <BarChart3 className="w-4 h-4 text-indigo-500" />
+                    Maiores Ativos na Carteira
+                  </h3>
+                  <p className="text-xs text-muted-foreground">Ranking de participação individual</p>
+                </div>
+
+                {allocationData.topTickers.length > 0 ? (
+                  <div className="space-y-3 max-h-[320px] overflow-y-auto pr-1">
+                    {allocationData.topTickers.map(t => (
+                      <div key={t.name} className="space-y-1">
+                        <div className="flex justify-between text-xs font-semibold">
+                          <span className="flex items-center gap-1.5">
+                            <span className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ backgroundColor: t.color }}></span>
+                            <span className="font-bold text-foreground">{t.name}</span>
+                            {t.type && t.type !== 'Outros' && (
+                              <span className="text-[9px] px-1.5 py-0.2 rounded bg-muted text-muted-foreground font-medium">
+                                {t.type}
+                              </span>
+                            )}
+                          </span>
+                          <span className="text-muted-foreground text-[11px]">
+                            {formatCurrency(t.value)} <strong className="text-foreground font-bold ml-1">{t.percent.toFixed(1)}%</strong>
+                          </span>
+                        </div>
+                        <div className="w-full h-2 rounded-full bg-muted/50 overflow-hidden">
+                          <div 
+                            className="h-full rounded-full transition-all duration-500"
+                            style={{ width: `${Math.min(100, t.percent)}%`, backgroundColor: t.color }}
+                          ></div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="py-12 text-center text-xs text-muted-foreground border border-dashed border-border/50 rounded-2xl">
+                    Sem posições ativas para exibir concentração.
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* VIEW 2: SECTORS BREAKDOWN */}
+          {allocationViewMode === 'sectors' && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {allocationData.bySector.map((sector) => (
+                  <div key={sector.name} className="p-5 rounded-3xl border border-border/50 bg-card shadow-xs space-y-4">
+                    {/* SECTOR HEADER */}
+                    <div className="flex items-center justify-between border-b border-border/40 pb-3">
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: sector.color }}></div>
+                        <div>
+                          <h4 className="text-sm font-black text-foreground">{sector.name}</h4>
+                          <p className="text-[10px] text-muted-foreground font-medium">{sector.count} ativos nesta categoria</p>
+                        </div>
+                      </div>
+
+                      <div className="text-right">
+                        <p className="text-sm font-black text-foreground">{formatCurrency(sector.value)}</p>
+                        <p className="text-xs font-bold text-emerald-500">{sector.percent.toFixed(1)}% da carteira</p>
+                      </div>
+                    </div>
+
+                    {/* BAR */}
                     <div className="w-full h-2 rounded-full bg-muted/50 overflow-hidden">
                       <div 
                         className="h-full rounded-full transition-all duration-500"
-                        style={{ width: `${Math.min(100, t.percent)}%`, backgroundColor: t.color }}
+                        style={{ width: `${Math.min(100, sector.percent)}%`, backgroundColor: sector.color }}
                       ></div>
+                    </div>
+
+                    {/* ASSETS INSIDE SECTOR */}
+                    <div className="space-y-2 pt-1">
+                      {sector.assets.map((asset) => (
+                        <div key={asset.ticker} className="flex items-center justify-between text-xs p-2 rounded-xl bg-muted/20 hover:bg-muted/40 transition-colors">
+                          <div className="flex items-center gap-2">
+                            <span className="font-extrabold text-foreground">{asset.ticker}</span>
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground uppercase font-bold">
+                              {asset.type}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-3">
+                            <div className="text-right">
+                              <span className="font-bold text-foreground block">{formatCurrency(asset.value)}</span>
+                              <span className="text-[10px] text-muted-foreground font-semibold">
+                                {asset.percent.toFixed(1)}% do total
+                              </span>
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() => setEditingMetadataTicker(asset.ticker)}
+                              className="p-1.5 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
+                              title={`Editar CNPJ / Setor de ${asset.ticker}`}
+                            >
+                              <Edit3 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 ))}
               </div>
-            ) : (
-              <div className="py-12 text-center text-xs text-muted-foreground border border-dashed border-border/50 rounded-2xl">
-                Sem posições ativas para exibir concentração.
+            </div>
+          )}
+
+          {/* VIEW 3: RISK & CONCENTRATION */}
+          {allocationViewMode === 'risk' && (
+            <div className="space-y-6">
+              {/* RISK DIAGNOSTIC CARDS */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="p-5 rounded-3xl border border-border/50 bg-card shadow-xs space-y-2">
+                  <div className="flex items-center gap-2 text-primary">
+                    <ShieldCheck className="w-5 h-5" />
+                    <h4 className="text-xs font-black uppercase tracking-wider">Score de Diversificação</h4>
+                  </div>
+                  <p className="text-2xl font-black text-foreground">{10000 - allocationData.hhiScore} <span className="text-xs text-muted-foreground font-normal">/ 10000</span></p>
+                  <p className="text-xs text-muted-foreground font-medium leading-relaxed">
+                    Calculado pelo modelo estatístico Herfindahl-Hirschman (HHI).
+                  </p>
+                </div>
+
+                <div className="p-5 rounded-3xl border border-border/50 bg-card shadow-xs space-y-2">
+                  <div className="flex items-center gap-2 text-amber-500">
+                    <AlertTriangle className="w-5 h-5" />
+                    <h4 className="text-xs font-black uppercase tracking-wider">Atenção no Maior Ativo</h4>
+                  </div>
+                  {allocationData.topAsset && allocationData.topAsset.percent > 20 ? (
+                    <div>
+                      <p className="text-sm font-black text-rose-500">Concentração Elevada ({allocationData.topAsset.ticker})</p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        O ativo {allocationData.topAsset.ticker} representa {allocationData.topAsset.percent.toFixed(1)}% do seu patrimônio. Recomenda-se limite máximo de 15% por ativo.
+                      </p>
+                    </div>
+                  ) : (
+                    <div>
+                      <p className="text-sm font-black text-emerald-500">Limite Seguro ({allocationData.topAsset?.ticker || '-'})</p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Nenhum ativo individual ultrapassa 20% do patrimônio total da carteira.
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                <div className="p-5 rounded-3xl border border-border/50 bg-card shadow-xs space-y-2">
+                  <div className="flex items-center gap-2 text-indigo-500">
+                    <Building2 className="w-5 h-5" />
+                    <h4 className="text-xs font-black uppercase tracking-wider">Risco Setorial</h4>
+                  </div>
+                  {allocationData.topSector && allocationData.topSector.percent > 35 ? (
+                    <div>
+                      <p className="text-sm font-black text-amber-500">Setor {allocationData.topSector.name} Dominante</p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        O setor {allocationData.topSector.name} representa {allocationData.topSector.percent.toFixed(1)}% da carteira. Considere alocar novos aportes em outros segmentos.
+                      </p>
+                    </div>
+                  ) : (
+                    <div>
+                      <p className="text-sm font-black text-emerald-500">Setores Equilibrados</p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Sua carteira possui {allocationData.bySector.length} setores sem concentração crítica.
+                      </p>
+                    </div>
+                  )}
+                </div>
               </div>
-            )}
-          </div>
+
+              {/* ASSET WEIGHT RANKING TABLE */}
+              <div className="p-5 rounded-3xl border border-border/50 bg-card shadow-xs space-y-4">
+                <h4 className="text-sm font-black text-foreground">Mapa de Peso por Ativo e Classificação de Risco</h4>
+
+                <div className="space-y-3">
+                  {allocationData.sortedPositions.map((pos) => {
+                    const isHighRisk = pos.percent > 20;
+                    const isModRisk = pos.percent > 12 && pos.percent <= 20;
+                    return (
+                      <div key={pos.ticker} className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-3 rounded-2xl bg-muted/20 border border-border/30">
+                        <div className="flex items-center gap-3 min-w-[200px]">
+                          <span className="font-black text-sm text-foreground w-16">{pos.ticker}</span>
+                          <div>
+                            <span className="text-[10px] text-muted-foreground font-semibold block">{pos.sector}</span>
+                            <span className="text-[9px] px-1.5 py-0.2 rounded bg-muted text-muted-foreground font-bold uppercase">
+                              {pos.type}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="flex-1 max-w-xs mx-0 sm:mx-4">
+                          <div className="w-full h-2 rounded-full bg-muted overflow-hidden">
+                            <div 
+                              className={`h-full rounded-full transition-all ${
+                                isHighRisk ? 'bg-rose-500' : isModRisk ? 'bg-amber-500' : 'bg-emerald-500'
+                              }`}
+                              style={{ width: `${Math.min(100, pos.percent)}%` }}
+                            ></div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-between sm:justify-end gap-4 min-w-[180px]">
+                          <div className="text-right">
+                            <span className="font-black text-xs text-foreground block">{formatCurrency(pos.currentValue)}</span>
+                            <span className={`text-[11px] font-extrabold ${isHighRisk ? 'text-rose-500' : isModRisk ? 'text-amber-500' : 'text-emerald-500'}`}>
+                              {pos.percent.toFixed(1)}%
+                            </span>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => setEditingMetadataTicker(pos.ticker)}
+                            className="p-1.5 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
+                            title="Editar CNPJ / Setor"
+                          >
+                            <Edit3 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* VIEW 4: DETAILED ALLOCATION TABLE */}
+          {allocationViewMode === 'table' && (
+            <div className="p-5 rounded-3xl border border-border/50 bg-card shadow-xs space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h4 className="text-sm font-black text-foreground">Tabela Detalhada de Alocação & Metadados</h4>
+                  <p className="text-xs text-muted-foreground">Gerencie setores, CNPJs e percentuais da sua carteira</p>
+                </div>
+              </div>
+
+              <div className="overflow-x-auto rounded-2xl border border-border/40">
+                <table className="w-full text-xs text-left">
+                  <thead className="bg-muted/40 text-muted-foreground font-bold uppercase text-[10px] tracking-wider border-b border-border/40">
+                    <tr>
+                      <th className="px-4 py-3">Ativo</th>
+                      <th className="px-4 py-3">Setor / Segmento</th>
+                      <th className="px-4 py-3">CNPJ</th>
+                      <th className="px-4 py-3 text-right">Quantidade</th>
+                      <th className="px-4 py-3 text-right">Valor Atual</th>
+                      <th className="px-4 py-3 text-right">Peso na Carteira</th>
+                      <th className="px-4 py-3 text-center">Ações</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border/30">
+                    {allocationData.sortedPositions
+                      .filter(p => {
+                        if (!allocationSearch.trim()) return true;
+                        const term = allocationSearch.toLowerCase().trim();
+                        return p.ticker.toLowerCase().includes(term) || p.sector.toLowerCase().includes(term);
+                      })
+                      .map((pos) => (
+                        <tr key={pos.ticker} className="hover:bg-muted/20 transition-colors">
+                          <td className="px-4 py-3">
+                            <div className="flex items-center gap-2">
+                              <span className="font-extrabold text-sm text-foreground">{pos.ticker}</span>
+                              <span className="text-[9px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground uppercase font-bold">
+                                {pos.type}
+                              </span>
+                            </div>
+                          </td>
+
+                          <td className="px-4 py-3">
+                            <span className="font-medium text-foreground">{pos.sector}</span>
+                          </td>
+
+                          <td className="px-4 py-3 font-mono text-[11px] text-muted-foreground">
+                            {pos.cnpj ? (
+                              <span className="text-emerald-500 font-semibold">{pos.cnpj}</span>
+                            ) : (
+                              <span className="text-amber-500 italic">Pendente</span>
+                            )}
+                          </td>
+
+                          <td className="px-4 py-3 text-right font-bold text-foreground">
+                            {pos.quantity}
+                          </td>
+
+                          <td className="px-4 py-3 text-right font-black text-foreground">
+                            {formatCurrency(pos.currentValue)}
+                          </td>
+
+                          <td className="px-4 py-3 text-right font-black text-primary">
+                            <div className="flex items-center justify-end gap-2">
+                              <span>{pos.percent.toFixed(1)}%</span>
+                              <div className="w-12 h-1.5 rounded-full bg-muted overflow-hidden">
+                                <div 
+                                  className="h-full bg-primary rounded-full"
+                                  style={{ width: `${Math.min(100, pos.percent)}%` }}
+                                ></div>
+                              </div>
+                            </div>
+                          </td>
+
+                          <td className="px-4 py-3 text-center">
+                            <div className="flex items-center justify-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => setEditingMetadataTicker(pos.ticker)}
+                                className="p-1.5 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors flex items-center gap-1 text-[11px] font-bold"
+                                title="Editar CNPJ e Setor B3"
+                              >
+                                <Edit3 className="w-3.5 h-3.5" />
+                                <span>Editar</span>
+                              </button>
+
+                              <CvmDocumentButton ticker={pos.ticker} variant="icon" />
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* EDIT METADATA MODAL INTEGRATION */}
+          {editingMetadataTicker && (
+            <EditAssetMetadataModal
+              ticker={editingMetadataTicker}
+              onClose={() => setEditingMetadataTicker(null)}
+            />
+          )}
         </div>
       )}
 
