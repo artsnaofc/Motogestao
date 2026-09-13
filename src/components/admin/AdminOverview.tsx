@@ -29,7 +29,7 @@ import { formatCurrency } from '../../lib/utils';
 import { toast } from 'sonner';
 
 interface AdminOverviewProps {
-  onNavigateToTab: (tab: 'users' | 'settings' | 'backup' | 'audit') => void;
+  onNavigateToTab: (tab: 'users' | 'settings' | 'backup') => void;
   onOpenCreateUser: () => void;
 }
 
@@ -329,17 +329,6 @@ export function AdminOverview({ onNavigateToTab, onOpenCreateUser }: AdminOvervi
                 </div>
                 <span className="font-mono text-[10px] font-bold text-emerald-600">Ativa</span>
               </div>
-
-              <div className="p-3 rounded-2xl bg-muted/30 border border-border/50 flex items-center justify-between">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-xs" />
-                  <div>
-                    <span className="text-xs font-bold text-foreground block">Audit Engine</span>
-                    <span className="text-[10px] text-muted-foreground block">Rastreabilidade de ações</span>
-                  </div>
-                </div>
-                <span className="font-mono text-[10px] font-bold text-emerald-600">Registrando</span>
-              </div>
             </div>
 
             {/* Quick Stats on Records */}
@@ -408,58 +397,10 @@ export function AdminOverview({ onNavigateToTab, onOpenCreateUser }: AdminOvervi
                 <Trash2 className="w-4 h-4 text-amber-500" />
                 Limpar Caches do Cliente
               </Button>
-
-              <Button
-                variant="outline"
-                className="w-full justify-start rounded-xl h-10 font-bold text-xs border-border/60 hover:bg-muted gap-2 cursor-pointer"
-                onClick={() => onNavigateToTab('audit')}
-              >
-                <Clock className="w-4 h-4 text-emerald-500" />
-                Ver Trilha de Auditoria
-              </Button>
             </div>
           </CardContent>
         </Card>
       </div>
-
-      {/* Recent Audit Logs Ticker */}
-      <Card className="border-border/50 bg-background/60 shadow-xs">
-        <CardContent className="p-5 space-y-3">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-black uppercase tracking-wider text-muted-foreground flex items-center gap-2">
-              <Clock className="w-4 h-4 text-primary" />
-              Últimos Eventos de Auditoria
-            </span>
-            <button
-              onClick={() => onNavigateToTab('audit')}
-              className="text-xs font-bold text-primary hover:underline cursor-pointer"
-            >
-              Ver todos os logs →
-            </button>
-          </div>
-
-          <div className="divide-y divide-border/40">
-            {recentLogs.map((log) => (
-              <div key={log.id} className="py-2.5 flex items-center justify-between gap-3 text-xs">
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <div className={`w-2 h-2 rounded-full shrink-0 ${
-                    log.severity === 'success' ? 'bg-emerald-500' :
-                    log.severity === 'warn' ? 'bg-amber-500' :
-                    log.severity === 'error' ? 'bg-rose-500' : 'bg-indigo-500'
-                  }`} />
-                  <div className="min-w-0">
-                    <span className="font-bold text-foreground truncate block">{log.action}</span>
-                    <span className="text-[11px] text-muted-foreground truncate block">{log.details}</span>
-                  </div>
-                </div>
-                <span className="text-[10px] font-mono text-muted-foreground shrink-0">
-                  {new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                </span>
-              </div>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
     </div>
   );
 }

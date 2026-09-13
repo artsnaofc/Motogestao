@@ -40,7 +40,7 @@ export interface DatabaseSnapshot {
     freight_presets?: DriverFreightPreset[];
     freight_clients?: FreightClient[];
     system_config?: SystemConfig;
-    audit_logs?: AuditLog[];
+    b3_assets_metadata?: any[];
   };
 }
 
@@ -159,10 +159,10 @@ class DatabaseBackupEngine {
         description: 'Configurações de infraestrutura, políticas operacionais e avisos globais.',
       },
       {
-        tableName: 'audit_logs',
-        displayName: 'Trilha de Auditoria',
+        tableName: 'b3_assets_metadata',
+        displayName: 'Metadados e Classificação de Ativos B3',
         recordCount: 0,
-        description: 'Registro histórico de ações administrativas e eventos do sistema.',
+        description: 'Armazenamento centralizado de setores, segmentos, CNPJs e características de ativos da B3.',
       },
     ];
   }
@@ -182,7 +182,7 @@ class DatabaseBackupEngine {
       freight_presets: 1,
       freight_clients: freightStorage.getClients().length,
       system_config: 1,
-      audit_logs: systemSettings.getAuditLogs().length,
+      b3_assets_metadata: 0,
     };
 
     const tables = [
@@ -195,6 +195,7 @@ class DatabaseBackupEngine {
       'freight_quotes',
       'freight_presets',
       'freight_clients',
+      'b3_assets_metadata',
     ];
 
     await Promise.all(
@@ -239,7 +240,7 @@ class DatabaseBackupEngine {
           'freight_presets',
           'freight_clients',
           'system_config',
-          'audit_logs',
+          'b3_assets_metadata',
         ];
 
     const data: DatabaseSnapshot['data'] = {};
@@ -257,11 +258,6 @@ class DatabaseBackupEngine {
           data.system_config = systemSettings.getConfig();
           tableCounts.system_config = 1;
           totalRecords += 1;
-        } else if (table === 'audit_logs') {
-          const logs = systemSettings.getAuditLogs();
-          data.audit_logs = logs;
-          tableCounts.audit_logs = logs.length;
-          totalRecords += logs.length;
         } else {
           // Supabase tables
           const { data: rows, error } = await supabase
@@ -611,7 +607,7 @@ SET CONSTRAINTS ALL DEFERRED;
       { key: 'investment_transactions', name: 'Investimentos' },
       { key: 'dividends', name: 'Proventos & Dividendos' },
       { key: 'system_config', name: 'Configurações do Sistema' },
-      { key: 'audit_logs', name: 'Logs de Auditoria' },
+      { key: 'b3_assets_metadata', name: 'Metadados e Classificação de Ativos B3' },
     ];
 
     for (const tbl of tableNames) {
@@ -697,12 +693,6 @@ SET CONSTRAINTS ALL DEFERRED;
         if (table === 'system_config' && data.system_config) {
           systemSettings.updateConfig(data.system_config, adminName);
           stats.system_config = 1;
-        } else if (table === 'audit_logs' && Array.isArray(data.audit_logs)) {
-          // Append or replace audit logs
-          data.audit_logs.forEach((log: AuditLog) => {
-            systemSettings.logAction(log.adminName, log.action, log.details, log.category, log.severity);
-          });
-          stats.audit_logs = data.audit_logs.length;
         } else {
           const rows: any[] = data[table as keyof DatabaseSnapshot['data']] as any[];
           if (Array.isArray(rows) && rows.length > 0) {

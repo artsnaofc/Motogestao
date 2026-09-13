@@ -24,11 +24,10 @@ import { UserDetailModal } from '../components/admin/UserDetailModal';
 import { EditUserModal } from '../components/admin/EditUserModal';
 import { AdminOverview } from '../components/admin/AdminOverview';
 import { SystemSettingsTab } from '../components/admin/SystemSettingsTab';
-import { AdminAuditTab } from '../components/admin/AdminAuditTab';
 import { DatabaseBackupSuite } from '../components/admin/DatabaseBackupSuite';
 import { DebugConsoleModal } from '../components/DebugConsoleModal';
 
-type AdminTab = 'overview' | 'users' | 'settings' | 'backup' | 'audit';
+type AdminTab = 'overview' | 'users' | 'settings' | 'backup';
 
 export default function Admin() {
   const { settings } = useData();
@@ -227,17 +226,6 @@ export default function Admin() {
             <Database className="w-4 h-4 mr-2 text-primary" />
             Backup & Database
           </Button>
-
-          <Button
-            variant={activeTab === 'audit' ? 'default' : 'outline'}
-            className={`rounded-2xl h-11 px-4 font-bold shrink-0 cursor-pointer transition-all ${
-              activeTab !== 'audit' ? 'border-border/50 bg-background text-muted-foreground hover:text-foreground' : 'shadow-sm'
-            }`}
-            onClick={() => setActiveTab('audit')}
-          >
-            <Clock className="w-4 h-4 mr-2" />
-            Auditoria & Logs
-          </Button>
         </div>
 
         <AnimatePresence mode="wait">
@@ -297,18 +285,6 @@ export default function Admin() {
               transition={{ duration: 0.15 }}
             >
               <DatabaseBackupSuite />
-            </motion.div>
-          )}
-
-          {activeTab === 'audit' && (
-            <motion.div
-              key="audit"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              transition={{ duration: 0.15 }}
-            >
-              <AdminAuditTab />
             </motion.div>
           )}
         </AnimatePresence>

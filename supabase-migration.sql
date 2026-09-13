@@ -270,6 +270,66 @@ CREATE TABLE IF NOT EXISTS public.valuation_targets (
 CREATE INDEX IF NOT EXISTS idx_valuation_user_ticker ON public.valuation_targets(user_id, ticker);
 
 -- ==============================================================================
+-- 7b. TABELA DE METADADOS DE ATIVOS B3 (b3_assets_metadata)
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS public.b3_assets_metadata (
+    ticker TEXT PRIMARY KEY,
+    user_id TEXT,
+    asset_type TEXT NOT NULL DEFAULT 'Ação',
+    name TEXT,
+    cnpj TEXT,
+    sector TEXT,
+    subsector TEXT,
+    segment TEXT,
+    issuer TEXT,
+    administrator TEXT,
+    market_cap NUMERIC,
+    daily_liquidity NUMERIC,
+    last_price NUMERIC,
+    pl NUMERIC,
+    pvp NUMERIC,
+    psr NUMERIC,
+    dividend_yield NUMERIC,
+    p_ativo NUMERIC,
+    p_cap_giro NUMERIC,
+    p_ebit NUMERIC,
+    p_ativ_circ_liq NUMERIC,
+    ev_ebit NUMERIC,
+    ev_ebitda NUMERIC,
+    gross_margin NUMERIC,
+    ebit_margin NUMERIC,
+    net_margin NUMERIC,
+    ebitda_margin NUMERIC,
+    current_liquidity NUMERIC,
+    roic NUMERIC,
+    roe NUMERIC,
+    net_worth NUMERIC,
+    net_debt_over_equity NUMERIC,
+    net_debt_over_ebitda NUMERIC,
+    revenue_cagr_5y NUMERIC,
+    profit_cagr_5y NUMERIC,
+    payout NUMERIC,
+    lpa NUMERIC,
+    vpa NUMERIC,
+    fii_type TEXT,
+    fii_segment TEXT,
+    ffo_yield NUMERIC,
+    physical_vacancy NUMERIC,
+    financial_vacancy NUMERIC,
+    properties_count NUMERIC,
+    price_per_sqm NUMERIC,
+    rent_per_sqm NUMERIC,
+    cap_rate NUMERIC,
+    gross_lettable_area NUMERIC,
+    top_tenants_share NUMERIC,
+    description TEXT,
+    source TEXT,
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_b3_assets_metadata_ticker ON public.b3_assets_metadata(ticker);
+
+-- ==============================================================================
 -- 8. TABELA DE ORÇAMENTOS DE FRETE (freight_quotes)
 -- ==============================================================================
 CREATE TABLE IF NOT EXISTS public.freight_quotes (
@@ -393,6 +453,7 @@ ALTER TABLE public.investment_transactions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.dividends ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.valuation_targets ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.freight_quotes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.b3_assets_metadata ENABLE ROW LEVEL SECURITY;
 
 -- Concessão de permissões completas aos roles do Supabase
 GRANT ALL ON TABLE public.transactions TO anon, authenticated, service_role, postgres;
@@ -403,6 +464,7 @@ GRANT ALL ON TABLE public.investment_transactions TO anon, authenticated, servic
 GRANT ALL ON TABLE public.dividends TO anon, authenticated, service_role, postgres;
 GRANT ALL ON TABLE public.valuation_targets TO anon, authenticated, service_role, postgres;
 GRANT ALL ON TABLE public.freight_quotes TO anon, authenticated, service_role, postgres;
+GRANT ALL ON TABLE public.b3_assets_metadata TO anon, authenticated, service_role, postgres;
 
 -- 1. Transações
 DROP POLICY IF EXISTS "Acesso Total Transactions" ON public.transactions;
@@ -451,3 +513,7 @@ DROP POLICY IF EXISTS "Acesso Total Freight Quotes" ON public.freight_quotes;
 DROP POLICY IF EXISTS "Users can manage their freight quotes" ON public.freight_quotes;
 DROP POLICY IF EXISTS "Allow All Freight Quotes" ON public.freight_quotes;
 CREATE POLICY "Acesso Total Freight Quotes" ON public.freight_quotes FOR ALL TO public USING (true) WITH CHECK (true);
+
+-- 9. Metadados de Ativos B3
+DROP POLICY IF EXISTS "Acesso Total B3 Assets Metadata" ON public.b3_assets_metadata;
+CREATE POLICY "Acesso Total B3 Assets Metadata" ON public.b3_assets_metadata FOR ALL TO public USING (true) WITH CHECK (true);
