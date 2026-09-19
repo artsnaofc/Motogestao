@@ -77,6 +77,9 @@ import {
 } from '../lib/recurrenceUtils';
 import { syncQueueManager } from '../lib/syncQueue';
 import { getTodayLocalDateStr } from '../lib/utils';
+import { VehicleSelect } from '../components/VehicleSelect';
+import { useVehicles } from '../contexts/VehiclesContext';
+import { isVehicleRelatedCategory } from '../lib/vehicleUtils';
 
 const HISTORY_FILTERS_KEY = 'motogestao_history_filters_v2';
 
@@ -569,6 +572,21 @@ export function History() {
   const [editEndKm, setEditEndKm] = useState('');
   const [editDeliveries, setEditDeliveries] = useState('');
   const [editOutOfNeighborhood, setEditOutOfNeighborhood] = useState('');
+
+  const { vehicles } = useVehicles();
+  const [editVehicleId, setEditVehicleId] = useState<string>('');
+  const [showEditVehicleSelect, setShowEditVehicleSelect] = useState(false);
+
+  const isEditCategoryVehicleRelated = useMemo(() => {
+    if (!editCategory) return false;
+    return isVehicleRelatedCategory(
+      editCategory,
+      editCategory === 'Pizzaria' ? 'pizzaria' : (editCategory === 'Frete do Dia' ? 'frete' : null),
+      editType,
+      settings
+    );
+  }, [editCategory, editType, settings]);
+
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [visibleGroupsCount, setVisibleGroupsCount] = useState(10);
   const [groupByType, setGroupByType] = useState<boolean>(true);
@@ -643,12 +661,17 @@ export function History() {
       setEditDate(t.date);
       setEditDesc(tDescription || '');
       setEditReserveCategory((t as any).reserveCategory || '');
+      setEditVehicleId((t as any).vehicle_id || '');
+      setShowEditVehicleSelect(false);
 
       const matchRt = (reserveTransactions || []).find(r => r.id === t.id);
       if (matchRt) {
         setEditPaymentStatus(matchRt.payment_status || t.payment_status || 'paid');
         setEditPaymentDate(matchRt.payment_date || t.payment_date || t.date);
         setEditDueDate(matchRt.due_date || t.due_date || t.date);
+        if ((matchRt as any).vehicle_id) {
+          setEditVehicleId((matchRt as any).vehicle_id);
+        }
         const isRec = Boolean(matchRt.is_recurring ?? t.is_recurring);
         setEditIsRecurring(isRec);
         setEditRecurrenceFrequency((matchRt.recurrence_frequency || t.recurrence_frequency || 'monthly') as RecurrenceFrequency);
@@ -683,6 +706,8 @@ export function History() {
         setEditDate(matchRt.date);
         setEditDesc(matchRt.description ? matchRt.description.replace(/^\[Reserva\]\s*/, '') : '');
         setEditReserveCategory(matchRt.category || '');
+        setEditVehicleId(t.vehicle_id || (matchRt as any).vehicle_id || '');
+        setShowEditVehicleSelect(false);
 
         setEditPaymentStatus(matchRt.payment_status || t.payment_status || 'paid');
         setEditPaymentDate(matchRt.payment_date || t.payment_date || t.date);
@@ -706,6 +731,8 @@ export function History() {
         setEditEndKm(t.end_km?.toString() || '');
         setEditDeliveries(t.deliveries?.toString() || '');
         setEditOutOfNeighborhood(t.out_of_neighborhood?.toString() || '');
+        setEditVehicleId(t.vehicle_id || '');
+        setShowEditVehicleSelect(false);
       }
     } else {
       setEditIsReserve(false);
@@ -719,6 +746,8 @@ export function History() {
       setEditEndKm(t.end_km?.toString() || '');
       setEditDeliveries(t.deliveries?.toString() || '');
       setEditOutOfNeighborhood(t.out_of_neighborhood?.toString() || '');
+      setEditVehicleId(t.vehicle_id || '');
+      setShowEditVehicleSelect(false);
     }
   };
 
@@ -760,6 +789,10 @@ export function History() {
           ? (editDueDate || editDate)
           : null;
 
+        const finalVehicleId = editVehicleId === '__none__' || !editVehicleId.trim()
+          ? undefined
+          : editVehicleId.trim();
+
         if (editReserveTxType === 'utilizacao') {
           if (editIsRecurring) {
             const numInstallments = Math.max(2, Math.min(60, Number(editRecurrenceInstallments) || 12));
@@ -780,6 +813,7 @@ export function History() {
                 payment_status: effectivePaymentStatus,
                 payment_date: effectivePaymentDate,
                 due_date: effectiveDueDate,
+                vehicle_id: finalVehicleId,
                 is_recurring: true,
                 recurrence_frequency: editRecurrenceFrequency,
                 recurrence_installments: numInstallments,
@@ -814,6 +848,7 @@ export function History() {
                     payment_status: 'pending',
                     payment_date: null,
                     due_date: instDueDate,
+                    vehicle_id: finalVehicleId,
                     is_recurring: true,
                     recurrence_frequency: editRecurrenceFrequency,
                     recurrence_installments: numInstallments,
@@ -855,6 +890,7 @@ export function History() {
                 payment_status: effectivePaymentStatus,
                 payment_date: effectivePaymentDate,
                 due_date: effectiveDueDate,
+                vehicle_id: finalVehicleId,
                 is_recurring: true,
                 recurrence_frequency: editRecurrenceFrequency,
                 recurrence_installments: numInstallments,
@@ -927,6 +963,7 @@ export function History() {
               payment_status: effectivePaymentStatus,
               payment_date: effectivePaymentDate,
               due_date: effectiveDueDate,
+              vehicle_id: finalVehicleId,
               is_recurring: false,
               recurrence_frequency: undefined,
               recurrence_installments: undefined,
@@ -983,6 +1020,10 @@ export function History() {
     }
 
     const oldTx = transactions.find(t => t.id === editItem.id);
+    const finalVehicleId = editVehicleId === '__none__' || !editVehicleId.trim()
+      ? null
+      : editVehicleId.trim();
+
     const effectivePaymentStatus = editType === 'expense' ? editPaymentStatus : 'paid';
     const effectivePaymentDate = editType === 'expense' && editPaymentStatus === 'paid' 
       ? (editPaymentDate || editDate) 
@@ -1050,6 +1091,7 @@ export function History() {
                 end_km: null,
                 deliveries: null,
                 out_of_neighborhood: null,
+                vehicle_id: finalVehicleId || undefined,
                 created_at: new Date().toISOString()
               };
 
@@ -1102,6 +1144,7 @@ export function History() {
                   amount: finalAmount,
                   category: editCategory,
                   description: subDesc,
+                  vehicle_id: finalVehicleId || undefined,
                   recurrence_frequency: editRecurrenceFrequency,
                   recurrence_installments: numInstallments,
                   installment_total: numInstallments,
@@ -1112,6 +1155,7 @@ export function History() {
                   amount: finalAmount,
                   category: editCategory,
                   description: subDesc,
+                  vehicle_id: finalVehicleId || undefined,
                   recurrence_frequency: editRecurrenceFrequency,
                   recurrence_installments: numInstallments,
                   installment_total: numInstallments,
@@ -1161,6 +1205,7 @@ export function History() {
       payment_status: effectivePaymentStatus,
       payment_date: effectivePaymentDate,
       due_date: effectiveDueDate,
+      vehicle_id: finalVehicleId,
       ...recurrenceFields,
     };
 
@@ -1182,6 +1227,7 @@ export function History() {
           payment_status: effectivePaymentStatus,
           payment_date: effectivePaymentDate,
           due_date: effectiveDueDate,
+          vehicle_id: finalVehicleId || undefined,
         });
       }
     }
@@ -1190,6 +1236,8 @@ export function History() {
       toast.success('Lançamento atualizado com sucesso!');
     }
     setEditItem(null);
+    setEditVehicleId('');
+    setShowEditVehicleSelect(false);
     setSaving(false);
   };
 
@@ -4735,6 +4783,20 @@ export function History() {
                 </div>
               </div>
 
+              {/* Vehicle Selection for Reserve Utilization - Right below Valor */}
+              {editReserveTxType === 'utilizacao' && vehicles && vehicles.length > 0 && isVehicleRelatedCategory(editReserveCategory, null, 'expense', settings) && (
+                <div className="space-y-1.5 pt-0.5 animate-fade-in">
+                  <VehicleSelect
+                    value={editVehicleId === '__none__' ? '' : editVehicleId}
+                    onChange={(val) => {
+                      setEditVehicleId(val === '' ? '__none__' : val);
+                    }}
+                    label="Veículo / Moto Vinculada"
+                    showAddOption={true}
+                  />
+                </div>
+              )}
+
               {/* Category (only for utilization) */}
               {editReserveTxType === 'utilizacao' && (!selectedReserve || selectedReserve.require_category_on_use !== false) && (
                 <div className="space-y-1.5">
@@ -5051,6 +5113,21 @@ export function History() {
                   />
                 </div>
               </div>
+
+              {/* Vehicle Selection in Edit Form - Placed right below Valor */}
+              {vehicles && vehicles.length > 0 && (isEditCategoryVehicleRelated || (editVehicleId && editVehicleId !== '__none__')) && (
+                <div className="space-y-1 pt-1 animate-fade-in">
+                  <VehicleSelect
+                    value={editVehicleId === '__none__' ? '' : editVehicleId}
+                    onChange={(val) => {
+                      setEditVehicleId(val === '' ? '__none__' : val);
+                    }}
+                    label="Veículo / Moto Vinculada"
+                    showAddOption={true}
+                    className="mt-0"
+                  />
+                </div>
+              )}
 
               <div className="space-y-1">
                 <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground/90">Categoria</label>

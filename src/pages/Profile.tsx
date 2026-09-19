@@ -82,9 +82,12 @@ import {
   Info,
   RotateCcw,
   AlertCircle,
-  Key
+  Key,
+  CarFront
 } from 'lucide-react';
 import { useData } from '../contexts/DataContext';
+import { useVehicles } from '../contexts/VehiclesContext';
+import { DEFAULT_VEHICLE_CATEGORIES } from '../lib/vehicleUtils';
 import { executeQuoteFetch, QuoteProvider, QuoteFetchResult } from '../lib/quoteService';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -95,11 +98,13 @@ interface SettingsSnapshot {
   operationalCategories: string[];
   incomeCategories: string[];
   categoriesWithKm: string[];
+  vehicleCategories: string[];
   categoryIcons: Record<string, string>;
 }
 
 export function Profile() {
   const { settings: globalSettings, refreshData, loading: dataLoading, transactions, reserves } = useData();
+  const { vehicles, activeVehicle, setActiveVehicle } = useVehicles();
   const [loading, setLoading] = useState(true);
   const [savingSettings, setSavingSettings] = useState(false);
   const [savingAuth, setSavingAuth] = useState(false);
@@ -138,6 +143,7 @@ export function Profile() {
   const [operationalCategories, setOperationalCategories] = useState<string[]>([]);
   const [incomeCategories, setIncomeCategories] = useState<string[]>([]);
   const [categoriesWithKm, setCategoriesWithKm] = useState<string[]>([]);
+  const [vehicleCategories, setVehicleCategories] = useState<string[]>(DEFAULT_VEHICLE_CATEGORIES);
   const [categoryIcons, setCategoryIcons] = useState<Record<string, string>>({});
   const [newPersonalCat, setNewPersonalCat] = useState('');
   const [newIncomeCat, setNewIncomeCat] = useState('');
@@ -230,41 +236,58 @@ export function Profile() {
     return found ? found.icon : Landmark;
   };
 
-  const loadSettings = async () => {
-    setLoading(true);
-    const { data: userData } = await supabase.auth.getUser();
-    if (userData.user && globalSettings) {
-      setEmail(userData.user.email || '');
-      setSettings(globalSettings);
-
-      const pers = globalSettings.personal_expense_categories || ['Alimentação', 'Plano de Internet', 'Equipamento', 'Outras Despesas', 'Outros'];
-      const oper = globalSettings.operational_expense_categories || ['Combustível', 'Pedágio', 'Manutenção'];
-      const inc = globalSettings.income_categories || [];
-      const kmCats = globalSettings.categories_with_km || [];
-      const icons = globalSettings.category_icons || {};
-
-      setPersonalCategories(pers);
-      setOperationalCategories(oper);
-      setIncomeCategories(inc);
-      setCategoriesWithKm(kmCats);
-      setCategoryIcons(icons);
-
-      setInitialSnapshot({
-        settings: { ...globalSettings },
-        personalCategories: [...pers],
-        operationalCategories: [...oper],
-        incomeCategories: [...inc],
-        categoriesWithKm: [...kmCats],
-        categoryIcons: { ...icons },
-      });
-    }
-    setLoading(false);
-  };
+  const hasInitializedRef = useRef(false);
 
   useEffect(() => {
-    if (!dataLoading && globalSettings) {
-      loadSettings();
+    let isMounted = true;
+
+    // Load auth user email in background
+    supabase.auth.getUser().then(({ data }) => {
+      if (isMounted && data?.user?.email) {
+        setEmail(data.user.email);
+      }
+    }).catch(err => {
+      console.warn('Could not fetch user email in Profile:', err);
+    });
+
+    if (globalSettings) {
+      if (!hasInitializedRef.current) {
+        hasInitializedRef.current = true;
+        setSettings(globalSettings);
+
+        const pers = globalSettings.personal_expense_categories || ['Alimentação', 'Plano de Internet', 'Equipamento', 'Outras Despesas', 'Outros'];
+        const oper = globalSettings.operational_expense_categories || ['Combustível', 'Pedágio', 'Manutenção'];
+        const inc = globalSettings.income_categories || [];
+        const kmCats = globalSettings.categories_with_km || [];
+        const vehCats = globalSettings.vehicle_categories || DEFAULT_VEHICLE_CATEGORIES;
+        const icons = globalSettings.category_icons || {};
+
+        setPersonalCategories(pers);
+        setOperationalCategories(oper);
+        setIncomeCategories(inc);
+        setCategoriesWithKm(kmCats);
+        setVehicleCategories(vehCats);
+        setCategoryIcons(icons);
+
+        setInitialSnapshot({
+          settings: { ...globalSettings },
+          personalCategories: [...pers],
+          operationalCategories: [...oper],
+          incomeCategories: [...inc],
+          categoriesWithKm: [...kmCats],
+          vehicleCategories: [...vehCats],
+          categoryIcons: { ...icons },
+        });
+      }
+      setLoading(false);
+    } else if (!dataLoading) {
+      // If data loading is completed and no settings exist, stop loading
+      setLoading(false);
     }
+
+    return () => {
+      isMounted = false;
+    };
   }, [dataLoading, globalSettings]);
 
   // DIRTY CHECK LOGIC
@@ -281,6 +304,7 @@ export function Profile() {
       s1.default_driver_labor !== s0.default_driver_labor ||
       s1.initial_balance !== s0.initial_balance ||
       s1.default_investment_reserve_id !== s0.default_investment_reserve_id ||
+      s1.active_vehicle_id !== s0.active_vehicle_id ||
       s1.pizzaria_base_deliveries !== s0.pizzaria_base_deliveries ||
       s1.pizzaria_base_rate !== s0.pizzaria_base_rate ||
       s1.pizzaria_daily_rate_above_base !== s0.pizzaria_daily_rate_above_base ||
@@ -297,6 +321,7 @@ export function Profile() {
     if (JSON.stringify(operationalCategories) !== JSON.stringify(initialSnapshot.operationalCategories)) return true;
     if (JSON.stringify(incomeCategories) !== JSON.stringify(initialSnapshot.incomeCategories)) return true;
     if (JSON.stringify(categoriesWithKm) !== JSON.stringify(initialSnapshot.categoriesWithKm)) return true;
+    if (JSON.stringify(vehicleCategories) !== JSON.stringify(initialSnapshot.vehicleCategories)) return true;
     if (JSON.stringify(categoryIcons) !== JSON.stringify(initialSnapshot.categoryIcons)) return true;
 
     return false;
@@ -306,6 +331,7 @@ export function Profile() {
     operationalCategories,
     incomeCategories,
     categoriesWithKm,
+    vehicleCategories,
     categoryIcons,
     initialSnapshot
   ]);
@@ -317,6 +343,7 @@ export function Profile() {
     setOperationalCategories([...initialSnapshot.operationalCategories]);
     setIncomeCategories([...initialSnapshot.incomeCategories]);
     setCategoriesWithKm([...initialSnapshot.categoriesWithKm]);
+    setVehicleCategories([...initialSnapshot.vehicleCategories]);
     setCategoryIcons({ ...initialSnapshot.categoryIcons });
     toast.info('Alterações descartadas.');
   };
@@ -492,6 +519,17 @@ export function Profile() {
     );
   };
 
+  const toggleVehicleCategory = (cat: string) => {
+    setVehicleCategories(prev => 
+      prev.includes(cat) ? prev.filter(c => c !== cat) : [...prev, cat]
+    );
+  };
+
+  const handleResetVehicleCategories = () => {
+    setVehicleCategories([...DEFAULT_VEHICLE_CATEGORIES]);
+    toast.info('Categorias de veículo restauradas para o padrão do sistema.');
+  };
+
   const handleUpdateIcon = (cat: string, iconName: string) => {
     setCategoryIcons(prev => ({
       ...prev,
@@ -532,6 +570,8 @@ export function Profile() {
         expense_categories: [...operationalCategories, ...personalCategories],
         income_categories: incomeCategories,
         categories_with_km: categoriesWithKm,
+        vehicle_categories: vehicleCategories,
+        active_vehicle_id: settings.active_vehicle_id || null,
         category_icons: categoryIcons,
         asset_cnpjs: settings.asset_cnpjs || {},
         rebalance_targets: settings.rebalance_targets || {},
@@ -548,6 +588,10 @@ export function Profile() {
       const localKey = `user_settings_${userData.user.id}`;
       cacheManager.set(localKey, payload, undefined, 'settings');
 
+      if (settings.active_vehicle_id && setActiveVehicle) {
+        await setActiveVehicle(settings.active_vehicle_id);
+      }
+
       // Update snapshot
       setInitialSnapshot({
         settings: { ...settings },
@@ -555,6 +599,7 @@ export function Profile() {
         operationalCategories: [...operationalCategories],
         incomeCategories: [...incomeCategories],
         categoriesWithKm: [...categoriesWithKm],
+        vehicleCategories: [...vehicleCategories],
         categoryIcons: { ...categoryIcons },
       });
 
@@ -1494,6 +1539,172 @@ export function Profile() {
                   <span className="text-lg font-black font-mono text-amber-600 dark:text-amber-400 bg-amber-500/10 px-3.5 py-1.5 rounded-xl border border-amber-500/20">
                     R$ {costPer100Km.toFixed(2)}
                   </span>
+                </div>
+              </div>
+
+              {/* SEÇÃO 1: VEÍCULO PADRÃO DO SISTEMA */}
+              <div className="space-y-4 pt-6 border-t border-border/50">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <span className="text-xs font-black uppercase tracking-wider text-foreground block flex items-center gap-2">
+                      <CarFront className="w-4 h-4 text-primary" /> Veículo Padrão (Padrão para Novos Lançamentos)
+                    </span>
+                    <span className="text-[11px] text-muted-foreground">
+                      O veículo selecionado será preenchido automaticamente ao criar novos ganhos ou despesas veiculares.
+                    </span>
+                  </div>
+                </div>
+
+                {vehicles && vehicles.length > 0 ? (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 pt-1">
+                    {/* Opção Nenhum Veículo Automático */}
+                    <button
+                      type="button"
+                      onClick={() => setSettings(prev => ({ ...prev, active_vehicle_id: '' }))}
+                      className={`p-3.5 rounded-xl text-left border transition-all cursor-pointer flex flex-col justify-between gap-2 ${
+                        !settings.active_vehicle_id
+                          ? 'bg-primary/10 border-primary text-foreground shadow-xs ring-1 ring-primary'
+                          : 'bg-card text-muted-foreground border-border hover:bg-muted/60'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between w-full">
+                        <span className="text-xs font-black text-foreground">Sem Veículo Padrão</span>
+                        {!settings.active_vehicle_id && (
+                          <span className="text-[9px] font-black uppercase bg-primary text-primary-foreground px-2 py-0.5 rounded-md">
+                            Selecionado
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[10px] text-muted-foreground">
+                        Exige selecionar o veículo manualmente a cada lançamento ou deixar em branco.
+                      </p>
+                    </button>
+
+                    {/* Lista de Veículos Cadastrados */}
+                    {vehicles.map((v) => {
+                      const isSelected = settings.active_vehicle_id === v.id || (!settings.active_vehicle_id && v.is_active);
+                      return (
+                        <button
+                          key={v.id}
+                          type="button"
+                          onClick={() => setSettings(prev => ({ ...prev, active_vehicle_id: v.id }))}
+                          className={`p-3.5 rounded-xl text-left border transition-all cursor-pointer flex flex-col justify-between gap-2 ${
+                            isSelected
+                              ? 'bg-primary/10 border-primary text-foreground shadow-xs ring-1 ring-primary'
+                              : 'bg-card text-muted-foreground border-border hover:bg-muted/60'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between w-full">
+                            <div className="flex items-center gap-2">
+                              <div className="p-1.5 rounded-lg bg-primary/10 text-primary">
+                                <Car className="w-4 h-4" />
+                              </div>
+                              <span className="text-xs font-black text-foreground">{v.brand} {v.model}</span>
+                            </div>
+                            {isSelected && (
+                              <span className="text-[9px] font-black uppercase bg-primary text-primary-foreground px-2 py-0.5 rounded-md">
+                                Padrão
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[10px] text-muted-foreground flex items-center justify-between font-mono">
+                            <span className="font-bold text-foreground">{v.plate || 'Sem Placa'}</span>
+                            <span>{v.year_model ? `${v.year_model} • ` : ''}{v.fuel_type || 'Flex'}</span>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="p-4 rounded-xl border border-dashed border-border bg-muted/20 text-center space-y-2">
+                    <p className="text-xs text-muted-foreground">
+                      Você ainda não cadastrou veículos no sistema.
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* SEÇÃO 2: CATEGORIAS COM SELEÇÃO DE VEÍCULO */}
+              <div className="space-y-4 pt-6 border-t border-border/50 bg-muted/20 -mx-5 -mb-5 p-5 rounded-b-2xl">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <span className="text-xs font-black uppercase tracking-wider text-foreground block flex items-center gap-2">
+                      <Sliders className="w-4 h-4 text-primary" /> Categorias que Utilizam Veículo
+                    </span>
+                    <span className="text-[11px] text-muted-foreground">
+                      Selecione em quais categorias o campo de seleção de veículo deve aparecer logo abaixo do valor.
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleResetVehicleCategories}
+                    className="text-[10px] font-extrabold text-primary hover:underline self-start sm:self-auto flex items-center gap-1 cursor-pointer"
+                  >
+                    <RotateCcw className="w-3 h-3" /> Restaurar Padrões
+                  </button>
+                </div>
+
+                {/* Nota explicativa sobre a regra da categoria Trabalho */}
+                <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-xl flex items-start gap-2.5 text-blue-900 dark:text-blue-200">
+                  <Info className="w-4 h-4 text-blue-500 shrink-0 mt-0.5" />
+                  <p className="text-[11px] leading-relaxed">
+                    <strong>Regra Especial:</strong> Na categoria <strong>Trabalho</strong>, a seleção de veículo é opcional e vem desmarcada por padrão no formulário para não poluir os lançamentos comuns. Em resgates de reserva associados a despesas veiculares, o seletor também é exibido.
+                  </p>
+                </div>
+
+                {/* Grid com todas as categorias disponíveis no sistema */}
+                <div className="space-y-3">
+                  <div className="space-y-1.5">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-muted-foreground">
+                      Ganhos & Entradas
+                    </span>
+                    <div className="flex flex-wrap gap-2">
+                      {Array.from(new Set([...incomeCategories, 'Frete do Dia', 'Pizzaria', 'Uber', 'Trabalho'])).map(cat => {
+                        const isActive = vehicleCategories.includes(cat);
+                        return (
+                          <button
+                            key={`veh-inc-${cat}`}
+                            type="button"
+                            onClick={() => toggleVehicleCategory(cat)}
+                            className={`px-3.5 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer flex items-center gap-1.5 ${
+                              isActive
+                                ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm font-extrabold'
+                                : 'bg-card text-muted-foreground border-border hover:bg-muted hover:text-foreground'
+                            }`}
+                          >
+                            {isActive && <Check className="w-3.5 h-3.5 stroke-[3]" />}
+                            {cat}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5 pt-1">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-muted-foreground">
+                      Despesas Operacionais & Gerais
+                    </span>
+                    <div className="flex flex-wrap gap-2">
+                      {Array.from(new Set([...operationalCategories, ...personalCategories, 'Combustível', 'Manutenção', 'Pedágio'])).map(cat => {
+                        const isActive = vehicleCategories.includes(cat);
+                        return (
+                          <button
+                            key={`veh-exp-${cat}`}
+                            type="button"
+                            onClick={() => toggleVehicleCategory(cat)}
+                            className={`px-3.5 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer flex items-center gap-1.5 ${
+                              isActive
+                                ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm font-extrabold'
+                                : 'bg-card text-muted-foreground border-border hover:bg-muted hover:text-foreground'
+                            }`}
+                          >
+                            {isActive && <Check className="w-3.5 h-3.5 stroke-[3]" />}
+                            {cat}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
                 </div>
               </div>
 

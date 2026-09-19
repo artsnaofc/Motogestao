@@ -70,6 +70,7 @@ export interface UserSettings {
   operational_expense_categories?: string[];
   personal_expense_categories?: string[];
   income_categories?: string[];
+  vehicle_categories?: string[];
   vehicle_km_per_liter?: number;
   fuel_price?: number;
   initial_balance?: number;

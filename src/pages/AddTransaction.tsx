@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -82,6 +82,7 @@ import { calculateNextOccurrence, getFrequencyLabel, generateUUID, parseLocalDat
 import { getTodayLocalDateStr } from '../lib/utils';
 import { getEffectiveUserId } from '../lib/authUtils';
 import { RefreshCw, CalendarClock, CalendarRange, CheckCircle2, AlertCircle } from 'lucide-react';
+import { isVehicleRelatedCategory, shouldDefaultToNoVehicle } from '../lib/vehicleUtils';
 
 export function AddTransaction() {
   const navigate = useNavigate();
@@ -104,11 +105,12 @@ export function AddTransaction() {
   const paramDistanceKm = searchParams.get('distance_km') || '';
 
   const { transactions, setTransactions, settings, refreshData, globalPeriod, reserves, addReserveTransaction, hideValues } = useData();
-  const { activeVehicle } = useVehicles();
+  const { activeVehicle, vehicles } = useVehicles();
 
   const [selectedVehicleId, setSelectedVehicleId] = useState<string>(
-    searchParams.get('vehicle_id') || activeVehicle?.id || ''
+    searchParams.get('vehicle_id') || ''
   );
+  const [showManualVehicleSelect, setShowManualVehicleSelect] = useState(false);
 
   // Find active maintenance reserve rule rate
   const maintenanceReserve = reserves?.find(r => 
@@ -145,6 +147,60 @@ export function AddTransaction() {
   const [operationalExpenses, setOperationalExpenses] = useState(paramOpExpenses || '');
   const [showFreightCalc, setShowFreightCalc] = useState(false);
 
+  // Reserves Tab specific state
+  const [rtType, setRtType] = useState<'aporte' | 'utilizacao'>(
+    paramType === 'utilizacao' ? 'utilizacao' : 'aporte'
+  );
+  const [reserveId, setReserveId] = useState(paramReserveId);
+  const [rtCategory, setRtCategory] = useState('Combustível');
+
+  // Payment Status & Recurrence state
+  const [paymentStatus, setPaymentStatus] = useState<PaymentStatus>('paid');
+  const [paymentDate, setPaymentDate] = useState<string>('');
+  const [dueDate, setDueDate] = useState<string>('');
+  const [isRecurring, setIsRecurring] = useState<boolean>(false);
+  const [recurrenceFrequency, setRecurrenceFrequency] = useState<RecurrenceFrequency>('monthly');
+  const [recurrenceInstallments, setRecurrenceInstallments] = useState<string>('12');
+
+  const currentCategoryName = useMemo(() => {
+    if (activeTab === 'pizzaria') return 'Pizzaria';
+    if (activeTab === 'frete') return 'Frete do Dia';
+    if (activeTab === 'reserva') return rtCategory;
+    return category;
+  }, [activeTab, category, rtCategory]);
+
+  const isCurrentCategoryVehicleRelated = useMemo(() => {
+    if (activeTab === 'reserva' && rtType !== 'utilizacao') return false;
+    if (searchParams.get('vehicle_id')) return true;
+    return isVehicleRelatedCategory(
+      currentCategoryName,
+      activeTab,
+      activeTab === 'despesa' || activeTab === 'reserva' ? 'expense' : 'income',
+      settings
+    );
+  }, [currentCategoryName, activeTab, rtType, settings, searchParams]);
+
+  const effectiveSelectedVehicleValue = useMemo(() => {
+    if (selectedVehicleId === '__none__') return '';
+    if (selectedVehicleId) return selectedVehicleId;
+    if (shouldDefaultToNoVehicle(currentCategoryName)) return '';
+    if (isCurrentCategoryVehicleRelated) return activeVehicle?.id || '';
+    return '';
+  }, [selectedVehicleId, currentCategoryName, isCurrentCategoryVehicleRelated, activeVehicle]);
+
+  const getEffectiveVehicleId = (): string | undefined => {
+    if (activeTab === 'reserva' && rtType !== 'utilizacao') return undefined;
+    if (selectedVehicleId === '__none__') return undefined;
+    if (selectedVehicleId && selectedVehicleId.trim() !== '') return selectedVehicleId;
+    if (isCurrentCategoryVehicleRelated) {
+      if (shouldDefaultToNoVehicle(currentCategoryName)) {
+        return undefined;
+      }
+      return activeVehicle?.id || undefined;
+    }
+    return undefined;
+  };
+
   const handleApplyFreight = ({
     freightPrice,
     tollExpense: calcToll,
@@ -168,21 +224,6 @@ export function AddTransaction() {
     }
     toast.success(`Preço do frete (R$ ${freightPrice.toFixed(2)}) aplicado com sucesso!`);
   };
-
-  // Reserves Tab specific state
-  const [rtType, setRtType] = useState<'aporte' | 'utilizacao'>(
-    paramType === 'utilizacao' ? 'utilizacao' : 'aporte'
-  );
-  const [reserveId, setReserveId] = useState(paramReserveId);
-  const [rtCategory, setRtCategory] = useState('Combustível');
-
-  // Payment Status & Recurrence state
-  const [paymentStatus, setPaymentStatus] = useState<PaymentStatus>('paid');
-  const [paymentDate, setPaymentDate] = useState<string>('');
-  const [dueDate, setDueDate] = useState<string>('');
-  const [isRecurring, setIsRecurring] = useState<boolean>(false);
-  const [recurrenceFrequency, setRecurrenceFrequency] = useState<RecurrenceFrequency>('monthly');
-  const [recurrenceInstallments, setRecurrenceInstallments] = useState<string>('12');
 
   // Robust effect to pre-fill the initial kilometer from the last registered final kilometer
   useEffect(() => {
@@ -390,6 +431,7 @@ export function AddTransaction() {
         if (isRecurring) {
           const numInstallments = Math.max(2, Math.min(60, Number(recurrenceInstallments) || 12));
           const recurrenceGroupId = generateUUID();
+          const reserveVehicleId = getEffectiveVehicleId();
 
           for (let i = 1; i <= numInstallments; i++) {
             const isFirst = i === 1;
@@ -417,7 +459,7 @@ export function AddTransaction() {
               recurrence_group_id: recurrenceGroupId,
               installment_number: i,
               installment_total: numInstallments,
-              vehicle_id: selectedVehicleId || activeVehicle?.id || undefined,
+              vehicle_id: reserveVehicleId,
             }, { silent: true });
 
             if (isFirst) {
@@ -433,6 +475,8 @@ export function AddTransaction() {
           );
         } else {
           // Single reserve transaction
+          const reserveVehicleId = getEffectiveVehicleId();
+
           const rtId = await addReserveTransaction({
             reserve_id: reserveId,
             type: rtType,
@@ -444,7 +488,7 @@ export function AddTransaction() {
             payment_date: effectivePaymentDate,
             due_date: effectiveDueDate,
             is_recurring: false,
-            vehicle_id: selectedVehicleId || activeVehicle?.id || undefined,
+            vehicle_id: reserveVehicleId,
           }, { silent: true });
 
           targetHighlightId = rtId;
@@ -534,7 +578,7 @@ export function AddTransaction() {
             end_km: null,
             deliveries: null,
             out_of_neighborhood: null,
-            vehicle_id: selectedVehicleId || activeVehicle?.id || undefined,
+            vehicle_id: getEffectiveVehicleId(),
             created_at: new Date().toISOString()
           };
 
@@ -579,7 +623,7 @@ export function AddTransaction() {
         payment_status: effectivePaymentStatus,
         payment_date: effectivePaymentDate,
         due_date: effectiveDueDate,
-        vehicle_id: selectedVehicleId || activeVehicle?.id || undefined,
+        vehicle_id: getEffectiveVehicleId(),
         is_recurring: false,
         created_at: new Date().toISOString()
       };
@@ -798,6 +842,19 @@ export function AddTransaction() {
                   </div>
                 </div>
 
+                {vehicles && vehicles.length > 0 && rtType === 'utilizacao' && isCurrentCategoryVehicleRelated && (
+                  <div className="space-y-1.5 pt-1 animate-fade-in">
+                    <VehicleSelect
+                      value={effectiveSelectedVehicleValue}
+                      onChange={(val) => {
+                        setSelectedVehicleId(val === '' ? '__none__' : val);
+                      }}
+                      label="Veículo / Moto Vinculada"
+                      showAddOption={true}
+                    />
+                  </div>
+                )}
+
                 {rtType === 'utilizacao' && (!reserveId || reserves.find(r => r.id === reserveId)?.require_category_on_use !== false) && (
                   <div className="space-y-3 animate-fade-in">
                     <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground/90">Categoria de Saída Secundária</label>
@@ -881,6 +938,19 @@ export function AddTransaction() {
                     R$ {calcPizzariaEarnings().toFixed(2)}
                   </span>
                 </div>
+
+                {vehicles && vehicles.length > 0 && (
+                  <div className="space-y-1.5 mt-2 animate-fade-in">
+                    <VehicleSelect
+                      value={effectiveSelectedVehicleValue}
+                      onChange={(val) => {
+                        setSelectedVehicleId(val === '' ? '__none__' : val);
+                      }}
+                      label="Veículo / Moto Utilizada"
+                      showAddOption={true}
+                    />
+                  </div>
+                )}
               </>
             )}
 
@@ -904,6 +974,19 @@ export function AddTransaction() {
                     />
                   </div>
                 </div>
+
+                {vehicles && vehicles.length > 0 && (
+                  <div className="space-y-1.5 animate-fade-in">
+                    <VehicleSelect
+                      value={effectiveSelectedVehicleValue}
+                      onChange={(val) => {
+                        setSelectedVehicleId(val === '' ? '__none__' : val);
+                      }}
+                      label="Veículo / Moto Utilizada"
+                      showAddOption={true}
+                    />
+                  </div>
+                )}
 
                 <div className="space-y-2 p-4 bg-amber-500/[0.03] border border-amber-500/20 rounded-xl">
                   <div className="flex items-center justify-between">
@@ -948,6 +1031,20 @@ export function AddTransaction() {
                     />
                   </div>
                 </div>
+
+                {/* Vehicle Selection - Positioned directly below the Valor input */}
+                {vehicles && vehicles.length > 0 && isCurrentCategoryVehicleRelated && (
+                  <div className="space-y-1.5 pt-1 animate-fade-in">
+                    <VehicleSelect
+                      value={effectiveSelectedVehicleValue}
+                      onChange={(val) => {
+                        setSelectedVehicleId(val === '' ? '__none__' : val);
+                      }}
+                      label="Veículo / Moto Vinculada"
+                      showAddOption={true}
+                    />
+                  </div>
+                )}
                 
                 <div className="space-y-3">
                   <div className="flex justify-between items-center flex-wrap gap-1 mb-1">
@@ -1260,13 +1357,6 @@ export function AddTransaction() {
                 </div>
               );
             })()}
-
-            {/* Vehicle Selection */}
-            <VehicleSelect
-              value={selectedVehicleId}
-              onChange={setSelectedVehicleId}
-              className="mt-2"
-            />
 
             <div className="space-y-2">
               <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground/90">Descrição / Observações</label>
