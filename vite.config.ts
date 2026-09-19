@@ -46,6 +46,7 @@ export default defineConfig(() => {
         },
         workbox: {
           globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
+          maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
           runtimeCaching: [
             {
               urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
@@ -93,6 +94,7 @@ export default defineConfig(() => {
       include: ['react', 'react-dom', 'react-router-dom'],
     },
     build: {
+      chunkSizeWarningLimit: 3000,
       rollupOptions: {
         output: {
           manualChunks(id) {
@@ -108,6 +110,12 @@ export default defineConfig(() => {
               }
               if (id.includes('@supabase')) {
                 return 'supabase';
+              }
+              if (id.includes('jspdf') || id.includes('html2canvas')) {
+                return 'pdf-export';
+              }
+              if (id.includes('motion')) {
+                return 'motion';
               }
             }
           }

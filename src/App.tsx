@@ -1,8 +1,16 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from './components/ui/sonner';
 import { Login } from './pages/Login';
+import { Dashboard } from './pages/Dashboard';
+import { History } from './pages/History';
+import { AddTransaction } from './pages/AddTransaction';
+import { Profile } from './pages/Profile';
+import { Reserves } from './pages/Reserves';
+import { Investments } from './pages/Investments';
+import Admin from './pages/Admin';
+import FreightQuotePage from './pages/FreightQuote';
 import { DataProvider } from './contexts/DataContext';
-import React, { useEffect, useState, Suspense } from 'react';
+import React, { useEffect, useState } from 'react';
 import { supabase } from './lib/supabase';
 import { Session } from '@supabase/supabase-js';
 import { setCachedUser, getEffectiveUser } from './lib/authUtils';
@@ -11,43 +19,6 @@ import { PageLoadingFallback } from './components/PageLoadingFallback';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ScrollManager } from './components/ScrollManager';
 import { DebugConsoleModal } from './components/DebugConsoleModal';
-
-// Helper function for lazy loading with detailed error logging and auto-retry on dynamic chunk failures
-const lazyWithLogging = (importFn: () => Promise<any>, moduleExportName: string) =>
-  React.lazy(async () => {
-    try {
-      const module = await importFn();
-      return { default: module[moduleExportName] || module.default };
-    } catch (error: any) {
-      console.group('%c[Finanças Pro - Lazy Load Error]', 'background: #dc2626; color: white; font-weight: bold; padding: 2px 6px; border-radius: 4px;');
-      console.error(`❌ Falha ao carregar o módulo '${moduleExportName}'`);
-      console.error('📅 Data/Hora:', new Date().toISOString());
-      console.error('🌐 URL Atual:', window.location.href);
-      console.error('⚠️ Mensagem de Erro:', error?.message || error);
-      console.error('📚 Stack:', error?.stack);
-      console.groupEnd();
-
-      // Handle stale chunk reloading once if Vite hot re-build modified chunk paths
-      const retryKey = `chunk_retry_${moduleExportName}`;
-      const hasRetried = sessionStorage.getItem(retryKey);
-      if (!hasRetried) {
-        sessionStorage.setItem(retryKey, 'true');
-        console.warn(`[Finanças Pro] Recarregando aplicação para recuperar o chunk do módulo '${moduleExportName}'...`);
-        window.location.reload();
-      }
-
-      throw error;
-    }
-  });
-
-const Dashboard = lazyWithLogging(() => import('./pages/Dashboard'), 'Dashboard');
-const History = lazyWithLogging(() => import('./pages/History'), 'History');
-const AddTransaction = lazyWithLogging(() => import('./pages/AddTransaction'), 'AddTransaction');
-const Profile = lazyWithLogging(() => import('./pages/Profile'), 'Profile');
-const Reserves = lazyWithLogging(() => import('./pages/Reserves'), 'Reserves');
-const Investments = lazyWithLogging(() => import('./pages/Investments'), 'Investments');
-const Admin = lazyWithLogging(() => import('./pages/Admin'), 'Admin');
-const FreightQuotePage = lazyWithLogging(() => import('./pages/FreightQuote'), 'default');
 
 // Auth guard outside App to prevent recreation
 const PrivateRoute = ({ session, children }: { session: Session | null; children: React.ReactNode }) => {
@@ -186,19 +157,17 @@ export default function App() {
                 <DataProvider>
                   <MainLayout>
                     <ErrorBoundary>
-                      <Suspense fallback={<PageLoadingFallback />}>
-                        <Routes>
-                          <Route path="/" element={<Dashboard />} />
-                          <Route path="/history" element={<History />} />
-                          <Route path="/add" element={<AddTransaction />} />
-                          <Route path="/add-transaction" element={<AddTransaction />} />
-                          <Route path="/freight" element={<FreightQuotePage />} />
-                          <Route path="/reserves" element={<Reserves />} />
-                          <Route path="/investments" element={<Investments />} />
-                          <Route path="/admin" element={<Admin />} />
-                          <Route path="/profile" element={<Profile />} />
-                        </Routes>
-                      </Suspense>
+                      <Routes>
+                        <Route path="/" element={<Dashboard />} />
+                        <Route path="/history" element={<History />} />
+                        <Route path="/add" element={<AddTransaction />} />
+                        <Route path="/add-transaction" element={<AddTransaction />} />
+                        <Route path="/freight" element={<FreightQuotePage />} />
+                        <Route path="/reserves" element={<Reserves />} />
+                        <Route path="/investments" element={<Investments />} />
+                        <Route path="/admin" element={<Admin />} />
+                        <Route path="/profile" element={<Profile />} />
+                      </Routes>
                     </ErrorBoundary>
                   </MainLayout>
                 </DataProvider>

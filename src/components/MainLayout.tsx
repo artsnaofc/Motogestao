@@ -244,12 +244,16 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
         </main>
 
         {/* REFINED MOBILE BOTTOM NAVIGATION (5 Primary Touch Targets) */}
-        <div className="md:hidden fixed bottom-0 left-0 right-0 border-t border-border/80 bg-background/95 backdrop-blur-xl z-40 pb-[max(0.35rem,safe-area-inset-bottom)] px-3 py-1.5 shadow-lg">
+        <nav 
+          aria-label="Navegação inferior móvel"
+          className="md:hidden fixed bottom-0 left-0 right-0 border-t border-border/80 bg-background/95 backdrop-blur-xl z-40 pb-[max(0.35rem,safe-area-inset-bottom)] px-3 py-1.5 shadow-lg select-none touch-manipulation"
+        >
           <div className="flex items-center justify-around max-w-md mx-auto">
             {/* 1. Início */}
             <Link 
               to="/" 
-              className={`flex-1 flex flex-col items-center justify-center py-1 rounded-xl transition-all active:scale-95 min-h-[44px] ${
+              onClick={() => setIsMobileMenuOpen(false)}
+              className={`flex-1 flex flex-col items-center justify-center py-1 rounded-xl transition-all active:scale-95 min-h-[48px] touch-manipulation ${
                 location.pathname === '/' 
                   ? 'text-primary font-bold' 
                   : 'text-muted-foreground hover:text-foreground'
@@ -262,7 +266,8 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
             {/* 2. Extrato */}
             <Link 
               to="/history" 
-              className={`flex-1 flex flex-col items-center justify-center py-1 rounded-xl transition-all active:scale-95 min-h-[44px] ${
+              onClick={() => setIsMobileMenuOpen(false)}
+              className={`flex-1 flex flex-col items-center justify-center py-1 rounded-xl transition-all active:scale-95 min-h-[48px] touch-manipulation ${
                 location.pathname === '/history' 
                   ? 'text-primary font-bold' 
                   : 'text-muted-foreground hover:text-foreground'
@@ -276,7 +281,8 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
             <div className="flex-1 flex flex-col items-center justify-center -mt-4">
               <Link
                 to="/add"
-                className="h-12 w-12 rounded-full bg-gradient-to-tr from-primary via-indigo-600 to-indigo-700 text-primary-foreground flex items-center justify-center shadow-lg shadow-primary/30 active:scale-90 transition-transform ring-4 ring-background"
+                onClick={() => setIsMobileMenuOpen(false)}
+                className="h-12 w-12 rounded-full bg-gradient-to-tr from-primary via-indigo-600 to-indigo-700 text-primary-foreground flex items-center justify-center shadow-lg shadow-primary/30 active:scale-90 transition-transform ring-4 ring-background touch-manipulation"
                 title="Novo Lançamento"
               >
                 <Plus className="w-6 h-6 stroke-[2.5]" />
@@ -289,7 +295,8 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
             {/* 4. Frete */}
             <Link 
               to="/freight" 
-              className={`flex-1 flex flex-col items-center justify-center py-1 rounded-xl transition-all active:scale-95 min-h-[44px] ${
+              onClick={() => setIsMobileMenuOpen(false)}
+              className={`flex-1 flex flex-col items-center justify-center py-1 rounded-xl transition-all active:scale-95 min-h-[48px] touch-manipulation ${
                 location.pathname === '/freight' 
                   ? 'text-primary font-bold' 
                   : 'text-muted-foreground hover:text-foreground'
@@ -302,8 +309,8 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
             {/* 5. Mais / Menu Sheet */}
             <button
               type="button"
-              onClick={() => setIsMobileMenuOpen(true)}
-              className={`flex-1 flex flex-col items-center justify-center py-1 rounded-xl transition-all active:scale-95 min-h-[44px] cursor-pointer relative ${
+              onClick={() => setIsMobileMenuOpen(prev => !prev)}
+              className={`flex-1 flex flex-col items-center justify-center py-1 rounded-xl transition-all active:scale-95 min-h-[48px] cursor-pointer relative touch-manipulation ${
                 isMoreMenuActive 
                   ? 'text-primary font-bold' 
                   : 'text-muted-foreground hover:text-foreground'
@@ -318,7 +325,7 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
               <span className="text-[10px] font-semibold mt-0.5 leading-none">Mais</span>
             </button>
           </div>
-        </div>
+        </nav>
 
         {/* MOBILE "MAIS" DRAWER SHEET */}
         {isMobileMenuOpen && (
