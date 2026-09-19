@@ -33,7 +33,7 @@ import { executeQuoteFetch, QuoteProvider, QuoteFetchResult } from '../lib/quote
 import { cacheManager } from '../lib/cacheManager';
 import { DataContext } from '../contexts/DataContext';
 import { supabase } from '../lib/supabase';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { syncQueueManager, SyncTask } from '../lib/syncQueue';
 
 interface DebugConsoleModalProps {

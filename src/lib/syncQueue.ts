@@ -1,6 +1,6 @@
 import { supabase } from './supabase';
 import { cacheManager } from './cacheManager';
-import { toast } from 'sonner';
+import { toast } from './toast';
 
 export interface SyncTask {
   id: string;
@@ -16,11 +16,15 @@ class SyncQueueManager {
   private queueKey = 'sync_queue';
   private processing = false;
   private listeners: ((queue: SyncTask[]) => void)[] = [];
+  private hadMultipleOfflineTasks = false;
 
   constructor() {
     if (typeof window !== 'undefined') {
       window.addEventListener('online', () => {
         console.log('[SyncQueue] Dispositivo voltou a ficar online. Retomando processamento...');
+        if (this.getQueue().length > 1) {
+          this.hadMultipleOfflineTasks = true;
+        }
         this.processQueue();
       });
       // Process queue immediately on load
@@ -264,8 +268,9 @@ class SyncQueueManager {
         const remaining = this.getQueue().filter(t => t.id !== task.id);
         this.saveQueue(remaining);
 
-        if (remaining.length === 0) {
-          toast.success('Todos os lançamentos pendentes foram salvos na nuvem!');
+        if (remaining.length === 0 && this.hadMultipleOfflineTasks) {
+          this.hadMultipleOfflineTasks = false;
+          toast.success('Todas as alterações offline foram sincronizadas com a nuvem!', { id: 'sync-queue-finish' });
         }
       }
     } catch (err) {

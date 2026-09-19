@@ -11,7 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { 
   Bike, 
   Package, 
@@ -420,7 +420,8 @@ export function AddTransaction() {
           toast.success(
             rtType === 'aporte'
               ? `Aporte recorrente programado (${numInstallments} parcelas)!`
-              : `Resgate recorrente programado (${numInstallments} parcelas)!`
+              : `Resgate recorrente programado (${numInstallments} parcelas)!`,
+            { id: 'add-tx' }
           );
         } else {
           // Single reserve transaction
@@ -435,13 +436,14 @@ export function AddTransaction() {
             payment_date: effectivePaymentDate,
             due_date: effectiveDueDate,
             is_recurring: false,
-          });
+          }, { silent: true });
 
           targetHighlightId = rtId;
           toast.success(
             rtType === 'aporte'
               ? (effectivePaymentStatus === 'paid' ? 'Aporte efetuado com sucesso!' : 'Aporte agendado como pendente!')
-              : (effectivePaymentStatus === 'paid' ? 'Resgate efetuado com sucesso!' : 'Resgate agendado como pendente!')
+              : (effectivePaymentStatus === 'paid' ? 'Resgate efetuado com sucesso!' : 'Resgate agendado como pendente!'),
+            { id: 'add-tx' }
           );
         }
 
@@ -455,7 +457,7 @@ export function AddTransaction() {
         finalAmount = calcPizzariaEarnings();
         finalCategory = 'Pizzaria';
         if (finalAmount <= 0) {
-          toast.error('Ganhos não calculados corretamente.');
+          toast.error('Ganhos não calculados corretamente.', { id: 'add-tx' });
           setLoading(false);
           return;
         }
@@ -472,7 +474,7 @@ export function AddTransaction() {
       }
 
       if (activeTab !== 'pizzaria' && finalAmount <= 0) {
-        toast.error('Informe um valor válido.');
+        toast.error('Informe um valor válido.', { id: 'add-tx' });
         setLoading(false);
         return;
       }
@@ -538,7 +540,7 @@ export function AddTransaction() {
           return newState;
         });
 
-        toast.success(`Despesa recorrente criada com sucesso (${numInstallments} parcelas)!`);
+        toast.success(`Despesa recorrente criada com sucesso (${numInstallments} parcelas)!`, { id: 'add-tx' });
         resetForm();
         navigate(`/history?highlight=${firstTxId}`);
         return;
@@ -632,7 +634,7 @@ export function AddTransaction() {
         }
       }
 
-      toast.success('Lançamento salvo com sucesso!');
+      toast.success('Lançamento salvo com sucesso!', { id: 'add-tx' });
       resetForm();
       if (newTxId) {
         navigate(`/history?highlight=${newTxId}`);

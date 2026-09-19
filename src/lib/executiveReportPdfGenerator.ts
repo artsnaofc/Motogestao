@@ -1,7 +1,7 @@
 import jsPDF from 'jspdf';
 import { format } from 'date-fns';
 import { UserSettings } from '../types';
-import { toast } from 'sonner';
+import { toast } from './toast';
 
 export interface ReportPDFData {
   grossIncome: number;

@@ -28,7 +28,7 @@ import {
   Eye
 } from 'lucide-react';
 import { systemSettings, SystemConfig } from '../../lib/systemSettings';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { DatabaseBackupSuite } from './DatabaseBackupSuite';
 
 export function SystemSettingsTab() {

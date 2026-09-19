@@ -28,7 +28,7 @@ import {
   parseLocalDate,
   getTodayLocalDateStr
 } from './reserveUtils';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 interface MassAporteConsolidatorProps {
   reserves: Reserve[];

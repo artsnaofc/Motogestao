@@ -29,7 +29,7 @@ import {
 } from 'lucide-react';
 import { syncQueueManager, SyncTask } from '../lib/syncQueue';
 import { formatCurrency } from '../lib/utils';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 interface PendingSyncQueueModalProps {
   open: boolean;

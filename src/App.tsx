@@ -1,5 +1,5 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { Toaster } from 'sonner';
+import { Toaster } from './components/ui/sonner';
 import { Login } from './pages/Login';
 import { DataProvider } from './contexts/DataContext';
 import React, { useEffect, useState, Suspense } from 'react';

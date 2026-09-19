@@ -13,7 +13,7 @@ import {
   Briefcase,
   HelpCircle
 } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { formatCnpj, fetchCnpjOnline, isValidCnpj } from '../../lib/cnpjUtils';
 import { useInvestments } from '../../contexts/InvestmentsContext';
 import { useData } from '../../contexts/DataContext';

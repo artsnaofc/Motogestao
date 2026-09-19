@@ -23,7 +23,7 @@ import {
   Maximize2,
   Sparkles
 } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { FreightQuote } from '../../types/freight';
 import { freightStorage } from '../../lib/freightStorage';
 import { downloadFreightQuotePDF, shareFreightQuotePDF } from '../../lib/freightPdfGenerator';

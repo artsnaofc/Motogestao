@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { UserSettings } from '../types';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { cacheManager } from '../lib/cacheManager';
 import { 
   LogOut, 

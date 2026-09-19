@@ -17,7 +17,7 @@ import {
   PlusCircle
 } from 'lucide-react';
 import { parseFundamentusTable, FundamentusParseResult } from '../../lib/fundamentusParser';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 interface FundamentusImportModalProps {
   isOpen: boolean;

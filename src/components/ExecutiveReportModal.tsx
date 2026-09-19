@@ -31,7 +31,7 @@ import { Transaction, UserSettings, Reserve } from '../types';
 import { downloadExecutiveReportPDF } from '../lib/executiveReportPdfGenerator';
 import { format, parseISO, startOfMonth, endOfMonth, isWithinInterval, subMonths } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import {
   ResponsiveContainer,
   BarChart,

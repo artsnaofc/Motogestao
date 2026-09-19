@@ -46,7 +46,7 @@ import {
   DialogFooter 
 } from '@/components/ui/dialog';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { FreightQuote, FreightQuoteStatus } from '../../types/freight';
 import { freightStorage } from '../../lib/freightStorage';
 import { shareFreightQuotePDF } from '../../lib/freightPdfGenerator';

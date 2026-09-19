@@ -26,7 +26,7 @@ import { cacheManager } from '../../lib/cacheManager';
 import { systemSettings, AuditLog } from '../../lib/systemSettings';
 import { syncQueueManager } from '../../lib/syncQueue';
 import { formatCurrency } from '../../lib/utils';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 interface AdminOverviewProps {
   onNavigateToTab: (tab: 'users' | 'settings' | 'backup') => void;

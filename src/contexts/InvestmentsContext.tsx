@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase';
 import { InvestmentTransaction, Dividend, UserSettings, ReserveTransaction, DividendAnalysisMode, ValuationTarget } from '../types';
 import { AssetAllocationTarget, RebalanceRulesConfig, DEFAULT_REBALANCE_RULES } from '../lib/rebalanceEngine';
 import { B3AssetHistoryRecord, getAssetTypeForTicker } from '../lib/b3Fundamentals';
-import { toast } from 'sonner';
+import { toast } from '../lib/toast';
 import { cacheManager } from '../lib/cacheManager';
 import { syncQueueManager } from '../lib/syncQueue';
 import { getTodayLocalDateStr } from '../lib/utils';
@@ -11,14 +11,14 @@ import { getEffectiveUserId } from '../lib/authUtils';
 
 export interface InvestmentsContextType {
   investmentTransactions: InvestmentTransaction[];
-  addInvestmentTransaction: (it: Omit<InvestmentTransaction, 'id' | 'user_id' | 'created_at'>) => Promise<string | undefined>;
-  updateInvestmentTransaction: (id: string, it: Partial<InvestmentTransaction>) => Promise<void>;
-  deleteInvestmentTransaction: (id: string) => Promise<void>;
+  addInvestmentTransaction: (it: Omit<InvestmentTransaction, 'id' | 'user_id' | 'created_at'>, options?: { silent?: boolean }) => Promise<string | undefined>;
+  updateInvestmentTransaction: (id: string, it: Partial<InvestmentTransaction>, options?: { silent?: boolean }) => Promise<void>;
+  deleteInvestmentTransaction: (id: string, options?: { silent?: boolean }) => Promise<void>;
   deleteInvestmentTransactionsByTicker: (ticker: string) => Promise<void>;
   dividends: Dividend[];
-  addDividend: (div: Omit<Dividend, 'id' | 'user_id' | 'created_at'>) => Promise<void>;
-  updateDividend: (id: string, div: Partial<Dividend>) => Promise<void>;
-  deleteDividend: (id: string) => Promise<void>;
+  addDividend: (div: Omit<Dividend, 'id' | 'user_id' | 'created_at'>, options?: { silent?: boolean }) => Promise<void>;
+  updateDividend: (id: string, div: Partial<Dividend>, options?: { silent?: boolean }) => Promise<void>;
+  deleteDividend: (id: string, options?: { silent?: boolean }) => Promise<void>;
   updateAssetCnpj: (ticker: string, cnpj: string) => Promise<void>;
   dividendAnalysisMode: DividendAnalysisMode;
   setDividendAnalysisMode: (mode: DividendAnalysisMode) => void;
@@ -270,7 +270,10 @@ export function InvestmentsProvider({
     return () => clearTimeout(timeout);
   }, [dividends, settings, onDataChange]);
 
-  const addInvestmentTransaction = useCallback(async (newIt: Omit<InvestmentTransaction, 'id' | 'user_id' | 'created_at'>): Promise<string | undefined> => {
+  const addInvestmentTransaction = useCallback(async (
+    newIt: Omit<InvestmentTransaction, 'id' | 'user_id' | 'created_at'>,
+    options?: { silent?: boolean }
+  ): Promise<string | undefined> => {
     const userId = (await getEffectiveUserId()) || 'default';
 
     const itObj: InvestmentTransaction = {
@@ -361,17 +364,17 @@ export function InvestmentsProvider({
         }
       }
 
-      toast.success('Lançamento de investimento registrado!');
+      if (!options?.silent) toast.success('Lançamento de investimento registrado!', { id: 'inv-action' });
       return itObj.id;
     } catch (err: any) {
       console.warn('Error queuing investment transaction:', err);
-      toast.error('Erro ao salvar lançamento localmente.');
+      if (!options?.silent) toast.error('Erro ao salvar lançamento localmente.', { id: 'inv-action' });
       return itObj.id;
     }
   }, []);
 
-  const deleteInvestmentTransaction = useCallback(async (id: string) => {
-    toast.loading('Processando exclusão...', { id: 'del-inv' });
+  const deleteInvestmentTransaction = useCallback(async (id: string, options?: { silent?: boolean }) => {
+    if (!options?.silent) toast.loading('Processando exclusão...', { id: 'del-inv' });
     const userId = (await getEffectiveUserId()) || 'default';
 
     const targetTx = investmentTransactions.find(it => it.id === id);
@@ -388,10 +391,10 @@ export function InvestmentsProvider({
       syncQueueManager.enqueue('reserve_transactions', 'delete', targetTx.transaction_id);
     }
     syncQueueManager.enqueue('investment_transactions', 'delete', id);
-    toast.success('Lançamento excluído!', { id: 'del-inv' });
+    if (!options?.silent) toast.success('Lançamento excluído!', { id: 'del-inv' });
   }, [investmentTransactions]);
 
-  const updateInvestmentTransaction = useCallback(async (id: string, updatedFields: Partial<InvestmentTransaction>) => {
+  const updateInvestmentTransaction = useCallback(async (id: string, updatedFields: Partial<InvestmentTransaction>, options?: { silent?: boolean }) => {
     const userId = (await getEffectiveUserId()) || 'default';
 
     const targetTx = investmentTransactions.find(it => it.id === id);
@@ -433,7 +436,7 @@ export function InvestmentsProvider({
       syncQueueManager.enqueue('reserve_transactions', 'update', targetTx.transaction_id, rtPayload);
     }
 
-    toast.success('Lançamento atualizado!');
+    if (!options?.silent) toast.success('Lançamento atualizado!', { id: 'inv-action' });
   }, [investmentTransactions]);
 
   const deleteInvestmentTransactionsByTicker = useCallback(async (ticker: string) => {
@@ -461,7 +464,7 @@ export function InvestmentsProvider({
     toast.success('Lançamentos excluídos!', { id: 'del-ticker' });
   }, [investmentTransactions]);
 
-  const addDividend = useCallback(async (newDiv: Omit<Dividend, 'id' | 'user_id' | 'created_at'>) => {
+  const addDividend = useCallback(async (newDiv: Omit<Dividend, 'id' | 'user_id' | 'created_at'>, options?: { silent?: boolean }) => {
     const userId = (await getEffectiveUserId()) || 'default';
 
     const divObj: Dividend = {
@@ -494,10 +497,10 @@ export function InvestmentsProvider({
     if (divObj.transaction_id) divSupabasePayload.transaction_id = divObj.transaction_id;
 
     syncQueueManager.enqueue('dividends', 'insert', divObj.id, divSupabasePayload);
-    toast.success('Provento registrado!');
+    if (!options?.silent) toast.success('Provento registrado!', { id: 'div-action' });
   }, []);
 
-  const updateDividend = useCallback(async (id: string, updatedFields: Partial<Dividend>) => {
+  const updateDividend = useCallback(async (id: string, updatedFields: Partial<Dividend>, options?: { silent?: boolean }) => {
     const userId = (await getEffectiveUserId()) || 'default';
 
     const currentDiv = dividends.find(d => d.id === id);
@@ -529,10 +532,10 @@ export function InvestmentsProvider({
     }
 
     syncQueueManager.enqueue('dividends', 'update', id, cleanPayload);
-    toast.success('Provento atualizado!');
+    if (!options?.silent) toast.success('Provento atualizado!', { id: 'div-action' });
   }, [dividends]);
 
-  const deleteDividend = useCallback(async (id: string) => {
+  const deleteDividend = useCallback(async (id: string, options?: { silent?: boolean }) => {
     const userId = (await getEffectiveUserId()) || 'default';
 
     const currentDiv = dividends.find(d => d.id === id);
@@ -547,7 +550,7 @@ export function InvestmentsProvider({
     });
 
     syncQueueManager.enqueue('dividends', 'delete', id);
-    toast.success('Provento removido!');
+    if (!options?.silent) toast.success('Provento removido!', { id: 'div-action' });
   }, [dividends]);
 
   const updateAssetCnpj = useCallback(async (ticker: string, cnpj: string) => {

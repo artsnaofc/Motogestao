@@ -46,7 +46,7 @@ import {
   parseLocalDate,
   getTodayLocalDateStr
 } from './reserveUtils';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 export interface RuleHistoryItem {
   id: string;

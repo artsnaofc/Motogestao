@@ -54,7 +54,7 @@ import {
 } from '../../lib/rebalanceEngine';
 import { useInvestments } from '../../contexts/InvestmentsContext';
 import { useData } from '../../contexts/DataContext';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { AddRebalanceAssetModal, CustomRebalanceAsset } from './AddRebalanceAssetModal';
 import { EditTargetAssetModal } from './EditTargetAssetModal';
 import { RebalanceMacroClassModal } from './RebalanceMacroClassModal';

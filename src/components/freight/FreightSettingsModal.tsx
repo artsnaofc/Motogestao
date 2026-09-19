@@ -13,7 +13,7 @@ import {
   Weight, 
   Layers
 } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { DriverFreightPreset, VehicleConfigItem } from '../../types/freight';
 import { freightStorage, DEFAULT_PRESET, DEFAULT_VEHICLES } from '../../lib/freightStorage';
 import { maskPhone, maskCpfCnpj } from '../../lib/brazilianFormatters';

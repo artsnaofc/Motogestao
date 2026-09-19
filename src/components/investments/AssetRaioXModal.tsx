@@ -6,7 +6,7 @@ import { calculateAssetDividendProjection } from '../../lib/investmentCalculatio
 import { getAssetCnpj, formatCnpj } from '../../lib/cnpjUtils';
 import { useData } from '../../contexts/DataContext';
 import { useInvestments } from '../../contexts/InvestmentsContext';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { 
   X, 
   PlusCircle, 

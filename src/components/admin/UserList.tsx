@@ -27,7 +27,7 @@ import {
 } from 'lucide-react';
 import { UserSettings } from '../../types';
 import { formatCurrency } from '../../lib/utils';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 interface UserListProps {
   users: UserSettings[];

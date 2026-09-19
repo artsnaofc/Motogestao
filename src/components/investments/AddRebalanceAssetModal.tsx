@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 import { CurrencyInput } from '../CurrencyInput';
 import { fetchSingleQuote } from '../../lib/quoteService';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 export interface CustomRebalanceAsset {
   ticker: string;

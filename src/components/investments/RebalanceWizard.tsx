@@ -3,7 +3,7 @@ import { InvestmentTransaction, UserSettings } from '../../types';
 import { CurrencyInput } from '../CurrencyInput';
 import { useData } from '../../contexts/DataContext';
 import { supabase } from '../../lib/supabase';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { cacheManager } from '../../lib/cacheManager';
 import { 
   Scale, 

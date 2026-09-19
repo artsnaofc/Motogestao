@@ -20,7 +20,7 @@ import {
   AlertTriangle,
   Loader2
 } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { FreightClient, FreightQuote } from '../../types/freight';
 import { freightStorage } from '../../lib/freightStorage';
 import { maskPhone, maskCpfCnpj } from '../../lib/brazilianFormatters';

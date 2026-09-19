@@ -20,7 +20,7 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Reserve, Transaction, UserSettings, ReserveTransaction } from '../../types';
 import { iconOptions, formatCurrency, isTxInPeriod, getPeriodDisplayLabel, getTodayLocalDateStr } from './reserveUtils';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 interface UpdateRuleModalProps {
   reserve: Reserve | null;

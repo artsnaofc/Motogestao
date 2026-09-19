@@ -12,7 +12,7 @@ import {
   Activity, 
   Layers 
 } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 interface ManualAssetModalProps {
   isOpen: boolean;

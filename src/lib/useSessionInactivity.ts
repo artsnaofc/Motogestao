@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { supabase } from './supabase';
 import { systemSettings } from './systemSettings';
-import { toast } from 'sonner';
+import { toast } from './toast';
 
 /**
  * Monitors user inactivity and triggers automatic session expiration / logout

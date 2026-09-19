@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useData } from '../contexts/DataContext';
 import { getAssetCnpj, formatCnpj, getCvmDocumentUrl, fetchCnpjOnline } from '../lib/cnpjUtils';
 import { FileText, ExternalLink, Edit3, X, Building2, CheckCircle2, Sparkles, Loader2 } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 interface CvmDocumentButtonProps {
   ticker: string;

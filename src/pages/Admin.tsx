@@ -13,7 +13,7 @@ import {
   Database
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { motion, AnimatePresence } from 'motion/react';
 import { UserSettings } from '../types';
 import { systemSettings } from '../lib/systemSettings';

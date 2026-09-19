@@ -19,7 +19,7 @@ import {
 import { UserSettings } from '../../types';
 import { supabase } from '../../lib/supabase';
 import { systemSettings } from '../../lib/systemSettings';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 interface EditUserModalProps {
   user: UserSettings | null;

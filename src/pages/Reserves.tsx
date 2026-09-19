@@ -39,7 +39,7 @@ import {
   UpdateBalanceModal, 
   RuleHistoryModal 
 } from '../components/reserves/QuickActionModals';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 export function Reserves() {
   const {

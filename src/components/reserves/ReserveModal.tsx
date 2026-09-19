@@ -17,7 +17,7 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Reserve, Transaction, UserSettings } from '../../types';
 import { iconOptions, COLOR_PALETTE, formatCurrency } from './reserveUtils';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 interface ReserveModalProps {
   isOpen: boolean;

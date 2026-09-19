@@ -4,7 +4,7 @@ import { Transaction, UserSettings, Reserve, ReserveTransaction, InvestmentTrans
 import { QuoteProvider, QuoteFetchResult } from '../lib/quoteService';
 import { cacheManager } from '../lib/cacheManager';
 import { syncQueueManager } from '../lib/syncQueue';
-import { toast } from 'sonner';
+import { toast } from '../lib/toast';
 import { getEffectiveUserId } from '../lib/authUtils';
 
 // Segregated Contexts & Hooks

@@ -18,7 +18,7 @@ import { fetchSingleQuote } from '../lib/quoteService';
 import { calculateAssetDividendProjection, calculatePortfolioProjections, calculatePortfolioPerformanceMetrics } from '../lib/investmentCalculations';
 import { InvestmentTransaction, Dividend, DividendType, DividendStatus } from '../types';
 import { getTodayLocalDateStr } from '../lib/utils';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { 
   PlusCircle, 
   TrendingUp, 

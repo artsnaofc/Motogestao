@@ -1,5 +1,5 @@
 import React from 'react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { Share2, Copy, FileSpreadsheet, X, Check } from 'lucide-react';
 
 interface Position {

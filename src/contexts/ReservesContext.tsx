@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
 import { Reserve, ReserveTransaction } from '../types';
-import { toast } from 'sonner';
+import { toast } from '../lib/toast';
 import { cacheManager } from '../lib/cacheManager';
 import { syncQueueManager } from '../lib/syncQueue';
 import { getEffectiveUserId } from '../lib/authUtils';
@@ -13,8 +13,8 @@ export interface ReservesContextType {
   updateReserve: (id: string, reserve: Partial<Reserve>) => Promise<void>;
   deleteReserve: (id: string) => Promise<void>;
   addReserveTransaction: (rt: Omit<ReserveTransaction, 'id' | 'user_id' | 'created_at'>, options?: { silent?: boolean }) => Promise<string | undefined>;
-  deleteReserveTransaction: (id: string) => Promise<void>;
-  updateReserveTransaction: (id: string, rt: Partial<ReserveTransaction>) => Promise<void>;
+  deleteReserveTransaction: (id: string, options?: { silent?: boolean }) => Promise<void>;
+  updateReserveTransaction: (id: string, rt: Partial<ReserveTransaction>, options?: { silent?: boolean }) => Promise<void>;
   setReserves: React.Dispatch<React.SetStateAction<Reserve[]>>;
   setReserveTransactions: React.Dispatch<React.SetStateAction<ReserveTransaction[]>>;
 }
@@ -77,7 +77,7 @@ export function ReservesProvider({
     });
 
     syncQueueManager.enqueue('reserves', 'insert', resObj.id, supabasePayload);
-    toast.success('Reserva criada com sucesso!');
+    toast.success('Reserva criada com sucesso!', { id: 'reserve-action' });
   }, []);
 
   const updateReserve = useCallback(async (id: string, updatedFields: Partial<Reserve>) => {
@@ -93,7 +93,7 @@ export function ReservesProvider({
     });
 
     syncQueueManager.enqueue('reserves', 'update', id, { ...supabasePayload, updated_at: new Date().toISOString() });
-    toast.success('Reserva atualizada com sucesso!');
+    toast.success('Reserva atualizada com sucesso!', { id: 'reserve-action' });
   }, []);
 
   const deleteReserve = useCallback(async (id: string) => {
@@ -119,7 +119,7 @@ export function ReservesProvider({
     });
     
     syncQueueManager.enqueue('reserves', 'delete', id);
-    toast.success('Reserva excluída com sucesso!');
+    toast.success('Reserva excluída com sucesso!', { id: 'reserve-action' });
   }, [reserveTransactions]);
 
   const addReserveTransaction = useCallback(async (
@@ -169,11 +169,11 @@ export function ReservesProvider({
     });
 
     syncQueueManager.enqueue('reserve_transactions', 'insert', rtObj.id, supabasePayload);
-    if (!options?.silent) toast.success('Movimentação registrada com sucesso!');
+    if (!options?.silent) toast.success('Movimentação registrada com sucesso!', { id: 'reserve-action' });
     return rtObj.id;
   }, []);
 
-  const deleteReserveTransaction = useCallback(async (id: string) => {
+  const deleteReserveTransaction = useCallback(async (id: string, options?: { silent?: boolean }) => {
     const userId = await getEffectiveUserId();
     if (!userId) return;
 
@@ -195,10 +195,10 @@ export function ReservesProvider({
     }
 
     syncQueueManager.enqueue('reserve_transactions', 'delete', id);
-    toast.success('Movimentação excluída com sucesso!');
+    if (!options?.silent) toast.success('Movimentação excluída com sucesso!', { id: 'reserve-action' });
   }, [reserveTransactions]);
 
-  const updateReserveTransaction = useCallback(async (id: string, updatedFields: Partial<ReserveTransaction>) => {
+  const updateReserveTransaction = useCallback(async (id: string, updatedFields: Partial<ReserveTransaction>, options?: { silent?: boolean }) => {
     const userId = await getEffectiveUserId();
     if (!userId) return;
 
@@ -213,7 +213,7 @@ export function ReservesProvider({
     const { source, batch_id, ...supabasePayload } = updatedFields as any;
 
     syncQueueManager.enqueue('reserve_transactions', 'update', id, supabasePayload);
-    toast.success('Movimentação de reserva atualizada!');
+    if (!options?.silent) toast.success('Movimentação de reserva atualizada!', { id: 'reserve-action' });
   }, []);
 
   // Dynamically calculate computed balances for reserves (only counting settled/paid transactions)

@@ -17,7 +17,7 @@ import {
 } from 'lucide-react';
 import { AssetAllocationTarget } from '../../lib/rebalanceEngine';
 import { fetchSingleQuote } from '../../lib/quoteService';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 export interface EditTargetAssetModalProps {
   isOpen: boolean;

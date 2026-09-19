@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
 import { Transaction, UserSettings } from '../types';
-import { toast } from 'sonner';
+import { toast } from '../lib/toast';
 import { cacheManager } from '../lib/cacheManager';
 import { syncQueueManager } from '../lib/syncQueue';
 import { getTodayLocalDateStr } from '../lib/utils';
@@ -9,8 +9,8 @@ import { getEffectiveUserId } from '../lib/authUtils';
 
 export interface TransactionsContextType {
   transactions: Transaction[];
-  updateTransaction: (id: string, transaction: Partial<Transaction>) => Promise<void>;
-  deleteTransaction: (id: string) => Promise<void>;
+  updateTransaction: (id: string, transaction: Partial<Transaction>, options?: { silent?: boolean }) => Promise<void>;
+  deleteTransaction: (id: string, options?: { silent?: boolean }) => Promise<void>;
   settings: UserSettings | null;
   setSettings: React.Dispatch<React.SetStateAction<UserSettings | null>>;
   loading: boolean;
@@ -77,7 +77,7 @@ export function TransactionsProvider({
     }
   }, [onRefresh]);
 
-  const updateTransaction = useCallback(async (id: string, updatedFields: Partial<Transaction>) => {
+  const updateTransaction = useCallback(async (id: string, updatedFields: Partial<Transaction>, options?: { silent?: boolean }) => {
     const userId = await getEffectiveUserId();
 
     const { id: _id, user_id: _uid, created_at: _ca, ...cleanPayload } = updatedFields as any;
@@ -91,13 +91,15 @@ export function TransactionsProvider({
       return newState;
     });
 
-    toast.success('Lançamento atualizado!');
+    if (!options?.silent) {
+      toast.success('Lançamento atualizado!', { id: 'tx-action' });
+    }
 
     // Always push to sync queue
     syncQueueManager.enqueue('transactions', 'update', id, cleanPayload);
   }, []);
 
-  const deleteTransaction = useCallback(async (id: string) => {
+  const deleteTransaction = useCallback(async (id: string, options?: { silent?: boolean }) => {
     const userId = await getEffectiveUserId();
 
     setTransactions(prev => {
@@ -109,7 +111,9 @@ export function TransactionsProvider({
       return newState;
     });
 
-    toast.success('Lançamento excluído!');
+    if (!options?.silent) {
+      toast.success('Lançamento excluído!', { id: 'tx-action' });
+    }
 
     // Always push to sync queue
     syncQueueManager.enqueue('transactions', 'delete', id);

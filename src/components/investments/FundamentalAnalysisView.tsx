@@ -46,7 +46,7 @@ import {
 import { useInvestments } from '../../contexts/InvestmentsContext';
 import { FundamentusImportModal } from './FundamentusImportModal';
 import { ManualAssetModal } from './ManualAssetModal';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 export type RankingMethod = 
   | 'score_b3'      // Score B3 Universal (Multicritério)

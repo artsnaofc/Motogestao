@@ -18,7 +18,7 @@ import {
   Sparkles,
   Info
 } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 interface PersonalExpenseBarConfigDialogProps {
   open: boolean;

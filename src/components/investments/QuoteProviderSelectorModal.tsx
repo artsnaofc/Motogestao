@@ -24,7 +24,7 @@ import {
 import { QuoteProvider, QuoteFetchResult } from '../../lib/quoteService';
 import { useData } from '../../contexts/DataContext';
 import { supabase } from '../../lib/supabase';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 interface QuoteProviderSelectorModalProps {
   open: boolean;

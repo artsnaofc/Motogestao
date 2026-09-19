@@ -29,7 +29,7 @@ import {
   parseLocalDate,
   getTodayLocalDateStr
 } from './reserveUtils';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 // ==========================================
 // 1. MODAL APORTE MANUAL INDIVIDUAL

@@ -26,7 +26,7 @@ import {
   ChevronRight,
   UserCheck
 } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { FreightQuote, DriverFreightPreset, FreightClient } from '../types/freight';
 import { getTodayLocalDateStr } from '../lib/utils';
 import { freightStorage } from '../lib/freightStorage';
