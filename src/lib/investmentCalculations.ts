@@ -1,4 +1,5 @@
 import { Dividend, InvestmentTransaction, DividendAnalysisMode, ValuationTarget } from '../types';
+import { getTodayLocalDateStr } from './utils';
 
 export interface AssetProjectionResult {
   ticker: string;
@@ -155,7 +156,7 @@ export function calculateAssetDividendProjection(
     const now = new Date();
     const oneYearAgo = new Date();
     oneYearAgo.setFullYear(now.getFullYear() - 1);
-    const oneYearAgoStr = oneYearAgo.toISOString().split('T')[0];
+    const oneYearAgoStr = getTodayLocalDateStr(oneYearAgo);
 
     // 1. Dividends within the last 12 months (or upcoming provisioned)
     const ltmDivs = consideredDivs.filter(d => {
@@ -685,7 +686,7 @@ export function calculatePortfolioPerformanceMetrics(
   });
 
   const eventDates = Array.from(eventDatesSet).sort();
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = getTodayLocalDateStr();
 
   const txByDate: Record<string, InvestmentTransaction[]> = {};
   sortedTx.forEach(tx => {

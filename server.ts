@@ -291,12 +291,77 @@ async function startServer() {
     return { quotes, variations, timestamps, details };
   }
 
+  // --- In-Memory High Performance Quote Cache ---
+  interface ServerQuoteCacheEntry {
+    ticker: string;
+    price: number;
+    change: number;
+    updatedAt: string;
+    provider: string;
+    cachedAt: number;
+  }
+
+  const quoteMemoryCache = new Map<string, ServerQuoteCacheEntry>();
+  const DEFAULT_QUOTE_CACHE_TTL_MS = 60 * 1000; // 60s cache TTL
+
+  function getCachedQuote(ticker: string, forceRefresh = false, ttlMs = DEFAULT_QUOTE_CACHE_TTL_MS): ServerQuoteCacheEntry | null {
+    if (forceRefresh) return null;
+    const clean = ticker.trim().toUpperCase();
+    const entry = quoteMemoryCache.get(clean);
+    if (!entry) return null;
+    if (Date.now() - entry.cachedAt > ttlMs) {
+      quoteMemoryCache.delete(clean);
+      return null;
+    }
+    return entry;
+  }
+
+  function setCachedQuote(ticker: string, price: number, change: number, provider: string, updatedAt: string) {
+    if (typeof price === 'number' && price > 0) {
+      const clean = ticker.trim().toUpperCase();
+      quoteMemoryCache.set(clean, {
+        ticker: clean,
+        price,
+        change,
+        provider,
+        updatedAt: updatedAt || new Date().toISOString(),
+        cachedAt: Date.now(),
+      });
+    }
+  }
+
+  // Cache stats and management endpoints
+  app.get('/api/quotes/cache', (req, res) => {
+    const entries = Array.from(quoteMemoryCache.values()).map(e => ({
+      ticker: e.ticker,
+      price: e.price,
+      change: e.change,
+      provider: e.provider,
+      updatedAt: e.updatedAt,
+      ageSeconds: Math.round((Date.now() - e.cachedAt) / 1000),
+      expiresInSeconds: Math.max(0, Math.round((DEFAULT_QUOTE_CACHE_TTL_MS - (Date.now() - e.cachedAt)) / 1000)),
+    }));
+
+    res.json({
+      totalCached: entries.length,
+      ttlSeconds: DEFAULT_QUOTE_CACHE_TTL_MS / 1000,
+      entries,
+    });
+  });
+
+  app.all('/api/quotes/clear-cache', (req, res) => {
+    const count = quoteMemoryCache.size;
+    quoteMemoryCache.clear();
+    res.json({ success: true, clearedEntries: count, message: 'Cache de cotações esvaziado com sucesso.' });
+  });
+
   // Quotes API endpoint
   app.get('/api/quotes', async (req, res) => {
     const startTime = performance.now();
     const tickersParam = (req.query.tickers as string) || '';
     const providerParam = ((req.query.provider as string) || 'auto').toLowerCase();
     const tokenParam = (req.query.token as string) || process.env.BRAPI_TOKEN || '';
+    const forceRefresh = req.query.refresh === 'true' || req.query.forceRefresh === 'true';
 
     const tickers = Array.from(new Set(
       tickersParam
@@ -314,6 +379,7 @@ async function startServer() {
         durationMs: 0,
         successCount: 0,
         failedCount: 0,
+        cacheStats: { hits: 0, misses: 0, totalCached: quoteMemoryCache.size },
         details: [],
       });
     }
@@ -324,54 +390,105 @@ async function startServer() {
     let allDetails: any[] = [];
     let providerUsed = 'Multi-Fonte B3 (Alta Confiabilidade)';
 
-    if (providerParam === 'brapi') {
-      providerUsed = 'Brapi API (Servidor)';
-      const brapiResult = await fetchBrapiServer(tickers, tokenParam);
-      Object.assign(finalQuotes, brapiResult.quotes);
-      Object.assign(finalVariations, brapiResult.variations);
-      Object.assign(finalTimestamps, brapiResult.timestamps);
-      allDetails = brapiResult.details;
-    } else if (providerParam === 'mfinance') {
-      providerUsed = 'mFinance B3 (Servidor)';
-      const mfinanceResult = await fetchMFinanceServer(tickers);
-      Object.assign(finalQuotes, mfinanceResult.quotes);
-      Object.assign(finalVariations, mfinanceResult.variations);
-      Object.assign(finalTimestamps, mfinanceResult.timestamps);
-      allDetails = mfinanceResult.details;
-    } else if (providerParam === 'yahoo') {
-      providerUsed = 'Yahoo Finance B3 (Servidor)';
-      const yahooResult = await fetchYahooQuotesServer(tickers);
-      Object.assign(finalQuotes, yahooResult.quotes);
-      Object.assign(finalVariations, yahooResult.variations);
-      Object.assign(finalTimestamps, yahooResult.timestamps);
-      allDetails = yahooResult.details;
-    } else {
-      // AUTO MODE (High Speed & Zero Loss Cascade):
-      // Stage 1. Yahoo Finance Spark Batch (resolves Ações, FIIs, BDRs, ETFs in ~150ms)
-      const yahooResult = await fetchYahooQuotesServer(tickers);
-      Object.assign(finalQuotes, yahooResult.quotes);
-      Object.assign(finalVariations, yahooResult.variations);
-      Object.assign(finalTimestamps, yahooResult.timestamps);
-      allDetails.push(...yahooResult.details);
+    // Step 1: Check memory cache first (sub-millisecond resolution)
+    const missingTickers: string[] = [];
+    let cacheHits = 0;
 
-      // Stage 2. If any tickers missing, try mFinance (specialized for FIIs & Brazilian stocks)
-      const missing1 = tickers.filter(t => !finalQuotes[t] || finalQuotes[t] <= 0);
-      if (missing1.length > 0) {
-        const mfinanceResult = await fetchMFinanceServer(missing1);
-        Object.assign(finalQuotes, mfinanceResult.quotes);
-        Object.assign(finalVariations, mfinanceResult.variations);
-        Object.assign(finalTimestamps, mfinanceResult.timestamps);
-        allDetails.push(...mfinanceResult.details);
+    for (const ticker of tickers) {
+      const cached = getCachedQuote(ticker, forceRefresh);
+      if (cached) {
+        finalQuotes[ticker] = cached.price;
+        finalVariations[ticker] = cached.change;
+        finalTimestamps[ticker] = cached.updatedAt;
+        allDetails.push({
+          ticker,
+          price: cached.price,
+          change: cached.change,
+          provider: `${cached.provider} (Cache Servidor)`,
+          updatedAt: cached.updatedAt,
+          cached: true,
+        });
+        cacheHits++;
+      } else {
+        missingTickers.push(ticker);
       }
+    }
 
-      // Stage 3. If still missing, try Brapi
-      const missing2 = tickers.filter(t => !finalQuotes[t] || finalQuotes[t] <= 0);
-      if (missing2.length > 0) {
-        const brapiResult = await fetchBrapiServer(missing2, tokenParam);
+    // Step 2: Fetch only uncached/missing tickers from external network providers
+    if (missingTickers.length > 0) {
+      if (providerParam === 'brapi') {
+        providerUsed = 'Brapi API (Servidor)';
+        const brapiResult = await fetchBrapiServer(missingTickers, tokenParam);
         Object.assign(finalQuotes, brapiResult.quotes);
         Object.assign(finalVariations, brapiResult.variations);
         Object.assign(finalTimestamps, brapiResult.timestamps);
         allDetails.push(...brapiResult.details);
+
+        for (const [sym, price] of Object.entries(brapiResult.quotes)) {
+          setCachedQuote(sym, price, brapiResult.variations[sym] || 0, 'Brapi API', brapiResult.timestamps[sym] || new Date().toISOString());
+        }
+      } else if (providerParam === 'mfinance') {
+        providerUsed = 'mFinance B3 (Servidor)';
+        const mfinanceResult = await fetchMFinanceServer(missingTickers);
+        Object.assign(finalQuotes, mfinanceResult.quotes);
+        Object.assign(finalVariations, mfinanceResult.variations);
+        Object.assign(finalTimestamps, mfinanceResult.timestamps);
+        allDetails.push(...mfinanceResult.details);
+
+        for (const [sym, price] of Object.entries(mfinanceResult.quotes)) {
+          setCachedQuote(sym, price, mfinanceResult.variations[sym] || 0, 'mFinance B3', mfinanceResult.timestamps[sym] || new Date().toISOString());
+        }
+      } else if (providerParam === 'yahoo') {
+        providerUsed = 'Yahoo Finance B3 (Servidor)';
+        const yahooResult = await fetchYahooQuotesServer(missingTickers);
+        Object.assign(finalQuotes, yahooResult.quotes);
+        Object.assign(finalVariations, yahooResult.variations);
+        Object.assign(finalTimestamps, yahooResult.timestamps);
+        allDetails.push(...yahooResult.details);
+
+        for (const [sym, price] of Object.entries(yahooResult.quotes)) {
+          setCachedQuote(sym, price, yahooResult.variations[sym] || 0, 'Yahoo Finance', yahooResult.timestamps[sym] || new Date().toISOString());
+        }
+      } else {
+        // AUTO CASCADE MODE:
+        // Stage 1. Yahoo Finance Spark Batch (~150ms)
+        const yahooResult = await fetchYahooQuotesServer(missingTickers);
+        Object.assign(finalQuotes, yahooResult.quotes);
+        Object.assign(finalVariations, yahooResult.variations);
+        Object.assign(finalTimestamps, yahooResult.timestamps);
+        allDetails.push(...yahooResult.details);
+
+        for (const [sym, price] of Object.entries(yahooResult.quotes)) {
+          setCachedQuote(sym, price, yahooResult.variations[sym] || 0, 'Yahoo Finance', yahooResult.timestamps[sym] || new Date().toISOString());
+        }
+
+        // Stage 2. If any tickers missing, try mFinance
+        const missing1 = missingTickers.filter(t => !finalQuotes[t] || finalQuotes[t] <= 0);
+        if (missing1.length > 0) {
+          const mfinanceResult = await fetchMFinanceServer(missing1);
+          Object.assign(finalQuotes, mfinanceResult.quotes);
+          Object.assign(finalVariations, mfinanceResult.variations);
+          Object.assign(finalTimestamps, mfinanceResult.timestamps);
+          allDetails.push(...mfinanceResult.details);
+
+          for (const [sym, price] of Object.entries(mfinanceResult.quotes)) {
+            setCachedQuote(sym, price, mfinanceResult.variations[sym] || 0, 'mFinance B3', mfinanceResult.timestamps[sym] || new Date().toISOString());
+          }
+        }
+
+        // Stage 3. If still missing, try Brapi
+        const missing2 = missingTickers.filter(t => !finalQuotes[t] || finalQuotes[t] <= 0);
+        if (missing2.length > 0) {
+          const brapiResult = await fetchBrapiServer(missing2, tokenParam);
+          Object.assign(finalQuotes, brapiResult.quotes);
+          Object.assign(finalVariations, brapiResult.variations);
+          Object.assign(finalTimestamps, brapiResult.timestamps);
+          allDetails.push(...brapiResult.details);
+
+          for (const [sym, price] of Object.entries(brapiResult.quotes)) {
+            setCachedQuote(sym, price, brapiResult.variations[sym] || 0, 'Brapi API', brapiResult.timestamps[sym] || new Date().toISOString());
+          }
+        }
       }
     }
 
@@ -396,54 +513,81 @@ async function startServer() {
       quotes: finalQuotes,
       variations: finalVariations,
       timestamps: finalTimestamps,
-      providerUsed,
+      providerUsed: cacheHits === tickers.length ? 'Cache em Memória (Ultra Rápido)' : providerUsed,
       durationMs,
       successCount,
       failedCount,
+      cacheStats: {
+        hits: cacheHits,
+        misses: missingTickers.length,
+        totalCached: quoteMemoryCache.size,
+        hitRatio: tickers.length > 0 ? `${Math.round((cacheHits / tickers.length) * 100)}%` : '0%',
+      },
       details: allDetails,
     });
   });
 
-  // Single Quote endpoint
+  // Single Quote endpoint with Cache-First
   app.get('/api/quote/:ticker', async (req, res) => {
     const rawTicker = (req.params.ticker || '').trim().toUpperCase();
+    const forceRefresh = req.query.refresh === 'true' || req.query.forceRefresh === 'true';
+
     if (!rawTicker) {
       return res.status(400).json({ error: 'Ticker obrigatório' });
+    }
+
+    // Check memory cache first
+    const cached = getCachedQuote(rawTicker, forceRefresh);
+    if (cached) {
+      return res.json({
+        ticker: rawTicker,
+        price: cached.price,
+        change: cached.change,
+        updatedAt: cached.updatedAt,
+        provider: `${cached.provider} (Cache Servidor)`,
+        cached: true,
+      });
     }
 
     // Try Yahoo Spark/Chart first
     const yahoo = await fetchYahooQuotesServer([rawTicker]);
     if (yahoo.quotes[rawTicker]) {
+      setCachedQuote(rawTicker, yahoo.quotes[rawTicker], yahoo.variations[rawTicker] || 0, 'Yahoo Finance', yahoo.timestamps[rawTicker]);
       return res.json({
         ticker: rawTicker,
         price: yahoo.quotes[rawTicker],
         change: yahoo.variations[rawTicker],
         updatedAt: yahoo.timestamps[rawTicker],
         provider: 'Yahoo Finance',
+        cached: false,
       });
     }
 
     // Try mFinance
     const mfinance = await fetchMFinanceServer([rawTicker]);
     if (mfinance.quotes[rawTicker]) {
+      setCachedQuote(rawTicker, mfinance.quotes[rawTicker], mfinance.variations[rawTicker] || 0, 'mFinance', mfinance.timestamps[rawTicker]);
       return res.json({
         ticker: rawTicker,
         price: mfinance.quotes[rawTicker],
         change: mfinance.variations[rawTicker],
         updatedAt: mfinance.timestamps[rawTicker],
         provider: 'mFinance',
+        cached: false,
       });
     }
 
     // Try Brapi
     const brapi = await fetchBrapiServer([rawTicker], req.query.token as string);
     if (brapi.quotes[rawTicker]) {
+      setCachedQuote(rawTicker, brapi.quotes[rawTicker], brapi.variations[rawTicker] || 0, 'Brapi', brapi.timestamps[rawTicker]);
       return res.json({
         ticker: rawTicker,
         price: brapi.quotes[rawTicker],
         change: brapi.variations[rawTicker],
         updatedAt: brapi.timestamps[rawTicker],
         provider: 'Brapi',
+        cached: false,
       });
     }
 

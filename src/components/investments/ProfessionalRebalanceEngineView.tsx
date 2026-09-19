@@ -59,6 +59,7 @@ import { AddRebalanceAssetModal, CustomRebalanceAsset } from './AddRebalanceAsse
 import { EditTargetAssetModal } from './EditTargetAssetModal';
 import { RebalanceMacroClassModal } from './RebalanceMacroClassModal';
 import { fetchSingleQuote } from '../../lib/quoteService';
+import { getTodayLocalDateStr } from '../../lib/utils';
 
 interface ProfessionalRebalanceEngineViewProps {
   positions: any[];
@@ -171,7 +172,7 @@ export const ProfessionalRebalanceEngineView: React.FC<ProfessionalRebalanceEngi
   const [isMacroClassModalOpen, setIsMacroClassModalOpen] = useState(false);
   const [pendingOrders, setPendingOrders] = useState<any[] | null>(null);
   const [selectedReserveIdForExecution, setSelectedReserveIdForExecution] = useState<string>(invReserve?.id || '');
-  const [executionDate, setExecutionDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
+  const [executionDate, setExecutionDate] = useState<string>(() => getTodayLocalDateStr());
   const [isExecuting, setIsExecuting] = useState(false);
 
   // Sync targets when incoming targets change

@@ -77,6 +77,7 @@ import { syncQueueManager } from '../lib/syncQueue';
 import { cacheManager } from '../lib/cacheManager';
 import { freightStorage } from '../lib/freightStorage';
 import { calculateNextOccurrence, getFrequencyLabel, generateUUID, parseLocalDate } from '../lib/recurrenceUtils';
+import { getTodayLocalDateStr } from '../lib/utils';
 import { RefreshCw, CalendarClock, CalendarRange, CheckCircle2, AlertCircle } from 'lucide-react';
 
 export function AddTransaction() {
@@ -119,7 +120,7 @@ export function AddTransaction() {
   const incomeCategories = incomeCategoriesRaw.filter(c => c !== 'Pizzaria' && c !== 'Frete do Dia');
 
   // Common Fields
-  const [date, setDate] = useState(paramDate || new Date().toISOString().split('T')[0]);
+  const [date, setDate] = useState(paramDate || getTodayLocalDateStr());
   const [startKm, setStartKm] = useState('');
   const [endKm, setEndKm] = useState('');
   const [description, setDescription] = useState(
@@ -232,6 +233,7 @@ export function AddTransaction() {
     setPaymentStatus('paid');
     setPaymentDate('');
     setDueDate('');
+    setDate(getTodayLocalDateStr());
     setIsRecurring(false);
     setRecurrenceFrequency('monthly');
     setRecurrenceInstallments('12');
@@ -372,7 +374,7 @@ export function AddTransaction() {
 
         const effectivePaymentStatus = paymentStatus;
         const effectivePaymentDate = effectivePaymentStatus === 'paid' 
-          ? (paymentDate.trim() || date || new Date().toISOString().split('T')[0])
+          ? (paymentDate.trim() || date || getTodayLocalDateStr())
           : null;
         const effectiveDueDate = dueDate.trim() || date;
 
@@ -481,7 +483,7 @@ export function AddTransaction() {
         const recurrenceGroupId = generateUUID();
         const effectiveDueDate = dueDate.trim() || date;
         const effectivePaymentDate = paymentStatus === 'paid' 
-          ? (paymentDate.trim() || date || new Date().toISOString().split('T')[0])
+          ? (paymentDate.trim() || date || getTodayLocalDateStr())
           : null;
 
         const newTxBatch: any[] = [];
@@ -545,7 +547,7 @@ export function AddTransaction() {
       const newTxId = generateUUID();
       const effectivePaymentStatus: PaymentStatus = activeTab === 'despesa' ? paymentStatus : 'paid';
       const effectivePaymentDate = effectivePaymentStatus === 'paid' 
-        ? (paymentDate.trim() || date || new Date().toISOString().split('T')[0])
+        ? (paymentDate.trim() || date || getTodayLocalDateStr())
         : null;
       const effectiveDueDate = (activeTab === 'despesa' && dueDate.trim()) ? dueDate.trim() : date;
 
@@ -1022,7 +1024,7 @@ export function AddTransaction() {
                       <Input
                         type="date"
                         value={paymentDate}
-                        placeholder={date || new Date().toISOString().split('T')[0]}
+                        placeholder={date || getTodayLocalDateStr()}
                         onChange={(e) => setPaymentDate(e.target.value)}
                         className="h-10 rounded-xl border-border bg-card text-xs font-semibold"
                       />
@@ -1177,10 +1179,10 @@ export function AddTransaction() {
                                 1ª: <strong>{date ? format(parseLocalDate(date), 'dd/MM/yyyy') : 'Hoje'}</strong> ({paymentStatus === 'paid' ? 'Pago' : 'Pendente'})
                               </span>
                               <span className="bg-muted/40 p-1.5 rounded text-[10px]">
-                                2ª: <strong>{format(parseLocalDate(calculateNextOccurrence(date || new Date().toISOString().split('T')[0], recurrenceFrequency, 1)), 'dd/MM/yyyy')}</strong> (Pendente)
+                                2ª: <strong>{format(parseLocalDate(calculateNextOccurrence(date || getTodayLocalDateStr(), recurrenceFrequency, 1)), 'dd/MM/yyyy')}</strong> (Pendente)
                               </span>
                               <span className="bg-muted/40 p-1.5 rounded text-[10px]">
-                                3ª: <strong>{format(parseLocalDate(calculateNextOccurrence(date || new Date().toISOString().split('T')[0], recurrenceFrequency, 2)), 'dd/MM/yyyy')}</strong> (Pendente)
+                                3ª: <strong>{format(parseLocalDate(calculateNextOccurrence(date || getTodayLocalDateStr(), recurrenceFrequency, 2)), 'dd/MM/yyyy')}</strong> (Pendente)
                               </span>
                             </div>
                           </div>

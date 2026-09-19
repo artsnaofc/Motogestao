@@ -73,6 +73,7 @@ async function fetchServerQuotes(
     }
     if (options.forceRefresh) {
       queryParams.append('force', 'true');
+      queryParams.append('refresh', 'true');
     }
 
     const res = await fetchWithTimeout(`/api/quotes?${queryParams.toString()}`, options.timeoutMs || 8000);

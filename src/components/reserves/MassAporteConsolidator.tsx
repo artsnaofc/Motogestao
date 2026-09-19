@@ -25,7 +25,8 @@ import {
   formatCurrency, 
   calculateSuggestion, 
   getEffectiveAportesInPeriod,
-  parseLocalDate 
+  parseLocalDate,
+  getTodayLocalDateStr
 } from './reserveUtils';
 import { toast } from 'sonner';
 
@@ -61,7 +62,7 @@ export function MassAporteConsolidator({
   // Selection state
   const [selectedReserves, setSelectedReserves] = useState<Record<string, boolean>>({});
   const [customAmounts, setCustomAmounts] = useState<Record<string, string>>({});
-  const [batchDate, setBatchDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [batchDate, setBatchDate] = useState<string>(getTodayLocalDateStr());
   const [batchDesc, setBatchDesc] = useState<string>('Aporte Consolidado');
 
   // Search & Filter

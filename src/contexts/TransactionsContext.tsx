@@ -4,6 +4,7 @@ import { Transaction, UserSettings } from '../types';
 import { toast } from 'sonner';
 import { cacheManager } from '../lib/cacheManager';
 import { syncQueueManager } from '../lib/syncQueue';
+import { getTodayLocalDateStr } from '../lib/utils';
 
 export interface TransactionsContextType {
   transactions: Transaction[];
@@ -46,7 +47,7 @@ export function TransactionsProvider({
     try {
       const now = new Date();
       const startStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
-      const endStr = now.toISOString().split('T')[0];
+      const endStr = getTodayLocalDateStr(now);
       return { start: startStr, end: endStr };
     } catch {
       return null;

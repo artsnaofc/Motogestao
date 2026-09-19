@@ -43,7 +43,8 @@ import {
   formatDateDisplay, 
   iconOptions, 
   isTxInPeriod,
-  parseLocalDate 
+  parseLocalDate,
+  getTodayLocalDateStr
 } from './reserveUtils';
 import { toast } from 'sonner';
 
@@ -834,7 +835,7 @@ export function ReserveHistoryTab({
   const handleOpenEdit = (tx: ReserveTransaction) => {
     setTxToEdit(tx);
     setEditAmount(String(tx.amount || ''));
-    setEditDate(tx.date || new Date().toISOString().split('T')[0]);
+    setEditDate(tx.date || getTodayLocalDateStr());
     setEditDescription(tx.description || '');
     setEditCategory(tx.category || '');
     setEditReserveId(tx.reserve_id || '');
@@ -873,7 +874,7 @@ export function ReserveHistoryTab({
     setRuleToEdit(rule);
     setEditRuleType(rule.regra_tipo || 'km');
     setEditRuleValue(rule.regra_valor !== undefined ? String(rule.regra_valor) : '');
-    setEditRuleStartDate(rule.start_date || rule.date || new Date().toISOString().split('T')[0]);
+    setEditRuleStartDate(rule.start_date || rule.date || getTodayLocalDateStr());
     setEditRuleEndDate(rule.end_date || '');
     const initialCats = Array.isArray(rule.regra_categorias) ? rule.regra_categorias : [];
     setEditRuleCategories(initialCats.join(', '));
@@ -952,7 +953,7 @@ export function ReserveHistoryTab({
           
           currentHist.push({
             start_date: prevStart,
-            end_date: editRuleStartDate || new Date().toISOString().split('T')[0],
+            end_date: editRuleStartDate || getTodayLocalDateStr(),
             regra_tipo: reserve.regra_tipo,
             regra_valor: reserve.regra_valor,
             regra_categorias: reserve.regra_categorias || [],
@@ -968,7 +969,7 @@ export function ReserveHistoryTab({
           regra_tipo: editRuleType as any,
           regra_valor: numVal,
           regra_categorias: parsedCats,
-          regra_inicio_validade: editRuleStartDate || new Date().toISOString().split('T')[0],
+          regra_inicio_validade: editRuleStartDate || getTodayLocalDateStr(),
           regra_ativa: editRuleActive,
           rule_history: currentHist,
           updated_at: new Date().toISOString()
@@ -1061,7 +1062,7 @@ export function ReserveHistoryTab({
             regra_valor: Number(fallbackRuleCandidate.regra_valor),
             regra_categorias: fallbackRuleCandidate.regra_categorias || [],
             regra_ativa: fallbackRuleCandidate.regra_ativa !== false,
-            regra_inicio_validade: new Date().toISOString().split('T')[0],
+            regra_inicio_validade: getTodayLocalDateStr(),
             rule_history: remainingHistory,
             updated_at: new Date().toISOString()
           };
@@ -1172,7 +1173,7 @@ export function ReserveHistoryTab({
                 className="bg-background border border-border/80 rounded-xl px-3 py-1.5 text-xs text-foreground focus:ring-1 focus:ring-indigo-500 outline-none font-mono cursor-pointer"
                 value={customDateRange?.start || ''}
                 onChange={(e) => {
-                  const todayStr = new Date().toISOString().split('T')[0];
+                  const todayStr = getTodayLocalDateStr();
                   setCustomDateRange({
                     start: e.target.value,
                     end: customDateRange?.end || todayStr
@@ -1186,7 +1187,7 @@ export function ReserveHistoryTab({
                 className="bg-background border border-border/80 rounded-xl px-3 py-1.5 text-xs text-foreground focus:ring-1 focus:ring-indigo-500 outline-none font-mono cursor-pointer"
                 value={customDateRange?.end || ''}
                 onChange={(e) => {
-                  const todayStr = new Date().toISOString().split('T')[0];
+                  const todayStr = getTodayLocalDateStr();
                   setCustomDateRange({
                     start: customDateRange?.start || todayStr,
                     end: e.target.value
@@ -1199,8 +1200,8 @@ export function ReserveHistoryTab({
                 size="sm"
                 onClick={() => {
                   const now = new Date();
-                  const firstDay = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
-                  const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
+                  const firstDay = getTodayLocalDateStr(new Date(now.getFullYear(), now.getMonth(), 1));
+                  const lastDay = getTodayLocalDateStr(new Date(now.getFullYear(), now.getMonth() + 1, 0));
                   setCustomDateRange({ start: firstDay, end: lastDay });
                 }}
                 className="h-7 text-[11px] font-bold text-indigo-600 dark:text-indigo-400"

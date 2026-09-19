@@ -26,7 +26,8 @@ import {
   formatDateDisplay, 
   iconOptions, 
   getSuggestionAudit,
-  parseLocalDate 
+  parseLocalDate,
+  getTodayLocalDateStr
 } from './reserveUtils';
 import { toast } from 'sonner';
 
@@ -57,7 +58,7 @@ export function AporteManualModal({
   onSubmit
 }: AporteManualModalProps) {
   const [amount, setAmount] = useState('');
-  const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+  const [date, setDate] = useState(getTodayLocalDateStr());
   const [description, setDescription] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -65,7 +66,7 @@ export function AporteManualModal({
     if (reserve) {
       setDescription(initialDescription || (isSuggestion ? `Aporte sugerido - ${reserve.name}` : `Aporte manual - ${reserve.name}`));
       setAmount(initialAmount && initialAmount > 0 ? String(Math.round(initialAmount * 100) / 100) : '');
-      setDate(new Date().toISOString().split('T')[0]);
+      setDate(getTodayLocalDateStr());
     }
   }, [reserve, isOpen, initialAmount, initialDescription, isSuggestion]);
 
@@ -302,12 +303,12 @@ export function WithdrawModal({
   onSubmit
 }: WithdrawModalProps) {
   const [amount, setAmount] = useState('');
-  const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+  const [date, setDate] = useState(getTodayLocalDateStr());
   const [category, setCategory] = useState('');
   const [description, setDescription] = useState('');
   const [paymentStatus, setPaymentStatus] = useState<'paid' | 'pending'>('paid');
-  const [dueDate, setDueDate] = useState(new Date().toISOString().split('T')[0]);
-  const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split('T')[0]);
+  const [dueDate, setDueDate] = useState(getTodayLocalDateStr());
+  const [paymentDate, setPaymentDate] = useState(getTodayLocalDateStr());
   
   // Recurrence states
   const [isRecurring, setIsRecurring] = useState(false);
@@ -335,7 +336,7 @@ export function WithdrawModal({
     if (reserve) {
       setDescription(`Resgate / Uso - ${reserve.name}`);
       setAmount('');
-      const today = new Date().toISOString().split('T')[0];
+      const today = getTodayLocalDateStr();
       setDate(today);
       setDueDate(today);
       setPaymentDate(today);
@@ -739,7 +740,7 @@ export function UpdateBalanceModal({
   onSubmit
 }: UpdateBalanceModalProps) {
   const [newBalanceInput, setNewBalanceInput] = useState('');
-  const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+  const [date, setDate] = useState(getTodayLocalDateStr());
   const [description, setDescription] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -747,7 +748,7 @@ export function UpdateBalanceModal({
     if (reserve) {
       setNewBalanceInput(String(Math.round((reserve.saldo_atual || 0) * 100) / 100));
       setDescription(`Atualização de saldo / rendimento - ${reserve.name}`);
-      setDate(new Date().toISOString().split('T')[0]);
+      setDate(getTodayLocalDateStr());
     }
   }, [reserve, isOpen]);
 

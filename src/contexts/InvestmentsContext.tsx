@@ -6,6 +6,7 @@ import { B3AssetHistoryRecord, getAssetTypeForTicker } from '../lib/b3Fundamenta
 import { toast } from 'sonner';
 import { cacheManager } from '../lib/cacheManager';
 import { syncQueueManager } from '../lib/syncQueue';
+import { getTodayLocalDateStr } from '../lib/utils';
 
 export interface InvestmentsContextType {
   investmentTransactions: InvestmentTransaction[];
@@ -199,7 +200,7 @@ export function InvestmentsProvider({
     const processReadyDividends = async () => {
       if (dividends.length === 0 || !settings?.default_investment_reserve_id) return;
 
-      const today = new Date().toISOString().split('T')[0];
+      const today = getTodayLocalDateStr();
       const currentReadyIds = new Set(
         dividends
           .filter(d => (d.status === 'provisioned' && d.data_ex && d.data_ex <= today) || (d.status === 'received' && !d.transaction_id))

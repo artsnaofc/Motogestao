@@ -67,6 +67,7 @@ import { useData } from '../../contexts/DataContext';
 import { AddressAutocompleteInput } from './AddressAutocompleteInput';
 import { ClientAutocompleteInput } from './ClientAutocompleteInput';
 import { maskPhone, maskCpfCnpj } from '@/lib/brazilianFormatters';
+import { getTodayLocalDateStr } from '../../lib/utils';
 
 interface FreightQuoteFormProps {
   initialQuote?: Partial<FreightQuote> | null;
@@ -228,7 +229,7 @@ export function FreightQuoteForm({
   // Scheduling
   const [cargoWeightKg, setCargoWeightKg] = useState<number | undefined>(initialQuote?.cargo_weight_kg);
   const [cargoValue, setCargoValue] = useState<number | undefined>(initialQuote?.cargo_value);
-  const [scheduledDate, setScheduledDate] = useState(initialQuote?.scheduled_date || new Date().toISOString().split('T')[0]);
+  const [scheduledDate, setScheduledDate] = useState(initialQuote?.scheduled_date || getTodayLocalDateStr());
   const [scheduledTime, setScheduledTime] = useState(initialQuote?.scheduled_time || '');
 
   // Pricing & Fees (Base R$ 15,00, Price/km R$ 0,80, Stop fee R$ 6,00)
@@ -294,7 +295,7 @@ export function FreightQuoteForm({
 
       setCargoWeightKg(initialQuote.cargo_weight_kg);
       setCargoValue(initialQuote.cargo_value);
-      setScheduledDate(initialQuote.scheduled_date || new Date().toISOString().split('T')[0]);
+      setScheduledDate(initialQuote.scheduled_date || getTodayLocalDateStr());
       setScheduledTime(initialQuote.scheduled_time || '');
 
       setBaseFee(initialQuote.base_fee ?? preset.default_base_fee ?? 15.00);
@@ -934,7 +935,7 @@ export function FreightQuoteForm({
                 type="button"
                 variant="outline"
                 size="sm"
-                onClick={() => setScheduledDate(new Date().toISOString().split('T')[0])}
+                onClick={() => setScheduledDate(getTodayLocalDateStr())}
                 className="h-9.5 px-2.5 text-[10px] font-bold rounded-xl border-border/60"
               >
                 Hoje

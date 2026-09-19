@@ -87,6 +87,7 @@ import {
 import { toast } from 'sonner';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
+import { getTodayLocalDateStr } from '../lib/utils';
 import { useData } from '../contexts/DataContext';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
@@ -95,6 +96,7 @@ import { PatrimonyEvolution } from '../components/PatrimonyEvolution';
 import { DailyProductivityHeatmap } from '../components/dashboard/DailyProductivityHeatmap';
 import { PassiveIncomeEvolutionChart } from '../components/dashboard/PassiveIncomeEvolutionChart';
 import { PersonalExpenseBarConfigDialog } from '../components/dashboard/PersonalExpenseBarConfigDialog';
+import { IndicatorHistoryModal, IndicatorType, MonthHistoryItem, formatIndicatorValue } from '../components/IndicatorHistoryModal';
 import {
   BarChart,
   Bar,
@@ -505,6 +507,12 @@ export function Dashboard() {
     DespesasOperacionaisAnt: false,
     DespesasPessoaisAnt: false,
   });
+
+  const [selectedIndicator, setSelectedIndicator] = useState<IndicatorType | null>(null);
+
+  const handleIndicatorModalOpenChange = useCallback((isOpen: boolean) => {
+    if (!isOpen) setSelectedIndicator(null);
+  }, []);
 
   const getPeriodLabel = () => {
     switch (globalPeriod) {
@@ -1128,6 +1136,175 @@ export function Dashboard() {
 
   const current = useMemo(() => calcTotals(currentPeriodTx), [currentPeriodTx, settings]);
   const past = useMemo(() => calcTotals(pastPeriodTx), [pastPeriodTx, settings]);
+
+  // Helper to compute indicator value for a specific list of transactions in a month
+  const getIndicatorMonthValue = useCallback((
+    ind: IndicatorType,
+    monthStr: string,
+    mTxs: Transaction[]
+  ): number => {
+    const totals = calcTotals(mTxs);
+
+    switch (ind) {
+      case 'faturamento_bruto': {
+        return Number((totals.income + (totals.totalVendaInvestimento || 0) + (totals.rendimentosReserva || 0)).toFixed(2));
+      }
+      case 'fat_liquido_op': {
+        return Number((totals.income - totals.opExpPuro).toFixed(2));
+      }
+      case 'gastos_totais': {
+        const valOperacional = totals.opExpPuro || 0;
+        const investmentReserve = (reserves || []).find(r => 
+          (settings?.default_investment_reserve_id && r.id === settings.default_investment_reserve_id) || 
+          r.name.toLowerCase().includes('invest') || 
+          r.name.toLowerCase().includes('ativo') ||
+          r.name.toLowerCase().includes('carteira')
+        );
+        const investmentReserveId = investmentReserve?.id;
+
+        const valResgatesInv = (reserveTransactions || [])
+          .filter(rt => {
+            const isMatch = investmentReserveId 
+              ? rt.reserve_id === investmentReserveId 
+              : rt.description?.toLowerCase().includes('invest') || rt.description?.toLowerCase().includes('ativo');
+            const isAssetPurchase = rt.linked_investment_id || rt.description?.toLowerCase().includes('compra');
+            const rtDateStr = (rt.payment_date || rt.date || '').split('T')[0];
+            return isMatch && rt.type === 'utilizacao' && !isAssetPurchase && rtDateStr.startsWith(monthStr);
+          })
+          .reduce((sum, rt) => sum + Number(rt.amount), 0);
+
+        const valPessoal = Math.max(0, (totals.perExp || 0) - valResgatesInv);
+        return Number((valOperacional + valPessoal).toFixed(2));
+      }
+      case 'operacional_puro': {
+        return Number((totals.opExpPuro || 0).toFixed(2));
+      }
+      case 'lucro_liquido': {
+        return Number((totals.net + totals.reserveAporte + (totals.rendimentosReserva || 0) - (totals.totalVendaInvestimento || 0)).toFixed(2));
+      }
+      case 'balanco_caixa': {
+        return Number((totals.net || 0).toFixed(2));
+      }
+      case 'gasto_pessoal': {
+        return Number((totals.perExp || 0).toFixed(2));
+      }
+      case 'km_rodado': {
+        return Math.round(totals.km || 0);
+      }
+      case 'combustivel': {
+        const actualFuel = mTxs
+          .filter(t => t.type === 'expense' && ((t.category || '').toLowerCase().trim() === 'combustível' || (t.category || '').toLowerCase().trim() === 'combustivel'))
+          .reduce((acc, t) => acc + Number(t.amount), 0);
+        return Number(actualFuel.toFixed(2));
+      }
+      default:
+        return 0;
+    }
+  }, [settings, reserves, reserveTransactions]);
+
+  const allRecordedMonths = useMemo(() => {
+    const monthsSet = new Set<string>();
+    (allTransactionsAdjusted || []).forEach(t => {
+      const m = (t as any)._monthStr;
+      if (m && m.length === 7) {
+        monthsSet.add(m);
+      }
+    });
+    (reserveTransactions || []).forEach(rt => {
+      const d = (rt.payment_date || rt.date || '').split('T')[0];
+      if (d && d.length >= 7) {
+        monthsSet.add(d.substring(0, 7));
+      }
+    });
+    return Array.from(monthsSet).sort((a, b) => b.localeCompare(a));
+  }, [allTransactionsAdjusted, reserveTransactions]);
+
+  const currentPeriodMonths = useMemo(() => {
+    if (globalPeriod === 'all') return allRecordedMonths;
+    const set = new Set<string>();
+    (currentPeriodTx || []).forEach(t => {
+      const m = (t as any)._monthStr;
+      if (m && m.length === 7) {
+        set.add(m);
+      }
+    });
+    const sorted = Array.from(set).sort((a, b) => b.localeCompare(a));
+    return sorted.length > 0 ? sorted : allRecordedMonths;
+  }, [globalPeriod, currentPeriodTx, allRecordedMonths]);
+
+  const formatMonthTitle = useCallback((monthStr: string) => {
+    try {
+      const [year, month] = monthStr.split('-');
+      const date = new Date(Number(year), Number(month) - 1, 1);
+      const name = format(date, 'MMMM', { locale: ptBR });
+      return `${name.charAt(0).toUpperCase() + name.slice(1)}/${year}`;
+    } catch {
+      return monthStr;
+    }
+  }, []);
+
+  const formatMonthShort = useCallback((monthStr: string) => {
+    try {
+      const [year, month] = monthStr.split('-');
+      const date = new Date(Number(year), Number(month) - 1, 1);
+      const name = format(date, 'MMM', { locale: ptBR });
+      return `${name.charAt(0).toUpperCase() + name.slice(1)}/${year.slice(2)}`;
+    } catch {
+      return monthStr;
+    }
+  }, []);
+
+  const allIndicatorHistoryData = useMemo((): MonthHistoryItem[] => {
+    if (!selectedIndicator) return [];
+
+    const currentMonthStr = format(new Date(), 'yyyy-MM');
+    const chronologicalMonths = [...allRecordedMonths].reverse();
+    const chronologicalResults: MonthHistoryItem[] = [];
+
+    chronologicalMonths.forEach((mStr) => {
+      const mTxs = (allTransactionsAdjusted || []).filter(t => (t as any)._monthStr === mStr);
+      const val = getIndicatorMonthValue(selectedIndicator, mStr, mTxs);
+
+      // "Nos gráficos e tabelas não mostre os valores zerados que ainda irão vir"
+      if (mStr > currentMonthStr && val === 0) {
+        return;
+      }
+
+      let changePct: number | null = null;
+      if (chronologicalResults.length > 0) {
+        const prevVal = chronologicalResults[chronologicalResults.length - 1].value;
+        if (prevVal !== 0) {
+          changePct = ((val - prevVal) / Math.abs(prevVal)) * 100;
+        } else if (val > 0) {
+          changePct = 100;
+        }
+      }
+
+      const unit = selectedIndicator === 'km_rodado' ? 'km' : 'currency';
+      chronologicalResults.push({
+        monthStr: mStr,
+        label: formatMonthTitle(mStr),
+        shortLabel: formatMonthShort(mStr),
+        value: val,
+        formattedValue: formatIndicatorValue(val, unit, false),
+        changePct,
+        txCount: mTxs.length,
+      });
+    });
+
+    return [...chronologicalResults].reverse();
+  }, [selectedIndicator, allRecordedMonths, allTransactionsAdjusted, getIndicatorMonthValue, formatMonthTitle, formatMonthShort]);
+
+  const filteredIndicatorHistoryData = useMemo((): MonthHistoryItem[] => {
+    if (!selectedIndicator) return [];
+    const set = new Set(currentPeriodMonths);
+    const currentMonthStr = format(new Date(), 'yyyy-MM');
+    return allIndicatorHistoryData.filter(item => {
+      if (!set.has(item.monthStr)) return false;
+      if (item.monthStr > currentMonthStr && item.value === 0) return false;
+      return true;
+    });
+  }, [selectedIndicator, currentPeriodMonths, allIndicatorHistoryData]);
 
   const totalInReserves = useMemo(() => {
     return (reserves || []).reduce((sum, r) => sum + (r.saldo_atual || 0), 0);
@@ -2133,6 +2310,9 @@ export function Dashboard() {
   const weeklyGainsExpensesData = useMemo(() => {
     if (!dayList || dayList.length === 0) return [];
 
+    const todayStr = format(new Date(), 'yyyy-MM-dd');
+    const currentMonthStr = format(new Date(), 'yyyy-MM');
+
     if (activeGainsExpensesScale === 'daily') {
       const targetDays = dayList.length > 31
         ? dayList.filter(day => {
@@ -2141,16 +2321,24 @@ export function Dashboard() {
           })
         : dayList;
 
-      return targetDays.map(day => {
-        const dayStr = format(day, 'yyyy-MM-dd');
-        const dayTxs = allTxsByDate[dayStr] || [];
-        const { income, expense, rendimentosReserva, totalVendaInvestimento } = calcTotals(dayTxs);
-        return {
-          date: format(day, 'dd/MM'),
-          income: Number((income + (rendimentosReserva || 0) + (totalVendaInvestimento || 0)).toFixed(2)),
-          expense: Number(expense.toFixed(2))
-        };
-      });
+      return targetDays
+        .filter(day => {
+          const dayStr = format(day, 'yyyy-MM-dd');
+          const dayTxs = allTxsByDate[dayStr] || [];
+          const { income, expense } = calcTotals(dayTxs);
+          if (dayStr > todayStr && income === 0 && expense === 0) return false;
+          return true;
+        })
+        .map(day => {
+          const dayStr = format(day, 'yyyy-MM-dd');
+          const dayTxs = allTxsByDate[dayStr] || [];
+          const { income, expense, rendimentosReserva, totalVendaInvestimento } = calcTotals(dayTxs);
+          return {
+            date: format(day, 'dd/MM'),
+            income: Number((income + (rendimentosReserva || 0) + (totalVendaInvestimento || 0)).toFixed(2)),
+            expense: Number(expense.toFixed(2))
+          };
+        });
     }
 
     if (activeGainsExpensesScale === 'monthly') {
@@ -2170,16 +2358,24 @@ export function Dashboard() {
         }
       });
 
-      return Object.keys(monthsMap).sort().map(mKey => {
-        const item = monthsMap[mKey];
-        const label = format(item.start, 'MMM/yy', { locale: ptBR });
-        const { income, expense, rendimentosReserva, totalVendaInvestimento } = calcTotals(item.txs);
-        return {
-          date: label,
-          income: Number((income + (rendimentosReserva || 0) + (totalVendaInvestimento || 0)).toFixed(2)),
-          expense: Number(expense.toFixed(2))
-        };
-      });
+      return Object.keys(monthsMap)
+        .sort()
+        .filter(mKey => {
+          const item = monthsMap[mKey];
+          const { income, expense } = calcTotals(item.txs);
+          if (mKey > currentMonthStr && income === 0 && expense === 0) return false;
+          return true;
+        })
+        .map(mKey => {
+          const item = monthsMap[mKey];
+          const label = format(item.start, 'MMM/yy', { locale: ptBR });
+          const { income, expense, rendimentosReserva, totalVendaInvestimento } = calcTotals(item.txs);
+          return {
+            date: label,
+            income: Number((income + (rendimentosReserva || 0) + (totalVendaInvestimento || 0)).toFixed(2)),
+            expense: Number(expense.toFixed(2))
+          };
+        });
     }
 
     // Default: 'weekly'
@@ -2209,7 +2405,13 @@ export function Dashboard() {
     const sortedWeeks = Object.keys(weeksMap)
       .sort()
       .map(key => weeksMap[key])
-      .filter(w => w.txs.length > 0);
+      .filter(w => {
+        if (w.txs.length === 0) return false;
+        const startStr = format(w.start, 'yyyy-MM-dd');
+        const { income, expense } = calcTotals(w.txs);
+        if (startStr > todayStr && income === 0 && expense === 0) return false;
+        return true;
+      });
 
     return sortedWeeks.map(w => {
       const label = `Sem. ${format(w.start, 'dd/MM')}-${format(w.end, 'dd/MM')}`;
@@ -2918,14 +3120,14 @@ export function Dashboard() {
                 type="date"
                 className="bg-background border border-border/60 rounded-lg px-2.5 py-1 text-xs text-foreground focus:ring-1 focus:ring-primary outline-none max-w-[130px]"
                 value={customDateRange?.start || ''}
-                onChange={(e) => setCustomDateRange({ start: e.target.value, end: customDateRange?.end || format(new Date(), 'yyyy-MM-dd') })}
+                onChange={(e) => setCustomDateRange({ start: e.target.value, end: customDateRange?.end || getTodayLocalDateStr() })}
               />
               <span className="text-muted-foreground text-xs">até</span>
               <input
                 type="date"
                 className="bg-background border border-border/60 rounded-lg px-2.5 py-1 text-xs text-foreground focus:ring-1 focus:ring-primary outline-none max-w-[130px]"
                 value={customDateRange?.end || ''}
-                onChange={(e) => setCustomDateRange({ start: customDateRange?.start || format(new Date(), 'yyyy-MM-dd'), end: e.target.value })}
+                onChange={(e) => setCustomDateRange({ start: customDateRange?.start || getTodayLocalDateStr(), end: e.target.value })}
               />
             </div>
           )}
@@ -3450,7 +3652,11 @@ export function Dashboard() {
             { label: 'Proventos', val: summary.rendimentosReserva || 0, pct: totalInflow > 0 ? ((summary.rendimentosReserva || 0) / totalInflow) * 100 : 0, color: 'bg-purple-500', textColor: 'text-purple-500', textBoldColor: 'text-purple-600 dark:text-purple-400', format: formatCompactValue(summary.rendimentosReserva || 0) }
           ].filter(s => s.val > 0).sort((a, b) => b.val - a.val);
           return (
-            <Card className="border border-border/70 hover:border-emerald-500/30 shadow-2xs hover:shadow-sm transition-all duration-200 bg-card/95 flex flex-col justify-between rounded-xl overflow-hidden group">
+            <Card
+              onClick={() => setSelectedIndicator('faturamento_bruto')}
+              className="border border-border/70 hover:border-emerald-500/50 shadow-2xs hover:shadow-md transition-all duration-200 bg-card/95 flex flex-col justify-between rounded-xl overflow-hidden group cursor-pointer active:scale-[0.99]"
+              title="Clique para ver o histórico mensal de Faturamento (Bruto)"
+            >
               <CardHeader className="p-2.5 pb-1 sm:p-3 sm:pb-1 flex flex-row items-center justify-between space-y-0">
                 <CardTitle className="text-[10px] sm:text-[10.5px] font-extrabold uppercase tracking-wider text-emerald-500 w-[85%] truncate">
                   Faturamento (Bruto)
@@ -3491,7 +3697,11 @@ export function Dashboard() {
           const fatLiquidoOp = summary.netOperatingProfit;
           const margemOp = summary.totalIncome > 0 ? (fatLiquidoOp / summary.totalIncome) * 100 : 0;
           return (
-            <Card className="border border-emerald-500/30 hover:border-emerald-500/50 shadow-2xs hover:shadow-sm transition-all duration-200 bg-emerald-500/[0.02] flex flex-col justify-between rounded-xl overflow-hidden group">
+            <Card
+              onClick={() => setSelectedIndicator('fat_liquido_op')}
+              className="border border-emerald-500/30 hover:border-emerald-500/60 shadow-2xs hover:shadow-md transition-all duration-200 bg-emerald-500/[0.02] flex flex-col justify-between rounded-xl overflow-hidden group cursor-pointer active:scale-[0.99]"
+              title="Clique para ver o histórico mensal de Fat. Líquido (Pós-Op)"
+            >
               <CardHeader className="p-2.5 pb-1 sm:p-3 sm:pb-1 flex flex-row items-center justify-between space-y-0">
                 <CardTitle className="text-[10px] sm:text-[10.5px] font-black uppercase tracking-wider text-emerald-600 dark:text-emerald-400 w-[85%] truncate flex items-center gap-1">
                   Fat. Líquido (Pós-Op)
@@ -3573,7 +3783,11 @@ export function Dashboard() {
           ].filter(s => s.val > 0).sort((a, b) => b.val - a.val);
 
           return (
-            <Card className="border border-border/70 hover:border-rose-500/30 shadow-2xs hover:shadow-sm transition-all duration-200 bg-card/95 flex flex-col justify-between rounded-xl overflow-hidden group">
+            <Card
+              onClick={() => setSelectedIndicator('gastos_totais')}
+              className="border border-border/70 hover:border-rose-500/50 shadow-2xs hover:shadow-md transition-all duration-200 bg-card/95 flex flex-col justify-between rounded-xl overflow-hidden group cursor-pointer active:scale-[0.99]"
+              title="Clique para ver o histórico mensal de Gastos Totais"
+            >
               <CardHeader className="p-2.5 pb-1 sm:p-3 sm:pb-1 flex flex-row items-center justify-between space-y-0">
                 <CardTitle className="text-[10px] sm:text-[10.5px] font-extrabold uppercase tracking-wider text-rose-500 w-[85%] truncate">
                   Gastos Totais
@@ -3627,7 +3841,11 @@ export function Dashboard() {
           ].filter(s => s.val > 0).sort((a, b) => b.val - a.val);
 
           return (
-            <Card className="border border-border/70 hover:border-amber-500/30 shadow-2xs hover:shadow-sm transition-all duration-200 bg-card/95 flex flex-col justify-between rounded-xl overflow-hidden group">
+            <Card
+              onClick={() => setSelectedIndicator('operacional_puro')}
+              className="border border-border/70 hover:border-amber-500/50 shadow-2xs hover:shadow-md transition-all duration-200 bg-card/95 flex flex-col justify-between rounded-xl overflow-hidden group cursor-pointer active:scale-[0.99]"
+              title="Clique para ver o histórico mensal de Operacional (Puro)"
+            >
               <CardHeader className="p-2.5 pb-1 sm:p-3 sm:pb-1 flex flex-row items-center justify-between space-y-0">
                 <CardTitle className="text-[10px] sm:text-[10.5px] font-extrabold uppercase tracking-wider text-amber-500 w-[85%] truncate">
                   Operacional (Puro)
@@ -3680,7 +3898,11 @@ export function Dashboard() {
           }));
 
           return (
-            <Card className={`border shadow-2xs hover:shadow-sm transition-all duration-200 flex flex-col justify-between rounded-xl overflow-hidden group ${summary.netProfitPatrimony >= 0 ? 'border-indigo-500/25 bg-indigo-500/[0.02] hover:border-indigo-500/40' : 'border-rose-500/25 bg-rose-500/[0.02] hover:border-rose-500/40'}`}>
+            <Card
+              onClick={() => setSelectedIndicator('lucro_liquido')}
+              className={`border shadow-2xs hover:shadow-md transition-all duration-200 flex flex-col justify-between rounded-xl overflow-hidden group cursor-pointer active:scale-[0.99] ${summary.netProfitPatrimony >= 0 ? 'border-indigo-500/25 bg-indigo-500/[0.02] hover:border-indigo-500/50' : 'border-rose-500/25 bg-rose-500/[0.02] hover:border-rose-500/50'}`}
+              title="Clique para ver o histórico mensal de Lucro Líquido"
+            >
               <CardHeader className="p-2.5 pb-1 sm:p-3 sm:pb-1 flex flex-row items-center justify-between space-y-0">
                 <CardTitle className="text-[10px] sm:text-[10.5px] font-extrabold uppercase tracking-wider text-muted-foreground w-[85%] truncate">
                   Lucro Líquido
@@ -3742,7 +3964,11 @@ export function Dashboard() {
           }));
 
           return (
-            <Card className={`border shadow-2xs hover:shadow-sm transition-all duration-200 flex flex-col justify-between rounded-xl overflow-hidden group ${summary.netProfit >= 0 ? 'border-primary/25 bg-primary/[0.02] hover:border-primary/40' : 'border-rose-500/25 bg-rose-500/[0.02] hover:border-rose-500/40'}`}>
+            <Card
+              onClick={() => setSelectedIndicator('balanco_caixa')}
+              className={`border shadow-2xs hover:shadow-md transition-all duration-200 flex flex-col justify-between rounded-xl overflow-hidden group cursor-pointer active:scale-[0.99] ${summary.netProfit >= 0 ? 'border-primary/25 bg-primary/[0.02] hover:border-primary/50' : 'border-rose-500/25 bg-rose-500/[0.02] hover:border-rose-500/50'}`}
+              title="Clique para ver o histórico mensal de Balanço do Caixa"
+            >
               <CardHeader className="p-2.5 pb-1 sm:p-3 sm:pb-1 flex flex-row items-center justify-between space-y-0">
                 <CardTitle className="text-[10px] sm:text-[10.5px] font-extrabold uppercase tracking-wider text-muted-foreground w-[85%] truncate">
                   Balanço do Caixa
@@ -3864,7 +4090,11 @@ export function Dashboard() {
           });
 
           return (
-            <Card className="col-span-2 border border-border/70 hover:border-rose-500/30 shadow-2xs hover:shadow-sm transition-all duration-200 bg-card/95 flex flex-col justify-between rounded-xl overflow-hidden group">
+            <Card
+              onClick={() => setSelectedIndicator('gasto_pessoal')}
+              className="col-span-2 border border-border/70 hover:border-rose-500/50 shadow-2xs hover:shadow-md transition-all duration-200 bg-card/95 flex flex-col justify-between rounded-xl overflow-hidden group cursor-pointer active:scale-[0.99]"
+              title="Clique para ver o histórico mensal de Gasto Pessoal"
+            >
               <CardHeader className="p-2.5 pb-1 sm:p-3 sm:pb-1 flex flex-row items-center justify-between space-y-0">
                 <div className="flex items-center gap-1.5 min-w-0">
                   <CardTitle className="text-[10px] sm:text-[10.5px] font-extrabold uppercase tracking-wider text-rose-500 truncate">
@@ -4035,7 +4265,11 @@ export function Dashboard() {
         </Card>
 
         {/* indicator 8: KM */}
-        <Card className="border border-border/70 hover:border-cyan-500/30 shadow-2xs hover:shadow-sm transition-all duration-200 bg-card/95 flex flex-col justify-between rounded-xl overflow-hidden group">
+        <Card
+          onClick={() => setSelectedIndicator('km_rodado')}
+          className="border border-border/70 hover:border-cyan-500/50 shadow-2xs hover:shadow-md transition-all duration-200 bg-card/95 flex flex-col justify-between rounded-xl overflow-hidden group cursor-pointer active:scale-[0.99]"
+          title="Clique para ver o histórico mensal de KM Rodado"
+        >
           <CardHeader className="p-2.5 pb-1 sm:p-3 sm:pb-1 flex flex-row items-center justify-between space-y-0">
             <CardTitle className="text-[10px] sm:text-[10.5px] font-extrabold uppercase tracking-wider text-cyan-500 w-[85%] truncate">
               KM Rodado
@@ -4091,7 +4325,11 @@ export function Dashboard() {
             : null;
 
           return (
-            <Card className="border border-border/70 hover:border-amber-500/30 shadow-2xs hover:shadow-sm transition-all duration-200 bg-card/95 flex flex-col justify-between rounded-xl overflow-hidden group">
+            <Card
+              onClick={() => setSelectedIndicator('combustivel')}
+              className="border border-border/70 hover:border-amber-500/50 shadow-2xs hover:shadow-md transition-all duration-200 bg-card/95 flex flex-col justify-between rounded-xl overflow-hidden group cursor-pointer active:scale-[0.99]"
+              title="Clique para ver o histórico mensal de Combustível"
+            >
               <CardHeader className="p-2.5 pb-1 sm:p-3 sm:pb-1 flex flex-row items-center justify-between space-y-0">
                 <CardTitle className="text-[10px] sm:text-[10.5px] font-extrabold uppercase tracking-wider text-amber-500 w-[85%] truncate">
                   Combustível
@@ -5701,6 +5939,18 @@ export function Dashboard() {
         allTransactions={allTransactionsAdjusted}
         settings={settings}
         reserves={reserves}
+      />
+
+      <IndicatorHistoryModal
+        open={selectedIndicator !== null}
+        onOpenChange={handleIndicatorModalOpenChange}
+        indicator={selectedIndicator}
+        onSelectIndicator={setSelectedIndicator}
+        historyData={filteredIndicatorHistoryData}
+        allHistoryData={allIndicatorHistoryData}
+        currentPeriodLabel={getPeriodLabel()}
+        isPeriodFiltered={globalPeriod !== 'all'}
+        hideValues={hideValues}
       />
 
       <Dialog open={showWeeklyGoalConfig} onOpenChange={setShowWeeklyGoalConfig}>

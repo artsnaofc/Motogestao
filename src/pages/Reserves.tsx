@@ -20,7 +20,8 @@ import {
   parseLocalDate,
   generateUUID,
   calculateNextOccurrence,
-  RecurrenceFrequency
+  RecurrenceFrequency,
+  getTodayLocalDateStr
 } from '../components/reserves/reserveUtils';
 import { cacheManager } from '../lib/cacheManager';
 import { syncQueueManager } from '../lib/syncQueue';
@@ -546,7 +547,7 @@ export function Reserves() {
       return;
     }
 
-    const effectiveDate = ruleData.regra_inicio_validade || new Date().toISOString().split('T')[0];
+    const effectiveDate = ruleData.regra_inicio_validade || getTodayLocalDateStr();
     const hadPrevRule = Boolean(currentRes.regra_tipo && currentRes.regra_valor);
     let updatedHistory = [...(currentRes.rule_history || [])];
 

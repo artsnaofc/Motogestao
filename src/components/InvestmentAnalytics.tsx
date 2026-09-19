@@ -5,6 +5,7 @@ import { useInvestments } from '../contexts/InvestmentsContext';
 import { supabase } from '../lib/supabase';
 import { fetchSingleQuote } from '../lib/quoteService';
 import { toast } from 'sonner';
+import { getTodayLocalDateStr } from '../lib/utils';
 import { CvmDocumentButton } from './CvmDocumentButton';
 import { EditAssetMetadataModal } from './investments/EditAssetMetadataModal';
 import { 
@@ -788,7 +789,7 @@ export function InvestmentAnalytics({
     });
 
     const eventDates = Array.from(eventDatesSet).sort();
-    const todayStr = new Date().toISOString().split('T')[0];
+    const todayStr = getTodayLocalDateStr();
 
     // Map txs and dividends by date string
     const txByDate: Record<string, InvestmentTransaction[]> = {};

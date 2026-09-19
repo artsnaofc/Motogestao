@@ -75,6 +75,7 @@ import {
   RecurrenceFrequency 
 } from '../lib/recurrenceUtils';
 import { syncQueueManager } from '../lib/syncQueue';
+import { getTodayLocalDateStr } from '../lib/utils';
 
 const HISTORY_FILTERS_KEY = 'motogestao_history_filters_v2';
 
@@ -453,12 +454,12 @@ export function History() {
 
   // Quick Settle Modal State
   const [settleItem, setSettleItem] = useState<Transaction | null>(null);
-  const [settlePaymentDate, setSettlePaymentDate] = useState<string>(format(new Date(), 'yyyy-MM-dd'));
+  const [settlePaymentDate, setSettlePaymentDate] = useState<string>(getTodayLocalDateStr());
   const [isSettling, setIsSettling] = useState(false);
 
   const handleOpenSettle = (t: Transaction) => {
     setSettleItem(t);
-    setSettlePaymentDate(format(new Date(), 'yyyy-MM-dd'));
+    setSettlePaymentDate(getTodayLocalDateStr());
   };
 
   const handleConfirmSettle = async () => {
@@ -466,7 +467,7 @@ export function History() {
     setIsSettling(true);
     try {
       const isReserveTx = (settleItem as any).isReserveTx;
-      const finalPaymentDate = settlePaymentDate || format(new Date(), 'yyyy-MM-dd');
+      const finalPaymentDate = settlePaymentDate || getTodayLocalDateStr();
       
       if (isReserveTx) {
         await updateReserveTransaction(settleItem.id, {
@@ -1545,6 +1546,12 @@ export function History() {
         if (!isPureResgateToCash) {
           patrimonio -= Number(rt.amount);
         }
+      } else if (rt.type === 'aporte') {
+        const cat = (rt.category || '').toLowerCase().trim();
+        const isFromInvestmentSell = rt.linked_investment_id || cat === 'investimentos' || (rt.description && rt.description.includes('Investimento:'));
+        if (isFromInvestmentSell) {
+          patrimonio += Number(rt.amount);
+        }
       }
     });
 
@@ -1660,49 +1667,92 @@ export function History() {
     };
   }, [transactions, periodFiltered, settings, reserves, investmentTransactions, dividends]);
 
+  const totalInvestmentEquity = useMemo(() => {
+    const posMap: Record<string, number> = {};
+    (investmentTransactions || []).forEach(tx => {
+      if ((tx as any).payment_status === 'pending') return;
+      const q = Number(tx.quantity);
+      if (tx.operation === 'buy') {
+        posMap[tx.ticker] = (posMap[tx.ticker] || 0) + q;
+      } else {
+        posMap[tx.ticker] = (posMap[tx.ticker] || 0) - q;
+      }
+    });
+
+    return Object.entries(posMap).reduce((acc, [ticker, quantity]) => {
+      if (quantity <= 0) return acc;
+      const price = quotes?.[ticker] || 0;
+      if (price > 0) {
+        return acc + (price * quantity);
+      }
+      const lastTx = (investmentTransactions || [])
+        .filter(t => t.ticker === ticker && (t as any).payment_status !== 'pending')
+        .sort((a, b) => (b.date || '').localeCompare(a.date || ''))[0];
+      const fallbackPrice = lastTx ? Number(lastTx.price) : 0;
+      return acc + (fallbackPrice * quantity);
+    }, 0);
+  }, [investmentTransactions, quotes]);
+
   const patrimonioPorDia = useMemo(() => {
     if (!transactions) return { dailyAccumulated: [], initialBalance: 0 };
     const events = [
-      ...transactions.filter(t => t.payment_status !== 'pending').map(t => ({
-        date: t.date,
-        amount: Number(t.amount),
-        type: t.type,
-        category: t.category,
-        isReserveTx: (t as any).isReserveTx || (t as any).isReserveAporte,
-        reserveTxType: undefined,
-        isInvestment: false as const,
-        ticker: undefined,
-        operation: undefined,
-        quantity: undefined,
-        price: undefined,
-        costs: undefined,
-        reserve_id: undefined,
-        linked_investment_id: undefined,
-        description: t.description
-      })),
-      ...(reserveTransactions || [])
-        .filter(rt => rt.payment_status !== 'pending')
-        .map(rt => ({
-          date: rt.date,
-          amount: Number(rt.amount),
-          type: rt.type === 'rendimento' ? ('income' as const) : (rt.type === 'aporte' ? ('income' as const) : ('expense' as const)),
-          category: rt.category,
-          isReserveTx: true as const,
-          reserveTxType: rt.type,
+      ...transactions.filter(t => t.payment_status !== 'pending').map(t => {
+        const effectiveDate = (t.payment_date || t.date || '').split('T')[0];
+        const isReserveInternal = Boolean(
+          (t as any).isReserveTx || 
+          (t as any).isReserveAporte || 
+          t.category === 'Aporte Reserva' || 
+          t.category === 'Aporte Extra' || 
+          t.category === 'Resgate Reserva' || 
+          t.category === 'Resgate de Reserva'
+        );
+        return {
+          date: effectiveDate,
+          amount: Number(t.amount),
+          type: t.type,
+          category: t.category,
+          isReserveTx: isReserveInternal,
+          reserveTxType: undefined,
           isInvestment: false as const,
           ticker: undefined,
           operation: undefined,
           quantity: undefined,
           price: undefined,
           costs: undefined,
-          reserve_id: rt.reserve_id,
-          linked_investment_id: rt.linked_investment_id,
-          description: rt.description
-        })),
+          reserve_id: undefined,
+          linked_investment_id: undefined,
+          description: t.description,
+          created_at: t.created_at
+        };
+      }),
+      ...(reserveTransactions || [])
+        .filter(rt => rt.payment_status !== 'pending')
+        .map(rt => {
+          const effectiveDate = (rt.payment_date || rt.date || '').split('T')[0];
+          return {
+            date: effectiveDate,
+            amount: Number(rt.amount),
+            type: rt.type === 'rendimento' ? ('income' as const) : (rt.type === 'aporte' ? ('income' as const) : ('expense' as const)),
+            category: rt.category,
+            isReserveTx: true as const,
+            reserveTxType: rt.type,
+            isInvestment: false as const,
+            ticker: undefined,
+            operation: undefined,
+            quantity: undefined,
+            price: undefined,
+            costs: undefined,
+            reserve_id: rt.reserve_id,
+            linked_investment_id: rt.linked_investment_id,
+            description: rt.description,
+            created_at: rt.created_at
+          };
+        }),
       ...(investmentTransactions || []).filter(tx => (tx as any).payment_status !== 'pending').map(tx => {
         const amount = (Number(tx.price) * Number(tx.quantity)) + Number(tx.costs || 0);
+        const effectiveDate = (tx.date || '').split('T')[0];
         return {
-          date: tx.date,
+          date: effectiveDate,
           amount,
           type: tx.operation === 'buy' ? ('expense' as const) : ('income' as const),
           category: undefined,
@@ -1716,13 +1766,16 @@ export function History() {
           costs: Number(tx.costs || 0),
           reserve_id: tx.reserve_id,
           linked_investment_id: tx.id,
-          description: undefined
+          description: undefined,
+          created_at: tx.created_at
         };
       })
     ];
 
     const sorted = events.sort((a, b) => {
-      return parseLocalDate(a.date).getTime() - parseLocalDate(b.date).getTime();
+      const dComp = a.date.localeCompare(b.date);
+      if (dComp !== 0) return dComp;
+      return (a.created_at || '').localeCompare(b.created_at || '');
     });
 
     let currentCash = settings?.initial_balance || 0;
@@ -1730,7 +1783,7 @@ export function History() {
     const dailyAccumulated: { dateStr: string; cash: number; patrimonio: number }[] = [];
 
     sorted.forEach(evt => {
-      const dateStr = format(parseLocalDate(evt.date), 'yyyy-MM-dd');
+      const dateStr = evt.date;
 
       if (evt.isInvestment) {
         // Update the portfolio quantities
@@ -1759,7 +1812,13 @@ export function History() {
           }
         }
       } else {
-        const isInternalTransfer = evt.category === 'Aporte Reserva' || evt.category === 'Resgate Reserva' || evt.category === 'Resgate de Reserva' || evt.isReserveTx;
+        const isInternalTransfer = Boolean(
+          evt.category === 'Aporte Reserva' || 
+          evt.category === 'Aporte Extra' || 
+          evt.category === 'Resgate Reserva' || 
+          evt.category === 'Resgate de Reserva' || 
+          evt.isReserveTx
+        );
         if (!isInternalTransfer) {
           if (evt.type === 'income') {
             currentCash += evt.amount;
@@ -1778,8 +1837,8 @@ export function History() {
         }
         // Latest transaction price of that ticker up to this date
         const lastTx = (investmentTransactions || [])
-          .filter(tx => tx.ticker.toUpperCase() === ticker.toUpperCase() && tx.date <= evt.date)
-          .sort((a, b) => b.date.localeCompare(a.date))[0];
+          .filter(tx => tx.ticker.toUpperCase() === ticker.toUpperCase() && (tx.date || '').split('T')[0] <= evt.date)
+          .sort((a, b) => (b.date || '').localeCompare(a.date || ''))[0];
         const fallbackPrice = lastTx ? Number(lastTx.price) : 0;
         return acc + (fallbackPrice * qty);
       }, 0);
@@ -1799,6 +1858,33 @@ export function History() {
       }
     });
 
+    // Ensure today's entry is represented in dailyAccumulated with current portfolio value
+    const todayStr = getTodayLocalDateStr();
+    const currentPortfolioVal = Object.entries(portfolio).reduce((acc, [ticker, qty]) => {
+      if (qty <= 0) return acc;
+      const currentQuote = quotes?.[ticker] || 0;
+      if (currentQuote > 0) {
+        return acc + (currentQuote * qty);
+      }
+      const lastTx = (investmentTransactions || [])
+        .filter(tx => tx.ticker.toUpperCase() === ticker.toUpperCase() && (tx.date || '').split('T')[0] <= todayStr)
+        .sort((a, b) => (b.date || '').localeCompare(a.date || ''))[0];
+      const fallbackPrice = lastTx ? Number(lastTx.price) : 0;
+      return acc + (fallbackPrice * qty);
+    }, 0);
+
+    const todayIdx = dailyAccumulated.findIndex(item => item.dateStr === todayStr);
+    if (todayIdx !== -1) {
+      dailyAccumulated[todayIdx].patrimonio = dailyAccumulated[todayIdx].cash + currentPortfolioVal;
+    } else {
+      dailyAccumulated.push({
+        dateStr: todayStr,
+        cash: currentCash,
+        patrimonio: currentCash + currentPortfolioVal
+      });
+      dailyAccumulated.sort((a, b) => a.dateStr.localeCompare(b.dateStr));
+    }
+
     return {
       dailyAccumulated,
       initialBalance: settings?.initial_balance || 0
@@ -1807,14 +1893,33 @@ export function History() {
 
   const getPatrimonioAtDate = (date: Date) => {
     const targetStr = format(date, 'yyyy-MM-dd');
+    const todayStr = getTodayLocalDateStr();
     const { dailyAccumulated, initialBalance } = patrimonioPorDia;
+
+    const hasFutureTxs = transactions.some(t => {
+      if (t.payment_status === 'pending') return false;
+      const d = (t.payment_date || t.date || '').split('T')[0];
+      return d > targetStr;
+    });
+    const hasFutureReserveTxs = (reserveTransactions || []).some(rt => {
+      if (rt.payment_status === 'pending') return false;
+      const d = (rt.payment_date || rt.date || '').split('T')[0];
+      return d > targetStr;
+    });
+    const hasFutureInvTxs = (investmentTransactions || []).some(it => {
+      if ((it as any).payment_status === 'pending') return false;
+      const d = (it.date || '').split('T')[0];
+      return d > targetStr;
+    });
+
+    if (targetStr >= todayStr && !hasFutureTxs && !hasFutureReserveTxs && !hasFutureInvTxs) {
+      return summaries.patrimonio + totalInvestmentEquity;
+    }
     
     let lastKnownValue = initialBalance;
     for (const item of dailyAccumulated) {
       if (item.dateStr <= targetStr) {
         lastKnownValue = item.patrimonio;
-      } else {
-        break;
       }
     }
     return lastKnownValue;
@@ -1822,14 +1927,28 @@ export function History() {
 
   const getCashAtDate = (date: Date) => {
     const targetStr = format(date, 'yyyy-MM-dd');
+    const todayStr = getTodayLocalDateStr();
     const { dailyAccumulated, initialBalance } = patrimonioPorDia;
+
+    const hasFutureTxs = transactions.some(t => {
+      if (t.payment_status === 'pending') return false;
+      const d = (t.payment_date || t.date || '').split('T')[0];
+      return d > targetStr;
+    });
+    const hasFutureReserveTxs = (reserveTransactions || []).some(rt => {
+      if (rt.payment_status === 'pending') return false;
+      const d = (rt.payment_date || rt.date || '').split('T')[0];
+      return d > targetStr;
+    });
+
+    if (targetStr >= todayStr && !hasFutureTxs && !hasFutureReserveTxs) {
+      return summaries.patrimonio;
+    }
     
     let lastKnownValue = initialBalance;
     for (const item of dailyAccumulated) {
       if (item.dateStr <= targetStr) {
         lastKnownValue = item.cash;
-      } else {
-        break;
       }
     }
     return lastKnownValue;
@@ -1837,23 +1956,27 @@ export function History() {
 
   const getReservesAtDate = (date: Date) => {
     const targetStr = format(date, 'yyyy-MM-dd');
+    const todayStr = getTodayLocalDateStr();
+
+    const hasFutureReserveTxs = (reserveTransactions || []).some(rt => {
+      if (rt.payment_status === 'pending') return false;
+      const d = (rt.payment_date || rt.date || '').split('T')[0];
+      return d > targetStr;
+    });
+
+    if (targetStr >= todayStr && !hasFutureReserveTxs) {
+      return summaries.totalInReserves;
+    }
+    
     let total = 0;
     
-    // Somar o saldo inicial das reservas criadas até a data alvo
     (reserves || []).forEach(r => {
       const isDefaultReserve = r.name === 'Reserva de Manutenção' || r.name === 'Reserva de Emergência';
       let shouldIncludeInitial = true;
       if (r.created_at && !isDefaultReserve) {
-        try {
-          const creationDayStr = format(parseLocalDate(r.created_at), 'yyyy-MM-dd');
-          if (creationDayStr > targetStr) {
-            shouldIncludeInitial = false;
-          }
-        } catch {
-          const creationDayStr = r.created_at.split('T')[0];
-          if (creationDayStr > targetStr) {
-            shouldIncludeInitial = false;
-          }
+        const creationDayStr = r.created_at.split('T')[0];
+        if (creationDayStr > targetStr) {
+          shouldIncludeInitial = false;
         }
       }
       if (shouldIncludeInitial) {
@@ -1863,23 +1986,12 @@ export function History() {
 
     (reserveTransactions || []).forEach(rt => {
       if (rt.payment_status === 'pending') return;
-      try {
-        const rtDateStr = format(parseLocalDate(rt.date), 'yyyy-MM-dd');
-        if (rtDateStr <= targetStr) {
-          if (rt.type === 'aporte' || rt.type === 'rendimento') {
-            total += Number(rt.amount);
-          } else if (rt.type === 'utilizacao') {
-            total -= Number(rt.amount);
-          }
-        }
-      } catch {
-        const rtDateStr = rt.date.split('T')[0];
-        if (rtDateStr <= targetStr) {
-          if (rt.type === 'aporte' || rt.type === 'rendimento') {
-            total += Number(rt.amount);
-          } else if (rt.type === 'utilizacao') {
-            total -= Number(rt.amount);
-          }
+      const rtDateStr = (rt.payment_date || rt.date || '').split('T')[0];
+      if (rtDateStr <= targetStr) {
+        if (rt.type === 'aporte' || rt.type === 'rendimento') {
+          total += Number(rt.amount);
+        } else if (rt.type === 'utilizacao') {
+          total -= Number(rt.amount);
         }
       }
     });
@@ -1887,6 +1999,26 @@ export function History() {
   };
 
   const getBancaAtDate = (date: Date) => {
+    const targetStr = format(date, 'yyyy-MM-dd');
+    const todayStr = getTodayLocalDateStr();
+
+    const hasFutureTxs = transactions.some(t => {
+      if (t.payment_status === 'pending') return false;
+      const d = (t.payment_date || t.date || '').split('T')[0];
+      return d > targetStr;
+    });
+    const hasFutureReserveTxs = (reserveTransactions || []).some(rt => {
+      if (rt.payment_status === 'pending') return false;
+      const d = (rt.payment_date || rt.date || '').split('T')[0];
+      return d > targetStr;
+    });
+
+    // Se hoje ou futuro sem movimentações além desta data:
+    // o Caixa Acumulado é exatamente a Banca Livre do Dashboard!
+    if (targetStr >= todayStr && !hasFutureTxs && !hasFutureReserveTxs) {
+      return summaries.bancaLivre;
+    }
+
     return getCashAtDate(date) - getReservesAtDate(date);
   };
 
@@ -2201,32 +2333,6 @@ export function History() {
       raceCount: count
     };
   }, [periodFiltered, summaries.ganhosBrutos]);
-
-  const totalInvestmentEquity = useMemo(() => {
-    const posMap: Record<string, number> = {};
-    (investmentTransactions || []).forEach(tx => {
-      if ((tx as any).payment_status === 'pending') return;
-      const q = Number(tx.quantity);
-      if (tx.operation === 'buy') {
-        posMap[tx.ticker] = (posMap[tx.ticker] || 0) + q;
-      } else {
-        posMap[tx.ticker] = (posMap[tx.ticker] || 0) - q;
-      }
-    });
-
-    return Object.entries(posMap).reduce((acc, [ticker, quantity]) => {
-      if (quantity <= 0) return acc;
-      const price = quotes?.[ticker] || 0;
-      if (price > 0) {
-        return acc + (price * quantity);
-      }
-      const lastTx = (investmentTransactions || [])
-        .filter(t => t.ticker === ticker && (t as any).payment_status !== 'pending')
-        .sort((a, b) => (b.date || '').localeCompare(a.date || ''))[0];
-      const fallbackPrice = lastTx ? Number(lastTx.price) : 0;
-      return acc + (fallbackPrice * quantity);
-    }, 0);
-  }, [investmentTransactions, quotes]);
 
   const { pctBanca, pctReserva, pctInvestimento } = useMemo(() => {
     const bPrice = Math.max(0, summaries.bancaLivre);
@@ -3066,14 +3172,14 @@ export function History() {
                 type="date"
                 className="bg-background border border-border/60 rounded-md px-2 py-1.5 text-xs text-foreground focus:ring-1 focus:ring-primary outline-none max-w-[130px]"
                 value={customDateRange?.start || ''}
-                onChange={(e) => setCustomDateRange({ start: e.target.value, end: customDateRange?.end || format(new Date(), 'yyyy-MM-dd') })}
+                onChange={(e) => setCustomDateRange({ start: e.target.value, end: customDateRange?.end || getTodayLocalDateStr() })}
               />
               <span className="text-muted-foreground text-xs">até</span>
               <input
                 type="date"
                 className="bg-background border border-border/60 rounded-md px-2 py-1.5 text-xs text-foreground focus:ring-1 focus:ring-primary outline-none max-w-[130px]"
                 value={customDateRange?.end || ''}
-                onChange={(e) => setCustomDateRange({ start: customDateRange?.start || format(new Date(), 'yyyy-MM-dd'), end: e.target.value })}
+                onChange={(e) => setCustomDateRange({ start: customDateRange?.start || getTodayLocalDateStr(), end: e.target.value })}
               />
             </div>
           )}

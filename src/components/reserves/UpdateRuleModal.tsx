@@ -19,7 +19,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Reserve, Transaction, UserSettings, ReserveTransaction } from '../../types';
-import { iconOptions, formatCurrency, isTxInPeriod, getPeriodDisplayLabel } from './reserveUtils';
+import { iconOptions, formatCurrency, isTxInPeriod, getPeriodDisplayLabel, getTodayLocalDateStr } from './reserveUtils';
 import { toast } from 'sonner';
 
 interface UpdateRuleModalProps {
@@ -96,7 +96,7 @@ export function UpdateRuleModal({
   const [regraTipo, setRegraTipo] = useState<Reserve['regra_tipo'] | ''>('km');
   const [regraValor, setRegraValor] = useState('');
   const [regraCategorias, setRegraCategorias] = useState<string[]>([]);
-  const [effectiveDate, setEffectiveDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [effectiveDate, setEffectiveDate] = useState<string>(getTodayLocalDateStr());
   const [requireCategoryOnUse, setRequireCategoryOnUse] = useState<boolean>(true);
   const [defaultUseCategory, setDefaultUseCategory] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -105,7 +105,7 @@ export function UpdateRuleModal({
     if (reserve) {
       setRegraAtiva(Boolean(reserve.regra_ativa));
       setRegraTipo(reserve.regra_tipo || 'km');
-      setEffectiveDate(new Date().toISOString().split('T')[0]);
+      setEffectiveDate(getTodayLocalDateStr());
       setRegraValor(
         reserve.regra_valor !== undefined && reserve.regra_valor !== null
           ? String(Math.round(reserve.regra_valor * 100) / 100)

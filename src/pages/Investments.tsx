@@ -17,6 +17,7 @@ import { parseNumericValue } from '../lib/numberUtils';
 import { fetchSingleQuote } from '../lib/quoteService';
 import { calculateAssetDividendProjection, calculatePortfolioProjections, calculatePortfolioPerformanceMetrics } from '../lib/investmentCalculations';
 import { InvestmentTransaction, Dividend, DividendType, DividendStatus } from '../types';
+import { getTodayLocalDateStr } from '../lib/utils';
 import { toast } from 'sonner';
 import { 
   PlusCircle, 
@@ -201,7 +202,7 @@ export function Investments() {
   const [quantity, setQuantity] = useState('');
   const [costs, setCosts] = useState('');
   const [reserveId, setReserveId] = useState(settings?.default_investment_reserve_id || '');
-  const [date, setDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [date, setDate] = useState(() => getTodayLocalDateStr());
 
   // Dividend Form State
   const [isDivModalOpen, setIsDivModalOpen] = useState(false);
@@ -375,7 +376,7 @@ export function Investments() {
     setQuantity('');
     setCosts('');
     setReserveId(settings?.default_investment_reserve_id || '');
-    setDate(new Date().toISOString().split('T')[0]);
+    setDate(getTodayLocalDateStr());
     setEditItem(null);
   };
 
@@ -411,7 +412,7 @@ export function Investments() {
     setDivAmount('');
     setDivType('Dividendo');
     setDivDataCom('');
-    const today = new Date().toISOString().split('T')[0];
+    const today = getTodayLocalDateStr();
     setDivDataEx(today);
     setIsDivModalOpen(true);
   };
@@ -496,7 +497,7 @@ export function Investments() {
 
   // Batch Buy execution from Rebalance Engine
   const handleBatchBuy = async (items: Array<{ ticker: string; type: 'Ação' | 'FII' | string; quantity: number; price: number; costs?: number; reserve_id?: string; date?: string }>) => {
-    const today = new Date().toISOString().split('T')[0];
+    const today = getTodayLocalDateStr();
     const defaultResId = settings?.default_investment_reserve_id || undefined;
 
     for (const item of items) {
@@ -555,7 +556,7 @@ export function Investments() {
         return;
       }
 
-      const todayStr = new Date().toISOString().split('T')[0];
+      const todayStr = getTodayLocalDateStr();
       const autoStatus: DividendStatus = divDataEx <= todayStr ? 'received' : 'provisioned';
 
       const payload = {
@@ -2555,11 +2556,11 @@ export function Investments() {
                 <div className="sm:col-span-2 text-[11px] text-muted-foreground bg-muted/40 p-2.5 rounded-xl flex items-center justify-between border border-border/40">
                   <span className="font-medium">Status definido pela Data de Pagamento:</span>
                   <span className={`font-bold px-2 py-0.5 rounded-md ${
-                    divDataEx <= new Date().toISOString().split('T')[0]
+                    divDataEx <= getTodayLocalDateStr()
                       ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
                       : 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
                   }`}>
-                    {divDataEx <= new Date().toISOString().split('T')[0] ? 'Recebido (Creditado)' : 'Provisionado (A Receber)'}
+                    {divDataEx <= getTodayLocalDateStr() ? 'Recebido (Creditado)' : 'Provisionado (A Receber)'}
                   </span>
                 </div>
               )}
@@ -2762,3 +2763,5 @@ export function Investments() {
     </div>
   );
 }
+
+export default Investments;

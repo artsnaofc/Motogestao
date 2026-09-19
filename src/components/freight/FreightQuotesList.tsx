@@ -52,6 +52,7 @@ import { freightStorage } from '../../lib/freightStorage';
 import { shareFreightQuotePDF } from '../../lib/freightPdfGenerator';
 import { useData } from '../../contexts/DataContext';
 import { supabase } from '../../lib/supabase';
+import { getTodayLocalDateStr } from '../../lib/utils';
 
 interface FreightQuotesListProps {
   quotes: FreightQuote[];
@@ -243,7 +244,7 @@ export function FreightQuotesList({
     }
     const opExpenses = calcOperationalExpenses(quote);
     const description = `Frete ${quote.code} - ${quote.client_name} (${quote.origin_neighborhood || 'Origem'} ➔ ${quote.destination_neighborhood || 'Destino'})`;
-    const quoteDate = quote.scheduled_date || (quote.created_at ? quote.created_at.split('T')[0] : new Date().toISOString().split('T')[0]);
+    const quoteDate = quote.scheduled_date || (quote.created_at ? quote.created_at.split('T')[0] : getTodayLocalDateStr());
 
     const params = new URLSearchParams({
       tab: 'frete',

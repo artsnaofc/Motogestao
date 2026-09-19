@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { Home, List, PlusCircle, User, PiggyBank, TrendingUp, Bike, Sparkles, LogOut, ChevronRight, ShieldCheck, Terminal, Cloud, RefreshCw, Truck, Menu, X, Plus, ReceiptText } from 'lucide-react';
+import { Home, List, PlusCircle, User, PiggyBank, TrendingUp, Bike, Sparkles, LogOut, ChevronRight, ShieldCheck, Terminal, Cloud, RefreshCw, Truck, Menu, X, Plus, ReceiptText, Scale } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { Button } from '@/components/ui/button';
 import { syncQueueManager, SyncTask } from '../lib/syncQueue';
@@ -9,6 +9,8 @@ import { BroadcastBanner } from './BroadcastBanner';
 import { MaintenanceGuard } from './MaintenanceGuard';
 import { useSessionInactivity } from '../lib/useSessionInactivity';
 import { systemSettings } from '../lib/systemSettings';
+import { PWAInstallButton } from './PWAInstallButton';
+import { OfflineIndicator } from './OfflineIndicator';
 
 export function MainLayout({ children }: { children: React.ReactNode }) {
   const location = useLocation();
@@ -182,6 +184,8 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
               </div>
             </div>
 
+            <PWAInstallButton variant="sidebar" />
+
             <Button
               variant="outline"
               onClick={handleLogout}
@@ -209,22 +213,26 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
             </span>
           </div>
 
-          {syncQueue.length > 0 && (
-            <div className="flex items-center gap-1 text-[10px] font-extrabold text-amber-500 bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/20 shrink-0 select-none animate-pulse">
-              <RefreshCw className="w-2.5 h-2.5 animate-spin" />
-              <span>Sincronizando ({syncQueue.length})</span>
-            </div>
-          )}
+          <div className="flex items-center gap-2">
+            <PWAInstallButton variant="header" />
 
-          {settings?.is_admin && (
-            <Link 
-              to="/admin"
-              className="p-2 text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded-xl transition-all cursor-pointer min-w-[36px] min-h-[36px] flex items-center justify-center border border-border/40"
-              title="Painel Administrativo"
-            >
-              <ShieldCheck className="w-4 h-4 text-primary" />
-            </Link>
-          )}
+            {syncQueue.length > 0 && (
+              <div className="flex items-center gap-1 text-[10px] font-extrabold text-amber-500 bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/20 shrink-0 select-none animate-pulse">
+                <RefreshCw className="w-2.5 h-2.5 animate-spin" />
+                <span>({syncQueue.length})</span>
+              </div>
+            )}
+
+            {settings?.is_admin && (
+              <Link 
+                to="/admin"
+                className="p-2 text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded-xl transition-all cursor-pointer min-w-[36px] min-h-[36px] flex items-center justify-center border border-border/40"
+                title="Painel Administrativo"
+              >
+                <ShieldCheck className="w-4 h-4 text-primary" />
+              </Link>
+            )}
+          </div>
         </header>
 
         {/* Main Content Area */}
@@ -431,6 +439,8 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
                     <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
                   </button>
                 )}
+                {/* Instalar App no Guidão / Celular */}
+                <PWAInstallButton variant="banner" />
               </div>
 
               {/* Status e Logout */}
@@ -471,6 +481,7 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
             </div>
           </div>
         )}
+        <OfflineIndicator />
       </div>
     </MaintenanceGuard>
   );

@@ -1,6 +1,6 @@
 {
   "name": "Remix: MotoGestão V2",
-  "description": "Controle financeiro, gestão de entregas, reservas e carteira de investimentos com rebalanceamento inteligente e valuation",
+  "description": "Controle financeiro, gestão de entregas, reservas, carteira de investimentos com cotações em cache e PWA mobile",
   "requestFramePermissions": [],
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"

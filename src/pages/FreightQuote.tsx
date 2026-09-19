@@ -28,6 +28,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { FreightQuote, DriverFreightPreset, FreightClient } from '../types/freight';
+import { getTodayLocalDateStr } from '../lib/utils';
 import { freightStorage } from '../lib/freightStorage';
 import { FreightQuoteForm } from '../components/freight/FreightQuoteForm';
 import { FreightQuotesList } from '../components/freight/FreightQuotesList';
@@ -111,7 +112,7 @@ export default function FreightQuotePage() {
       code: nextCode,
       created_at: new Date().toISOString(),
       status: 'pending',
-      scheduled_date: new Date().toISOString().split('T')[0],
+      scheduled_date: getTodayLocalDateStr(),
       converted_to_transaction_id: undefined,
       converted_at: undefined,
     };

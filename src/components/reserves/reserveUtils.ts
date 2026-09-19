@@ -691,3 +691,5 @@ export const calculateNextOccurrence = (baseDateStr: string, frequency: Recurren
   const dayStr = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${dayStr}`;
 };
+
+export { getTodayLocalDateStr } from '../../lib/utils';
