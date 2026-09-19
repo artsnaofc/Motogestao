@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate, Outlet } from 'react-router-dom';
 import { Home, List, PlusCircle, User, PiggyBank, TrendingUp, Bike, Sparkles, LogOut, ChevronRight, ShieldCheck, Terminal, Cloud, RefreshCw, Truck, Menu, X, Plus, ReceiptText, Scale } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { Button } from '@/components/ui/button';
@@ -12,7 +12,7 @@ import { systemSettings } from '../lib/systemSettings';
 import { PWAInstallButton } from './PWAInstallButton';
 import { OfflineIndicator } from './OfflineIndicator';
 
-export function MainLayout({ children }: { children: React.ReactNode }) {
+export function MainLayout({ children }: { children?: React.ReactNode }) {
   const location = useLocation();
   const navigate = useNavigate();
   const [syncQueue, setSyncQueue] = useState<SyncTask[]>([]);
@@ -239,7 +239,7 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
         <main className="flex-1 w-full md:pl-64 lg:pl-72 pt-14 md:pt-0 pb-20 md:pb-12 min-h-screen transition-all flex flex-col">
           <BroadcastBanner />
           <div className="flex-1">
-            {children}
+            {children || <Outlet />}
           </div>
         </main>
 

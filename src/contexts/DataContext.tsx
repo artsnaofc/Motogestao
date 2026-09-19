@@ -18,6 +18,9 @@ export { useReserves } from './ReservesContext';
 export { useInvestments } from './InvestmentsContext';
 export { useTransactions } from './TransactionsContext';
 
+// Global In-Flight Request Deduplicator for master data fetching
+let activeRefreshPromise: Promise<void> | null = null;
+
 export interface DataContextType {
   // Operational Transactions & Settings
   transactions: Transaction[];
@@ -239,58 +242,68 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(false);
 
   const refreshData = useCallback(async (silent = false) => {
-    if (!silent && !settings) setLoading(true);
-    try {
-      const userId = await getEffectiveUserId();
-      if (!userId) {
-        if (!silent) setLoading(false);
-        return;
-      }
+    // If a master refresh is already in-flight, reuse it rather than spamming duplicate queries!
+    if (activeRefreshPromise) {
+      return activeRefreshPromise;
+    }
 
-      // 1. Immediately hydrate all available data from cacheManager for zero-delay offline rendering
-      const localSettings = cacheManager.get<UserSettings>(`user_settings_${userId}`) || cacheManager.get<UserSettings>('last_known_user_settings');
-      if (localSettings) setSettings(localSettings);
-
-      const localTxs = cacheManager.get<Transaction[]>(`transactions_${userId}`) || cacheManager.get<Transaction[]>('last_known_transactions');
-      if (localTxs) setTransactions(localTxs);
-
-      const localRes = cacheManager.get<Reserve[]>(`reserves_${userId}`) || cacheManager.get<Reserve[]>('last_known_reserves');
-      if (localRes) setReserves(localRes);
-
-      const localRts = cacheManager.get<ReserveTransaction[]>(`reserve_transactions_${userId}`) || cacheManager.get<ReserveTransaction[]>('last_known_reserve_transactions');
-      if (localRts) setReserveTransactions(localRts);
-
-      const localIts = cacheManager.get<InvestmentTransaction[]>(`investment_transactions_${userId}`) || cacheManager.get<InvestmentTransaction[]>('last_known_investment_transactions');
-      if (localIts) setInvestmentTransactions(localIts);
-
-      const localDivs = cacheManager.get<Dividend[]>(`dividends_${userId}`) || cacheManager.get<Dividend[]>('last_known_dividends');
-      if (localDivs) setDividends(localDivs);
-
-      // If device is offline, stop right here! Cache is already loaded and UI is intact!
-      if (typeof navigator !== 'undefined' && !navigator.onLine) {
-        console.log('[Finanças Pro - DataContext] Dispositivo offline. Dados carregados com segurança do cache local.');
-        if (!silent) setLoading(false);
-        return;
-      }
-
-      // When online: first flush any pending sync queue items so Supabase has our offline edits!
+    activeRefreshPromise = (async () => {
+      if (!silent && !settings) setLoading(true);
       try {
-        if (syncQueueManager.getPendingCount() > 0) {
-          await syncQueueManager.flushQueue(4000);
+        const userId = await getEffectiveUserId();
+        if (!userId) {
+          if (!silent) setLoading(false);
+          return;
         }
-      } catch (qErr) {
-        console.warn('[DataContext] Aviso na sincronização prévia da fila:', qErr);
-      }
 
-      // 1. Fetch user_settings
-      try {
-        const { data: settingsData } = await supabase
-          .from('user_settings')
-          .select('*')
-          .eq('user_id', userId)
-          .maybeSingle();
+        // 1. Immediately hydrate all available data from cacheManager (0ms L1/L2)
+        const localSettings = cacheManager.get<UserSettings>(`user_settings_${userId}`) || cacheManager.get<UserSettings>('last_known_user_settings');
+        if (localSettings) setSettings(localSettings);
 
-        if (settingsData) {
+        const localTxs = cacheManager.get<Transaction[]>(`transactions_${userId}`) || cacheManager.get<Transaction[]>('last_known_transactions');
+        if (localTxs) setTransactions(localTxs);
+
+        const localRes = cacheManager.get<Reserve[]>(`reserves_${userId}`) || cacheManager.get<Reserve[]>('last_known_reserves');
+        if (localRes) setReserves(localRes);
+
+        const localRts = cacheManager.get<ReserveTransaction[]>(`reserve_transactions_${userId}`) || cacheManager.get<ReserveTransaction[]>('last_known_reserve_transactions');
+        if (localRts) setReserveTransactions(localRts);
+
+        const localIts = cacheManager.get<InvestmentTransaction[]>(`investment_transactions_${userId}`) || cacheManager.get<InvestmentTransaction[]>('last_known_investment_transactions');
+        if (localIts) setInvestmentTransactions(localIts);
+
+        const localDivs = cacheManager.get<Dividend[]>(`dividends_${userId}`) || cacheManager.get<Dividend[]>('last_known_dividends');
+        if (localDivs) setDividends(localDivs);
+
+        // If device is offline, stop right here! Cache is already loaded and UI is intact!
+        if (typeof navigator !== 'undefined' && !navigator.onLine) {
+          console.log('[Finanças Pro - DataContext] Dispositivo offline. Dados servidos do cache local.');
+          if (!silent) setLoading(false);
+          return;
+        }
+
+        // When online: first flush any pending sync queue items
+        try {
+          if (syncQueueManager.getPendingCount() > 0) {
+            await syncQueueManager.flushQueue(4000);
+          }
+        } catch (qErr) {
+          console.warn('[DataContext] Aviso na sincronização prévia da fila:', qErr);
+        }
+
+        // 2. Fetch all collections in parallel for maximum network speed!
+        const [settingsResult, txResult, reservesResult, rtResult, itResult, divResult] = await Promise.allSettled([
+          supabase.from('user_settings').select('*').eq('user_id', userId).maybeSingle(),
+          supabase.from('transactions').select('*').eq('user_id', userId).order('date', { ascending: false }).order('created_at', { ascending: false }),
+          supabase.from('reserves').select('*').eq('user_id', userId).order('name', { ascending: true }),
+          supabase.from('reserve_transactions').select('*').eq('user_id', userId).order('date', { ascending: false }).order('created_at', { ascending: false }),
+          supabase.from('investment_transactions').select('*').eq('user_id', userId).order('date', { ascending: false }).order('created_at', { ascending: false }),
+          supabase.from('dividends').select('*').eq('user_id', userId).order('date', { ascending: false })
+        ]);
+
+        // Process Settings
+        if (settingsResult.status === 'fulfilled' && settingsResult.value.data) {
+          const settingsData = settingsResult.value.data;
           const opCats = settingsData.operational_expense_categories ? [...settingsData.operational_expense_categories] : [];
           if (!opCats.includes('Manutenção')) opCats.push('Manutenção');
           const expCats = settingsData.expense_categories ? [...settingsData.expense_categories] : [];
@@ -321,66 +334,19 @@ export function DataProvider({ children }: { children: ReactNode }) {
           setSettings(finalSettings);
           cacheManager.set(`user_settings_${userId}`, finalSettings, undefined, 'settings');
 
-          // Sync database cached quotes to local cache manager
           if (settingsData.cached_quotes && Object.keys(settingsData.cached_quotes).length > 0) {
             cacheManager.set('cached_quotes', settingsData.cached_quotes, undefined, 'quotes');
           }
-        } else {
-          const defaultSettings: UserSettings = {
-            user_id: userId,
-            pizzaria_base_deliveries: 8,
-            pizzaria_base_rate: 90,
-            pizzaria_daily_rate_above_base: 50,
-            pizzaria_delivery_rate: 5,
-            pizzaria_out_of_neighborhood_rate: 4,
-            expense_categories: ['Combustível', 'Pedágio', 'Manutenção', 'Alimentação', 'Plano de Internet', 'Equipamento', 'Outras Despesas', 'Outros'],
-            operational_expense_categories: ['Combustível', 'Pedágio', 'Manutenção'],
-            personal_expense_categories: ['Alimentação', 'Plano de Internet', 'Equipamento', 'Outras Despesas', 'Outros'],
-            income_categories: ['iFood', 'Uber', '99Moto', 'Particular', 'Gorjeta', 'Frete do Dia', 'Pizzaria', 'Outros'],
-            vehicle_km_per_liter: 30,
-            fuel_price: 6,
-            initial_balance: 0,
-            weekly_goal: 0,
-            weekly_net_goal: 0,
-            default_driver_labor: 100,
-            brapi_token: '',
-            quote_provider: 'auto',
-            categories_with_km: ['iFood', 'Uber', '99Moto', 'Pizzaria', 'Frete do Dia'],
-            asset_cnpjs: {},
-            rebalance_targets: {},
-            category_icons: {},
-            cached_quotes: {},
-          };
-          setSettings(defaultSettings);
         }
-      } catch (errSettings) {
-        console.warn('Could not load settings from Supabase, loading from cache:', errSettings);
-        const cached = cacheManager.get<UserSettings>(`user_settings_${userId}`);
-        if (cached) {
-          setSettings(cached);
-        }
-      }
 
-      // Trigger sync queue immediately
-      syncQueueManager.processQueue();
-
-      // 2. Fetch transactions
-      try {
-        const { data: txData, error: txError } = await supabase
-          .from('transactions')
-          .select('*')
-          .eq('user_id', userId)
-          .order('date', { ascending: false })
-          .order('created_at', { ascending: false });
-
-        if (txError) throw txError;
-        if (txData) {
+        // Process Transactions
+        if (txResult.status === 'fulfilled' && txResult.value.data) {
+          const txData = txResult.value.data;
           const localStored = cacheManager.get<Transaction[]>(`transactions_${userId}`) || [];
           const supaMap = new Map(txData.map(item => [item.id, item]));
           const merged: Transaction[] = [];
           const seenIds = new Set<string>();
 
-          // Keep local version if there are pending sync queue tasks or if it was created offline
           for (const localItem of localStored) {
             seenIds.add(localItem.id);
             if (syncQueueManager.hasPendingTaskFor('transactions', localItem.id)) {
@@ -392,7 +358,6 @@ export function DataProvider({ children }: { children: ReactNode }) {
             }
           }
 
-          // Append remote records not in local cache
           for (const remoteItem of txData) {
             if (!seenIds.has(remoteItem.id)) {
               merged.push(remoteItem);
@@ -403,98 +368,62 @@ export function DataProvider({ children }: { children: ReactNode }) {
           cacheManager.set(`transactions_${userId}`, merged, undefined, 'transactions');
           cacheManager.set('last_known_transactions', merged, undefined, 'transactions');
         }
-      } catch (errTx) {
-        console.warn('Could not load transactions from Supabase, preserving cache:', errTx);
-        const cached = cacheManager.get<Transaction[]>(`transactions_${userId}`);
-        if (cached) {
-          setTransactions(cached);
-        }
-      }
 
-      // 3. Fetch reserves
-      try {
-        const { data: rSupadata, error: rSupaerror } = await supabase
-          .from('reserves')
-          .select('*')
-          .eq('user_id', userId)
-          .order('name', { ascending: true });
+        // Process Reserves
+        if (reservesResult.status === 'fulfilled') {
+          const rSupadata = reservesResult.value.data;
+          const hasSeededKey = `has_seeded_reserves_${userId}`;
+          const hasSeeded = cacheManager.get<boolean>(hasSeededKey) === true;
 
-        if (rSupaerror) throw rSupaerror;
+          if (rSupadata && rSupadata.length > 0) {
+            const localStored = cacheManager.get<Reserve[]>(`reserves_${userId}`) || [];
+            const supaMap = new Map(rSupadata.map(item => [item.id, item]));
+            const merged: Reserve[] = [];
+            const seenIds = new Set<string>();
 
-        const hasSeededKey = `has_seeded_reserves_${userId}`;
-        const hasSeeded = cacheManager.get<boolean>(hasSeededKey) === true;
+            for (const localItem of localStored) {
+              seenIds.add(localItem.id);
+              if (syncQueueManager.hasPendingTaskFor('reserves', localItem.id)) {
+                merged.push(localItem);
+              } else if (supaMap.has(localItem.id)) {
+                merged.push(supaMap.get(localItem.id)!);
+              } else {
+                merged.push(localItem);
+              }
+            }
 
-        if (rSupadata && rSupadata.length > 0) {
-          const localStored = cacheManager.get<Reserve[]>(`reserves_${userId}`) || [];
-          const supaMap = new Map(rSupadata.map(item => [item.id, item]));
-          const merged: Reserve[] = [];
-          const seenIds = new Set<string>();
+            for (const remoteItem of rSupadata) {
+              if (!seenIds.has(remoteItem.id)) {
+                merged.push(remoteItem as Reserve);
+              }
+            }
 
-          for (const localItem of localStored) {
-            seenIds.add(localItem.id);
-            if (syncQueueManager.hasPendingTaskFor('reserves', localItem.id)) {
-              merged.push(localItem);
-            } else if (supaMap.has(localItem.id)) {
-              merged.push(supaMap.get(localItem.id)!);
+            setReserves(merged);
+            cacheManager.set(`reserves_${userId}`, merged, undefined, 'reserves');
+            if (!hasSeeded) cacheManager.set(hasSeededKey, true, undefined, 'reserves');
+          } else if (!hasSeeded) {
+            const defaults = getDefaultReserves(userId);
+            const sanitizedDefaults = defaults.map(({ saldo_atual, ...rest }) => rest);
+            const { data: rInserted, error: rInsertError } = await supabase
+              .from('reserves')
+              .insert(sanitizedDefaults)
+              .select();
+
+            if (!rInsertError && rInserted && rInserted.length > 0) {
+              setReserves(rInserted);
+              cacheManager.set(`reserves_${userId}`, rInserted, undefined, 'reserves');
+              cacheManager.set(hasSeededKey, true, undefined, 'reserves');
             } else {
-              merged.push(localItem);
+              setReserves(defaults);
+              cacheManager.set(`reserves_${userId}`, defaults, undefined, 'reserves');
+              cacheManager.set(hasSeededKey, true, undefined, 'reserves');
             }
           }
-
-          for (const remoteItem of rSupadata) {
-            if (!seenIds.has(remoteItem.id)) {
-              merged.push(remoteItem as Reserve);
-            }
-          }
-
-          setReserves(merged);
-          cacheManager.set(`reserves_${userId}`, merged, undefined, 'reserves');
-          if (!hasSeeded) cacheManager.set(hasSeededKey, true, undefined, 'reserves');
-        } else if (!hasSeeded) {
-          const defaults = getDefaultReserves(userId);
-          const sanitizedDefaults = defaults.map(({ saldo_atual, ...rest }) => rest);
-          const { data: rInserted, error: rInsertError } = await supabase
-            .from('reserves')
-            .insert(sanitizedDefaults)
-            .select();
-
-          if (!rInsertError && rInserted && rInserted.length > 0) {
-            setReserves(rInserted);
-            cacheManager.set(`reserves_${userId}`, rInserted, undefined, 'reserves');
-            cacheManager.set(hasSeededKey, true, undefined, 'reserves');
-          } else {
-            setReserves(defaults);
-            cacheManager.set(`reserves_${userId}`, defaults, undefined, 'reserves');
-            cacheManager.set(hasSeededKey, true, undefined, 'reserves');
-          }
-        } else {
-          const localRes = cacheManager.get<Reserve[]>(`reserves_${userId}`) || [];
-          setReserves(localRes);
-          cacheManager.set(`reserves_${userId}`, localRes, undefined, 'reserves');
         }
-      } catch (errRes) {
-        console.warn('Could not load reserves from Supabase, preserving cache:', errRes);
-        const localRes = cacheManager.get<Reserve[]>(`reserves_${userId}`);
-        if (localRes) {
-          setReserves(localRes);
-        } else {
-          const defaults = getDefaultReserves(userId);
-          setReserves(defaults);
-          cacheManager.set(`reserves_${userId}`, defaults, undefined, 'reserves');
-        }
-      }
 
-      // 4. Fetch reserve transactions
-      try {
-        const { data: rtSupadata, error: rtSupaerror } = await supabase
-          .from('reserve_transactions')
-          .select('*')
-          .eq('user_id', userId)
-          .order('date', { ascending: false })
-          .order('created_at', { ascending: false });
-
-        if (rtSupaerror) throw rtSupaerror;
-        if (rtSupadata) {
+        // Process Reserve Transactions
+        if (rtResult.status === 'fulfilled' && rtResult.value.data) {
+          const rtSupadata = rtResult.value.data;
           const localStored = cacheManager.get<ReserveTransaction[]>(`reserve_transactions_${userId}`) || [];
           const supaMap = new Map(rtSupadata.map(item => [item.id, item]));
           const merged: ReserveTransaction[] = [];
@@ -520,25 +449,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
           setReserveTransactions(merged);
           cacheManager.set(`reserve_transactions_${userId}`, merged, undefined, 'reserves');
         }
-      } catch (errRt) {
-        console.warn('Could not load reserve transactions from Supabase, preserving cache:', errRt);
-        const localRts = cacheManager.get<ReserveTransaction[]>(`reserve_transactions_${userId}`);
-        if (localRts) {
-          setReserveTransactions(localRts);
-        }
-      }
 
-      // 5. Fetch investment transactions
-      try {
-        const { data: itSupadata, error: itSupaerror } = await supabase
-          .from('investment_transactions')
-          .select('*')
-          .eq('user_id', userId)
-          .order('date', { ascending: false })
-          .order('created_at', { ascending: false });
-
-        if (itSupaerror) throw itSupaerror;
-        if (itSupadata) {
+        // Process Investment Transactions
+        if (itResult.status === 'fulfilled' && itResult.value.data) {
+          const itSupadata = itResult.value.data;
           const localStored = cacheManager.get<InvestmentTransaction[]>(`investment_transactions_${userId}`) || [];
           const supaMap = new Map(itSupadata.map(item => [item.id, item]));
           const merged: InvestmentTransaction[] = [];
@@ -564,24 +478,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
           setInvestmentTransactions(merged);
           cacheManager.set(`investment_transactions_${userId}`, merged, undefined, 'investments');
         }
-      } catch (errIt) {
-        console.warn('Supabase investment loading error, preserving cache:', errIt);
-        const localIts = cacheManager.get<InvestmentTransaction[]>(`investment_transactions_${userId}`);
-        if (localIts) {
-          setInvestmentTransactions(localIts);
-        }
-      }
 
-      // 6. Fetch dividends
-      try {
-        const { data: divData, error: divError } = await supabase
-          .from('dividends')
-          .select('*')
-          .eq('user_id', userId)
-          .order('date', { ascending: false });
-
-        if (divError) throw divError;
-        if (divData) {
+        // Process Dividends
+        if (divResult.status === 'fulfilled' && divResult.value.data) {
+          const divData = divResult.value.data;
           const localStored = cacheManager.get<Dividend[]>(`dividends_${userId}`) || [];
           const supaMap = new Map(divData.map(item => [item.id, item]));
           const merged: Dividend[] = [];
@@ -607,19 +507,19 @@ export function DataProvider({ children }: { children: ReactNode }) {
           setDividends(merged);
           cacheManager.set(`dividends_${userId}`, merged, undefined, 'investments');
         }
-      } catch (errDiv) {
-        console.warn('Supabase dividends loading error, preserving cache:', errDiv);
-        const localDivs = cacheManager.get<Dividend[]>(`dividends_${userId}`);
-        if (localDivs) {
-          setDividends(localDivs);
-        }
-      }
 
-    } catch (err) {
-      console.error('Master data loading error:', err);
-    } finally {
-      if (!silent) setLoading(false);
-    }
+        // Record last sync timestamp
+        cacheManager.set(`last_sync_timestamp_${userId}`, Date.now(), undefined, 'system');
+
+      } catch (err) {
+        console.error('Master data loading error:', err);
+      } finally {
+        activeRefreshPromise = null;
+        if (!silent) setLoading(false);
+      }
+    })();
+
+    return activeRefreshPromise;
   }, [settings]);
 
   useEffect(() => {

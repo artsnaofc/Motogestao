@@ -140,49 +140,43 @@ export default function App() {
     };
   }, []);
 
-  const renderContent = () => {
-    if (loading) {
-      return <PageLoadingFallback />;
-    }
-
-    return (
-      <BrowserRouter>
-        <ScrollManager />
-        <Routes>
-          <Route path="/login" element={!session ? <Login /> : <Navigate to="/" replace />} />
-          <Route
-            path="/*"
-            element={
-              <PrivateRoute session={session}>
-                <DataProvider>
-                  <MainLayout>
-                    <ErrorBoundary>
-                      <Routes>
-                        <Route path="/" element={<Dashboard />} />
-                        <Route path="/history" element={<History />} />
-                        <Route path="/add" element={<AddTransaction />} />
-                        <Route path="/add-transaction" element={<AddTransaction />} />
-                        <Route path="/freight" element={<FreightQuotePage />} />
-                        <Route path="/reserves" element={<Reserves />} />
-                        <Route path="/investments" element={<Investments />} />
-                        <Route path="/admin" element={<Admin />} />
-                        <Route path="/profile" element={<Profile />} />
-                      </Routes>
-                    </ErrorBoundary>
-                  </MainLayout>
-                </DataProvider>
-              </PrivateRoute>
-            }
-          />
-        </Routes>
-        <Toaster position="top-center" richColors />
-      </BrowserRouter>
-    );
-  };
-
   return (
     <ErrorBoundary>
-      {renderContent()}
+      <BrowserRouter>
+        <ScrollManager />
+        {loading ? (
+          <PageLoadingFallback />
+        ) : (
+          <Routes>
+            <Route path="/login" element={!session ? <Login /> : <Navigate to="/" replace />} />
+            
+            {/* Authenticated Layout and Application Routes */}
+            <Route
+              element={
+                <PrivateRoute session={session}>
+                  <DataProvider>
+                    <MainLayout />
+                  </DataProvider>
+                </PrivateRoute>
+              }
+            >
+              <Route path="/" element={<Dashboard />} />
+              <Route path="/history" element={<History />} />
+              <Route path="/add" element={<AddTransaction />} />
+              <Route path="/add-transaction" element={<AddTransaction />} />
+              <Route path="/freight" element={<FreightQuotePage />} />
+              <Route path="/reserves" element={<Reserves />} />
+              <Route path="/investments" element={<Investments />} />
+              <Route path="/admin" element={<Admin />} />
+              <Route path="/profile" element={<Profile />} />
+            </Route>
+
+            {/* Fallback to root */}
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        )}
+        <Toaster position="top-center" richColors />
+      </BrowserRouter>
       <DebugConsoleModal open={showDebugModal} onOpenChange={setShowDebugModal} />
     </ErrorBoundary>
   );

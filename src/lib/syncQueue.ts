@@ -17,6 +17,7 @@ class SyncQueueManager {
   private processing = false;
   private listeners: ((queue: SyncTask[]) => void)[] = [];
   private hadMultipleOfflineTasks = false;
+  private retryBackoffTimeout: any = null;
 
   constructor() {
     if (typeof window !== 'undefined') {
@@ -25,12 +26,22 @@ class SyncQueueManager {
         if (this.getQueue().length > 1) {
           this.hadMultipleOfflineTasks = true;
         }
+        if (this.retryBackoffTimeout) {
+          clearTimeout(this.retryBackoffTimeout);
+          this.retryBackoffTimeout = null;
+        }
         this.processQueue();
       });
-      // Process queue immediately on load
-      setTimeout(() => this.processQueue(), 200);
-      // Poll queue every 15 seconds as a safety net
-      setInterval(() => this.processQueue(), 15000);
+
+      // Process queue shortly after boot
+      setTimeout(() => this.processQueue(), 500);
+
+      // Safe heartbeat poll every 30 seconds
+      setInterval(() => {
+        if (navigator.onLine && this.getPendingCount() > 0 && !this.processing) {
+          this.processQueue();
+        }
+      }, 30000);
     }
   }
 
@@ -56,7 +67,13 @@ class SyncQueueManager {
   }
 
   private notifyListeners(queue: SyncTask[]) {
-    this.listeners.forEach(l => l(queue));
+    this.listeners.forEach(l => {
+      try {
+        l(queue);
+      } catch (e) {
+        console.warn('[SyncQueue] Erro ao notificar listener:', e);
+      }
+    });
   }
 
   /**
@@ -88,7 +105,7 @@ class SyncQueueManager {
     }
 
     const newTask: SyncTask = {
-      id: Math.random().toString(36).substring(2, 11),
+      id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2, 11),
       table,
       action,
       targetId,
@@ -100,15 +117,17 @@ class SyncQueueManager {
     queue.push(newTask);
     this.saveQueue(queue);
     
-    // Start processing background tasks immediately
-    this.processQueue();
+    // Trigger background processing if online
+    if (navigator.onLine) {
+      this.processQueue();
+    }
   }
 
   /**
-   * Process the persistent queue items sequentially
+   * Process persistent queue items sequentially
    */
   public async processQueue() {
-    if (this.processing || !navigator.onLine) return;
+    if (this.processing || (typeof navigator !== 'undefined' && !navigator.onLine)) return;
     const queue = this.getQueue();
     if (queue.length === 0) return;
 
@@ -129,7 +148,7 @@ class SyncQueueManager {
           .insert(payloadToInsert);
         error = insertErr;
 
-        // Auto fallback 1: If column does not exist in schema (e.g. newer columns before migration)
+        // Auto fallback 1: If column does not exist in schema
         if (error && (error.code === '42703' || error.code === 'PGRST204' || error.message?.includes('column'))) {
           console.warn(`[SyncQueue] Tentando payload simplificado para ${task.table}:${task.targetId}`);
           const coreKeys = [
@@ -149,7 +168,7 @@ class SyncQueueManager {
           }
         }
 
-        // Auto fallback 2: Foreign key violation (23503) e.g., circular FK between reserve_transactions and investment_transactions
+        // Auto fallback 2: Foreign key violation (23503) e.g., circular FK
         if (error && error.code === '23503') {
           console.warn(`[SyncQueue] Foreign Key violation (23503) em ${task.table}:${task.targetId}. Tentando inserir sem chaves de vínculo externo...`);
           const fkKeysToOmit = ['linked_investment_id', 'transaction_id', 'reserve_id'];
@@ -167,7 +186,6 @@ class SyncQueueManager {
             const { error: fkRetryErr } = await supabase.from(task.table).insert(sanitizedPayload);
             if (!fkRetryErr) {
               error = null;
-              // Re-queue an update so the FK link is applied after referenced records exist
               const updatePayload: Record<string, any> = {};
               for (const key of fkKeysToOmit) {
                 if (payloadToInsert[key] !== undefined && payloadToInsert[key] !== null) {
@@ -187,7 +205,6 @@ class SyncQueueManager {
           .eq('id', task.targetId);
         error = updateErr;
 
-        // If update failed due to FK constraint (23503), retry by unlinking invalid FK
         if (error && error.code === '23503') {
           console.warn(`[SyncQueue] FK violation (23503) no update de ${task.table}:${task.targetId}.`);
           const fkKeysToOmit = ['linked_investment_id', 'transaction_id', 'reserve_id'];
@@ -215,7 +232,6 @@ class SyncQueueManager {
           .delete()
           .eq('id', task.targetId);
         
-        // If delete is blocked by FK constraint (23503), clear references in referencing tables first
         if (deleteErr && deleteErr.code === '23503') {
           console.warn(`[SyncQueue] FK violation (23503) ao excluir de ${task.table}:${task.targetId}. Desvinculando registros dependentes...`);
           try {
@@ -239,32 +255,33 @@ class SyncQueueManager {
       if (error) {
         const isRlsError = error.code === '42501' || error.message?.includes('row-level security');
         if (isRlsError) {
-          console.error(`[SyncQueue] [RLS VIOLATION] A tabela '${task.table}' bloqueou a operação '${task.action}' via Row Level Security (RLS). Execute as políticas de liberação no Supabase SQL Editor:`, error);
+          console.error(`[SyncQueue] [RLS VIOLATION] A tabela '${task.table}' bloqueou a operação '${task.action}' via Row Level Security (RLS):`, error);
         } else {
           console.error(`[SyncQueue] Falha na sincronização do item ${task.id}:`, error);
         }
         
-        // Critical database validation failures or exceeded retry threshold
-        const isDatabaseConstraint = error.code && ['23505', '42P01', '22P02', 'P0001'].includes(error.code);
+        // Critical database validation failures or duplicate keys
+        const isFatalDatabaseError = error.code && ['23505', '42P01', '22P02', 'P0001'].includes(error.code);
         
-        if (isDatabaseConstraint || task.attempts >= 4) {
+        if (isFatalDatabaseError || task.attempts >= 5) {
           console.warn(`[SyncQueue] Descartando item por limite de tentativas ou restrição irremediável:`, task);
           const remaining = this.getQueue().filter(t => t.id !== task.id);
           this.saveQueue(remaining);
         } else {
-          // Rotate task to back of queue so subsequent independent items are not blocked
+          // Rotate task to back with incremented attempt
           const currentQueue = this.getQueue();
           if (currentQueue[0]?.id === task.id) {
             const [failedTask, ...rest] = currentQueue;
             this.saveQueue([...rest, { ...failedTask, attempts: failedTask.attempts + 1 }]);
           }
           this.processing = false;
-          // Delay next attempt slightly
-          setTimeout(() => this.processQueue(), 800);
+          // Exponential backoff
+          const delay = Math.min(1000 * Math.pow(1.5, task.attempts), 10000);
+          this.retryBackoffTimeout = setTimeout(() => this.processQueue(), delay);
           return;
         }
       } else {
-        // Succeeded syncing mutation to Supabase!
+        // Succeeded syncing mutation!
         const remaining = this.getQueue().filter(t => t.id !== task.id);
         this.saveQueue(remaining);
 
@@ -277,31 +294,22 @@ class SyncQueueManager {
       console.error('[SyncQueue] Erro inesperado ao processar tarefa da fila:', err);
     } finally {
       this.processing = false;
-      // Loop recursively with a slight delay
-      setTimeout(() => this.processQueue(), 150);
+      // Loop sequentially with small throttle
+      setTimeout(() => this.processQueue(), 100);
     }
   }
 
-  /**
-   * Check if there are un-synced operations for a specific record
-   */
   public hasPendingTaskFor(table: string, targetId: string): boolean {
     const queue = this.getQueue();
     return queue.some(t => t.table === table && t.targetId === targetId);
   }
 
-  /**
-   * Get pending update payload for a record if any
-   */
   public getPendingPayload(table: string, targetId: string): any | undefined {
     const queue = this.getQueue();
     const task = queue.find(t => t.table === table && t.targetId === targetId);
     return task?.payload;
   }
 
-  /**
-   * Waits until the queue is fully drained or cannot proceed
-   */
   public async flushQueue(timeoutMs = 5000): Promise<void> {
     if (!navigator.onLine || this.getPendingCount() === 0) return;
     const start = Date.now();
