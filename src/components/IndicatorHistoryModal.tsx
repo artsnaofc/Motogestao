@@ -278,7 +278,10 @@ export const IndicatorHistoryModal: React.FC<IndicatorHistoryModalProps> = ({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl sm:max-w-2xl max-h-[90vh] p-0 bg-card border border-border/70 rounded-2xl sm:rounded-3xl shadow-2xl overflow-hidden flex flex-col">
+      <DialogContent
+        initialFocus={false}
+        className="max-w-2xl sm:max-w-2xl max-h-[90vh] p-0 bg-card border border-border/70 rounded-2xl sm:rounded-3xl shadow-2xl overflow-hidden flex flex-col outline-none focus:outline-none focus-visible:outline-none"
+      >
         {/* Header */}
         <DialogHeader className="p-4 sm:p-6 pb-3 sm:pb-4 border-b border-border/40 shrink-0 bg-muted/20">
           <div className="flex items-start justify-between gap-3 pr-6">
@@ -319,13 +322,14 @@ export const IndicatorHistoryModal: React.FC<IndicatorHistoryModalProps> = ({
                     <button
                       key={indKey}
                       type="button"
+                      tabIndex={-1}
                       onClick={(e) => {
                         e.stopPropagation();
                         onSelectIndicator(indKey);
                       }}
-                      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-bold whitespace-nowrap transition-all duration-150 cursor-pointer ${
+                      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-bold whitespace-nowrap transition-all duration-150 cursor-pointer select-none outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0 active:outline-none ${
                         isCurrent
-                          ? `${itemCfg.bgColor} ${itemCfg.textColor} border ${itemCfg.borderColor} shadow-2xs font-extrabold ring-1 ring-current/20 scale-[1.02]`
+                          ? `${itemCfg.bgColor} ${itemCfg.textColor} border ${itemCfg.borderColor} shadow-2xs font-extrabold scale-[1.02]`
                           : 'text-muted-foreground hover:text-foreground hover:bg-muted/50 border border-border/40'
                       }`}
                     >
@@ -348,11 +352,12 @@ export const IndicatorHistoryModal: React.FC<IndicatorHistoryModalProps> = ({
               <div className="inline-flex rounded-lg border border-border/60 bg-muted/30 p-0.5 text-xs font-bold">
                 <button
                   type="button"
+                  tabIndex={-1}
                   onClick={(e) => {
                     e.stopPropagation();
                     setViewScope('all');
                   }}
-                  className={`px-2.5 py-1 rounded-md transition-all text-[11px] font-bold ${
+                  className={`px-2.5 py-1 rounded-md transition-all text-[11px] font-bold cursor-pointer select-none outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0 active:outline-none ${
                     viewScope === 'all'
                       ? 'bg-card text-foreground shadow-2xs'
                       : 'text-muted-foreground hover:text-foreground'
@@ -362,11 +367,12 @@ export const IndicatorHistoryModal: React.FC<IndicatorHistoryModalProps> = ({
                 </button>
                 <button
                   type="button"
+                  tabIndex={-1}
                   onClick={(e) => {
                     e.stopPropagation();
                     setViewScope('filtered');
                   }}
-                  className={`px-2.5 py-1 rounded-md transition-all text-[11px] font-bold ${
+                  className={`px-2.5 py-1 rounded-md transition-all text-[11px] font-bold cursor-pointer select-none outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0 active:outline-none ${
                     viewScope === 'filtered'
                       ? 'bg-card text-foreground shadow-2xs'
                       : 'text-muted-foreground hover:text-foreground'
@@ -433,11 +439,12 @@ export const IndicatorHistoryModal: React.FC<IndicatorHistoryModalProps> = ({
                   <div className="inline-flex rounded-lg border border-border/50 bg-muted/40 p-0.5 text-[10px] font-bold">
                     <button
                       type="button"
+                      tabIndex={-1}
                       onClick={(e) => {
                         e.stopPropagation();
                         setChartType('area');
                       }}
-                      className={`px-2 py-0.5 rounded-md transition-all cursor-pointer ${
+                      className={`px-2 py-0.5 rounded-md transition-all cursor-pointer select-none outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0 active:outline-none ${
                         chartType === 'area'
                           ? 'bg-card text-foreground shadow-2xs font-extrabold'
                           : 'text-muted-foreground hover:text-foreground'
@@ -447,11 +454,12 @@ export const IndicatorHistoryModal: React.FC<IndicatorHistoryModalProps> = ({
                     </button>
                     <button
                       type="button"
+                      tabIndex={-1}
                       onClick={(e) => {
                         e.stopPropagation();
                         setChartType('bar');
                       }}
-                      className={`px-2 py-0.5 rounded-md transition-all cursor-pointer ${
+                      className={`px-2 py-0.5 rounded-md transition-all cursor-pointer select-none outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0 active:outline-none ${
                         chartType === 'bar'
                           ? 'bg-card text-foreground shadow-2xs font-extrabold'
                           : 'text-muted-foreground hover:text-foreground'
@@ -461,11 +469,12 @@ export const IndicatorHistoryModal: React.FC<IndicatorHistoryModalProps> = ({
                     </button>
                     <button
                       type="button"
+                      tabIndex={-1}
                       onClick={(e) => {
                         e.stopPropagation();
                         setChartType('line');
                       }}
-                      className={`px-2 py-0.5 rounded-md transition-all cursor-pointer ${
+                      className={`px-2 py-0.5 rounded-md transition-all cursor-pointer select-none outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0 active:outline-none ${
                         chartType === 'line'
                           ? 'bg-card text-foreground shadow-2xs font-extrabold'
                           : 'text-muted-foreground hover:text-foreground'
@@ -753,11 +762,6 @@ export const IndicatorHistoryModal: React.FC<IndicatorHistoryModalProps> = ({
                                 <span className="font-bold text-foreground text-xs sm:text-sm">
                                   {item.label}
                                 </span>
-                                {idx === 0 && (
-                                  <span className="text-[9px] font-black uppercase px-1.5 py-0.25 rounded-md bg-primary/10 text-primary border border-primary/20">
-                                    Mais recente
-                                  </span>
-                                )}
                               </div>
                             </td>
                             <td className="py-2.5 px-3 sm:px-4 text-right">
