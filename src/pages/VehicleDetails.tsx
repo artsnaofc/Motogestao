@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import {
   Bike,
@@ -50,6 +50,7 @@ export const VehicleDetails: React.FC = () => {
   const { transactions, reserveTransactions, hideValues } = useData();
 
   const [activeTab, setActiveTab] = useState<'overview' | 'history' | 'maintenance' | 'km_logs' | 'fipe'>('overview');
+  const [historyTypeFilter, setHistoryTypeFilter] = useState<'all' | 'income' | 'expense' | 'utilizacao'>('all');
   const [historyCategoryFilter, setHistoryCategoryFilter] = useState<string>('all');
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isKmModalOpen, setIsKmModalOpen] = useState(false);
@@ -92,12 +93,68 @@ export const VehicleDetails: React.FC = () => {
     return val.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
   };
 
-  // Filter financial records for this bike
-  const vehicleTransactions = transactions.filter(t => t.vehicle_id === vehicle.id);
-  const filteredTransactions = vehicleTransactions.filter(t => {
-    if (historyCategoryFilter === 'all') return true;
-    return t.category.toLowerCase().includes(historyCategoryFilter.toLowerCase());
-  });
+  // Compile unified financial records for this bike (Transactions + Reserve Utilizations)
+  const unifiedHistory = React.useMemo(() => {
+    const list: Array<{
+      id: string;
+      date: string;
+      amount: number;
+      category: string;
+      description?: string;
+      type: 'income' | 'expense' | 'utilizacao';
+      isReserve?: boolean;
+    }> = [];
+
+    // Financial transactions
+    transactions.filter(t => t.vehicle_id === vehicle.id).forEach(t => {
+      list.push({
+        id: t.id,
+        date: t.date,
+        amount: Number(t.amount) || 0,
+        category: t.category,
+        description: t.description,
+        type: t.type === 'income' ? 'income' : 'expense',
+      });
+    });
+
+    // Reserve utilizations (only those without duplicate transaction_id)
+    reserveTransactions.filter(rt => rt.vehicle_id === vehicle.id && rt.type === 'utilizacao').forEach(rt => {
+      if (!rt.transaction_id) {
+        list.push({
+          id: rt.id,
+          date: rt.date,
+          amount: Number(rt.amount) || 0,
+          category: rt.category || 'Reserva Manutenção',
+          description: rt.description || 'Uso da Reserva',
+          type: 'utilizacao',
+          isReserve: true,
+        });
+      }
+    });
+
+    // Sort by date desc
+    return list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  }, [transactions, reserveTransactions, vehicle.id]);
+
+  const filteredHistory = useMemo(() => {
+    return unifiedHistory.filter(item => {
+      // Type filter
+      if (historyTypeFilter !== 'all') {
+        if (historyTypeFilter === 'income' && item.type !== 'income') return false;
+        if (historyTypeFilter === 'expense' && item.type !== 'expense') return false;
+        if (historyTypeFilter === 'utilizacao' && item.type !== 'utilizacao') return false;
+      }
+
+      // Category filter
+      if (historyCategoryFilter !== 'all') {
+        if (!item.category.toLowerCase().includes(historyCategoryFilter.toLowerCase())) {
+          return false;
+        }
+      }
+
+      return true;
+    });
+  }, [unifiedHistory, historyTypeFilter, historyCategoryFilter]);
 
   const handleUpdateFipeNow = async () => {
     if (!vehicle.fipe_code) {
@@ -311,7 +368,7 @@ export const VehicleDetails: React.FC = () => {
               : 'text-muted-foreground hover:text-foreground hover:bg-card/50'
           }`}
         >
-          Histórico Financeiro ({vehicleTransactions.length})
+          Histórico Financeiro ({unifiedHistory.length})
         </button>
 
         <button
@@ -351,50 +408,54 @@ export const VehicleDetails: React.FC = () => {
       {/* TAB 1: OVERVIEW */}
       {activeTab === 'overview' && (
         <div className="space-y-6">
-          {/* KPI Grid */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-            <div className="p-4 bg-card border border-border/70 rounded-2xl space-y-1">
-              <span className="text-[10px] font-bold text-muted-foreground uppercase flex items-center gap-1">
-                <Fuel className="w-3.5 h-3.5 text-indigo-500" />
-                Gasto em Combustível
+          {/* Main Financial KPI Grid */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
+            <div className="p-4 bg-card border border-border/70 rounded-2xl space-y-1 shadow-xs">
+              <span className="text-[10.5px] font-bold text-emerald-600 dark:text-emerald-400 uppercase flex items-center gap-1.5">
+                <TrendingUp className="w-3.5 h-3.5" />
+                Faturamento da Moto
               </span>
-              <strong className="text-lg font-black text-foreground block">
-                {formatCurrency(metrics.fuelCost)}
+              <strong className="text-lg font-black text-emerald-600 dark:text-emerald-400 block">
+                {formatCurrency(metrics.totalIncome)}
               </strong>
               <span className="text-[10.5px] text-muted-foreground block">
-                {metrics.totalLiters > 0 ? `${metrics.totalLiters.toFixed(1)} Litros abastecidos` : 'Nenhum abastecimento'}
+                {metrics.revenuePerKm > 0 ? `R$ ${metrics.revenuePerKm.toFixed(2)}/km gerado` : 'Ganhos vinculados'}
               </span>
             </div>
 
-            <div className="p-4 bg-card border border-border/70 rounded-2xl space-y-1">
-              <span className="text-[10px] font-bold text-muted-foreground uppercase flex items-center gap-1">
-                <Wrench className="w-3.5 h-3.5 text-amber-500" />
-                Manutenção & Peças
-              </span>
-              <strong className="text-lg font-black text-foreground block">
-                {formatCurrency(metrics.maintenanceCost + metrics.tiresCost + metrics.oilCost)}
-              </strong>
-              <span className="text-[10.5px] text-muted-foreground block">Oficinas, óleo e pneus</span>
-            </div>
-
-            <div className="p-4 bg-card border border-border/70 rounded-2xl space-y-1">
-              <span className="text-[10px] font-bold text-muted-foreground uppercase flex items-center gap-1">
+            <div className="p-4 bg-card border border-border/70 rounded-2xl space-y-1 shadow-xs">
+              <span className="text-[10.5px] font-bold text-muted-foreground uppercase flex items-center gap-1.5">
                 <DollarSign className="w-3.5 h-3.5 text-rose-500" />
-                Custo Total Acumulado
+                Custo Operacional Total
               </span>
               <strong className="text-lg font-black text-rose-500 block">
                 {formatCurrency(metrics.totalCost)}
               </strong>
-              <span className="text-[10.5px] text-muted-foreground block">Consolidação de despesas da moto</span>
+              <span className="text-[10.5px] text-muted-foreground block">
+                {metrics.costPerKm > 0 ? `R$ ${metrics.costPerKm.toFixed(2)}/km rodado` : 'Despesas da moto'}
+              </span>
             </div>
 
-            <div className="p-4 bg-card border border-border/70 rounded-2xl space-y-1">
-              <span className="text-[10px] font-bold text-muted-foreground uppercase flex items-center gap-1">
+            <div className="p-4 bg-card border border-border/70 rounded-2xl space-y-1 shadow-xs">
+              <span className="text-[10.5px] font-bold text-muted-foreground uppercase flex items-center gap-1.5">
+                <Sparkles className="w-3.5 h-3.5 text-indigo-500" />
+                Lucro Líquido
+              </span>
+              <strong className={`text-lg font-black block ${metrics.netProfit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-500'}`}>
+                {formatCurrency(metrics.netProfit)}
+              </strong>
+              <span className="text-[10.5px] font-bold text-muted-foreground block">
+                {metrics.totalIncome > 0 ? `Margem: ${metrics.marginPercent.toFixed(1)}%` : 'Receita menos custos'}
+              </span>
+            </div>
+
+            <div className="p-4 bg-card border border-border/70 rounded-2xl space-y-1 shadow-xs">
+              <span className="text-[10.5px] font-bold text-muted-foreground uppercase flex items-center gap-1.5">
                 <Gauge className="w-3.5 h-3.5 text-primary" />
-                Custo por KM Rodado
+                Custo / KM
               </span>
               <strong className="text-lg font-black text-indigo-500 block">
-                {metrics.costPerKm > 0 ? `R$ ${metrics.costPerKm.toFixed(2)}` : 'R$ 0,00'}
+                {metrics.costPerKm > 0 ? `R$ ${metrics.costPerKm.toFixed(2)}/km` : 'R$ 0,00'}
               </strong>
               <span className="text-[10.5px] text-muted-foreground block">
                 Combustível: {metrics.fuelCostPerKm > 0 ? `R$ ${metrics.fuelCostPerKm.toFixed(2)}/km` : '0,00'}
@@ -402,12 +463,61 @@ export const VehicleDetails: React.FC = () => {
             </div>
           </div>
 
+          {/* Operational Expenses Subgrid */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="p-3.5 bg-card/70 border border-border/60 rounded-2xl space-y-0.5">
+              <span className="text-[10px] font-semibold text-muted-foreground uppercase flex items-center gap-1">
+                <Fuel className="w-3 h-3 text-indigo-500" />
+                Combustível
+              </span>
+              <strong className="text-sm font-black text-foreground block">
+                {formatCurrency(metrics.fuelCost)}
+              </strong>
+              <span className="text-[9.5px] text-muted-foreground block">
+                {metrics.totalLiters > 0 ? `${metrics.totalLiters.toFixed(1)} L (${metrics.realizedKmPerLiter.toFixed(1)} km/l)` : '0 L'}
+              </span>
+            </div>
+
+            <div className="p-3.5 bg-card/70 border border-border/60 rounded-2xl space-y-0.5">
+              <span className="text-[10px] font-semibold text-muted-foreground uppercase flex items-center gap-1">
+                <Wrench className="w-3 h-3 text-amber-500" />
+                Oficina & Revisões
+              </span>
+              <strong className="text-sm font-black text-foreground block">
+                {formatCurrency(metrics.maintenanceCost)}
+              </strong>
+              <span className="text-[9.5px] text-muted-foreground block">Serviços mecânicos</span>
+            </div>
+
+            <div className="p-3.5 bg-card/70 border border-border/60 rounded-2xl space-y-0.5">
+              <span className="text-[10px] font-semibold text-muted-foreground uppercase flex items-center gap-1">
+                <Sparkles className="w-3 h-3 text-purple-500" />
+                Óleo & Pneus
+              </span>
+              <strong className="text-sm font-black text-foreground block">
+                {formatCurrency(metrics.oilCost + metrics.tiresCost)}
+              </strong>
+              <span className="text-[9.5px] text-muted-foreground block">Desgaste rápido</span>
+            </div>
+
+            <div className="p-3.5 bg-card/70 border border-border/60 rounded-2xl space-y-0.5">
+              <span className="text-[10px] font-semibold text-muted-foreground uppercase flex items-center gap-1">
+                <ReceiptText className="w-3 h-3 text-rose-500" />
+                Taxas & Seguro
+              </span>
+              <strong className="text-sm font-black text-foreground block">
+                {formatCurrency(metrics.taxCost + metrics.insuranceCost)}
+              </strong>
+              <span className="text-[9.5px] text-muted-foreground block">IPVA, licença, multas</span>
+            </div>
+          </div>
+
           {/* Breakdown by Category */}
-          <div className="p-5 bg-card border border-border/70 rounded-3xl space-y-4">
+          <div className="p-5 bg-card border border-border/70 rounded-3xl space-y-4 shadow-xs">
             <h3 className="text-sm font-black text-foreground">Detalhamento de Custos por Categoria</h3>
 
             {metrics.categoryBreakdown.length === 0 ? (
-              <p className="text-xs text-muted-foreground">Nenhum lançamento vinculado a este veículo ainda.</p>
+              <p className="text-xs text-muted-foreground">Nenhum custo registrado para este veículo ainda.</p>
             ) : (
               <div className="space-y-2.5">
                 {metrics.categoryBreakdown.map(item => {
@@ -436,49 +546,158 @@ export const VehicleDetails: React.FC = () => {
       {/* TAB 2: FINANCIAL HISTORY */}
       {activeTab === 'history' && (
         <div className="space-y-4">
-          <div className="flex items-center justify-between gap-3 p-3 bg-card border border-border/70 rounded-2xl">
-            <span className="text-xs font-bold text-foreground flex items-center gap-1.5">
-              <Filter className="w-3.5 h-3.5 text-primary" />
-              Filtrar por Categoria:
-            </span>
-            <select
-              value={historyCategoryFilter}
-              onChange={e => setHistoryCategoryFilter(e.target.value)}
-              className="h-9 px-3 bg-muted/30 border border-border rounded-xl text-xs font-bold text-foreground"
-            >
-              <option value="all">Todas as Despesas</option>
-              <option value="combustível">Combustível</option>
-              <option value="manutenção">Manutenção</option>
-              <option value="pneu">Pneus</option>
-              <option value="óleo">Óleo</option>
-              <option value="seguro">Seguro</option>
-              <option value="ipva">IPVA / Taxas</option>
-            </select>
+          {/* Summary Balance Strip */}
+          <div className="p-4 bg-card border border-border/70 rounded-3xl grid grid-cols-1 sm:grid-cols-3 gap-3 shadow-xs">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 rounded-xl bg-emerald-500/10 text-emerald-500 shrink-0">
+                <TrendingUp className="w-4 h-4" />
+              </div>
+              <div>
+                <span className="text-[10px] font-bold uppercase text-muted-foreground block">Faturamento Vinculado</span>
+                <strong className="text-sm font-black text-emerald-600 dark:text-emerald-400">
+                  +{formatCurrency(metrics.totalIncome)}
+                </strong>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 rounded-xl bg-rose-500/10 text-rose-500 shrink-0">
+                <DollarSign className="w-4 h-4" />
+              </div>
+              <div>
+                <span className="text-[10px] font-bold uppercase text-muted-foreground block">Despesas & Utilizações</span>
+                <strong className="text-sm font-black text-rose-500">
+                  -{formatCurrency(metrics.totalCost)}
+                </strong>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 rounded-xl bg-indigo-500/10 text-indigo-500 shrink-0">
+                <Sparkles className="w-4 h-4" />
+              </div>
+              <div>
+                <span className="text-[10px] font-bold uppercase text-muted-foreground block">Resultado Líquido</span>
+                <strong className={`text-sm font-black ${metrics.netProfit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-500'}`}>
+                  {metrics.netProfit >= 0 ? '+' : ''}{formatCurrency(metrics.netProfit)}
+                </strong>
+              </div>
+            </div>
           </div>
 
-          {filteredTransactions.length === 0 ? (
-            <div className="p-8 text-center bg-card border border-border/70 rounded-3xl">
-              <p className="text-xs text-muted-foreground">Nenhum lançamento encontrado para os filtros selecionados.</p>
+          {/* Filter Bar */}
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5 p-3 bg-card border border-border/70 rounded-2xl">
+            <div className="flex items-center gap-2">
+              <Filter className="w-3.5 h-3.5 text-primary shrink-0" />
+              <span className="text-xs font-bold text-foreground">Filtros:</span>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Type Filter */}
+              <select
+                value={historyTypeFilter}
+                onChange={e => setHistoryTypeFilter(e.target.value as any)}
+                className="h-8 px-2.5 bg-muted/40 border border-border rounded-xl text-xs font-semibold text-foreground cursor-pointer"
+              >
+                <option value="all">Todos os Tipos</option>
+                <option value="income">Apenas Entradas (Faturamento)</option>
+                <option value="expense">Apenas Despesas</option>
+                <option value="utilizacao">Apenas Resgates de Reserva</option>
+              </select>
+
+              {/* Category Filter */}
+              <select
+                value={historyCategoryFilter}
+                onChange={e => setHistoryCategoryFilter(e.target.value)}
+                className="h-8 px-2.5 bg-muted/40 border border-border rounded-xl text-xs font-semibold text-foreground cursor-pointer"
+              >
+                <option value="all">Todas as Categorias</option>
+                <option value="frete">Frete do Dia</option>
+                <option value="pizzaria">Pizzaria</option>
+                <option value="uber">Uber</option>
+                <option value="trabalho">Trabalho</option>
+                <option value="combustível">Combustível</option>
+                <option value="manutenção">Manutenção</option>
+                <option value="pneu">Pneus</option>
+                <option value="óleo">Óleo</option>
+                <option value="seguro">Seguro</option>
+                <option value="ipva">IPVA / Taxas</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Transactions List */}
+          {filteredHistory.length === 0 ? (
+            <div className="p-8 text-center bg-card border border-border/70 rounded-3xl space-y-1">
+              <p className="text-xs font-bold text-muted-foreground">Nenhum lançamento encontrado para os filtros selecionados.</p>
+              <p className="text-[11px] text-muted-foreground">Adicione transações ou faturamentos vinculando este veículo.</p>
             </div>
           ) : (
             <div className="space-y-2">
-              {filteredTransactions.map(t => (
-                <div key={t.id} className="p-3.5 bg-card border border-border/60 rounded-2xl flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2.5 rounded-xl bg-rose-500/10 text-rose-500 shrink-0">
-                      <DollarSign className="w-4 h-4" />
+              {filteredHistory.map(item => {
+                const isIncome = item.type === 'income';
+                const isReserve = item.type === 'utilizacao';
+
+                return (
+                  <div
+                    key={item.id}
+                    className="p-3.5 bg-card border border-border/60 rounded-2xl flex items-center justify-between gap-3 shadow-xs hover:border-border transition-colors"
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div
+                        className={`p-2.5 rounded-xl shrink-0 ${
+                          isIncome
+                            ? 'bg-emerald-500/10 text-emerald-500'
+                            : isReserve
+                            ? 'bg-amber-500/10 text-amber-500'
+                            : 'bg-rose-500/10 text-rose-500'
+                        }`}
+                      >
+                        {isIncome ? (
+                          <TrendingUp className="w-4 h-4" />
+                        ) : isReserve ? (
+                          <Wrench className="w-4 h-4" />
+                        ) : (
+                          <DollarSign className="w-4 h-4" />
+                        )}
+                      </div>
+
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-xs font-bold text-foreground truncate">{item.category}</span>
+                          <span
+                            className={`text-[9px] uppercase font-extrabold px-2 py-0.2 rounded-full border ${
+                              isIncome
+                                ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20'
+                                : isReserve
+                                ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20'
+                                : 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20'
+                            }`}
+                          >
+                            {isIncome ? 'Entrada' : isReserve ? 'Reserva' : 'Saída'}
+                          </span>
+                        </div>
+                        <div className="text-[10.5px] text-muted-foreground truncate">{item.description || item.date}</div>
+                      </div>
                     </div>
-                    <div>
-                      <div className="text-xs font-bold text-foreground">{t.category}</div>
-                      <div className="text-[10.5px] text-muted-foreground">{t.description || t.date}</div>
+
+                    <div className="text-right shrink-0">
+                      <strong
+                        className={`text-xs sm:text-sm font-black block ${
+                          isIncome
+                            ? 'text-emerald-600 dark:text-emerald-400'
+                            : isReserve
+                            ? 'text-amber-600 dark:text-amber-400'
+                            : 'text-rose-500'
+                        }`}
+                      >
+                        {isIncome ? '+' : '-'}{formatCurrency(item.amount)}
+                      </strong>
+                      <span className="text-[10px] text-muted-foreground block">{item.date}</span>
                     </div>
                   </div>
-                  <div className="text-right">
-                    <strong className="text-xs font-extrabold text-rose-500 block">-{formatCurrency(t.amount)}</strong>
-                    <span className="text-[10px] text-muted-foreground block">{t.date}</span>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>

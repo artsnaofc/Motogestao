@@ -162,23 +162,50 @@ export function AddTransaction() {
   const [recurrenceFrequency, setRecurrenceFrequency] = useState<RecurrenceFrequency>('monthly');
   const [recurrenceInstallments, setRecurrenceInstallments] = useState<string>('12');
 
+  const selectedReserveObj = useMemo(() => {
+    return reserves.find(r => r.id === reserveId);
+  }, [reserves, reserveId]);
+
   const currentCategoryName = useMemo(() => {
     if (activeTab === 'pizzaria') return 'Pizzaria';
     if (activeTab === 'frete') return 'Frete do Dia';
-    if (activeTab === 'reserva') return rtCategory;
+    if (activeTab === 'reserva') {
+      if (selectedReserveObj) {
+        if (selectedReserveObj.require_category_on_use === false) {
+          return selectedReserveObj.default_use_category || selectedReserveObj.name || 'Manutenção';
+        }
+      }
+      return rtCategory || 'Manutenção';
+    }
     return category;
-  }, [activeTab, category, rtCategory]);
+  }, [activeTab, category, rtCategory, selectedReserveObj]);
 
   const isCurrentCategoryVehicleRelated = useMemo(() => {
-    if (activeTab === 'reserva' && rtType !== 'utilizacao') return false;
+    if (activeTab === 'reserva') {
+      if (rtType !== 'utilizacao') return false;
+      if (searchParams.get('vehicle_id')) return true;
+      if (selectedReserveObj) {
+        const resCat = selectedReserveObj.require_category_on_use === false
+          ? (selectedReserveObj.default_use_category || selectedReserveObj.name || 'Manutenção')
+          : (rtCategory || selectedReserveObj.name || 'Manutenção');
+        if (
+          isVehicleRelatedCategory(resCat, 'reserva', 'expense', settings) ||
+          isVehicleRelatedCategory(selectedReserveObj.name, 'reserva', 'expense', settings) ||
+          isVehicleRelatedCategory(selectedReserveObj.default_use_category, 'reserva', 'expense', settings)
+        ) {
+          return true;
+        }
+      }
+      return isVehicleRelatedCategory(currentCategoryName, 'reserva', 'expense', settings);
+    }
     if (searchParams.get('vehicle_id')) return true;
     return isVehicleRelatedCategory(
       currentCategoryName,
       activeTab,
-      activeTab === 'despesa' || activeTab === 'reserva' ? 'expense' : 'income',
+      activeTab === 'despesa' ? 'expense' : 'income',
       settings
     );
-  }, [currentCategoryName, activeTab, rtType, settings, searchParams]);
+  }, [currentCategoryName, activeTab, rtType, selectedReserveObj, rtCategory, settings, searchParams]);
 
   const effectiveSelectedVehicleValue = useMemo(() => {
     if (selectedVehicleId === '__none__') return '';

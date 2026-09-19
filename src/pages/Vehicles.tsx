@@ -47,6 +47,25 @@ export const Vehicles: React.FC = () => {
     return map;
   }, [vehicles, transactions, reserveTransactions, getVehicleMetrics]);
 
+  // Consolidated fleet totals
+  const fleetTotals = React.useMemo(() => {
+    let totalIncome = 0;
+    let totalCost = 0;
+    let totalKm = 0;
+
+    Object.values(metricsMap).forEach(m => {
+      totalIncome += m.totalIncome || 0;
+      totalCost += m.totalCost || 0;
+      totalKm += m.totalKmRecorded || 0;
+    });
+
+    const netProfit = totalIncome - totalCost;
+    const margin = totalIncome > 0 ? (netProfit / totalIncome) * 100 : 0;
+    const avgCostPerKm = totalKm > 0 ? totalCost / totalKm : 0;
+
+    return { totalIncome, totalCost, netProfit, margin, totalKm, avgCostPerKm };
+  }, [metricsMap]);
+
   return (
     <div className="space-y-6 pb-12 animate-fade-in">
       {/* Page Header */}
@@ -63,7 +82,7 @@ export const Vehicles: React.FC = () => {
               </span>
             </h1>
             <p className="text-xs font-medium text-muted-foreground mt-0.5">
-              Gestão operacional, tabela FIPE, manutenção preventivas e custo por KM
+              Faturamento por moto, lucro líquido, tabela FIPE, manutenção e custo operacional por KM
             </p>
           </div>
         </div>
@@ -76,6 +95,63 @@ export const Vehicles: React.FC = () => {
           Cadastrar Nova Moto
         </Button>
       </div>
+
+      {/* Fleet Financial Overview Banner */}
+      {vehicles.length > 0 && (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="p-4 bg-card/90 border border-border/70 rounded-3xl space-y-1 shadow-xs">
+            <span className="text-[10.5px] font-bold text-muted-foreground uppercase flex items-center gap-1.5">
+              <TrendingUp className="w-3.5 h-3.5 text-emerald-500" />
+              Faturamento com Motos
+            </span>
+            <strong className="text-base sm:text-lg font-black text-emerald-600 dark:text-emerald-400 block">
+              {formatCurrency(fleetTotals.totalIncome)}
+            </strong>
+            <span className="text-[10px] text-muted-foreground block">
+              Ganhos brutos vinculados
+            </span>
+          </div>
+
+          <div className="p-4 bg-card/90 border border-border/70 rounded-3xl space-y-1 shadow-xs">
+            <span className="text-[10.5px] font-bold text-muted-foreground uppercase flex items-center gap-1.5">
+              <DollarSign className="w-3.5 h-3.5 text-rose-500" />
+              Custos Operacionais
+            </span>
+            <strong className="text-base sm:text-lg font-black text-rose-500 block">
+              {formatCurrency(fleetTotals.totalCost)}
+            </strong>
+            <span className="text-[10px] text-muted-foreground block">
+              Combustível, oficinas e taxas
+            </span>
+          </div>
+
+          <div className="p-4 bg-card/90 border border-border/70 rounded-3xl space-y-1 shadow-xs">
+            <span className="text-[10.5px] font-bold text-muted-foreground uppercase flex items-center gap-1.5">
+              <Sparkles className="w-3.5 h-3.5 text-indigo-500" />
+              Lucro Líquido da Garagem
+            </span>
+            <strong className={`text-base sm:text-lg font-black block ${fleetTotals.netProfit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-500'}`}>
+              {formatCurrency(fleetTotals.netProfit)}
+            </strong>
+            <span className="text-[10px] font-bold text-muted-foreground block">
+              Margem: {fleetTotals.margin.toFixed(1)}%
+            </span>
+          </div>
+
+          <div className="p-4 bg-card/90 border border-border/70 rounded-3xl space-y-1 shadow-xs">
+            <span className="text-[10.5px] font-bold text-muted-foreground uppercase flex items-center gap-1.5">
+              <Gauge className="w-3.5 h-3.5 text-primary" />
+              Custo Médio / KM
+            </span>
+            <strong className="text-base sm:text-lg font-black text-indigo-500 block">
+              {fleetTotals.avgCostPerKm > 0 ? `R$ ${fleetTotals.avgCostPerKm.toFixed(2)}/km` : 'R$ 0,00'}
+            </strong>
+            <span className="text-[10px] text-muted-foreground block">
+              {fleetTotals.totalKm.toLocaleString('pt-BR')} KM rodados
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* Loading Skeleton */}
       {isLoadingVehicles && vehicles.length === 0 && (
@@ -91,7 +167,7 @@ export const Vehicles: React.FC = () => {
           <div className="max-w-md mx-auto space-y-1">
             <h3 className="text-base font-black text-foreground">Sua garagem está vazia</h3>
             <p className="text-xs text-muted-foreground">
-              Cadastre sua moto para acompanhar o custo por KM, dados da Tabela FIPE, manutenção e histórico de despesas sem duplicação financeira.
+              Cadastre sua moto para acompanhar o faturamento, lucro líquido, custo por KM, dados da Tabela FIPE e manutenção preventiva.
             </p>
           </div>
           <Button
@@ -136,7 +212,7 @@ export const Vehicles: React.FC = () => {
                         )}
                       </div>
                       <p className="text-xs text-muted-foreground">
-                        {v.year_model ? `Ano ${v.year_model}` : ''} {v.plate ? `• Placa ${v.plate}` : ''} {v.color ? `• ${v.color}` : ''}
+                        {v.year_model ? `Ano ${v.year_model}` : ''} {v.plate ? `• Placa ${v.plate}` : ''} {v.fuel_type ? `• ${v.fuel_type}` : ''}
                       </p>
                     </div>
                   </div>
@@ -151,35 +227,44 @@ export const Vehicles: React.FC = () => {
                   )}
                 </div>
 
-                {/* Metrics Highlights */}
+                {/* Financial & Operational KPI Grid */}
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 my-3 p-3 bg-card/80 border border-border/50 rounded-2xl">
                   <div>
-                    <span className="text-[10px] font-semibold text-muted-foreground uppercase block">KM Atual</span>
-                    <strong className="text-xs font-extrabold text-foreground block mt-0.5">
-                      {v.current_km.toLocaleString('pt-BR')} km
+                    <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 uppercase block">Faturado</span>
+                    <strong className="text-xs font-black text-emerald-600 dark:text-emerald-400 block mt-0.5">
+                      {formatCurrency(metrics.totalIncome)}
                     </strong>
                   </div>
 
                   <div>
-                    <span className="text-[10px] font-semibold text-muted-foreground uppercase block">Tabela FIPE</span>
-                    <strong className="text-xs font-extrabold text-emerald-600 dark:text-emerald-400 block mt-0.5">
-                      {v.fipe_value ? formatCurrency(v.fipe_value) : 'Consulte'}
-                    </strong>
-                  </div>
-
-                  <div>
-                    <span className="text-[10px] font-semibold text-muted-foreground uppercase block">Custo Total</span>
+                    <span className="text-[10px] font-bold text-muted-foreground uppercase block">Custo Total</span>
                     <strong className="text-xs font-extrabold text-rose-500 block mt-0.5">
                       {formatCurrency(metrics.totalCost)}
                     </strong>
                   </div>
 
                   <div>
-                    <span className="text-[10px] font-semibold text-muted-foreground uppercase block">Custo / KM</span>
+                    <span className="text-[10px] font-bold text-muted-foreground uppercase block">Lucro Líquido</span>
+                    <strong className={`text-xs font-black block mt-0.5 ${metrics.netProfit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-500'}`}>
+                      {formatCurrency(metrics.netProfit)}
+                    </strong>
+                  </div>
+
+                  <div>
+                    <span className="text-[10px] font-bold text-muted-foreground uppercase block">Custo / KM</span>
                     <strong className="text-xs font-extrabold text-indigo-500 block mt-0.5">
                       {metrics.costPerKm > 0 ? `R$ ${metrics.costPerKm.toFixed(2)}/km` : 'R$ 0,00'}
                     </strong>
                   </div>
+                </div>
+
+                {/* Secondary details bar */}
+                <div className="flex items-center justify-between px-1 py-1 text-[11px] text-muted-foreground font-medium mb-3">
+                  <span>Hodômetro: <strong className="text-foreground">{v.current_km.toLocaleString('pt-BR')} km</strong></span>
+                  <span>FIPE: <strong className="text-foreground">{v.fipe_value ? formatCurrency(v.fipe_value) : 'Consulte'}</strong></span>
+                  {metrics.totalIncome > 0 && (
+                    <span className="text-emerald-600 dark:text-emerald-400 font-bold">Margem: {metrics.marginPercent.toFixed(0)}%</span>
+                  )}
                 </div>
 
                 {/* Alerts summary if any */}
@@ -219,7 +304,7 @@ export const Vehicles: React.FC = () => {
         <div className="p-5 bg-card border border-border/70 rounded-3xl space-y-4 shadow-xs">
           <div className="flex items-center gap-2">
             <Scale className="w-5 h-5 text-indigo-500" />
-            <h3 className="text-sm font-black text-foreground">Comparativo de Desempenho e Custos entre Motos</h3>
+            <h3 className="text-sm font-black text-foreground">Comparativo de Faturamento, Custos e Lucro entre Motos</h3>
           </div>
 
           <div className="overflow-x-auto">
@@ -228,9 +313,11 @@ export const Vehicles: React.FC = () => {
                 <tr className="border-b border-border/60 text-muted-foreground uppercase text-[10px]">
                   <th className="py-2.5 px-3">Veículo</th>
                   <th className="py-2.5 px-3">KM Atual</th>
+                  <th className="py-2.5 px-3 text-emerald-600 dark:text-emerald-400 font-black">Faturado (Bruto)</th>
                   <th className="py-2.5 px-3">Combustível</th>
                   <th className="py-2.5 px-3">Manutenção</th>
-                  <th className="py-2.5 px-3">Custo Total</th>
+                  <th className="py-2.5 px-3 text-rose-500">Custo Total</th>
+                  <th className="py-2.5 px-3 font-black">Lucro Líquido</th>
                   <th className="py-2.5 px-3">Custo/KM</th>
                   <th className="py-2.5 px-3">Valor FIPE</th>
                 </tr>
@@ -245,9 +332,18 @@ export const Vehicles: React.FC = () => {
                         {v.brand} {v.model}
                       </td>
                       <td className="py-3 px-3 text-foreground font-semibold">{v.current_km.toLocaleString('pt-BR')} km</td>
+                      <td className="py-3 px-3 text-emerald-600 dark:text-emerald-400 font-extrabold">{formatCurrency(m.totalIncome)}</td>
                       <td className="py-3 px-3 text-foreground">{formatCurrency(m.fuelCost)}</td>
                       <td className="py-3 px-3 text-foreground">{formatCurrency(m.maintenanceCost)}</td>
                       <td className="py-3 px-3 text-rose-500 font-bold">{formatCurrency(m.totalCost)}</td>
+                      <td className={`py-3 px-3 font-black ${m.netProfit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-500'}`}>
+                        {formatCurrency(m.netProfit)}
+                        {m.totalIncome > 0 && (
+                          <span className="text-[10px] text-muted-foreground block font-normal">
+                            ({m.marginPercent.toFixed(0)}% margem)
+                          </span>
+                        )}
+                      </td>
                       <td className="py-3 px-3 text-indigo-500 font-bold">R$ {m.costPerKm.toFixed(2)}/km</td>
                       <td className="py-3 px-3 text-emerald-600 font-bold">{v.fipe_value ? formatCurrency(v.fipe_value) : 'N/A'}</td>
                     </tr>

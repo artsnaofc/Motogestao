@@ -4784,7 +4784,13 @@ export function History() {
               </div>
 
               {/* Vehicle Selection for Reserve Utilization - Right below Valor */}
-              {editReserveTxType === 'utilizacao' && vehicles && vehicles.length > 0 && isVehicleRelatedCategory(editReserveCategory, null, 'expense', settings) && (
+              {editReserveTxType === 'utilizacao' && vehicles && vehicles.length > 0 && (() => {
+                const effCategory = editReserveCategory || selectedReserve?.default_use_category || selectedReserve?.name || '';
+                const isVehRelated = isVehicleRelatedCategory(effCategory, 'reserva', 'expense', settings) ||
+                  (selectedReserve?.name ? isVehicleRelatedCategory(selectedReserve.name, 'reserva', 'expense', settings) : false) ||
+                  (selectedReserve?.default_use_category ? isVehicleRelatedCategory(selectedReserve.default_use_category, 'reserva', 'expense', settings) : false);
+                return isVehRelated;
+              })() && (
                 <div className="space-y-1.5 pt-0.5 animate-fade-in">
                   <VehicleSelect
                     value={editVehicleId === '__none__' ? '' : editVehicleId}

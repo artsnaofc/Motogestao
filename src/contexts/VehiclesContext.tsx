@@ -19,7 +19,10 @@ export interface VehicleCategoryCostBreakdown {
 
 export interface VehicleMetrics {
   vehicleId: string;
+  totalIncome: number;
   totalCost: number;
+  netProfit: number;
+  marginPercent: number;
   fuelCost: number;
   maintenanceCost: number;
   tiresCost: number;
@@ -33,6 +36,8 @@ export interface VehicleMetrics {
   realizedKmPerLiter: number;
   costPerKm: number;
   fuelCostPerKm: number;
+  revenuePerKm: number;
+  profitPerKm: number;
   acquisitionValue: number;
   fipeValue: number;
   valueDifference: number; // FIPE - Acquisition
@@ -358,7 +363,11 @@ export const VehiclesProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     const vehicle = vehicles.find(v => v.id === vehicleId);
 
     // Filter financial transactions linked to this vehicle
-    const vehicleTxList = transactions.filter(t => t.vehicle_id === vehicleId && t.type === 'expense');
+    const vehicleExpenseTxList = transactions.filter(t => t.vehicle_id === vehicleId && t.type === 'expense');
+    const vehicleIncomeTxList = transactions.filter(t => t.vehicle_id === vehicleId && t.type === 'income');
+
+    // Calculate total income (faturamento) linked to this vehicle
+    const totalIncome = vehicleIncomeTxList.reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
 
     // Filter reserve usages linked to this vehicle
     const vehicleReserveUsages = reserveTransactions.filter(rt => rt.vehicle_id === vehicleId && rt.type === 'utilizacao');
@@ -398,7 +407,7 @@ export const VehiclesProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     };
 
     // Process transactions (normal expenses)
-    vehicleTxList.forEach(t => {
+    vehicleExpenseTxList.forEach(t => {
       const amt = Number(t.amount) || 0;
       categorizeExpense(t.category, amt);
       if (t.fuel_liters && Number(t.fuel_liters) > 0) {
@@ -419,6 +428,8 @@ export const VehiclesProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       .sort((a, b) => b.total - a.total);
 
     const totalCost = fuelCost + maintenanceCost + tiresCost + oilCost + insuranceCost + taxCost + otherCost;
+    const netProfit = totalIncome - totalCost;
+    const marginPercent = totalIncome > 0 ? (netProfit / totalIncome) * 100 : 0;
 
     // KM calculation from odometer logs & transactions
     const logs = odometerLogs[vehicleId] || [];
@@ -436,9 +447,11 @@ export const VehiclesProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       ? totalKmRecorded / totalLiters
       : avgKmPerLiter;
 
-    // Cost per KM
+    // Cost and Profit per KM
     const costPerKm = totalKmRecorded > 0 ? totalCost / totalKmRecorded : 0;
     const fuelCostPerKm = totalKmRecorded > 0 ? fuelCost / totalKmRecorded : 0;
+    const revenuePerKm = totalKmRecorded > 0 ? totalIncome / totalKmRecorded : 0;
+    const profitPerKm = totalKmRecorded > 0 ? netProfit / totalKmRecorded : 0;
 
     // FIPE vs Acquisition
     const acquisitionValue = vehicle?.acquisition_value || 0;
@@ -466,7 +479,10 @@ export const VehiclesProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
     return {
       vehicleId,
+      totalIncome,
       totalCost,
+      netProfit,
+      marginPercent,
       fuelCost,
       maintenanceCost,
       tiresCost,
@@ -480,6 +496,8 @@ export const VehiclesProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       realizedKmPerLiter,
       costPerKm,
       fuelCostPerKm,
+      revenuePerKm,
+      profitPerKm,
       acquisitionValue,
       fipeValue,
       valueDifference,
