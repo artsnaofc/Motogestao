@@ -7,6 +7,7 @@ import { PendingSyncQueueModal } from './PendingSyncQueueModal';
 export const OfflineIndicator: React.FC = () => {
   const isOnline = useOnlineStatus();
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [hasOtherModalOpen, setHasOtherModalOpen] = useState(false);
   const [pendingQueue, setPendingQueue] = useState<SyncTask[]>([]);
 
   useEffect(() => {
@@ -16,14 +17,49 @@ export const OfflineIndicator: React.FC = () => {
     return () => unsubscribe();
   }, []);
 
-  const pendingCount = pendingQueue.length;
+  // Detect when any modal/dialog is currently active in the DOM to avoid overlapping
+  useEffect(() => {
+    const checkIfModalActive = () => {
+      // Check for Radix/Base-UI dialogs, aria-modal, or common backdrop overlays
+      const modalElements = document.querySelectorAll(
+        '[role="dialog"]:not(#pwa-offline-badge), [aria-modal="true"], [data-slot="dialog-content"], [data-slot="dialog-overlay"]'
+      );
+      
+      // Also check if any full-screen fixed overlay is present outside our badge
+      const activeBackdrops = Array.from(document.querySelectorAll('.fixed.inset-0')).filter(
+        el => !el.closest('#pwa-offline-badge') && !el.closest('header')
+      );
 
-  // If online and modal is closed, don't show the badge
+      const isLocked = document.body.style.overflow === 'hidden' || document.body.hasAttribute('data-scroll-locked');
+
+      setHasOtherModalOpen(modalElements.length > 0 || activeBackdrops.length > 0 || isLocked);
+    };
+
+    checkIfModalActive();
+
+    const observer = new MutationObserver(() => {
+      checkIfModalActive();
+    });
+
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['data-open', 'data-state', 'style', 'aria-modal', 'class'],
+    });
+
+    return () => observer.disconnect();
+  }, []);
+
+  const pendingCount = pendingQueue.length;
+  const isBadgeVisible = !isOnline && !isModalOpen && !hasOtherModalOpen;
+
+  // If online and modal is closed, don't keep in DOM
   if (isOnline && !isModalOpen) return null;
 
   return (
     <>
-      {!isOnline && (
+      {isBadgeVisible && (
         <div
           id="pwa-offline-badge"
           role="button"
@@ -35,7 +71,7 @@ export const OfflineIndicator: React.FC = () => {
               setIsModalOpen(true);
             }
           }}
-          className="fixed bottom-16 md:bottom-6 left-4 right-4 md:right-auto md:max-w-md z-50 flex items-center justify-between gap-3 rounded-2xl bg-amber-600/95 hover:bg-amber-600 text-white px-4 py-3 shadow-xl backdrop-blur-md border border-amber-400/40 animate-in fade-in slide-in-from-bottom-3 cursor-pointer group select-none transition-all active:scale-[0.98] ring-1 ring-amber-300/30"
+          className="fixed bottom-16 md:bottom-6 left-4 right-4 md:right-auto md:max-w-md z-30 flex items-center justify-between gap-3 rounded-2xl bg-amber-600/95 hover:bg-amber-600 text-white px-4 py-3 shadow-xl backdrop-blur-md border border-amber-400/40 animate-in fade-in slide-in-from-bottom-3 cursor-pointer group select-none transition-all active:scale-[0.98] ring-1 ring-amber-300/30"
           title="Clique para ver a lista de movimentações pendentes da base de dados"
         >
           <div className="flex items-center gap-3">
