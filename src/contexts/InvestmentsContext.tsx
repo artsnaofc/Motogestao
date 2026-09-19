@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import { cacheManager } from '../lib/cacheManager';
 import { syncQueueManager } from '../lib/syncQueue';
 import { getTodayLocalDateStr } from '../lib/utils';
+import { getEffectiveUserId } from '../lib/authUtils';
 
 export interface InvestmentsContextType {
   investmentTransactions: InvestmentTransaction[];
@@ -270,8 +271,7 @@ export function InvestmentsProvider({
   }, [dividends, settings, onDataChange]);
 
   const addInvestmentTransaction = useCallback(async (newIt: Omit<InvestmentTransaction, 'id' | 'user_id' | 'created_at'>): Promise<string | undefined> => {
-    const { data: userData } = await supabase.auth.getUser();
-    const userId = userData.user?.id || 'default';
+    const userId = (await getEffectiveUserId()) || 'default';
 
     const itObj: InvestmentTransaction = {
       id: generateUUID(),
@@ -372,8 +372,7 @@ export function InvestmentsProvider({
 
   const deleteInvestmentTransaction = useCallback(async (id: string) => {
     toast.loading('Processando exclusão...', { id: 'del-inv' });
-    const { data: userData } = await supabase.auth.getUser();
-    const userId = userData.user?.id || 'default';
+    const userId = (await getEffectiveUserId()) || 'default';
 
     const targetTx = investmentTransactions.find(it => it.id === id);
 
@@ -393,8 +392,7 @@ export function InvestmentsProvider({
   }, [investmentTransactions]);
 
   const updateInvestmentTransaction = useCallback(async (id: string, updatedFields: Partial<InvestmentTransaction>) => {
-    const { data: userData } = await supabase.auth.getUser();
-    const userId = userData.user?.id || 'default';
+    const userId = (await getEffectiveUserId()) || 'default';
 
     const targetTx = investmentTransactions.find(it => it.id === id);
     const merged = { ...targetTx, ...updatedFields } as InvestmentTransaction;
@@ -440,8 +438,7 @@ export function InvestmentsProvider({
 
   const deleteInvestmentTransactionsByTicker = useCallback(async (ticker: string) => {
     toast.loading('Limpando posição de ' + ticker + '...', { id: 'del-ticker' });
-    const { data: userData } = await supabase.auth.getUser();
-    const userId = userData.user?.id || 'default';
+    const userId = (await getEffectiveUserId()) || 'default';
 
     const txsToDelete = investmentTransactions.filter(it => it.ticker.toUpperCase() === ticker.toUpperCase());
     const txIds = txsToDelete.map(t => t.id);
@@ -465,8 +462,7 @@ export function InvestmentsProvider({
   }, [investmentTransactions]);
 
   const addDividend = useCallback(async (newDiv: Omit<Dividend, 'id' | 'user_id' | 'created_at'>) => {
-    const { data: userData } = await supabase.auth.getUser();
-    const userId = userData.user?.id || 'default';
+    const userId = (await getEffectiveUserId()) || 'default';
 
     const divObj: Dividend = {
       id: generateUUID(),
@@ -502,8 +498,7 @@ export function InvestmentsProvider({
   }, []);
 
   const updateDividend = useCallback(async (id: string, updatedFields: Partial<Dividend>) => {
-    const { data: userData } = await supabase.auth.getUser();
-    const userId = userData.user?.id || 'default';
+    const userId = (await getEffectiveUserId()) || 'default';
 
     const currentDiv = dividends.find(d => d.id === id);
     const finalFields: Partial<Dividend> = { ...updatedFields };
@@ -538,8 +533,7 @@ export function InvestmentsProvider({
   }, [dividends]);
 
   const deleteDividend = useCallback(async (id: string) => {
-    const { data: userData } = await supabase.auth.getUser();
-    const userId = userData.user?.id || 'default';
+    const userId = (await getEffectiveUserId()) || 'default';
 
     const currentDiv = dividends.find(d => d.id === id);
     if (currentDiv?.transaction_id) {
@@ -560,8 +554,7 @@ export function InvestmentsProvider({
     const tk = ticker.toUpperCase().trim();
     if (!tk) return;
 
-    const { data: userData } = await supabase.auth.getUser();
-    const userId = userData.user?.id;
+    const userId = await getEffectiveUserId();
     const cleanCnpjVal = cnpj.trim();
 
     const newAssetCnpjs = {

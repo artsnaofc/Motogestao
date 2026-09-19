@@ -88,6 +88,8 @@ import { toast } from 'sonner';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { getTodayLocalDateStr } from '../lib/utils';
+import { getEffectiveUserId } from '../lib/authUtils';
+import { syncQueueManager } from '../lib/syncQueue';
 import { useData } from '../contexts/DataContext';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
@@ -450,16 +452,29 @@ export function Dashboard() {
 
   const handleSaveWeeklyGoal = async () => {
     try {
-      const { data: userData } = await supabase.auth.getUser();
-      const userId = userData?.user?.id;
+      const userId = await getEffectiveUserId();
       const parsedValue = Number(String(tempWeeklyGoal || '').replace(/\D/g, '')) / 100;
       const parsedNetValue = Number(String(tempWeeklyNetGoal || '').replace(/\D/g, '')) / 100;
       if (userId) {
-        await supabase.from('user_settings').upsert({
-          user_id: userId,
-          weekly_goal: parsedValue,
-          weekly_net_goal: parsedNetValue
-        });
+        if (navigator.onLine) {
+          try {
+            await supabase.from('user_settings').upsert({
+              user_id: userId,
+              weekly_goal: parsedValue,
+              weekly_net_goal: parsedNetValue
+            });
+          } catch (err) {
+            syncQueueManager.enqueue('settings', 'update', userId, {
+              weekly_goal: parsedValue,
+              weekly_net_goal: parsedNetValue
+            });
+          }
+        } else {
+          syncQueueManager.enqueue('settings', 'update', userId, {
+            weekly_goal: parsedValue,
+            weekly_net_goal: parsedNetValue
+          });
+        }
       }
       setShowWeeklyGoalConfig(false);
       refreshData(true);

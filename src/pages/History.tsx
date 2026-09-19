@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { cacheManager } from '../lib/cacheManager';
+import { getEffectiveUserId } from '../lib/authUtils';
 import { motion } from 'motion/react';
 import { supabase } from '../lib/supabase';
 import { Transaction, ReserveTransaction } from '../types';
@@ -791,8 +792,7 @@ export function History() {
 
               if (editGenerateFuture && numInstallments > 1) {
                 const futureBatch: ReserveTransaction[] = [];
-                const { data: userData } = await supabase.auth.getUser();
-                const userId = userData?.user?.id || oldRt?.user_id || 'local';
+                const userId = (await getEffectiveUserId()) || oldRt?.user_id || 'local';
 
                 for (let i = 2; i <= numInstallments; i++) {
                   const instId = generateUUID();

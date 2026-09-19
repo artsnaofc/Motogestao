@@ -5,6 +5,7 @@ import { DataProvider } from './contexts/DataContext';
 import React, { useEffect, useState, Suspense } from 'react';
 import { supabase } from './lib/supabase';
 import { Session } from '@supabase/supabase-js';
+import { setCachedUser, getEffectiveUser } from './lib/authUtils';
 import { MainLayout } from './components/MainLayout';
 import { PageLoadingFallback } from './components/PageLoadingFallback';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -62,28 +63,75 @@ export default function App() {
   const [showDebugModal, setShowDebugModal] = useState(false);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session }, error }) => {
-      if (error) {
-        console.error('[Finanças Pro - Auth Error] Error getting initial session:', error);
+    const initAuth = async () => {
+      try {
+        const { data: { session }, error } = await supabase.auth.getSession();
+        if (error) {
+          console.warn('[Finanças Pro - Auth Error] Error getting initial session:', error);
+        }
+        if (session?.user) {
+          setCachedUser({ id: session.user.id, email: session.user.email });
+          setSession(session);
+        } else {
+          // If offline or session returned null, check for cached effective user
+          const effUser = await getEffectiveUser();
+          if (effUser) {
+            setCachedUser(effUser);
+            // Construct a lightweight offline session object so PrivateRoute lets the user through
+            setSession({
+              user: {
+                id: effUser.id,
+                email: effUser.email,
+                app_metadata: {},
+                user_metadata: {},
+                aud: 'authenticated',
+                created_at: new Date().toISOString(),
+              },
+              access_token: 'offline_token',
+              token_type: 'bearer',
+              expires_in: 999999,
+              refresh_token: 'offline_refresh',
+            } as any);
+          } else {
+            setSession(null);
+          }
+        }
+      } catch (err) {
+        console.error('[Finanças Pro - Auth Catch] Failed to check auth session:', err);
+        const effUser = await getEffectiveUser();
+        if (effUser) {
+          setSession({
+            user: { id: effUser.id, email: effUser.email },
+          } as any);
+        }
+      } finally {
+        setLoading(false);
       }
-      setSession(session);
-      setLoading(false);
-    }).catch(err => {
-      console.error('[Finanças Pro - Auth Catch] Failed to check auth session:', err);
-      setLoading(false);
-    });
+    };
+
+    initAuth();
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((event, session) => {
+    } = supabase.auth.onAuthStateChange((event, newSession) => {
       if (process.env.NODE_ENV !== 'production') {
-        console.log(`[Finanças Pro Auth Change] Event: ${event}`, session?.user?.email);
+        console.log(`[Finanças Pro Auth Change] Event: ${event}`, newSession?.user?.email);
       }
+      if (newSession?.user) {
+        setCachedUser({ id: newSession.user.id, email: newSession.user.email });
+      } else if (event === 'SIGNED_OUT') {
+        setCachedUser(null);
+      }
+
       setSession(prevSession => {
-        if (prevSession?.access_token === session?.access_token && prevSession?.user?.id === session?.user?.id) {
+        if (!newSession && event !== 'SIGNED_OUT' && prevSession?.user) {
+          // Keep offline cached session active unless explicit SIGNED_OUT
           return prevSession;
         }
-        return session;
+        if (prevSession?.access_token === newSession?.access_token && prevSession?.user?.id === newSession?.user?.id) {
+          return prevSession;
+        }
+        return newSession;
       });
     });
 

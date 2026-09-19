@@ -277,6 +277,35 @@ class SyncQueueManager {
     }
   }
 
+  /**
+   * Check if there are un-synced operations for a specific record
+   */
+  public hasPendingTaskFor(table: string, targetId: string): boolean {
+    const queue = this.getQueue();
+    return queue.some(t => t.table === table && t.targetId === targetId);
+  }
+
+  /**
+   * Get pending update payload for a record if any
+   */
+  public getPendingPayload(table: string, targetId: string): any | undefined {
+    const queue = this.getQueue();
+    const task = queue.find(t => t.table === table && t.targetId === targetId);
+    return task?.payload;
+  }
+
+  /**
+   * Waits until the queue is fully drained or cannot proceed
+   */
+  public async flushQueue(timeoutMs = 5000): Promise<void> {
+    if (!navigator.onLine || this.getPendingCount() === 0) return;
+    const start = Date.now();
+    this.processQueue();
+    while (this.getPendingCount() > 0 && Date.now() - start < timeoutMs && navigator.onLine) {
+      await new Promise(r => setTimeout(r, 100));
+    }
+  }
+
   public clearQueue() {
     this.saveQueue([]);
   }

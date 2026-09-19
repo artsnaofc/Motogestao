@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect } from 'react';
 import { useSearchParams, useLocation } from 'react-router-dom';
 import { useData } from '../contexts/DataContext';
 import { supabase } from '../lib/supabase';
+import { getEffectiveUserId } from '../lib/authUtils';
 import { 
   PiggyBank, 
   Plus, 
@@ -355,8 +356,7 @@ export function Reserves() {
     const totalInstallments = Math.max(2, Math.min(60, Number(data.recurrence_installments) || 12));
     const shouldGenerateFuture = isRecurring && Boolean(data.generate_future);
 
-    const { data: userData } = await supabase.auth.getUser();
-    const userId = userData?.user?.id;
+    const userId = await getEffectiveUserId();
 
     if (isRecurring && shouldGenerateFuture && userId) {
       const recurrenceGroupId = generateUUID();

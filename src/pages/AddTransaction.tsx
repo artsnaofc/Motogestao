@@ -78,6 +78,7 @@ import { cacheManager } from '../lib/cacheManager';
 import { freightStorage } from '../lib/freightStorage';
 import { calculateNextOccurrence, getFrequencyLabel, generateUUID, parseLocalDate } from '../lib/recurrenceUtils';
 import { getTodayLocalDateStr } from '../lib/utils';
+import { getEffectiveUserId } from '../lib/authUtils';
 import { RefreshCw, CalendarClock, CalendarRange, CheckCircle2, AlertCircle } from 'lucide-react';
 
 export function AddTransaction() {
@@ -344,8 +345,7 @@ export function AddTransaction() {
     setLoading(true);
 
     try {
-      const { data: userData, error: userError } = await supabase.auth.getUser();
-      if (userError || !userData.user) throw new Error('Usuário não autenticado.');
+      const userId = (await getEffectiveUserId()) || 'default';
 
       let finalType = 'income';
       let finalAmount = 0;
@@ -504,7 +504,7 @@ export function AddTransaction() {
 
           const payload = {
             id: instId,
-            user_id: userData.user.id,
+            user_id: userId,
             type: 'expense' as TransactionType,
             amount: finalAmount,
             date: instDate,
@@ -533,7 +533,8 @@ export function AddTransaction() {
         // Optimistic update for full batch
         setTransactions(prev => {
           const newState = [...newTxBatch, ...prev];
-          cacheManager.set(`transactions_${userData.user.id}`, newState, undefined, 'transactions');
+          cacheManager.set(`transactions_${userId}`, newState, undefined, 'transactions');
+          cacheManager.set('last_known_transactions', newState, undefined, 'transactions');
           return newState;
         });
 
@@ -553,7 +554,7 @@ export function AddTransaction() {
 
       const newTxPayload = {
         id: newTxId,
-        user_id: userData.user.id,
+        user_id: userId,
         type: finalType as TransactionType,
         amount: finalAmount,
         date: date,
@@ -573,7 +574,8 @@ export function AddTransaction() {
       // Optimistic state and cache update
       setTransactions(prev => {
         const newState = [newTxPayload, ...prev];
-        cacheManager.set(`transactions_${userData.user.id}`, newState, undefined, 'transactions');
+        cacheManager.set(`transactions_${userId}`, newState, undefined, 'transactions');
+        cacheManager.set('last_known_transactions', newState, undefined, 'transactions');
         return newState;
       });
 
@@ -588,7 +590,7 @@ export function AddTransaction() {
 
           const opPayload = {
             id: opId,
-            user_id: userData.user.id,
+            user_id: userId,
             type: 'expense' as TransactionType,
             amount: opVal,
             date: date,
@@ -602,7 +604,8 @@ export function AddTransaction() {
 
           setTransactions(prev => {
             const newState = [opPayload, ...prev];
-            cacheManager.set(`transactions_${userData.user.id}`, newState, undefined, 'transactions');
+            cacheManager.set(`transactions_${userId}`, newState, undefined, 'transactions');
+            cacheManager.set('last_known_transactions', newState, undefined, 'transactions');
             return newState;
           });
 
@@ -614,7 +617,7 @@ export function AddTransaction() {
       // If this transaction was generated from a freight quote, mark quote as completed
       if (paramQuoteId) {
         try {
-          const quotes = freightStorage.getQuotes(userData.user.id);
+          const quotes = freightStorage.getQuotes(userId);
           const found = quotes.find(q => q.id === paramQuoteId);
           if (found) {
             freightStorage.saveQuote({
@@ -622,7 +625,7 @@ export function AddTransaction() {
               status: 'completed',
               converted_to_transaction_id: newTxId,
               converted_at: new Date().toISOString(),
-            }, userData.user.id);
+            }, userId);
           }
         } catch (e) {
           console.warn('Erro ao atualizar status do orçamento após lançamento:', e);

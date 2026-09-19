@@ -4,6 +4,7 @@ import { Reserve, ReserveTransaction } from '../types';
 import { toast } from 'sonner';
 import { cacheManager } from '../lib/cacheManager';
 import { syncQueueManager } from '../lib/syncQueue';
+import { getEffectiveUserId } from '../lib/authUtils';
 
 export interface ReservesContextType {
   reserves: Reserve[];
@@ -55,10 +56,9 @@ export function ReservesProvider({
   }, [initialReserveTransactions]);
 
   const addReserve = useCallback(async (newRes: Omit<Reserve, 'id' | 'user_id' | 'created_at' | 'updated_at'>) => {
-    const { data: userData } = await supabase.auth.getUser();
-    if (!userData.user) return;
+    const userId = await getEffectiveUserId();
+    if (!userId) return;
 
-    const userId = userData.user.id;
     const resObj: Reserve = {
       id: generateUUID(),
       user_id: userId,
@@ -81,10 +81,8 @@ export function ReservesProvider({
   }, []);
 
   const updateReserve = useCallback(async (id: string, updatedFields: Partial<Reserve>) => {
-    const { data: userData } = await supabase.auth.getUser();
-    if (!userData.user) return;
-
-    const userId = userData.user.id;
+    const userId = await getEffectiveUserId();
+    if (!userId) return;
 
     const { saldo_atual, ...supabasePayload } = updatedFields;
     
@@ -99,10 +97,8 @@ export function ReservesProvider({
   }, []);
 
   const deleteReserve = useCallback(async (id: string) => {
-    const { data: userData } = await supabase.auth.getUser();
-    if (!userData.user) return;
-
-    const userId = userData.user.id;
+    const userId = await getEffectiveUserId();
+    if (!userId) return;
 
     const rtsToDelete = reserveTransactions.filter(rt => rt.reserve_id === id);
 
@@ -130,10 +126,9 @@ export function ReservesProvider({
     newRt: Omit<ReserveTransaction, 'id' | 'user_id' | 'created_at'>,
     options?: { silent?: boolean }
   ): Promise<string | undefined> => {
-    const { data: userData } = await supabase.auth.getUser();
-    if (!userData.user) return;
+    const userId = await getEffectiveUserId();
+    if (!userId) return;
 
-    const userId = userData.user.id;
     const rtObj: ReserveTransaction = {
       id: generateUUID(),
       user_id: userId,
@@ -179,10 +174,9 @@ export function ReservesProvider({
   }, []);
 
   const deleteReserveTransaction = useCallback(async (id: string) => {
-    const { data: userData } = await supabase.auth.getUser();
-    if (!userData.user) return;
+    const userId = await getEffectiveUserId();
+    if (!userId) return;
 
-    const userId = userData.user.id;
     const rtToDelete = reserveTransactions.find(rt => rt.id === id);
 
     // 1. Optimistically update local state & cache immediately
@@ -205,10 +199,8 @@ export function ReservesProvider({
   }, [reserveTransactions]);
 
   const updateReserveTransaction = useCallback(async (id: string, updatedFields: Partial<ReserveTransaction>) => {
-    const { data: userData } = await supabase.auth.getUser();
-    if (!userData.user) return;
-
-    const userId = userData.user.id;
+    const userId = await getEffectiveUserId();
+    if (!userId) return;
 
     // Optimistically update local state
     setReserveTransactions(prev => {

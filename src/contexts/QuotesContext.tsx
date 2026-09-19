@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase';
 import { executeQuoteFetch, QuoteProvider, QuoteFetchResult } from '../lib/quoteService';
 import { UserSettings } from '../types';
 import { cacheManager } from '../lib/cacheManager';
+import { getEffectiveUserId } from '../lib/authUtils';
 
 export interface QuotesContextType {
   quotes: Record<string, number>;
@@ -49,13 +50,14 @@ export function QuotesProvider({ children }: { children: ReactNode }) {
   // Sync quotes cached in Supabase on load
   useEffect(() => {
     const syncQuotesFromDb = async () => {
+      if (!navigator.onLine) return;
       try {
-        const { data: userData } = await supabase.auth.getUser();
-        if (userData?.user) {
+        const userId = await getEffectiveUserId();
+        if (userId) {
           const { data: settingsData } = await supabase
             .from('user_settings')
             .select('cached_quotes')
-            .eq('user_id', userData.user.id)
+            .eq('user_id', userId)
             .maybeSingle();
 
           if (settingsData?.cached_quotes && Object.keys(settingsData.cached_quotes).length > 0) {
@@ -105,16 +107,18 @@ export function QuotesProvider({ children }: { children: ReactNode }) {
       });
     }
 
-    try {
-      const { data: userData } = await supabase.auth.getUser();
-      if (userData?.user) {
-        await supabase
-          .from('user_settings')
-          .update({ cached_quotes: newQuotes })
-          .eq('user_id', userData.user.id);
+    if (navigator.onLine) {
+      try {
+        const userId = await getEffectiveUserId();
+        if (userId) {
+          await supabase
+            .from('user_settings')
+            .update({ cached_quotes: newQuotes })
+            .eq('user_id', userId);
+        }
+      } catch (err) {
+        console.warn('[QuotesContext] Falha ao sincronizar cache de cotações com Supabase:', err);
       }
-    } catch (err) {
-      console.warn('[QuotesContext] Falha ao sincronizar cache de cotações com Supabase:', err);
     }
   }, []);
 

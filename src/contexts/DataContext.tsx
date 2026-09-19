@@ -4,6 +4,8 @@ import { Transaction, UserSettings, Reserve, ReserveTransaction, InvestmentTrans
 import { QuoteProvider, QuoteFetchResult } from '../lib/quoteService';
 import { cacheManager } from '../lib/cacheManager';
 import { syncQueueManager } from '../lib/syncQueue';
+import { toast } from 'sonner';
+import { getEffectiveUserId } from '../lib/authUtils';
 
 // Segregated Contexts & Hooks
 import { QuotesProvider, useQuotes } from './QuotesContext';
@@ -215,24 +217,70 @@ function DataContextBridge({ children }: { children: ReactNode }) {
 
 // Master DataProvider that fetches data from backend and mounts segregated providers
 export function DataProvider({ children }: { children: ReactNode }) {
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const [settings, setSettings] = useState<UserSettings | null>(null);
-  const [reserves, setReserves] = useState<Reserve[]>([]);
-  const [reserveTransactions, setReserveTransactions] = useState<ReserveTransaction[]>([]);
-  const [investmentTransactions, setInvestmentTransactions] = useState<InvestmentTransaction[]>([]);
-  const [dividends, setDividends] = useState<Dividend[]>([]);
-  const [loading, setLoading] = useState(true);
+  const getInitialCache = <T,>(keySuffix: string, fallback: T): T => {
+    try {
+      const uid = localStorage.getItem('financas_pro_last_user_id') || cacheManager.get<string>('current_user_id');
+      if (uid) {
+        const cached = cacheManager.get<T>(`${keySuffix}_${uid}`);
+        if (cached !== null && cached !== undefined) return cached;
+      }
+      const generic = cacheManager.get<T>(`last_known_${keySuffix}`);
+      if (generic !== null && generic !== undefined) return generic;
+    } catch {}
+    return fallback;
+  };
+
+  const [transactions, setTransactions] = useState<Transaction[]>(() => getInitialCache('transactions', []));
+  const [settings, setSettings] = useState<UserSettings | null>(() => getInitialCache('user_settings', null));
+  const [reserves, setReserves] = useState<Reserve[]>(() => getInitialCache('reserves', []));
+  const [reserveTransactions, setReserveTransactions] = useState<ReserveTransaction[]>(() => getInitialCache('reserve_transactions', []));
+  const [investmentTransactions, setInvestmentTransactions] = useState<InvestmentTransaction[]>(() => getInitialCache('investment_transactions', []));
+  const [dividends, setDividends] = useState<Dividend[]>(() => getInitialCache('dividends', []));
+  const [loading, setLoading] = useState(false);
 
   const refreshData = useCallback(async (silent = false) => {
-    if (!silent) setLoading(true);
+    if (!silent && !settings) setLoading(true);
     try {
-      const { data: userData, error: userError } = await supabase.auth.getUser();
-      if (userError || !userData?.user) {
+      const userId = await getEffectiveUserId();
+      if (!userId) {
         if (!silent) setLoading(false);
         return;
       }
 
-      const userId = userData.user.id;
+      // 1. Immediately hydrate all available data from cacheManager for zero-delay offline rendering
+      const localSettings = cacheManager.get<UserSettings>(`user_settings_${userId}`) || cacheManager.get<UserSettings>('last_known_user_settings');
+      if (localSettings) setSettings(localSettings);
+
+      const localTxs = cacheManager.get<Transaction[]>(`transactions_${userId}`) || cacheManager.get<Transaction[]>('last_known_transactions');
+      if (localTxs) setTransactions(localTxs);
+
+      const localRes = cacheManager.get<Reserve[]>(`reserves_${userId}`) || cacheManager.get<Reserve[]>('last_known_reserves');
+      if (localRes) setReserves(localRes);
+
+      const localRts = cacheManager.get<ReserveTransaction[]>(`reserve_transactions_${userId}`) || cacheManager.get<ReserveTransaction[]>('last_known_reserve_transactions');
+      if (localRts) setReserveTransactions(localRts);
+
+      const localIts = cacheManager.get<InvestmentTransaction[]>(`investment_transactions_${userId}`) || cacheManager.get<InvestmentTransaction[]>('last_known_investment_transactions');
+      if (localIts) setInvestmentTransactions(localIts);
+
+      const localDivs = cacheManager.get<Dividend[]>(`dividends_${userId}`) || cacheManager.get<Dividend[]>('last_known_dividends');
+      if (localDivs) setDividends(localDivs);
+
+      // If device is offline, stop right here! Cache is already loaded and UI is intact!
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        console.log('[Finanças Pro - DataContext] Dispositivo offline. Dados carregados com segurança do cache local.');
+        if (!silent) setLoading(false);
+        return;
+      }
+
+      // When online: first flush any pending sync queue items so Supabase has our offline edits!
+      try {
+        if (syncQueueManager.getPendingCount() > 0) {
+          await syncQueueManager.flushQueue(4000);
+        }
+      } catch (qErr) {
+        console.warn('[DataContext] Aviso na sincronização prévia da fila:', qErr);
+      }
 
       // 1. Fetch user_settings
       try {
@@ -307,9 +355,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
         }
       } catch (errSettings) {
         console.warn('Could not load settings from Supabase, loading from cache:', errSettings);
-        const localSettings = cacheManager.get<UserSettings>(`user_settings_${userId}`);
-        if (localSettings) {
-          setSettings(localSettings);
+        const cached = cacheManager.get<UserSettings>(`user_settings_${userId}`);
+        if (cached) {
+          setSettings(cached);
         }
       }
 
@@ -327,21 +375,39 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
         if (txError) throw txError;
         if (txData) {
-          const localTxs = cacheManager.get<Transaction[]>(`transactions_${userId}`);
-          let mergedTxs = txData;
-          if (localTxs && Array.isArray(localTxs)) {
-            const supaIds = new Set(txData.map(item => item.id));
-            const localOnly = localTxs.filter((item: any) => item && item.id && !supaIds.has(item.id));
-            mergedTxs = [...txData, ...localOnly];
+          const localStored = cacheManager.get<Transaction[]>(`transactions_${userId}`) || [];
+          const supaMap = new Map(txData.map(item => [item.id, item]));
+          const merged: Transaction[] = [];
+          const seenIds = new Set<string>();
+
+          // Keep local version if there are pending sync queue tasks or if it was created offline
+          for (const localItem of localStored) {
+            seenIds.add(localItem.id);
+            if (syncQueueManager.hasPendingTaskFor('transactions', localItem.id)) {
+              merged.push(localItem);
+            } else if (supaMap.has(localItem.id)) {
+              merged.push(supaMap.get(localItem.id)!);
+            } else {
+              merged.push(localItem);
+            }
           }
-          setTransactions(mergedTxs);
-          cacheManager.set(`transactions_${userId}`, mergedTxs, undefined, 'transactions');
+
+          // Append remote records not in local cache
+          for (const remoteItem of txData) {
+            if (!seenIds.has(remoteItem.id)) {
+              merged.push(remoteItem);
+            }
+          }
+
+          setTransactions(merged);
+          cacheManager.set(`transactions_${userId}`, merged, undefined, 'transactions');
+          cacheManager.set('last_known_transactions', merged, undefined, 'transactions');
         }
       } catch (errTx) {
-        console.warn('Could not load transactions from Supabase, loading from cache:', errTx);
-        const localTxs = cacheManager.get<Transaction[]>(`transactions_${userId}`);
-        if (localTxs) {
-          setTransactions(localTxs);
+        console.warn('Could not load transactions from Supabase, preserving cache:', errTx);
+        const cached = cacheManager.get<Transaction[]>(`transactions_${userId}`);
+        if (cached) {
+          setTransactions(cached);
         }
       }
 
@@ -359,15 +425,30 @@ export function DataProvider({ children }: { children: ReactNode }) {
         const hasSeeded = cacheManager.get<boolean>(hasSeededKey) === true;
 
         if (rSupadata && rSupadata.length > 0) {
-          const localRes = cacheManager.get<Reserve[]>(`reserves_${userId}`);
-          let finalReserves = rSupadata as Reserve[];
-          if (localRes && Array.isArray(localRes)) {
-            const supaIds = new Set(rSupadata.map(item => item.id));
-            const localOnly = localRes.filter((item: any) => item && item.id && !supaIds.has(item.id));
-            finalReserves = [...finalReserves, ...localOnly];
+          const localStored = cacheManager.get<Reserve[]>(`reserves_${userId}`) || [];
+          const supaMap = new Map(rSupadata.map(item => [item.id, item]));
+          const merged: Reserve[] = [];
+          const seenIds = new Set<string>();
+
+          for (const localItem of localStored) {
+            seenIds.add(localItem.id);
+            if (syncQueueManager.hasPendingTaskFor('reserves', localItem.id)) {
+              merged.push(localItem);
+            } else if (supaMap.has(localItem.id)) {
+              merged.push(supaMap.get(localItem.id)!);
+            } else {
+              merged.push(localItem);
+            }
           }
-          setReserves(finalReserves);
-          cacheManager.set(`reserves_${userId}`, finalReserves, undefined, 'reserves');
+
+          for (const remoteItem of rSupadata) {
+            if (!seenIds.has(remoteItem.id)) {
+              merged.push(remoteItem as Reserve);
+            }
+          }
+
+          setReserves(merged);
+          cacheManager.set(`reserves_${userId}`, merged, undefined, 'reserves');
           if (!hasSeeded) cacheManager.set(hasSeededKey, true, undefined, 'reserves');
         } else if (!hasSeeded) {
           const defaults = getDefaultReserves(userId);
@@ -392,7 +473,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
           cacheManager.set(`reserves_${userId}`, localRes, undefined, 'reserves');
         }
       } catch (errRes) {
-        console.warn('Could not load reserves from Supabase, loading from cache:', errRes);
+        console.warn('Could not load reserves from Supabase, preserving cache:', errRes);
         const localRes = cacheManager.get<Reserve[]>(`reserves_${userId}`);
         if (localRes) {
           setReserves(localRes);
@@ -414,18 +495,33 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
         if (rtSupaerror) throw rtSupaerror;
         if (rtSupadata) {
-          const localRts = cacheManager.get<ReserveTransaction[]>(`reserve_transactions_${userId}`);
-          let mergedRts = rtSupadata;
-          if (localRts && Array.isArray(localRts)) {
-            const supaIds = new Set(rtSupadata.map(item => item.id));
-            const localOnly = localRts.filter((item: any) => item && item.id && !supaIds.has(item.id));
-            mergedRts = [...rtSupadata, ...localOnly];
+          const localStored = cacheManager.get<ReserveTransaction[]>(`reserve_transactions_${userId}`) || [];
+          const supaMap = new Map(rtSupadata.map(item => [item.id, item]));
+          const merged: ReserveTransaction[] = [];
+          const seenIds = new Set<string>();
+
+          for (const localItem of localStored) {
+            seenIds.add(localItem.id);
+            if (syncQueueManager.hasPendingTaskFor('reserve_transactions', localItem.id)) {
+              merged.push(localItem);
+            } else if (supaMap.has(localItem.id)) {
+              merged.push(supaMap.get(localItem.id)!);
+            } else {
+              merged.push(localItem);
+            }
           }
-          setReserveTransactions(mergedRts);
-          cacheManager.set(`reserve_transactions_${userId}`, mergedRts, undefined, 'reserves');
+
+          for (const remoteItem of rtSupadata) {
+            if (!seenIds.has(remoteItem.id)) {
+              merged.push(remoteItem);
+            }
+          }
+
+          setReserveTransactions(merged);
+          cacheManager.set(`reserve_transactions_${userId}`, merged, undefined, 'reserves');
         }
       } catch (errRt) {
-        console.warn('Could not load reserve transactions from Supabase, loading from cache:', errRt);
+        console.warn('Could not load reserve transactions from Supabase, preserving cache:', errRt);
         const localRts = cacheManager.get<ReserveTransaction[]>(`reserve_transactions_${userId}`);
         if (localRts) {
           setReserveTransactions(localRts);
@@ -443,18 +539,33 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
         if (itSupaerror) throw itSupaerror;
         if (itSupadata) {
-          const localIts = cacheManager.get<InvestmentTransaction[]>(`investment_transactions_${userId}`);
-          let mergedIts = itSupadata;
-          if (localIts && Array.isArray(localIts)) {
-            const supaIds = new Set(itSupadata.map(item => item.id));
-            const localOnly = localIts.filter((item: any) => item && item.id && !supaIds.has(item.id));
-            mergedIts = [...itSupadata, ...localOnly];
+          const localStored = cacheManager.get<InvestmentTransaction[]>(`investment_transactions_${userId}`) || [];
+          const supaMap = new Map(itSupadata.map(item => [item.id, item]));
+          const merged: InvestmentTransaction[] = [];
+          const seenIds = new Set<string>();
+
+          for (const localItem of localStored) {
+            seenIds.add(localItem.id);
+            if (syncQueueManager.hasPendingTaskFor('investment_transactions', localItem.id)) {
+              merged.push(localItem);
+            } else if (supaMap.has(localItem.id)) {
+              merged.push(supaMap.get(localItem.id)!);
+            } else {
+              merged.push(localItem);
+            }
           }
-          setInvestmentTransactions(mergedIts);
-          cacheManager.set(`investment_transactions_${userId}`, mergedIts, undefined, 'investments');
+
+          for (const remoteItem of itSupadata) {
+            if (!seenIds.has(remoteItem.id)) {
+              merged.push(remoteItem);
+            }
+          }
+
+          setInvestmentTransactions(merged);
+          cacheManager.set(`investment_transactions_${userId}`, merged, undefined, 'investments');
         }
       } catch (errIt) {
-        console.warn('Supabase investment loading error, using cache:', errIt);
+        console.warn('Supabase investment loading error, preserving cache:', errIt);
         const localIts = cacheManager.get<InvestmentTransaction[]>(`investment_transactions_${userId}`);
         if (localIts) {
           setInvestmentTransactions(localIts);
@@ -471,18 +582,33 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
         if (divError) throw divError;
         if (divData) {
-          const localDivs = cacheManager.get<Dividend[]>(`dividends_${userId}`);
-          let mergedDivs = divData;
-          if (localDivs && Array.isArray(localDivs)) {
-            const supaIds = new Set(divData.map(item => item.id));
-            const localOnly = localDivs.filter((item: any) => item && item.id && !supaIds.has(item.id));
-            mergedDivs = [...divData, ...localOnly];
+          const localStored = cacheManager.get<Dividend[]>(`dividends_${userId}`) || [];
+          const supaMap = new Map(divData.map(item => [item.id, item]));
+          const merged: Dividend[] = [];
+          const seenIds = new Set<string>();
+
+          for (const localItem of localStored) {
+            seenIds.add(localItem.id);
+            if (syncQueueManager.hasPendingTaskFor('dividends', localItem.id)) {
+              merged.push(localItem);
+            } else if (supaMap.has(localItem.id)) {
+              merged.push(supaMap.get(localItem.id)!);
+            } else {
+              merged.push(localItem);
+            }
           }
-          setDividends(mergedDivs);
-          cacheManager.set(`dividends_${userId}`, mergedDivs, undefined, 'investments');
+
+          for (const remoteItem of divData) {
+            if (!seenIds.has(remoteItem.id)) {
+              merged.push(remoteItem);
+            }
+          }
+
+          setDividends(merged);
+          cacheManager.set(`dividends_${userId}`, merged, undefined, 'investments');
         }
       } catch (errDiv) {
-        console.warn('Supabase dividends loading error, using cache:', errDiv);
+        console.warn('Supabase dividends loading error, preserving cache:', errDiv);
         const localDivs = cacheManager.get<Dividend[]>(`dividends_${userId}`);
         if (localDivs) {
           setDividends(localDivs);
@@ -494,10 +620,23 @@ export function DataProvider({ children }: { children: ReactNode }) {
     } finally {
       if (!silent) setLoading(false);
     }
-  }, []);
+  }, [settings]);
 
   useEffect(() => {
     refreshData();
+  }, [refreshData]);
+
+  // Automatic online synchronization: when internet reconnects, flush queue and refresh data automatically!
+  useEffect(() => {
+    const handleOnline = async () => {
+      console.log('[Finanças Pro - DataContext] Internet reconectada! Sincronizando fila pendente e atualizando dados...');
+      toast.info('Internet reconectada! Sincronizando dados com a nuvem...');
+      await syncQueueManager.flushQueue(5000);
+      await refreshData(true);
+    };
+
+    window.addEventListener('online', handleOnline);
+    return () => window.removeEventListener('online', handleOnline);
   }, [refreshData]);
 
   return (

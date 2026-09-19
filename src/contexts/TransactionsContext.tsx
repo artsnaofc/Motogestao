@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { cacheManager } from '../lib/cacheManager';
 import { syncQueueManager } from '../lib/syncQueue';
 import { getTodayLocalDateStr } from '../lib/utils';
+import { getEffectiveUserId } from '../lib/authUtils';
 
 export interface TransactionsContextType {
   transactions: Transaction[];
@@ -77,8 +78,7 @@ export function TransactionsProvider({
   }, [onRefresh]);
 
   const updateTransaction = useCallback(async (id: string, updatedFields: Partial<Transaction>) => {
-    const { data: userData } = await supabase.auth.getUser();
-    const userId = userData.user?.id;
+    const userId = await getEffectiveUserId();
 
     const { id: _id, user_id: _uid, created_at: _ca, ...cleanPayload } = updatedFields as any;
 
@@ -87,35 +87,32 @@ export function TransactionsProvider({
       if (userId) {
         cacheManager.set(`transactions_${userId}`, newState, undefined, 'transactions');
       }
+      cacheManager.set('last_known_transactions', newState, undefined, 'transactions');
       return newState;
     });
 
     toast.success('Lançamento atualizado!');
 
-    if (userId) {
-      // Push operation to background sync queue
-      syncQueueManager.enqueue('transactions', 'update', id, cleanPayload);
-    }
+    // Always push to sync queue
+    syncQueueManager.enqueue('transactions', 'update', id, cleanPayload);
   }, []);
 
   const deleteTransaction = useCallback(async (id: string) => {
-    const { data: userData } = await supabase.auth.getUser();
-    const userId = userData.user?.id;
+    const userId = await getEffectiveUserId();
 
     setTransactions(prev => {
       const newState = prev.filter(t => t.id !== id);
       if (userId) {
         cacheManager.set(`transactions_${userId}`, newState, undefined, 'transactions');
       }
+      cacheManager.set('last_known_transactions', newState, undefined, 'transactions');
       return newState;
     });
 
     toast.success('Lançamento excluído!');
 
-    if (userId) {
-      // Push operation to background sync queue
-      syncQueueManager.enqueue('transactions', 'delete', id);
-    }
+    // Always push to sync queue
+    syncQueueManager.enqueue('transactions', 'delete', id);
   }, []);
 
   const value = useMemo<TransactionsContextType>(() => ({
