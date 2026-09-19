@@ -90,7 +90,7 @@ import { Button } from '@/components/ui/button';
 import { getTodayLocalDateStr } from '../lib/utils';
 import { getEffectiveUserId } from '../lib/authUtils';
 import { syncQueueManager } from '../lib/syncQueue';
-import { useData } from '../contexts/DataContext';
+import { useData, useVehicles } from '../contexts/DataContext';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { ExecutiveReportModal } from '../components/ExecutiveReportModal';
@@ -98,6 +98,7 @@ import { PatrimonyEvolution } from '../components/PatrimonyEvolution';
 import { DailyProductivityHeatmap } from '../components/dashboard/DailyProductivityHeatmap';
 import { PassiveIncomeEvolutionChart } from '../components/dashboard/PassiveIncomeEvolutionChart';
 import { PersonalExpenseBarConfigDialog } from '../components/dashboard/PersonalExpenseBarConfigDialog';
+import { PatrimonyBreakdownCard } from '../components/dashboard/PatrimonyBreakdownCard';
 import { IndicatorHistoryModal, IndicatorType, MonthHistoryItem, formatIndicatorValue } from '../components/IndicatorHistoryModal';
 import {
   BarChart,
@@ -449,6 +450,7 @@ export function Dashboard() {
     dividends,
     quotes
   } = useData();
+  const { vehicles } = useVehicles();
 
   const handleSaveWeeklyGoal = async () => {
     try {
@@ -1522,9 +1524,15 @@ export function Dashboard() {
     return rawNet;
   }, [transactions, reserveTransactions, investmentTransactions]);
 
-  const totalPatrimony = (settings?.initial_balance || 0) + allTimeTotalsRaw + totalInvestmentEquity;
+  const totalVehiclesFipe = useMemo(() => {
+    return (vehicles || []).reduce((sum, v) => {
+      return sum + (Number(v.fipe_value) || Number(v.acquisition_value) || 0);
+    }, 0);
+  }, [vehicles]);
+
   const caixaMaisReservas = (settings?.initial_balance || 0) + allTimeTotalsRaw;
   const bancaLivre = caixaMaisReservas - totalInReserves;
+  const totalPatrimony = bancaLivre + totalInReserves + totalInvestmentEquity;
 
   const weeklyGoalStats = useMemo(() => {
     const today = new Date();
@@ -3153,132 +3161,140 @@ export function Dashboard() {
       {(() => {
         const totalInResv = (reserves || []).reduce((sum, r) => sum + (r.saldo_atual || 0), 0);
         return (
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3.5">
-            {/* Patrimônio Total - Primeiro no grid e no mobile ocupa 2 quadrados */}
-            <Card className="border border-border/70 hover:border-amber-500/30 shadow-2xs hover:shadow-sm transition-all duration-200 overflow-hidden relative group rounded-2xl bg-card/95 col-span-2 sm:col-span-1">
-              <div className="absolute top-0 right-0 w-24 h-24 bg-amber-500/5 rounded-full blur-2xl group-hover:bg-amber-500/10 transition-all pointer-events-none" />
-              <CardContent className="p-4 sm:p-4.5 flex flex-col justify-between h-full space-y-2">
-                <div className="flex items-center justify-between">
-                  <p className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">Patrimônio Total</p>
-                  <div className="h-8.5 w-8.5 bg-amber-500/10 border border-amber-500/20 rounded-xl flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
-                    <Crown className="w-4 h-4 text-amber-500" />
-                  </div>
-                </div>
-                <div>
-                  <div className="text-lg sm:text-xl font-black text-amber-600 dark:text-amber-500 font-mono tracking-tight truncate">
-                    {formatCurrency(totalPatrimony)}
-                  </div>
-                  <div className="flex items-center gap-2 text-[10px] text-muted-foreground font-semibold mt-1">
-                    <div className="flex items-center gap-1 truncate">
-                      <span className="h-1.5 w-1.5 rounded-full bg-violet-500 shrink-0" />
-                      <span className="truncate">Base: {formatCompactValue(caixaMaisReservas)}</span>
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3.5">
+              {/* 1. Patrimônio Total - No mobile ocupa 2 colunas */}
+              <Card className="border border-border/70 hover:border-amber-500/30 shadow-2xs hover:shadow-sm transition-all duration-200 overflow-hidden relative group rounded-2xl bg-card/95 col-span-2 sm:col-span-1">
+                <div className="absolute top-0 right-0 w-24 h-24 bg-amber-500/5 rounded-full blur-2xl group-hover:bg-amber-500/10 transition-all pointer-events-none" />
+                <CardContent className="p-4 sm:p-4.5 flex flex-col justify-between h-full space-y-2">
+                  <div className="flex items-center justify-between">
+                    <p className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">Patrimônio Total</p>
+                    <div className="h-8.5 w-8.5 bg-amber-500/10 border border-amber-500/20 rounded-xl flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+                      <Crown className="w-4 h-4 text-amber-500" />
                     </div>
-                    <div className="flex items-center gap-1 truncate">
-                      <span className="h-1.5 w-1.5 rounded-full bg-blue-500 shrink-0" />
+                  </div>
+                  <div>
+                    <div className="text-lg sm:text-xl font-black text-amber-600 dark:text-amber-500 font-mono tracking-tight truncate">
+                      {formatCurrency(totalPatrimony)}
+                    </div>
+                    <div className="flex items-center gap-1.5 flex-wrap text-[9.5px] text-muted-foreground font-semibold mt-1">
+                      <span className="truncate">Cx: {formatCompactValue(bancaLivre)}</span>
+                      <span>•</span>
+                      <span className="truncate">Res: {formatCompactValue(totalInResv)}</span>
+                      <span>•</span>
                       <span className="truncate">Inv: {formatCompactValue(totalInvestmentEquity)}</span>
                     </div>
                   </div>
-                </div>
-              </CardContent>
-            </Card>
+                </CardContent>
+              </Card>
 
-            {/* Caixa */}
-            <Card className="border border-border/70 hover:border-emerald-500/30 shadow-2xs hover:shadow-sm transition-all duration-200 overflow-hidden relative group rounded-2xl bg-card/95">
-              <div className="absolute top-0 right-0 w-24 h-24 bg-emerald-500/5 rounded-full blur-2xl group-hover:bg-emerald-500/10 transition-all pointer-events-none" />
-              <CardContent className="p-4 sm:p-4.5 flex flex-col justify-between h-full space-y-2">
-                <div className="flex items-center justify-between">
-                  <p className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">Caixa</p>
-                  <div className="h-8.5 w-8.5 bg-emerald-500/10 border border-emerald-500/20 rounded-xl flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
-                    <Wallet className="w-4 h-4 text-emerald-500" />
-                  </div>
-                </div>
-                <div>
-                  <div className="text-lg sm:text-xl font-black text-foreground font-mono tracking-tight truncate">
-                    {formatCurrency(bancaLivre)}
-                  </div>
-                  <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground font-semibold mt-1">
-                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 shrink-0" />
-                    <span className="truncate">Livre p/ uso</span>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Patrimônio (Caixa + Reservas) */}
-            <Card className="border border-border/70 hover:border-violet-500/30 shadow-2xs hover:shadow-sm transition-all duration-200 overflow-hidden relative group rounded-2xl bg-card/95">
-              <div className="absolute top-0 right-0 w-24 h-24 bg-violet-500/5 rounded-full blur-2xl group-hover:bg-violet-500/10 transition-all pointer-events-none" />
-              <CardContent className="p-4 sm:p-4.5 flex flex-col justify-between h-full space-y-2">
-                <div className="flex items-center justify-between">
-                  <p className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">Caixa + Reservas</p>
-                  <div className="h-8.5 w-8.5 bg-violet-500/10 border border-violet-500/20 rounded-xl flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
-                    <Landmark className="w-4 h-4 text-violet-500" />
-                  </div>
-                </div>
-                <div>
-                  <div className="text-lg sm:text-xl font-black text-foreground font-mono tracking-tight truncate">
-                    {formatCurrency(caixaMaisReservas)}
-                  </div>
-                  <div className="flex items-center gap-2 text-[10px] text-muted-foreground font-semibold mt-1">
-                    <div className="flex items-center gap-1 truncate">
-                      <span className="h-1.5 w-1.5 rounded-full bg-primary shrink-0" />
-                      <span className="truncate">Cx: {formatCompactValue(bancaLivre)}</span>
+              {/* 2. Caixa */}
+              <Card className="border border-border/70 hover:border-emerald-500/30 shadow-2xs hover:shadow-sm transition-all duration-200 overflow-hidden relative group rounded-2xl bg-card/95">
+                <div className="absolute top-0 right-0 w-24 h-24 bg-emerald-500/5 rounded-full blur-2xl group-hover:bg-emerald-500/10 transition-all pointer-events-none" />
+                <CardContent className="p-4 sm:p-4.5 flex flex-col justify-between h-full space-y-2">
+                  <div className="flex items-center justify-between">
+                    <p className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">Caixa</p>
+                    <div className="h-8.5 w-8.5 bg-emerald-500/10 border border-emerald-500/20 rounded-xl flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+                      <Wallet className="w-4 h-4 text-emerald-500" />
                     </div>
-                    <div className="flex items-center gap-1 truncate">
+                  </div>
+                  <div>
+                    <div className="text-lg sm:text-xl font-black text-foreground font-mono tracking-tight truncate">
+                      {formatCurrency(bancaLivre)}
+                    </div>
+                    <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground font-semibold mt-1">
+                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 shrink-0" />
+                      <span className="truncate">Livre p/ uso</span>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* 3. Total das Reservas */}
+              <Card className="border border-border/70 hover:border-pink-500/30 shadow-2xs hover:shadow-sm transition-all duration-200 overflow-hidden relative group cursor-pointer rounded-2xl bg-card/95 active:scale-[0.98]" onClick={() => navigate('/reserves')}>
+                <div className="absolute top-0 right-0 w-24 h-24 bg-pink-500/5 rounded-full blur-2xl group-hover:bg-pink-500/10 transition-all pointer-events-none" />
+                <CardContent className="p-4 sm:p-4.5 flex flex-col justify-between h-full space-y-2">
+                  <div className="flex items-center justify-between">
+                    <p className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">Total Reservas</p>
+                    <div className="h-8.5 w-8.5 bg-pink-500/10 border border-pink-500/20 rounded-xl flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+                      <PiggyBank className="w-4 h-4 text-pink-500" />
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-lg sm:text-xl font-black text-pink-500 font-mono tracking-tight truncate">
+                      {formatCurrency(totalInReserves)}
+                    </div>
+                    <div className="flex items-center gap-1 text-[10px] text-muted-foreground font-semibold mt-1">
                       <span className="h-1.5 w-1.5 rounded-full bg-pink-500 shrink-0" />
-                      <span className="truncate">Res: {formatCompactValue(totalInResv)}</span>
+                      <span className="truncate">Fundos reservados</span>
                     </div>
                   </div>
-                </div>
-              </CardContent>
-            </Card>
+                </CardContent>
+              </Card>
 
-            {/* Total das Reservas */}
-            <Card className="border border-border/70 hover:border-pink-500/30 shadow-2xs hover:shadow-sm transition-all duration-200 overflow-hidden relative group cursor-pointer rounded-2xl bg-card/95 active:scale-[0.98]" onClick={() => navigate('/reserves')}>
-              <div className="absolute top-0 right-0 w-24 h-24 bg-pink-500/5 rounded-full blur-2xl group-hover:bg-pink-500/10 transition-all pointer-events-none" />
-              <CardContent className="p-4 sm:p-4.5 flex flex-col justify-between h-full space-y-2">
-                <div className="flex items-center justify-between">
-                  <p className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">Total Reservas</p>
-                  <div className="h-8.5 w-8.5 bg-pink-500/10 border border-pink-500/20 rounded-xl flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
-                    <PiggyBank className="w-4 h-4 text-pink-500" />
+              {/* 4. Total dos Investimentos */}
+              <Card 
+                onClick={() => navigate('/investments?tab=carteira', { state: { tab: 'carteira' } })}
+                className="border border-border/70 hover:border-blue-500/40 shadow-2xs hover:shadow-sm transition-all duration-200 overflow-hidden relative group cursor-pointer rounded-2xl bg-card/95 active:scale-[0.98]"
+                title="Abrir Carteira de Investimentos"
+              >
+                <div className="absolute top-0 right-0 w-24 h-24 bg-blue-500/5 rounded-full blur-2xl group-hover:bg-blue-500/10 transition-all pointer-events-none" />
+                <CardContent className="p-4 sm:p-4.5 flex flex-col justify-between h-full space-y-2">
+                  <div className="flex items-center justify-between">
+                    <p className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">Investimentos</p>
+                    <div className="h-8.5 w-8.5 bg-blue-500/10 border border-blue-500/20 rounded-xl flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+                      <TrendingUp className="w-4 h-4 text-blue-500" />
+                    </div>
                   </div>
-                </div>
-                <div>
-                  <div className="text-lg sm:text-xl font-black text-pink-500 font-mono tracking-tight truncate">
-                    {formatCurrency(totalInReserves)}
+                  <div>
+                    <div className="text-lg sm:text-xl font-black text-blue-500 font-mono tracking-tight truncate">
+                      {formatCurrency(totalInvestmentEquity)}
+                    </div>
+                    <div className="flex items-center gap-1 text-[10px] text-muted-foreground font-semibold mt-1">
+                      <span className="h-1.5 w-1.5 rounded-full bg-blue-500 shrink-0" />
+                      <span className="truncate">Valor de mercado</span>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-1 text-[10px] text-muted-foreground font-semibold mt-1">
-                    <span className="h-1.5 w-1.5 rounded-full bg-pink-500 shrink-0" />
-                    <span className="truncate">Fundos reservados</span>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+                </CardContent>
+              </Card>
 
-            {/* Total dos investimentos */}
-            <Card 
-              onClick={() => navigate('/investments?tab=carteira', { state: { tab: 'carteira' } })}
-              className="border border-border/70 hover:border-blue-500/40 shadow-2xs hover:shadow-sm transition-all duration-200 overflow-hidden relative group cursor-pointer rounded-2xl bg-card/95 active:scale-[0.98]"
-              title="Abrir Carteira de Investimentos"
-            >
-              <div className="absolute top-0 right-0 w-24 h-24 bg-blue-500/5 rounded-full blur-2xl group-hover:bg-blue-500/10 transition-all pointer-events-none" />
-              <CardContent className="p-4 sm:p-4.5 flex flex-col justify-between h-full space-y-2">
-                <div className="flex items-center justify-between">
-                  <p className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">Investimentos</p>
-                  <div className="h-8.5 w-8.5 bg-blue-500/10 border border-blue-500/20 rounded-xl flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
-                    <TrendingUp className="w-4 h-4 text-blue-500" />
+              {/* 5. Minhas Motos (FIPE) */}
+              <Card 
+                onClick={() => navigate('/vehicles')}
+                className="border border-border/70 hover:border-indigo-500/40 shadow-2xs hover:shadow-sm transition-all duration-200 overflow-hidden relative group cursor-pointer rounded-2xl bg-card/95 active:scale-[0.98]"
+                title="Abrir Garagem de Motos"
+              >
+                <div className="absolute top-0 right-0 w-24 h-24 bg-indigo-500/5 rounded-full blur-2xl group-hover:bg-indigo-500/10 transition-all pointer-events-none" />
+                <CardContent className="p-4 sm:p-4.5 flex flex-col justify-between h-full space-y-2">
+                  <div className="flex items-center justify-between">
+                    <p className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">Minhas Motos</p>
+                    <div className="h-8.5 w-8.5 bg-indigo-500/10 border border-indigo-500/20 rounded-xl flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+                      <Bike className="w-4 h-4 text-indigo-500" />
+                    </div>
                   </div>
-                </div>
-                <div>
-                  <div className="text-lg sm:text-xl font-black text-blue-500 font-mono tracking-tight truncate">
-                    {formatCurrency(totalInvestmentEquity)}
+                  <div>
+                    <div className="text-lg sm:text-xl font-black text-indigo-500 font-mono tracking-tight truncate">
+                      {formatCurrency(totalVehiclesFipe)}
+                    </div>
+                    <div className="flex items-center gap-1 text-[10px] text-muted-foreground font-semibold mt-1">
+                      <span className="h-1.5 w-1.5 rounded-full bg-indigo-500 shrink-0" />
+                      <span className="truncate">{vehicles.length} moto(s) • FIPE</span>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-1 text-[10px] text-muted-foreground font-semibold mt-1">
-                    <span className="h-1.5 w-1.5 rounded-full bg-blue-500 shrink-0" />
-                    <span className="truncate">Valor de mercado</span>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* Detailed Consolidated Patrimony Card */}
+            <PatrimonyBreakdownCard
+              bancaLivre={bancaLivre}
+              totalInReserves={totalInReserves}
+              totalInvestmentEquity={totalInvestmentEquity}
+              totalVehiclesFipe={totalVehiclesFipe}
+              vehicles={vehicles}
+              hideValues={hideValues}
+              formatCurrency={formatCurrency}
+            />
           </div>
         );
       })()}

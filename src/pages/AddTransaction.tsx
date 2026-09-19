@@ -12,6 +12,8 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { toast } from '@/lib/toast';
+import { useVehicles } from '../contexts/VehiclesContext';
+import { VehicleSelect } from '../components/VehicleSelect';
 import { 
   Bike, 
   Package, 
@@ -102,6 +104,11 @@ export function AddTransaction() {
   const paramDistanceKm = searchParams.get('distance_km') || '';
 
   const { transactions, setTransactions, settings, refreshData, globalPeriod, reserves, addReserveTransaction, hideValues } = useData();
+  const { activeVehicle } = useVehicles();
+
+  const [selectedVehicleId, setSelectedVehicleId] = useState<string>(
+    searchParams.get('vehicle_id') || activeVehicle?.id || ''
+  );
 
   // Find active maintenance reserve rule rate
   const maintenanceReserve = reserves?.find(r => 
@@ -410,6 +417,7 @@ export function AddTransaction() {
               recurrence_group_id: recurrenceGroupId,
               installment_number: i,
               installment_total: numInstallments,
+              vehicle_id: selectedVehicleId || activeVehicle?.id || undefined,
             }, { silent: true });
 
             if (isFirst) {
@@ -436,6 +444,7 @@ export function AddTransaction() {
             payment_date: effectivePaymentDate,
             due_date: effectiveDueDate,
             is_recurring: false,
+            vehicle_id: selectedVehicleId || activeVehicle?.id || undefined,
           }, { silent: true });
 
           targetHighlightId = rtId;
@@ -525,6 +534,7 @@ export function AddTransaction() {
             end_km: null,
             deliveries: null,
             out_of_neighborhood: null,
+            vehicle_id: selectedVehicleId || activeVehicle?.id || undefined,
             created_at: new Date().toISOString()
           };
 
@@ -569,6 +579,7 @@ export function AddTransaction() {
         payment_status: effectivePaymentStatus,
         payment_date: effectivePaymentDate,
         due_date: effectiveDueDate,
+        vehicle_id: selectedVehicleId || activeVehicle?.id || undefined,
         is_recurring: false,
         created_at: new Date().toISOString()
       };
@@ -1249,6 +1260,13 @@ export function AddTransaction() {
                 </div>
               );
             })()}
+
+            {/* Vehicle Selection */}
+            <VehicleSelect
+              value={selectedVehicleId}
+              onChange={setSelectedVehicleId}
+              className="mt-2"
+            />
 
             <div className="space-y-2">
               <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground/90">Descrição / Observações</label>

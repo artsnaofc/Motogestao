@@ -12,11 +12,13 @@ import { QuotesProvider, useQuotes } from './QuotesContext';
 import { ReservesProvider, useReserves } from './ReservesContext';
 import { InvestmentsProvider, useInvestments } from './InvestmentsContext';
 import { TransactionsProvider, useTransactions } from './TransactionsContext';
+import { VehiclesProvider, useVehicles } from './VehiclesContext';
 
 export { useQuotes } from './QuotesContext';
 export { useReserves } from './ReservesContext';
 export { useInvestments } from './InvestmentsContext';
 export { useTransactions } from './TransactionsContext';
+export { useVehicles } from './VehiclesContext';
 
 // Global In-Flight Request Deduplicator for master data fetching
 let activeRefreshPromise: Promise<void> | null = null;
@@ -559,9 +561,11 @@ export function DataProvider({ children }: { children: ReactNode }) {
           onUpdateSettings={(newSettings) => setSettings(newSettings)}
         >
           <QuotesProvider>
-            <DataContextBridge>
-              {children}
-            </DataContextBridge>
+            <VehiclesProvider>
+              <DataContextBridge>
+                {children}
+              </DataContextBridge>
+            </VehiclesProvider>
           </QuotesProvider>
         </InvestmentsProvider>
       </ReservesProvider>

@@ -46,6 +46,13 @@ export interface Transaction {
   installment_index?: number | null;
   total_installments?: number | null;
 
+  // Vínculo com Garagem / Veículo
+  vehicle_id?: string;
+  fuel_liters?: number | null;
+  fuel_price_per_liter?: number | null;
+  fuel_station?: string;
+  refuel_km?: number | null;
+
   created_at?: string;
 }
 
@@ -53,6 +60,7 @@ export interface UserSettings {
   user_id: string;
   full_name?: string;
   is_admin?: boolean;
+  active_vehicle_id?: string;
   pizzaria_base_deliveries: number;
   pizzaria_base_rate: number;
   pizzaria_daily_rate_above_base: number;
@@ -143,6 +151,9 @@ export interface ReserveTransaction {
   installment_index?: number | null;
   total_installments?: number | null;
 
+  // Vínculo com Garagem / Veículo
+  vehicle_id?: string;
+
   created_at?: string;
 }
 
@@ -207,3 +218,87 @@ export interface ValuationTarget {
   pvp_target?: number;
   updated_at?: string;
 }
+
+export interface Vehicle {
+  id: string;
+  user_id: string;
+  brand: string;
+  model: string;
+  version?: string;
+  year_manufacture?: number;
+  year_model: number;
+  color?: string;
+  plate?: string;
+  renavam?: string;
+  chassis?: string;
+  acquisition_date?: string;
+  acquisition_value?: number;
+  acquisition_type?: string;
+  notes?: string;
+  current_km: number;
+  avg_km_per_liter?: number;
+  fuel_type?: string;
+  is_active?: boolean;
+  photo_url?: string;
+  fipe_code?: string;
+  fipe_value?: number;
+  fipe_updated_at?: string;
+  fipe_ref_month?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface VehicleFipeHistory {
+  id: string;
+  user_id: string;
+  vehicle_id: string;
+  fipe_code: string;
+  fipe_value: number;
+  ref_month: string;
+  fetched_at: string;
+  created_at?: string;
+}
+
+export interface VehicleOdometerLog {
+  id: string;
+  user_id: string;
+  vehicle_id: string;
+  date: string;
+  km: number;
+  notes?: string;
+  source?: 'manual' | 'abastecimento' | 'manutencao' | 'frete';
+  created_at?: string;
+}
+
+export type MaintenanceType =
+  | 'Óleo'
+  | 'Filtro de Óleo'
+  | 'Filtro de Ar'
+  | 'Pneus'
+  | 'Relação'
+  | 'Freios / Pastilhas'
+  | 'Vela'
+  | 'Bateria'
+  | 'Suspensão'
+  | 'Motor'
+  | 'Elétrica'
+  | 'Revisão Geral'
+  | 'Outros';
+
+export interface VehicleMaintenanceRecord {
+  id: string;
+  user_id: string;
+  vehicle_id: string;
+  type: MaintenanceType | string;
+  description?: string;
+  last_service_date?: string;
+  last_service_km?: number;
+  cost?: number;
+  workshop?: string;
+  next_due_date?: string;
+  next_due_km?: number;
+  status?: 'ok' | 'warning' | 'overdue' | 'completed';
+  notes?: string;
+  created_at?: string;
+}
+

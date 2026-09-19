@@ -33,6 +33,7 @@ export function MainLayout({ children }: { children?: React.ReactNode }) {
   const navItems = [
     { path: '/', label: 'Painel Geral', icon: Home, desc: 'Visão holística do caixa' },
     { path: '/history', label: 'Extrato & Histórico', icon: ReceiptText, desc: 'Corridas, fretes e despesas' },
+    { path: '/vehicles', label: 'Minhas Motos', icon: Bike, desc: 'Garagem, FIPE e custos/km' },
     { path: '/freight', label: 'Orçamentos de Frete', icon: Truck, desc: 'Calculadora e propostas PDF' },
     { path: '/reserves', label: 'Reservas Financeiras', icon: PiggyBank, desc: 'Fundos de emergência' },
     { path: '/investments', label: 'Carteira de Ativos', icon: TrendingUp, desc: 'Ações e FIIs' },
@@ -40,7 +41,7 @@ export function MainLayout({ children }: { children?: React.ReactNode }) {
     { path: '/profile', label: 'Perfil & Ajustes', icon: User, desc: 'Categorias e parâmetros' },
   ];
 
-  const isMoreMenuActive = ['/reserves', '/investments', '/profile', '/admin'].some(p => location.pathname === p);
+  const isMoreMenuActive = ['/reserves', '/vehicles', '/investments', '/profile', '/admin'].some(p => location.pathname.startsWith(p));
 
   const handleLogoClick = () => {
     const config = systemSettings.getConfig();
@@ -292,18 +293,18 @@ export function MainLayout({ children }: { children?: React.ReactNode }) {
               </span>
             </div>
 
-            {/* 4. Frete */}
+            {/* 4. Garagem */}
             <Link 
-              to="/freight" 
+              to="/vehicles" 
               onClick={() => setIsMobileMenuOpen(false)}
               className={`flex-1 flex flex-col items-center justify-center py-1 rounded-xl transition-all active:scale-95 min-h-[48px] touch-manipulation ${
-                location.pathname === '/freight' 
+                location.pathname.startsWith('/vehicles')
                   ? 'text-primary font-bold' 
                   : 'text-muted-foreground hover:text-foreground'
               }`}
             >
-              <Truck className={`w-5 h-5 transition-transform ${location.pathname === '/freight' ? 'scale-110' : ''}`} />
-              <span className="text-[10px] font-semibold mt-0.5 leading-none">Fretes</span>
+              <Bike className={`w-5 h-5 transition-transform ${location.pathname.startsWith('/vehicles') ? 'scale-110' : ''}`} />
+              <span className="text-[10px] font-semibold mt-0.5 leading-none">Garagem</span>
             </Link>
 
             {/* 5. Mais / Menu Sheet */}
@@ -355,13 +356,57 @@ export function MainLayout({ children }: { children?: React.ReactNode }) {
                 </button>
               </div>
 
-              {/* Menu Options Grid / List */}
+              {/* Menu Options Grid / List using Instant Links */}
               <div className="grid grid-cols-1 gap-2.5">
+                {/* Minhas Motos / Garagem */}
+                <Link
+                  to="/vehicles"
+                  onClick={() => setIsMobileMenuOpen(false)}
+                  className={`w-full p-3.5 rounded-2xl border transition-all flex items-center justify-between text-left ${
+                    location.pathname.startsWith('/vehicles')
+                      ? 'bg-primary/10 border-primary/40 text-primary font-bold shadow-xs'
+                      : 'bg-card hover:bg-muted/50 border-border/60 text-foreground'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="p-2.5 rounded-xl bg-primary/10 text-primary shrink-0">
+                      <Bike className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-bold text-foreground">Minhas Motos & Garagem</div>
+                      <div className="text-[10.5px] text-muted-foreground">Tabela FIPE, hodômetro e custo por KM</div>
+                    </div>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
+                </Link>
+
+                {/* Orçamentos de Frete */}
+                <Link
+                  to="/freight"
+                  onClick={() => setIsMobileMenuOpen(false)}
+                  className={`w-full p-3.5 rounded-2xl border transition-all flex items-center justify-between text-left ${
+                    location.pathname === '/freight'
+                      ? 'bg-primary/10 border-primary/40 text-primary font-bold shadow-xs'
+                      : 'bg-card hover:bg-muted/50 border-border/60 text-foreground'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="p-2.5 rounded-xl bg-cyan-500/10 text-cyan-500 shrink-0">
+                      <Truck className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-bold text-foreground">Orçamentos de Frete</div>
+                      <div className="text-[10.5px] text-muted-foreground">Calculadora de rota e propostas em PDF</div>
+                    </div>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
+                </Link>
+
                 {/* Reservas */}
-                <button
-                  type="button"
-                  onClick={() => handleNavigateMobile('/reserves')}
-                  className={`w-full p-3.5 rounded-2xl border transition-all flex items-center justify-between text-left cursor-pointer ${
+                <Link
+                  to="/reserves"
+                  onClick={() => setIsMobileMenuOpen(false)}
+                  className={`w-full p-3.5 rounded-2xl border transition-all flex items-center justify-between text-left ${
                     location.pathname === '/reserves'
                       ? 'bg-primary/10 border-primary/40 text-primary font-bold shadow-xs'
                       : 'bg-card hover:bg-muted/50 border-border/60 text-foreground'
@@ -377,13 +422,13 @@ export function MainLayout({ children }: { children?: React.ReactNode }) {
                     </div>
                   </div>
                   <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
-                </button>
+                </Link>
 
                 {/* Ativos / Investimentos */}
-                <button
-                  type="button"
-                  onClick={() => handleNavigateMobile('/investments')}
-                  className={`w-full p-3.5 rounded-2xl border transition-all flex items-center justify-between text-left cursor-pointer ${
+                <Link
+                  to="/investments"
+                  onClick={() => setIsMobileMenuOpen(false)}
+                  className={`w-full p-3.5 rounded-2xl border transition-all flex items-center justify-between text-left ${
                     location.pathname === '/investments'
                       ? 'bg-primary/10 border-primary/40 text-primary font-bold shadow-xs'
                       : 'bg-card hover:bg-muted/50 border-border/60 text-foreground'
@@ -399,13 +444,13 @@ export function MainLayout({ children }: { children?: React.ReactNode }) {
                     </div>
                   </div>
                   <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
-                </button>
+                </Link>
 
                 {/* Perfil & Ajustes */}
-                <button
-                  type="button"
-                  onClick={() => handleNavigateMobile('/profile')}
-                  className={`w-full p-3.5 rounded-2xl border transition-all flex items-center justify-between text-left cursor-pointer ${
+                <Link
+                  to="/profile"
+                  onClick={() => setIsMobileMenuOpen(false)}
+                  className={`w-full p-3.5 rounded-2xl border transition-all flex items-center justify-between text-left ${
                     location.pathname === '/profile'
                       ? 'bg-primary/10 border-primary/40 text-primary font-bold shadow-xs'
                       : 'bg-card hover:bg-muted/50 border-border/60 text-foreground'
@@ -421,14 +466,14 @@ export function MainLayout({ children }: { children?: React.ReactNode }) {
                     </div>
                   </div>
                   <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
-                </button>
+                </Link>
 
                 {/* Admin (se admin) */}
                 {settings?.is_admin && (
-                  <button
-                    type="button"
-                    onClick={() => handleNavigateMobile('/admin')}
-                    className={`w-full p-3.5 rounded-2xl border transition-all flex items-center justify-between text-left cursor-pointer ${
+                  <Link
+                    to="/admin"
+                    onClick={() => setIsMobileMenuOpen(false)}
+                    className={`w-full p-3.5 rounded-2xl border transition-all flex items-center justify-between text-left ${
                       location.pathname === '/admin'
                         ? 'bg-primary/10 border-primary/40 text-primary font-bold shadow-xs'
                         : 'bg-card hover:bg-muted/50 border-border/60 text-foreground'
@@ -444,7 +489,7 @@ export function MainLayout({ children }: { children?: React.ReactNode }) {
                       </div>
                     </div>
                     <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
-                  </button>
+                  </Link>
                 )}
                 {/* Instalar App no Guidão / Celular */}
                 <PWAInstallButton variant="banner" />
