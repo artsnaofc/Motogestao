@@ -260,7 +260,7 @@ export const Vehicles: React.FC = () => {
 
                 {/* Secondary details bar */}
                 <div className="flex items-center justify-between px-1 py-1 text-[11px] text-muted-foreground font-medium mb-3">
-                  <span>Hodômetro: <strong className="text-foreground">{v.current_km.toLocaleString('pt-BR')} km</strong></span>
+                  <span>Hodômetro: <strong className="text-foreground">{metrics.currentOdometer.toLocaleString('pt-BR')} km</strong></span>
                   <span>FIPE: <strong className="text-foreground">{v.fipe_value ? formatCurrency(v.fipe_value) : 'Consulte'}</strong></span>
                   {metrics.totalIncome > 0 && (
                     <span className="text-emerald-600 dark:text-emerald-400 font-bold">Margem: {metrics.marginPercent.toFixed(0)}%</span>
@@ -331,7 +331,7 @@ export const Vehicles: React.FC = () => {
                         <Bike className="w-4 h-4 text-primary shrink-0" />
                         {v.brand} {v.model}
                       </td>
-                      <td className="py-3 px-3 text-foreground font-semibold">{v.current_km.toLocaleString('pt-BR')} km</td>
+                      <td className="py-3 px-3 text-foreground font-semibold">{m.currentOdometer.toLocaleString('pt-BR')} km</td>
                       <td className="py-3 px-3 text-emerald-600 dark:text-emerald-400 font-extrabold">{formatCurrency(m.totalIncome)}</td>
                       <td className="py-3 px-3 text-foreground">{formatCurrency(m.fuelCost)}</td>
                       <td className="py-3 px-3 text-foreground">{formatCurrency(m.maintenanceCost)}</td>
@@ -369,7 +369,7 @@ export const Vehicles: React.FC = () => {
         <OdometerLogModal
           isOpen={Boolean(selectedVehicleForKm)}
           onClose={() => setSelectedVehicleForKm(null)}
-          currentKm={selectedVehicleForKm.current_km}
+          currentKm={metricsMap[selectedVehicleForKm.id]?.currentOdometer || selectedVehicleForKm.current_km}
           onSave={async (km, date, notes) => {
             await addOdometerLog(selectedVehicleForKm.id, km, date, notes);
           }}

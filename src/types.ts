@@ -236,6 +236,7 @@ export interface Vehicle {
   acquisition_value?: number;
   acquisition_type?: string;
   notes?: string;
+  initial_km?: number;
   current_km: number;
   avg_km_per_liter?: number;
   fuel_type?: string;

@@ -19,6 +19,8 @@ export interface VehicleCategoryCostBreakdown {
 
 export interface VehicleMetrics {
   vehicleId: string;
+  currentOdometer: number;
+  initialOdometer: number;
   totalIncome: number;
   totalCost: number;
   netProfit: number;
@@ -362,15 +364,20 @@ export const VehiclesProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   ): VehicleMetrics => {
     const vehicle = vehicles.find(v => v.id === vehicleId);
 
-    // Filter financial transactions linked to this vehicle
-    const vehicleExpenseTxList = transactions.filter(t => t.vehicle_id === vehicleId && t.type === 'expense');
-    const vehicleIncomeTxList = transactions.filter(t => t.vehicle_id === vehicleId && t.type === 'income');
+    // Filter all financial transactions linked to this vehicle (explicit or single-vehicle fallback)
+    const isSingleVehicle = vehicles.length === 1 && vehicles[0].id === vehicleId;
+    const vehicleTransactions = transactions.filter(t => t.vehicle_id === vehicleId || (!t.vehicle_id && isSingleVehicle));
+
+    const vehicleExpenseTxList = vehicleTransactions.filter(t => t.type === 'expense');
+    const vehicleIncomeTxList = vehicleTransactions.filter(t => t.type === 'income');
 
     // Calculate total income (faturamento) linked to this vehicle
     const totalIncome = vehicleIncomeTxList.reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
 
     // Filter reserve usages linked to this vehicle
-    const vehicleReserveUsages = reserveTransactions.filter(rt => rt.vehicle_id === vehicleId && rt.type === 'utilizacao');
+    const vehicleReserveUsages = reserveTransactions.filter(rt =>
+      rt.type === 'utilizacao' && (rt.vehicle_id === vehicleId || (!rt.vehicle_id && isSingleVehicle))
+    );
 
     let fuelCost = 0;
     let maintenanceCost = 0;
@@ -431,15 +438,52 @@ export const VehiclesProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     const netProfit = totalIncome - totalCost;
     const marginPercent = totalIncome > 0 ? (netProfit / totalIncome) * 100 : 0;
 
-    // KM calculation from odometer logs & transactions
+    // KM calculation from transactions & odometer logs
+    let sumTripKm = 0;
+    const txOdometerReadings: number[] = [];
+
+    vehicleTransactions.forEach(t => {
+      const sKm = t.start_km !== null && t.start_km !== undefined ? Number(t.start_km) : NaN;
+      const eKm = t.end_km !== null && t.end_km !== undefined ? Number(t.end_km) : NaN;
+      const rKm = t.refuel_km !== null && t.refuel_km !== undefined ? Number(t.refuel_km) : NaN;
+
+      if (!isNaN(sKm) && sKm > 0) txOdometerReadings.push(sKm);
+      if (!isNaN(eKm) && eKm > 0) txOdometerReadings.push(eKm);
+      if (!isNaN(rKm) && rKm > 0) txOdometerReadings.push(rKm);
+
+      if (!isNaN(sKm) && !isNaN(eKm) && eKm > sKm) {
+        sumTripKm += (eKm - sKm);
+      }
+    });
+
     const logs = odometerLogs[vehicleId] || [];
-    const maxLogKm = logs.length > 0 ? Math.max(...logs.map(l => Number(l.km) || 0)) : 0;
-    const minLogKm = logs.length > 0 ? Math.min(...logs.map(l => Number(l.km) || 0)) : 0;
+    const logOdometerReadings = logs.map(l => Number(l.km)).filter(km => !isNaN(km) && km > 0);
 
-    const currentVehicleKm = vehicle ? (vehicle.current_km || 0) : maxLogKm;
-    const initialVehicleKm = minLogKm > 0 ? minLogKm : (vehicle?.current_km || 0);
+    const vehicleInitialKm = vehicle?.initial_km !== undefined && vehicle.initial_km !== null ? Number(vehicle.initial_km) : 0;
+    const vehicleCurrentKm = vehicle?.current_km !== undefined && vehicle.current_km !== null ? Number(vehicle.current_km) : 0;
 
-    const totalKmRecorded = Math.max(0, currentVehicleKm - (minLogKm > 0 ? minLogKm : 0));
+    const allReadings = [
+      ...(vehicleInitialKm > 0 ? [vehicleInitialKm] : []),
+      ...(vehicleCurrentKm > 0 ? [vehicleCurrentKm] : []),
+      ...txOdometerReadings,
+      ...logOdometerReadings,
+    ];
+
+    // Current odometer reading (highest reading recorded in transactions, logs or vehicle setup)
+    const currentOdometer = allReadings.length > 0
+      ? Math.max(...allReadings)
+      : (vehicleCurrentKm || 0);
+
+    // Initial odometer baseline
+    const initialOdometer = vehicleInitialKm > 0
+      ? vehicleInitialKm
+      : (allReadings.length > 0 ? Math.min(...allReadings) : currentOdometer);
+
+    // Progression of odometer from initial baseline to highest reading
+    const odometerProgression = Math.max(0, currentOdometer - initialOdometer);
+
+    // Total KM is the maximum of explicit trip sums and odometer progression
+    const totalKmRecorded = Math.max(sumTripKm, odometerProgression, 0);
 
     // Realized km/l
     const avgKmPerLiter = vehicle?.avg_km_per_liter || 30;
@@ -467,7 +511,7 @@ export const VehiclesProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     const todayStr = new Date().toISOString().split('T')[0];
 
     mainList.forEach(m => {
-      const isOverdueKm = m.next_due_km && currentVehicleKm >= m.next_due_km;
+      const isOverdueKm = m.next_due_km && currentOdometer >= m.next_due_km;
       const isOverdueData = m.next_due_date && m.next_due_date < todayStr;
 
       if (isOverdueKm || isOverdueData) {
@@ -479,6 +523,8 @@ export const VehiclesProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
     return {
       vehicleId,
+      currentOdometer,
+      initialOdometer,
       totalIncome,
       totalCost,
       netProfit,

@@ -286,10 +286,13 @@ export const VehicleDetails: React.FC = () => {
         {/* Valuation & Depreciation Summary Banner */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-4 bg-muted/20 border border-border/50 rounded-2xl">
           <div>
-            <span className="text-[10px] font-semibold text-muted-foreground uppercase block">KM Atual</span>
+            <span className="text-[10px] font-semibold text-muted-foreground uppercase block">Hodômetro Atual</span>
             <strong className="text-sm font-black text-foreground block mt-0.5">
-              {vehicle.current_km.toLocaleString('pt-BR')} km
+              {metrics.currentOdometer.toLocaleString('pt-BR')} km
             </strong>
+            <span className="text-[9.5px] text-muted-foreground block">
+              {metrics.totalKmRecorded.toLocaleString('pt-BR')} km rodados (lançamentos)
+            </span>
           </div>
 
           <div>
@@ -831,7 +834,7 @@ export const VehicleDetails: React.FC = () => {
       <OdometerLogModal
         isOpen={isKmModalOpen}
         onClose={() => setIsKmModalOpen(false)}
-        currentKm={vehicle.current_km}
+        currentKm={metrics.currentOdometer}
         onSave={async (km, date, notes) => {
           await addOdometerLog(vehicle.id, km, date, notes);
         }}
@@ -841,7 +844,7 @@ export const VehicleDetails: React.FC = () => {
         isOpen={isMaintenanceModalOpen}
         onClose={() => setIsMaintenanceModalOpen(false)}
         vehicleId={vehicle.id}
-        currentKm={vehicle.current_km}
+        currentKm={metrics.currentOdometer}
         onSave={async (record) => {
           await addMaintenanceRecord(record);
         }}
