@@ -241,6 +241,11 @@ export interface Vehicle {
   avg_km_per_liter?: number;
   fuel_type?: string;
   is_active?: boolean;
+  // Freight / Cargo & Pricing Configurations
+  default_load_capacity_kg?: number;
+  base_fee?: number;
+  price_per_km?: number;
+  extra_stop_fee?: number;
   photo_url?: string;
   fipe_code?: string;
   fipe_value?: number;

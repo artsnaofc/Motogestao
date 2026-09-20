@@ -253,32 +253,14 @@ export const VehicleDetails: React.FC = () => {
             </div>
           </div>
 
-          {/* Quick Action Buttons */}
+          {/* Header Action */}
           <div className="flex flex-wrap items-center gap-2">
             <Button
-              onClick={() => setIsKmModalOpen(true)}
-              variant="outline"
-              className="h-10 px-3.5 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer"
-            >
-              <Gauge className="w-4 h-4 text-primary" />
-              + Atualizar KM
-            </Button>
-
-            <Button
-              onClick={() => navigate(`/add?vehicle_id=${vehicle.id}&category=Combust%C3%ADvel`)}
-              variant="outline"
-              className="h-10 px-3.5 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer"
-            >
-              <Fuel className="w-4 h-4 text-indigo-500" />
-              + Abastecimento
-            </Button>
-
-            <Button
-              onClick={() => setIsMaintenanceModalOpen(true)}
+              onClick={() => navigate(`/add?vehicle_id=${vehicle.id}`)}
               className="h-10 px-4 rounded-xl text-xs font-bold bg-primary text-primary-foreground shadow-md flex items-center gap-1.5 cursor-pointer"
             >
-              <Wrench className="w-4 h-4" />
-              + Manutenção
+              <Plus className="w-4 h-4" />
+              + Novo Lançamento
             </Button>
           </div>
         </div>
@@ -466,75 +448,45 @@ export const VehicleDetails: React.FC = () => {
             </div>
           </div>
 
-          {/* Operational Expenses Subgrid */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <div className="p-3.5 bg-card/70 border border-border/60 rounded-2xl space-y-0.5">
-              <span className="text-[10px] font-semibold text-muted-foreground uppercase flex items-center gap-1">
-                <Fuel className="w-3 h-3 text-indigo-500" />
-                Combustível
-              </span>
-              <strong className="text-sm font-black text-foreground block">
-                {formatCurrency(metrics.fuelCost)}
-              </strong>
-              <span className="text-[9.5px] text-muted-foreground block">
-                {metrics.totalLiters > 0 ? `${metrics.totalLiters.toFixed(1)} L (${metrics.realizedKmPerLiter.toFixed(1)} km/l)` : '0 L'}
+          {/* Operational Expenses by Category Grid (Dynamic from actual entries) */}
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-black text-foreground">Custos por Categoria de Lançamento</h3>
+              <span className="text-xs text-muted-foreground font-medium">
+                {metrics.expenseTxCount} lançamento(s) de despesa
               </span>
             </div>
-
-            <div className="p-3.5 bg-card/70 border border-border/60 rounded-2xl space-y-0.5">
-              <span className="text-[10px] font-semibold text-muted-foreground uppercase flex items-center gap-1">
-                <Wrench className="w-3 h-3 text-amber-500" />
-                Oficina & Revisões
-              </span>
-              <strong className="text-sm font-black text-foreground block">
-                {formatCurrency(metrics.maintenanceCost)}
-              </strong>
-              <span className="text-[9.5px] text-muted-foreground block">Serviços mecânicos</span>
-            </div>
-
-            <div className="p-3.5 bg-card/70 border border-border/60 rounded-2xl space-y-0.5">
-              <span className="text-[10px] font-semibold text-muted-foreground uppercase flex items-center gap-1">
-                <Sparkles className="w-3 h-3 text-purple-500" />
-                Óleo & Pneus
-              </span>
-              <strong className="text-sm font-black text-foreground block">
-                {formatCurrency(metrics.oilCost + metrics.tiresCost)}
-              </strong>
-              <span className="text-[9.5px] text-muted-foreground block">Desgaste rápido</span>
-            </div>
-
-            <div className="p-3.5 bg-card/70 border border-border/60 rounded-2xl space-y-0.5">
-              <span className="text-[10px] font-semibold text-muted-foreground uppercase flex items-center gap-1">
-                <ReceiptText className="w-3 h-3 text-rose-500" />
-                Taxas & Seguro
-              </span>
-              <strong className="text-sm font-black text-foreground block">
-                {formatCurrency(metrics.taxCost + metrics.insuranceCost)}
-              </strong>
-              <span className="text-[9.5px] text-muted-foreground block">IPVA, licença, multas</span>
-            </div>
-          </div>
-
-          {/* Breakdown by Category */}
-          <div className="p-5 bg-card border border-border/70 rounded-3xl space-y-4 shadow-xs">
-            <h3 className="text-sm font-black text-foreground">Detalhamento de Custos por Categoria</h3>
 
             {metrics.categoryBreakdown.length === 0 ? (
-              <p className="text-xs text-muted-foreground">Nenhum custo registrado para este veículo ainda.</p>
+              <div className="p-6 text-center bg-card border border-border/70 rounded-2xl">
+                <p className="text-xs text-muted-foreground">Nenhum custo registrado para este veículo ainda.</p>
+              </div>
             ) : (
-              <div className="space-y-2.5">
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
                 {metrics.categoryBreakdown.map(item => {
                   const pct = metrics.totalCost > 0 ? (item.total / metrics.totalCost) * 100 : 0;
                   return (
-                    <div key={item.category} className="space-y-1">
-                      <div className="flex items-center justify-between text-xs font-semibold">
-                        <span className="text-foreground">{item.category}</span>
-                        <span className="text-foreground">{formatCurrency(item.total)} ({pct.toFixed(0)}%)</span>
+                    <div key={item.category} className="p-4 bg-card border border-border/70 rounded-2xl space-y-2 shadow-xs">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-foreground truncate">{item.category}</span>
+                        <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-rose-500/10 text-rose-600 dark:text-rose-400">
+                          {pct.toFixed(0)}% do total
+                        </span>
                       </div>
-                      <div className="w-full h-2 bg-muted/40 rounded-full overflow-hidden">
+
+                      <div className="flex items-baseline justify-between">
+                        <strong className="text-base font-black text-rose-500">
+                          {formatCurrency(item.total)}
+                        </strong>
+                        <span className="text-[10.5px] font-medium text-muted-foreground">
+                          {item.count} {item.count === 1 ? 'lançamento' : 'lançamentos'}
+                        </span>
+                      </div>
+
+                      <div className="w-full h-1.5 bg-muted/40 rounded-full overflow-hidden">
                         <div
-                          className="h-full bg-primary rounded-full transition-all duration-500"
-                          style={{ width: `${pct}%` }}
+                          className="h-full bg-rose-500 rounded-full transition-all duration-500"
+                          style={{ width: `${Math.min(100, Math.max(2, pct))}%` }}
                         />
                       </div>
                     </div>
@@ -543,6 +495,50 @@ export const VehicleDetails: React.FC = () => {
               </div>
             )}
           </div>
+
+          {/* Income by Category Grid (if any income recorded) */}
+          {metrics.incomeCategoryBreakdown.length > 0 && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-black text-foreground">Receitas por Categoria de Lançamento</h3>
+                <span className="text-xs text-muted-foreground font-medium">
+                  {metrics.incomeTxCount} lançamento(s) de receita
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                {metrics.incomeCategoryBreakdown.map(item => {
+                  const pct = metrics.totalIncome > 0 ? (item.total / metrics.totalIncome) * 100 : 0;
+                  return (
+                    <div key={item.category} className="p-4 bg-card border border-border/70 rounded-2xl space-y-2 shadow-xs">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-foreground truncate">{item.category}</span>
+                        <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                          {pct.toFixed(0)}% da receita
+                        </span>
+                      </div>
+
+                      <div className="flex items-baseline justify-between">
+                        <strong className="text-base font-black text-emerald-600 dark:text-emerald-400">
+                          {formatCurrency(item.total)}
+                        </strong>
+                        <span className="text-[10.5px] font-medium text-muted-foreground">
+                          {item.count} {item.count === 1 ? 'lançamento' : 'lançamentos'}
+                        </span>
+                      </div>
+
+                      <div className="w-full h-1.5 bg-muted/40 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-emerald-500 rounded-full transition-all duration-500"
+                          style={{ width: `${Math.min(100, Math.max(2, pct))}%` }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
       )}
 

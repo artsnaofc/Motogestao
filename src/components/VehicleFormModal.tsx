@@ -27,6 +27,10 @@ export const VehicleFormModal: React.FC<VehicleFormModalProps> = ({
   const [renavam, setRenavam] = useState(initialData?.renavam || '');
   const [currentKm, setCurrentKm] = useState<number>(initialData?.current_km || 0);
   const [avgKmPerLiter, setAvgKmPerLiter] = useState<number>(initialData?.avg_km_per_liter || 30);
+  const [defaultLoadCapacityKg, setDefaultLoadCapacityKg] = useState<number>(initialData?.default_load_capacity_kg || 50);
+  const [baseFee, setBaseFee] = useState<number>(initialData?.base_fee ?? 15.00);
+  const [pricePerKm, setPricePerKm] = useState<number>(initialData?.price_per_km ?? 0.80);
+  const [extraStopFee, setExtraStopFee] = useState<number>(initialData?.extra_stop_fee ?? 6.00);
   const [fuelType, setFuelType] = useState(initialData?.fuel_type || 'Gasolina');
   const [acquisitionDate, setAcquisitionDate] = useState(initialData?.acquisition_date || new Date().toISOString().split('T')[0]);
   const [acquisitionValue, setAcquisitionValue] = useState<number>(initialData?.acquisition_value || 0);
@@ -122,8 +126,13 @@ export const VehicleFormModal: React.FC<VehicleFormModalProps> = ({
         color,
         plate: plate.toUpperCase(),
         renavam,
+        initial_km: Number(currentKm) || 0,
         current_km: Number(currentKm) || 0,
         avg_km_per_liter: Number(avgKmPerLiter) || 30,
+        default_load_capacity_kg: Number(defaultLoadCapacityKg) || 50,
+        base_fee: Number(baseFee) >= 0 ? Number(baseFee) : 15.00,
+        price_per_km: Number(pricePerKm) >= 0 ? Number(pricePerKm) : 0.80,
+        extra_stop_fee: Number(extraStopFee) >= 0 ? Number(extraStopFee) : 6.00,
         fuel_type: fuelType,
         acquisition_date: acquisitionDate,
         acquisition_value: Number(acquisitionValue) || 0,
@@ -340,10 +349,10 @@ export const VehicleFormModal: React.FC<VehicleFormModalProps> = ({
             <h4 className="text-xs font-bold text-foreground uppercase tracking-wider">Parâmetros Operacionais</h4>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-xs font-semibold text-muted-foreground">KM Atual *</label>
+                <label className="text-xs font-semibold text-muted-foreground">KM Inicial / Base *</label>
                 <input
                   type="number"
-                  placeholder="Ex: 12450"
+                  placeholder="Ex: 12450 (ou 0 se nova)"
                   value={currentKm}
                   onChange={e => setCurrentKm(Number(e.target.value))}
                   className="w-full h-10 px-3 bg-card border border-border rounded-xl text-xs font-medium text-foreground"
@@ -352,13 +361,76 @@ export const VehicleFormModal: React.FC<VehicleFormModalProps> = ({
               </div>
 
               <div>
-                <label className="text-xs font-semibold text-muted-foreground">Consumo Médio (km/L)</label>
+                <label className="text-xs font-semibold text-muted-foreground">Consumo Médio (km/L) *</label>
                 <input
                   type="number"
                   step="0.1"
                   placeholder="Ex: 35.5"
                   value={avgKmPerLiter}
                   onChange={e => setAvgKmPerLiter(Number(e.target.value))}
+                  className="w-full h-10 px-3 bg-card border border-border rounded-xl text-xs font-medium text-foreground"
+                  required
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Freight & Cargo Configuration (Orçamento de Fretes) */}
+          <div className="space-y-3 pt-2 border-t border-border/40 p-3.5 bg-primary/5 border border-primary/20 rounded-2xl">
+            <div className="flex items-center justify-between">
+              <h4 className="text-xs font-bold text-primary uppercase tracking-wider flex items-center gap-1.5">
+                <Sparkles className="w-4 h-4 text-primary" />
+                Configuração para Orçamento de Fretes
+              </h4>
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              Estes valores serão carregados automaticamente ao gerar orçamentos de frete com esta moto.
+            </p>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-semibold text-muted-foreground">Capacidade de Carga (kg)</label>
+                <input
+                  type="number"
+                  placeholder="Ex: 50"
+                  value={defaultLoadCapacityKg}
+                  onChange={e => setDefaultLoadCapacityKg(Number(e.target.value))}
+                  className="w-full h-10 px-3 bg-card border border-border rounded-xl text-xs font-medium text-foreground"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-muted-foreground">Taxa Base / Saída (R$)</label>
+                <input
+                  type="number"
+                  step="0.50"
+                  placeholder="Ex: 15.00"
+                  value={baseFee}
+                  onChange={e => setBaseFee(Number(e.target.value))}
+                  className="w-full h-10 px-3 bg-card border border-border rounded-xl text-xs font-medium text-foreground"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-muted-foreground">Preço por KM (R$/KM)</label>
+                <input
+                  type="number"
+                  step="0.05"
+                  placeholder="Ex: 0.80"
+                  value={pricePerKm}
+                  onChange={e => setPricePerKm(Number(e.target.value))}
+                  className="w-full h-10 px-3 bg-card border border-border rounded-xl text-xs font-medium text-foreground"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-muted-foreground">Parada Extra (R$)</label>
+                <input
+                  type="number"
+                  step="0.50"
+                  placeholder="Ex: 6.00"
+                  value={extraStopFee}
+                  onChange={e => setExtraStopFee(Number(e.target.value))}
                   className="w-full h-10 px-3 bg-card border border-border rounded-xl text-xs font-medium text-foreground"
                 />
               </div>

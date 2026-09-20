@@ -277,19 +277,11 @@ export const Vehicles: React.FC = () => {
 
                 {/* Card Actions */}
                 <div className="pt-2 border-t border-border/40 flex items-center gap-2">
-                  <button
-                    onClick={() => setSelectedVehicleForKm(v)}
-                    className="flex-1 h-9 bg-muted/30 hover:bg-muted border border-border/60 rounded-xl text-xs font-bold text-foreground flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
-                  >
-                    <Gauge className="w-3.5 h-3.5 text-primary" />
-                    + Registrar KM
-                  </button>
-
                   <Link
                     to={`/vehicles/${v.id}`}
-                    className="flex-1 h-9 bg-primary text-primary-foreground hover:bg-primary/90 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                    className="w-full h-9 bg-primary text-primary-foreground hover:bg-primary/90 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
                   >
-                    Ver Ficha
+                    Ver Ficha da Moto
                     <ChevronRight className="w-3.5 h-3.5" />
                   </Link>
                 </div>

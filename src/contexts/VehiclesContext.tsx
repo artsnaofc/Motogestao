@@ -15,6 +15,7 @@ import {
 export interface VehicleCategoryCostBreakdown {
   category: string;
   total: number;
+  count: number;
 }
 
 export interface VehicleMetrics {
@@ -33,6 +34,9 @@ export interface VehicleMetrics {
   taxCost: number;
   otherCost: number;
   categoryBreakdown: VehicleCategoryCostBreakdown[];
+  incomeCategoryBreakdown: VehicleCategoryCostBreakdown[];
+  expenseTxCount: number;
+  incomeTxCount: number;
   totalKmRecorded: number;
   totalLiters: number;
   realizedKmPerLiter: number;
@@ -388,12 +392,17 @@ export const VehiclesProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     let otherCost = 0;
     let totalLiters = 0;
 
-    const catTotalsMap: Record<string, number> = {};
+    const catTotalsMap: Record<string, { total: number; count: number }> = {};
+    const incomeCatTotalsMap: Record<string, { total: number; count: number }> = {};
 
-    // Helper to categorize
+    // Helper to categorize expenses
     const categorizeExpense = (categoryName: string, amount: number) => {
       const cat = (categoryName || 'Outros').trim();
-      catTotalsMap[cat] = (catTotalsMap[cat] || 0) + amount;
+      if (!catTotalsMap[cat]) {
+        catTotalsMap[cat] = { total: 0, count: 0 };
+      }
+      catTotalsMap[cat].total += amount;
+      catTotalsMap[cat].count += 1;
 
       const catLower = cat.toLowerCase();
       if (catLower.includes('combustível') || catLower.includes('gasolina') || catLower.includes('etanol') || catLower.includes('abastecimento')) {
@@ -430,60 +439,55 @@ export const VehiclesProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       }
     });
 
+    // Categorize incomes
+    vehicleIncomeTxList.forEach(t => {
+      const amt = Number(t.amount) || 0;
+      const cat = (t.category || 'Ganhos').trim();
+      if (!incomeCatTotalsMap[cat]) {
+        incomeCatTotalsMap[cat] = { total: 0, count: 0 };
+      }
+      incomeCatTotalsMap[cat].total += amt;
+      incomeCatTotalsMap[cat].count += 1;
+    });
+
     const categoryBreakdown: VehicleCategoryCostBreakdown[] = Object.entries(catTotalsMap)
-      .map(([category, total]) => ({ category, total }))
+      .map(([category, data]) => ({ category, total: data.total, count: data.count }))
       .sort((a, b) => b.total - a.total);
+
+    const incomeCategoryBreakdown: VehicleCategoryCostBreakdown[] = Object.entries(incomeCatTotalsMap)
+      .map(([category, data]) => ({ category, total: data.total, count: data.count }))
+      .sort((a, b) => b.total - a.total);
+
+    const expenseTxCount = vehicleExpenseTxList.length + vehicleReserveUsages.filter(rt => !rt.transaction_id).length;
+    const incomeTxCount = vehicleIncomeTxList.length;
 
     const totalCost = fuelCost + maintenanceCost + tiresCost + oilCost + insuranceCost + taxCost + otherCost;
     const netProfit = totalIncome - totalCost;
     const marginPercent = totalIncome > 0 ? (netProfit / totalIncome) * 100 : 0;
 
-    // KM calculation from transactions & odometer logs
+    // KM calculation from transactions (calculado somando a distância de cada lançamento)
     let sumTripKm = 0;
-    const txOdometerReadings: number[] = [];
 
     vehicleTransactions.forEach(t => {
       const sKm = t.start_km !== null && t.start_km !== undefined ? Number(t.start_km) : NaN;
       const eKm = t.end_km !== null && t.end_km !== undefined ? Number(t.end_km) : NaN;
-      const rKm = t.refuel_km !== null && t.refuel_km !== undefined ? Number(t.refuel_km) : NaN;
-
-      if (!isNaN(sKm) && sKm > 0) txOdometerReadings.push(sKm);
-      if (!isNaN(eKm) && eKm > 0) txOdometerReadings.push(eKm);
-      if (!isNaN(rKm) && rKm > 0) txOdometerReadings.push(rKm);
 
       if (!isNaN(sKm) && !isNaN(eKm) && eKm > sKm) {
         sumTripKm += (eKm - sKm);
       }
     });
 
-    const logs = odometerLogs[vehicleId] || [];
-    const logOdometerReadings = logs.map(l => Number(l.km)).filter(km => !isNaN(km) && km > 0);
+    // Initial base KM registered on vehicle creation
+    const vehicleInitialKm = vehicle?.initial_km !== undefined && vehicle.initial_km !== null
+      ? Number(vehicle.initial_km)
+      : (vehicle?.current_km !== undefined && vehicle.current_km !== null ? Number(vehicle.current_km) : 0);
 
-    const vehicleInitialKm = vehicle?.initial_km !== undefined && vehicle.initial_km !== null ? Number(vehicle.initial_km) : 0;
-    const vehicleCurrentKm = vehicle?.current_km !== undefined && vehicle.current_km !== null ? Number(vehicle.current_km) : 0;
+    // Total KM rodados a partir da soma de todos os lançamentos
+    const totalKmRecorded = sumTripKm;
 
-    const allReadings = [
-      ...(vehicleInitialKm > 0 ? [vehicleInitialKm] : []),
-      ...(vehicleCurrentKm > 0 ? [vehicleCurrentKm] : []),
-      ...txOdometerReadings,
-      ...logOdometerReadings,
-    ];
-
-    // Current odometer reading (highest reading recorded in transactions, logs or vehicle setup)
-    const currentOdometer = allReadings.length > 0
-      ? Math.max(...allReadings)
-      : (vehicleCurrentKm || 0);
-
-    // Initial odometer baseline
-    const initialOdometer = vehicleInitialKm > 0
-      ? vehicleInitialKm
-      : (allReadings.length > 0 ? Math.min(...allReadings) : currentOdometer);
-
-    // Progression of odometer from initial baseline to highest reading
-    const odometerProgression = Math.max(0, currentOdometer - initialOdometer);
-
-    // Total KM is the maximum of explicit trip sums and odometer progression
-    const totalKmRecorded = Math.max(sumTripKm, odometerProgression, 0);
+    // Hodômetro atual = KM inicial cadastrado + soma dos lançamentos
+    const currentOdometer = vehicleInitialKm + sumTripKm;
+    const initialOdometer = vehicleInitialKm;
 
     // Realized km/l
     const avgKmPerLiter = vehicle?.avg_km_per_liter || 30;
@@ -537,6 +541,9 @@ export const VehiclesProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       taxCost,
       otherCost,
       categoryBreakdown,
+      incomeCategoryBreakdown,
+      expenseTxCount,
+      incomeTxCount,
       totalKmRecorded,
       totalLiters,
       realizedKmPerLiter,
