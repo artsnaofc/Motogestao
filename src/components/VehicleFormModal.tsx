@@ -165,10 +165,10 @@ export const VehicleFormModal: React.FC<VehicleFormModalProps> = ({
             </div>
             <div>
               <h3 className="text-base font-black text-foreground">
-                {initialData ? 'Editar Moto' : 'Cadastrar Nova Moto'}
+                {initialData ? 'Editar Veículo' : 'Cadastrar Novo Veículo'}
               </h3>
               <p className="text-[11px] text-muted-foreground">
-                Adicione a moto à sua garagem com dados FIPE e custos
+                Adicione o veículo à sua garagem com dados FIPE e custos
               </p>
             </div>
           </div>
@@ -468,8 +468,8 @@ export const VehicleFormModal: React.FC<VehicleFormModalProps> = ({
           {/* Active Status Check */}
           <div className="p-3 bg-muted/20 border border-border/60 rounded-2xl flex items-center justify-between cursor-pointer" onClick={() => setIsActive(!isActive)}>
             <div>
-              <div className="text-xs font-bold text-foreground">Moto Ativa / Principal</div>
-              <div className="text-[10.5px] text-muted-foreground">Aparece selecionada por padrão nos lançamentos de combustível e manutenção</div>
+              <div className="text-xs font-bold text-foreground">Veículo Ativo / Principal</div>
+              <div className="text-[10.5px] text-muted-foreground">Aparece selecionado por padrão nos lançamentos de combustível e manutenção</div>
             </div>
             <input
               type="checkbox"
@@ -494,7 +494,7 @@ export const VehicleFormModal: React.FC<VehicleFormModalProps> = ({
               disabled={isSubmitting}
               className="flex-1 h-11 rounded-2xl text-xs font-bold bg-primary text-primary-foreground shadow-md hover:bg-primary/90 cursor-pointer"
             >
-              {isSubmitting ? 'Salvando...' : (initialData ? 'Atualizar Moto' : 'Salvar Nova Moto')}
+              {isSubmitting ? 'Salvando...' : (initialData ? 'Atualizar Veículo' : 'Salvar Novo Veículo')}
             </Button>
           </div>
         </form>

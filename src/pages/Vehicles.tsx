@@ -76,13 +76,13 @@ export const Vehicles: React.FC = () => {
           </div>
           <div>
             <h1 className="text-xl font-black text-foreground tracking-tight flex items-center gap-2">
-              Minhas Motos & Garagem
+              Garagem
               <span className="text-[10px] uppercase tracking-wider font-extrabold bg-primary/10 text-primary px-2.5 py-0.5 rounded-full border border-primary/20">
-                {vehicles.length} {vehicles.length === 1 ? 'moto' : 'motos'}
+                {vehicles.length} {vehicles.length === 1 ? 'veículo' : 'veículos'}
               </span>
             </h1>
             <p className="text-xs font-medium text-muted-foreground mt-0.5">
-              Faturamento por moto, lucro líquido, tabela FIPE, manutenção e custo operacional por KM
+              Faturamento por veículo, lucro líquido, tabela FIPE, manutenção e custo operacional por KM
             </p>
           </div>
         </div>
@@ -92,7 +92,7 @@ export const Vehicles: React.FC = () => {
           className="h-11 px-5 rounded-2xl text-xs font-bold bg-primary text-primary-foreground shadow-md hover:bg-primary/90 flex items-center gap-2 cursor-pointer shrink-0"
         >
           <Plus className="w-4 h-4" />
-          Cadastrar Nova Moto
+          Cadastrar Novo Veículo
         </Button>
       </div>
 
@@ -281,7 +281,7 @@ export const Vehicles: React.FC = () => {
                     to={`/vehicles/${v.id}`}
                     className="w-full h-9 bg-primary text-primary-foreground hover:bg-primary/90 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
                   >
-                    Ver Ficha da Moto
+                    Ver Ficha do Veículo
                     <ChevronRight className="w-3.5 h-3.5" />
                   </Link>
                 </div>

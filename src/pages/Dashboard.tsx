@@ -3258,16 +3258,16 @@ export function Dashboard() {
                 </CardContent>
               </Card>
 
-              {/* 5. Minhas Motos (FIPE) */}
+              {/* 5. Garagem (FIPE) */}
               <Card 
                 onClick={() => navigate('/vehicles')}
                 className="border border-border/70 hover:border-indigo-500/40 shadow-2xs hover:shadow-sm transition-all duration-200 overflow-hidden relative group cursor-pointer rounded-2xl bg-card/95 active:scale-[0.98]"
-                title="Abrir Garagem de Motos"
+                title="Abrir Garagem"
               >
                 <div className="absolute top-0 right-0 w-24 h-24 bg-indigo-500/5 rounded-full blur-2xl group-hover:bg-indigo-500/10 transition-all pointer-events-none" />
                 <CardContent className="p-4 sm:p-4.5 flex flex-col justify-between h-full space-y-2">
                   <div className="flex items-center justify-between">
-                    <p className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">Minhas Motos</p>
+                    <p className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">Garagem</p>
                     <div className="h-8.5 w-8.5 bg-indigo-500/10 border border-indigo-500/20 rounded-xl flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
                       <Bike className="w-4 h-4 text-indigo-500" />
                     </div>

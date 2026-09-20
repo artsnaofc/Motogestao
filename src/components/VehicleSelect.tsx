@@ -15,11 +15,10 @@ export const VehicleSelect: React.FC<VehicleSelectProps> = ({
   value,
   onChange,
   label = 'Veículo Relacionado',
-  showAddOption = true,
+  showAddOption = false,
   className = '',
 }) => {
   const { vehicles, activeVehicle } = useVehicles();
-  const navigate = useNavigate();
 
   // Selected vehicle or default active
   const selectedId = value !== undefined ? value : (activeVehicle?.id || '');
@@ -41,23 +40,16 @@ export const VehicleSelect: React.FC<VehicleSelectProps> = ({
         <select
           value={selectedId}
           onChange={(e) => {
-            if (e.target.value === '__add_new__') {
-              navigate('/vehicles');
-            } else {
-              onChange(e.target.value);
-            }
+            onChange(e.target.value);
           }}
           className="w-full h-11 pl-10 pr-8 bg-card border border-border/70 rounded-xl text-xs font-medium text-foreground appearance-none focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all cursor-pointer"
         >
           <option value="">Nenhum Veículo (Geral)</option>
           {vehicles.map(v => (
             <option key={v.id} value={v.id}>
-              🏍️ {v.brand} {v.model} {v.year_model ? `(${v.year_model})` : ''} {v.plate ? `- ${v.plate}` : ''} {v.is_active ? '★ (Ativa)' : ''}
+              🚗 {v.brand} {v.model} {v.year_model ? `(${v.year_model})` : ''} {v.plate ? `- ${v.plate}` : ''} {v.is_active ? '★ (Ativo)' : ''}
             </option>
           ))}
-          {showAddOption && (
-            <option value="__add_new__">+ Cadastrar Nova Moto...</option>
-          )}
         </select>
         <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none text-primary">
           <Bike className="w-4 h-4" />

@@ -76,9 +76,9 @@ export const VehicleDetails: React.FC = () => {
 
     return (
       <div className="p-8 text-center space-y-4">
-        <p className="text-sm font-bold text-muted-foreground">Moto não encontrada na garagem.</p>
+        <p className="text-sm font-bold text-muted-foreground">Veículo não encontrado na garagem.</p>
         <Button onClick={() => navigate('/vehicles')} variant="outline" className="rounded-2xl">
-          Voltar para Minhas Motos
+          Voltar para Garagem
         </Button>
       </div>
     );
@@ -206,7 +206,7 @@ export const VehicleDetails: React.FC = () => {
               onClick={() => setActiveVehicle(vehicle.id)}
               className="h-9 px-3 rounded-xl text-xs font-bold border-primary/30 text-primary hover:bg-primary/10 cursor-pointer"
             >
-              Tornar Moto Ativa
+              Tornar Veículo Ativo
             </Button>
           )}
 

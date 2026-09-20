@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Link, useLocation, useNavigate, Outlet } from 'react-router-dom';
-import { Home, List, PlusCircle, User, PiggyBank, TrendingUp, Bike, Sparkles, LogOut, ChevronRight, ShieldCheck, Terminal, Cloud, RefreshCw, Truck, Menu, X, Plus, ReceiptText, Scale } from 'lucide-react';
+import { Home, List, PlusCircle, User, PiggyBank, TrendingUp, Bike, Sparkles, LogOut, ChevronRight, ShieldCheck, Terminal, Cloud, RefreshCw, Truck, Menu, X, Plus, ReceiptText, Scale, RotateCcw } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { Button } from '@/components/ui/button';
 import { syncQueueManager, SyncTask } from '../lib/syncQueue';
@@ -11,6 +11,31 @@ import { useSessionInactivity } from '../lib/useSessionInactivity';
 import { systemSettings } from '../lib/systemSettings';
 import { PWAInstallButton } from './PWAInstallButton';
 import { OfflineIndicator } from './OfflineIndicator';
+import { toast } from '@/lib/toast';
+
+export interface PageOption {
+  path: string;
+  label: string;
+  shortLabel: string;
+  iconName: string;
+  desc: string;
+}
+
+const ALL_PAGE_OPTIONS: PageOption[] = [
+  { path: '/', label: 'Painel Geral', shortLabel: 'Início', iconName: 'Home', desc: 'Visão holística do caixa e metas' },
+  { path: '/history', label: 'Extrato & Histórico', shortLabel: 'Extrato', iconName: 'ReceiptText', desc: 'Corridas, fretes e lançamentos' },
+  { path: '/vehicles', label: 'Garagem', shortLabel: 'Garagem', iconName: 'Bike', desc: 'Gestão da frota, FIPE e custo/km' },
+  { path: '/freight', label: 'Orçamentos de Frete', shortLabel: 'Fretes', iconName: 'Truck', desc: 'Calculadora de rotas e propostas PDF' },
+  { path: '/reserves', label: 'Reservas Financeiras', shortLabel: 'Reservas', iconName: 'PiggyBank', desc: 'Fundo de emergência e manutenção' },
+  { path: '/investments', label: 'Carteira de Ativos', shortLabel: 'Carteira', iconName: 'TrendingUp', desc: 'Ações, FIIs e rebalanceamento' },
+  { path: '/profile', label: 'Perfil & Ajustes', shortLabel: 'Perfil', iconName: 'User', desc: 'Categorias e configurações da conta' },
+];
+
+const DEFAULT_SLOT_ASSIGNMENTS: Record<string, PageOption> = {
+  slot1: ALL_PAGE_OPTIONS[0], // Início
+  slot2: ALL_PAGE_OPTIONS[1], // Extrato
+  slot4: ALL_PAGE_OPTIONS[2], // Garagem
+};
 
 export function MainLayout({ children }: { children?: React.ReactNode }) {
   const location = useLocation();
@@ -30,10 +55,94 @@ export function MainLayout({ children }: { children?: React.ReactNode }) {
     await supabase.auth.signOut();
   };
 
+  // Customizable Bottom Nav Slots State
+  const [slotAssignments, setSlotAssignments] = useState<Record<string, PageOption>>(() => {
+    try {
+      const stored = localStorage.getItem('app_bottom_nav_slots_v2');
+      if (stored) {
+        return JSON.parse(stored);
+      }
+    } catch (e) {
+      console.error('Failed to load bottom nav slots', e);
+    }
+    return DEFAULT_SLOT_ASSIGNMENTS;
+  });
+
+  const [clickTracker, setClickTracker] = useState<{ slotId: string; count: number }>({ slotId: '', count: 0 });
+  const clickTimerRef = React.useRef<NodeJS.Timeout | null>(null);
+  const [targetSlotToCustomize, setTargetSlotToCustomize] = useState<string | null>(null);
+
+  const getSlotConfig = (slotId: string): PageOption => {
+    return slotAssignments[slotId] || DEFAULT_SLOT_ASSIGNMENTS[slotId] || ALL_PAGE_OPTIONS[0];
+  };
+
+  const handleSlotTripleClick = (slotId: string, e: React.MouseEvent) => {
+    if (clickTimerRef.current) {
+      clearTimeout(clickTimerRef.current);
+    }
+
+    if (clickTracker.slotId === slotId) {
+      const nextCount = clickTracker.count + 1;
+      if (nextCount >= 3) {
+        e.preventDefault();
+        e.stopPropagation();
+        setClickTracker({ slotId: '', count: 0 });
+        setTargetSlotToCustomize(slotId);
+        return;
+      }
+      setClickTracker({ slotId, count: nextCount });
+    } else {
+      setClickTracker({ slotId, count: 1 });
+    }
+
+    clickTimerRef.current = setTimeout(() => {
+      setClickTracker({ slotId: '', count: 0 });
+    }, 500);
+  };
+
+  const updateSlotAssignment = (slotId: string, option: PageOption) => {
+    const updated = { ...slotAssignments, [slotId]: option };
+    setSlotAssignments(updated);
+    try {
+      localStorage.setItem('app_bottom_nav_slots_v2', JSON.stringify(updated));
+    } catch (e) {
+      console.error('Failed to save slot assignment', e);
+    }
+    toast.success(`Botão do slot configurado para "${option.label}"!`);
+    setTargetSlotToCustomize(null);
+  };
+
+  const resetSlotAssignment = (slotId: string) => {
+    const defaultOption = DEFAULT_SLOT_ASSIGNMENTS[slotId] || ALL_PAGE_OPTIONS[0];
+    const updated = { ...slotAssignments, [slotId]: defaultOption };
+    setSlotAssignments(updated);
+    try {
+      localStorage.setItem('app_bottom_nav_slots_v2', JSON.stringify(updated));
+    } catch (e) {
+      console.error('Failed to reset slot assignment', e);
+    }
+    toast.info(`Botão restaurado para o padrão ("${defaultOption.label}")`);
+    setTargetSlotToCustomize(null);
+  };
+
+  const renderSlotIcon = (iconName: string, className: string = 'w-5 h-5') => {
+    switch (iconName) {
+      case 'Home': return <Home className={className} />;
+      case 'ReceiptText': return <ReceiptText className={className} />;
+      case 'Bike': return <Bike className={className} />;
+      case 'Truck': return <Truck className={className} />;
+      case 'PiggyBank': return <PiggyBank className={className} />;
+      case 'TrendingUp': return <TrendingUp className={className} />;
+      case 'User': return <User className={className} />;
+      case 'ShieldCheck': return <ShieldCheck className={className} />;
+      default: return <Sparkles className={className} />;
+    }
+  };
+
   const navItems = [
     { path: '/', label: 'Painel Geral', icon: Home, desc: 'Visão holística do caixa' },
     { path: '/history', label: 'Extrato & Histórico', icon: ReceiptText, desc: 'Corridas, fretes e despesas' },
-    { path: '/vehicles', label: 'Minhas Motos', icon: Bike, desc: 'Garagem, FIPE e custos/km' },
+    { path: '/vehicles', label: 'Garagem', icon: Bike, desc: 'Garagem, FIPE e custos/km' },
     { path: '/freight', label: 'Orçamentos de Frete', icon: Truck, desc: 'Calculadora e propostas PDF' },
     { path: '/reserves', label: 'Reservas Financeiras', icon: PiggyBank, desc: 'Fundos de emergência' },
     { path: '/investments', label: 'Carteira de Ativos', icon: TrendingUp, desc: 'Ações e FIIs' },
@@ -123,15 +232,22 @@ export function MainLayout({ children }: { children?: React.ReactNode }) {
               {navItems.map((item) => {
                 const Icon = item.icon;
                 const isActive = location.pathname === item.path;
+                const isGaragem = item.path === '/vehicles';
                 return (
                   <Link
                     key={item.path}
                     to={item.path}
+                    onClick={(e) => {
+                      if (isGaragem) {
+                        handleSlotTripleClick('slot4', e);
+                      }
+                    }}
                     className={`group relative flex items-center justify-between p-3 rounded-2xl transition-all duration-200 ${
                       isActive
                         ? 'bg-primary/10 text-primary font-black border border-primary/25 shadow-2xs'
                         : 'text-muted-foreground hover:text-foreground hover:bg-muted/40 font-semibold'
                     }`}
+                    title={isGaragem ? "Garagem (Clique 3x para escolher o botão padrão deste slot)" : undefined}
                   >
                     <div className="flex items-center gap-3 overflow-hidden">
                       <div
@@ -250,35 +366,55 @@ export function MainLayout({ children }: { children?: React.ReactNode }) {
           className="md:hidden fixed bottom-0 left-0 right-0 border-t border-border/80 bg-background/95 backdrop-blur-xl z-40 pb-[max(0.35rem,safe-area-inset-bottom)] px-3 py-1.5 shadow-lg select-none touch-manipulation"
         >
           <div className="flex items-center justify-around max-w-md mx-auto">
-            {/* 1. Início */}
-            <Link 
-              to="/" 
-              onClick={() => setIsMobileMenuOpen(false)}
-              className={`flex-1 flex flex-col items-center justify-center py-1 rounded-xl transition-all active:scale-95 min-h-[48px] touch-manipulation ${
-                location.pathname === '/' 
-                  ? 'text-primary font-bold' 
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              <Home className={`w-5 h-5 transition-transform ${location.pathname === '/' ? 'scale-110' : ''}`} />
-              <span className="text-[10px] font-semibold mt-0.5 leading-none">Início</span>
-            </Link>
+            {/* Slot 1 */}
+            {(() => {
+              const conf = getSlotConfig('slot1');
+              const isActive = location.pathname === conf.path;
+              return (
+                <Link 
+                  to={conf.path} 
+                  onClick={(e) => {
+                    setIsMobileMenuOpen(false);
+                    handleSlotTripleClick('slot1', e);
+                  }}
+                  className={`flex-1 flex flex-col items-center justify-center py-1 rounded-xl transition-all active:scale-95 min-h-[48px] touch-manipulation ${
+                    isActive ? 'text-primary font-bold' : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                  title={`${conf.label} (Clique 3x para escolher o botão padrão deste slot)`}
+                >
+                  <div className={`transition-transform ${isActive ? 'scale-110' : ''}`}>
+                    {renderSlotIcon(conf.iconName, "w-5 h-5")}
+                  </div>
+                  <span className="text-[10px] font-semibold mt-0.5 leading-none">{conf.shortLabel}</span>
+                </Link>
+              );
+            })()}
 
-            {/* 2. Extrato */}
-            <Link 
-              to="/history" 
-              onClick={() => setIsMobileMenuOpen(false)}
-              className={`flex-1 flex flex-col items-center justify-center py-1 rounded-xl transition-all active:scale-95 min-h-[48px] touch-manipulation ${
-                location.pathname === '/history' 
-                  ? 'text-primary font-bold' 
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              <ReceiptText className={`w-5 h-5 transition-transform ${location.pathname === '/history' ? 'scale-110' : ''}`} />
-              <span className="text-[10px] font-semibold mt-0.5 leading-none">Extrato</span>
-            </Link>
+            {/* Slot 2 */}
+            {(() => {
+              const conf = getSlotConfig('slot2');
+              const isActive = location.pathname === conf.path;
+              return (
+                <Link 
+                  to={conf.path} 
+                  onClick={(e) => {
+                    setIsMobileMenuOpen(false);
+                    handleSlotTripleClick('slot2', e);
+                  }}
+                  className={`flex-1 flex flex-col items-center justify-center py-1 rounded-xl transition-all active:scale-95 min-h-[48px] touch-manipulation ${
+                    isActive ? 'text-primary font-bold' : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                  title={`${conf.label} (Clique 3x para escolher o botão padrão deste slot)`}
+                >
+                  <div className={`transition-transform ${isActive ? 'scale-110' : ''}`}>
+                    {renderSlotIcon(conf.iconName, "w-5 h-5")}
+                  </div>
+                  <span className="text-[10px] font-semibold mt-0.5 leading-none">{conf.shortLabel}</span>
+                </Link>
+              );
+            })()}
 
-            {/* 3. Central CTA: Lançar */}
+            {/* Slot 3 (Central CTA: Lançar) */}
             <div className="flex-1 flex flex-col items-center justify-center -mt-4">
               <Link
                 to="/add"
@@ -293,21 +429,31 @@ export function MainLayout({ children }: { children?: React.ReactNode }) {
               </span>
             </div>
 
-            {/* 4. Garagem */}
-            <Link 
-              to="/vehicles" 
-              onClick={() => setIsMobileMenuOpen(false)}
-              className={`flex-1 flex flex-col items-center justify-center py-1 rounded-xl transition-all active:scale-95 min-h-[48px] touch-manipulation ${
-                location.pathname.startsWith('/vehicles')
-                  ? 'text-primary font-bold' 
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              <Bike className={`w-5 h-5 transition-transform ${location.pathname.startsWith('/vehicles') ? 'scale-110' : ''}`} />
-              <span className="text-[10px] font-semibold mt-0.5 leading-none">Garagem</span>
-            </Link>
+            {/* Slot 4 */}
+            {(() => {
+              const conf = getSlotConfig('slot4');
+              const isActive = conf.path === '/' ? location.pathname === '/' : location.pathname.startsWith(conf.path);
+              return (
+                <Link 
+                  to={conf.path} 
+                  onClick={(e) => {
+                    setIsMobileMenuOpen(false);
+                    handleSlotTripleClick('slot4', e);
+                  }}
+                  className={`flex-1 flex flex-col items-center justify-center py-1 rounded-xl transition-all active:scale-95 min-h-[48px] touch-manipulation ${
+                    isActive ? 'text-primary font-bold' : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                  title={`${conf.label} (Clique 3x para escolher o botão padrão deste slot)`}
+                >
+                  <div className={`transition-transform ${isActive ? 'scale-110' : ''}`}>
+                    {renderSlotIcon(conf.iconName, "w-5 h-5")}
+                  </div>
+                  <span className="text-[10px] font-semibold mt-0.5 leading-none">{conf.shortLabel}</span>
+                </Link>
+              );
+            })()}
 
-            {/* 5. Mais / Menu Sheet */}
+            {/* Slot 5 (Mais / Menu Sheet) */}
             <button
               type="button"
               onClick={() => setIsMobileMenuOpen(prev => !prev)}
@@ -373,7 +519,7 @@ export function MainLayout({ children }: { children?: React.ReactNode }) {
                       <Bike className="w-5 h-5" />
                     </div>
                     <div>
-                      <div className="text-xs font-bold text-foreground">Minhas Motos & Garagem</div>
+                      <div className="text-xs font-bold text-foreground">Garagem</div>
                       <div className="text-[10.5px] text-muted-foreground">Tabela FIPE, hodômetro e custo por KM</div>
                     </div>
                   </div>
@@ -533,6 +679,95 @@ export function MainLayout({ children }: { children?: React.ReactNode }) {
             </div>
           </div>
         )}
+        {/* SLOT CUSTOMIZATION MODAL (ACTIVATED VIA TRIPLE CLICK ON ANY TAB SLOT) */}
+        {targetSlotToCustomize && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-md animate-in fade-in-50">
+            <div className="relative w-full max-w-md bg-card border border-border/80 rounded-3xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
+              {/* Modal Header */}
+              <div className="flex items-center justify-between p-5 border-b border-border/50 bg-muted/20">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 rounded-2xl bg-primary/10 text-primary shrink-0">
+                    <Sparkles className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-black text-foreground">
+                      Configurar Botão Padrão
+                    </h3>
+                    <p className="text-[11px] text-muted-foreground">
+                      Escolha qual página será aberta por padrão neste slot da barra
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setTargetSlotToCustomize(null)}
+                  className="p-2 rounded-full hover:bg-muted text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Page Options List */}
+              <div className="p-5 max-h-[60vh] overflow-y-auto space-y-2">
+                {ALL_PAGE_OPTIONS.map((page) => {
+                  const currentAssigned = getSlotConfig(targetSlotToCustomize);
+                  const isSelected = currentAssigned.path === page.path;
+                  return (
+                    <button
+                      key={page.path}
+                      type="button"
+                      onClick={() => updateSlotAssignment(targetSlotToCustomize, page)}
+                      className={`w-full p-3.5 rounded-2xl border text-left transition-all flex items-center justify-between cursor-pointer ${
+                        isSelected
+                          ? 'bg-primary/10 border-primary/50 text-primary font-black shadow-2xs'
+                          : 'bg-card hover:bg-muted/60 border-border/70 text-foreground font-semibold'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className={`p-2.5 rounded-xl shrink-0 ${isSelected ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}`}>
+                          {renderSlotIcon(page.iconName, 'w-4 h-4')}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="text-xs font-extrabold truncate flex items-center gap-2">
+                            {page.label}
+                            {isSelected && (
+                              <span className="px-2 py-0.5 rounded-full bg-primary/20 text-primary text-[9px] font-extrabold">
+                                Padrão Atual
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[10.5px] text-muted-foreground truncate">{page.desc}</div>
+                        </div>
+                      </div>
+                      <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0 ml-2" />
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Modal Footer: Restore Default Button */}
+              <div className="p-4 border-t border-border/40 bg-muted/10 flex items-center justify-between gap-3">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => resetSlotAssignment(targetSlotToCustomize)}
+                  className="rounded-2xl text-xs font-bold gap-1.5 text-muted-foreground hover:text-foreground cursor-pointer"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  Restaurar Padrão do Slot
+                </Button>
+                <Button
+                  type="button"
+                  onClick={() => setTargetSlotToCustomize(null)}
+                  className="rounded-2xl text-xs font-bold px-4 h-9 cursor-pointer"
+                >
+                  Concluir
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+
         <OfflineIndicator />
       </div>
     </MaintenanceGuard>
