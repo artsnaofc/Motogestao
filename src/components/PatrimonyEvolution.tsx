@@ -91,14 +91,14 @@ export const PatrimonyEvolution: React.FC<PatrimonyEvolutionProps> = ({
 
   // Active Series Visibility
   const [visibleSeries, setVisibleSeries] = useState<{
-    Caixa: boolean;
-    Reservas: boolean;
     Investimentos: boolean;
+    Reservas: boolean;
+    Caixa: boolean;
     PatrimonioTotal: boolean;
   }>({
-    Caixa: true,
-    Reservas: true,
     Investimentos: true,
+    Reservas: true,
+    Caixa: true,
     PatrimonioTotal: true
   });
 
@@ -408,15 +408,15 @@ export const PatrimonyEvolution: React.FC<PatrimonyEvolutionProps> = ({
         </div>
 
         <div className="space-y-1.5">
-          {visibleSeries.Caixa && (
+          {visibleSeries.Investimentos && (
             <div className="flex items-center justify-between text-muted-foreground">
               <span className="flex items-center gap-1.5 font-semibold">
-                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
-                Caixa:
+                <span className="w-2.5 h-2.5 rounded-full bg-amber-500"></span>
+                Investimentos:
               </span>
               <div className="text-right">
-                <span className="font-mono font-bold text-foreground">{formatCurrency(dataItem.Caixa)}</span>
-                <span className="text-[10px] text-muted-foreground block font-medium">({dataItem.pctCaixa.toFixed(1)}%)</span>
+                <span className="font-mono font-bold text-foreground">{formatCurrency(dataItem.Investimentos)}</span>
+                <span className="text-[10px] text-muted-foreground block font-medium">({dataItem.pctInvestimentos.toFixed(1)}%)</span>
               </div>
             </div>
           )}
@@ -434,15 +434,15 @@ export const PatrimonyEvolution: React.FC<PatrimonyEvolutionProps> = ({
             </div>
           )}
 
-          {visibleSeries.Investimentos && (
+          {visibleSeries.Caixa && (
             <div className="flex items-center justify-between text-muted-foreground">
               <span className="flex items-center gap-1.5 font-semibold">
-                <span className="w-2.5 h-2.5 rounded-full bg-amber-500"></span>
-                Investimentos:
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
+                Caixa:
               </span>
               <div className="text-right">
-                <span className="font-mono font-bold text-foreground">{formatCurrency(dataItem.Investimentos)}</span>
-                <span className="text-[10px] text-muted-foreground block font-medium">({dataItem.pctInvestimentos.toFixed(1)}%)</span>
+                <span className="font-mono font-bold text-foreground">{formatCurrency(dataItem.Caixa)}</span>
+                <span className="text-[10px] text-muted-foreground block font-medium">({dataItem.pctCaixa.toFixed(1)}%)</span>
               </div>
             </div>
           )}
@@ -478,7 +478,7 @@ export const PatrimonyEvolution: React.FC<PatrimonyEvolutionProps> = ({
             </span>
           </div>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Evolução mensal e composição integrada dos saldos de Caixa, Reservas e Investimentos.
+            Evolução mensal e composição integrada dos saldos de Investimentos, Reservas e Caixa.
           </p>
         </div>
 
@@ -639,17 +639,17 @@ export const PatrimonyEvolution: React.FC<PatrimonyEvolutionProps> = ({
             Composição Atual do Patrimônio:
           </span>
           <div className="flex items-center gap-3 text-[11px] font-mono font-bold flex-wrap">
-            <span className="text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
-              <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-              Caixa: {yearMetrics.pctCaixa.toFixed(1)}% ({formatCurrency(yearMetrics.latest.Caixa)})
+            <span className="text-amber-600 dark:text-amber-400 flex items-center gap-1">
+              <span className="w-2 h-2 rounded-full bg-amber-500"></span>
+              Investimentos: {yearMetrics.pctInvestimentos.toFixed(1)}% ({formatCurrency(yearMetrics.latest.Investimentos)})
             </span>
             <span className="text-pink-600 dark:text-pink-400 flex items-center gap-1">
               <span className="w-2 h-2 rounded-full bg-pink-500"></span>
               Reservas: {yearMetrics.pctReservas.toFixed(1)}% ({formatCurrency(yearMetrics.latest.Reservas)})
             </span>
-            <span className="text-amber-600 dark:text-amber-400 flex items-center gap-1">
-              <span className="w-2 h-2 rounded-full bg-amber-500"></span>
-              Investimentos: {yearMetrics.pctInvestimentos.toFixed(1)}% ({formatCurrency(yearMetrics.latest.Investimentos)})
+            <span className="text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+              <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+              Caixa: {yearMetrics.pctCaixa.toFixed(1)}% ({formatCurrency(yearMetrics.latest.Caixa)})
             </span>
           </div>
         </div>
@@ -657,9 +657,9 @@ export const PatrimonyEvolution: React.FC<PatrimonyEvolutionProps> = ({
         {/* Stacked Bar */}
         <div className="w-full h-2.5 rounded-full bg-muted overflow-hidden flex shadow-inner">
           <div
-            className="h-full bg-emerald-500 transition-all duration-500"
-            style={{ width: `${Math.max(0, yearMetrics.pctCaixa)}%` }}
-            title={`Caixa: ${yearMetrics.pctCaixa.toFixed(1)}%`}
+            className="h-full bg-amber-500 transition-all duration-500"
+            style={{ width: `${Math.max(0, yearMetrics.pctInvestimentos)}%` }}
+            title={`Investimentos: ${yearMetrics.pctInvestimentos.toFixed(1)}%`}
           ></div>
           <div
             className="h-full bg-pink-500 transition-all duration-500"
@@ -667,9 +667,9 @@ export const PatrimonyEvolution: React.FC<PatrimonyEvolutionProps> = ({
             title={`Reservas: ${yearMetrics.pctReservas.toFixed(1)}%`}
           ></div>
           <div
-            className="h-full bg-amber-500 transition-all duration-500"
-            style={{ width: `${Math.max(0, yearMetrics.pctInvestimentos)}%` }}
-            title={`Investimentos: ${yearMetrics.pctInvestimentos.toFixed(1)}%`}
+            className="h-full bg-emerald-500 transition-all duration-500"
+            style={{ width: `${Math.max(0, yearMetrics.pctCaixa)}%` }}
+            title={`Caixa: ${yearMetrics.pctCaixa.toFixed(1)}%`}
           ></div>
         </div>
       </div>
@@ -682,15 +682,15 @@ export const PatrimonyEvolution: React.FC<PatrimonyEvolutionProps> = ({
         <div className="flex items-center gap-1.5 flex-wrap">
           <button
             type="button"
-            onClick={() => toggleSeries('Caixa')}
+            onClick={() => toggleSeries('Investimentos')}
             className={`px-2.5 py-1 rounded-xl font-bold transition-all flex items-center gap-1.5 cursor-pointer border ${
-              visibleSeries.Caixa
-                ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30'
+              visibleSeries.Investimentos
+                ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30'
                 : 'bg-muted/40 text-muted-foreground/50 border-transparent line-through'
             }`}
           >
-            <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-            Caixa
+            <span className="w-2 h-2 rounded-full bg-amber-500"></span>
+            Investimentos
           </button>
 
           <button
@@ -708,15 +708,15 @@ export const PatrimonyEvolution: React.FC<PatrimonyEvolutionProps> = ({
 
           <button
             type="button"
-            onClick={() => toggleSeries('Investimentos')}
+            onClick={() => toggleSeries('Caixa')}
             className={`px-2.5 py-1 rounded-xl font-bold transition-all flex items-center gap-1.5 cursor-pointer border ${
-              visibleSeries.Investimentos
-                ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30'
+              visibleSeries.Caixa
+                ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30'
                 : 'bg-muted/40 text-muted-foreground/50 border-transparent line-through'
             }`}
           >
-            <span className="w-2 h-2 rounded-full bg-amber-500"></span>
-            Investimentos
+            <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+            Caixa
           </button>
 
           <button
@@ -773,16 +773,16 @@ export const PatrimonyEvolution: React.FC<PatrimonyEvolutionProps> = ({
                 <RechartsTooltip content={<CustomTooltip />} />
                 
                 <Area
-                  key="area-caixa"
+                  key="area-investimentos"
                   type="monotone"
-                  dataKey="Caixa"
-                  name="Caixa"
+                  dataKey="Investimentos"
+                  name="Investimentos"
                   stackId="1"
-                  stroke="#10b981"
+                  stroke="#f59e0b"
                   strokeWidth={2}
                   fillOpacity={1}
-                  fill="url(#colorCaixa)"
-                  hide={!visibleSeries.Caixa}
+                  fill="url(#colorInvestimentos)"
+                  hide={!visibleSeries.Investimentos}
                 />
                 <Area
                   key="area-reservas"
@@ -797,16 +797,16 @@ export const PatrimonyEvolution: React.FC<PatrimonyEvolutionProps> = ({
                   hide={!visibleSeries.Reservas}
                 />
                 <Area
-                  key="area-investimentos"
+                  key="area-caixa"
                   type="monotone"
-                  dataKey="Investimentos"
-                  name="Investimentos"
+                  dataKey="Caixa"
+                  name="Caixa"
                   stackId="1"
-                  stroke="#f59e0b"
+                  stroke="#10b981"
                   strokeWidth={2}
                   fillOpacity={1}
-                  fill="url(#colorInvestimentos)"
-                  hide={!visibleSeries.Investimentos}
+                  fill="url(#colorCaixa)"
+                  hide={!visibleSeries.Caixa}
                 />
                 <Line
                   key="line-patrimonio-area"
@@ -833,15 +833,15 @@ export const PatrimonyEvolution: React.FC<PatrimonyEvolutionProps> = ({
                 <RechartsTooltip content={<CustomTooltip />} />
 
                 <Line
-                  key="line-caixa"
+                  key="line-investimentos"
                   type="monotone"
-                  dataKey="Caixa"
-                  name="Caixa"
-                  stroke="#10b981"
+                  dataKey="Investimentos"
+                  name="Investimentos"
+                  stroke="#f59e0b"
                   strokeWidth={2.5}
-                  dot={{ r: 4, stroke: '#10b981', strokeWidth: 2, fill: '#18181b' }}
+                  dot={{ r: 4, stroke: '#f59e0b', strokeWidth: 2, fill: '#18181b' }}
                   activeDot={{ r: 6 }}
-                  hide={!visibleSeries.Caixa}
+                  hide={!visibleSeries.Investimentos}
                 />
                 <Line
                   key="line-reservas"
@@ -855,15 +855,15 @@ export const PatrimonyEvolution: React.FC<PatrimonyEvolutionProps> = ({
                   hide={!visibleSeries.Reservas}
                 />
                 <Line
-                  key="line-investimentos"
+                  key="line-caixa"
                   type="monotone"
-                  dataKey="Investimentos"
-                  name="Investimentos"
-                  stroke="#f59e0b"
+                  dataKey="Caixa"
+                  name="Caixa"
+                  stroke="#10b981"
                   strokeWidth={2.5}
-                  dot={{ r: 4, stroke: '#f59e0b', strokeWidth: 2, fill: '#18181b' }}
+                  dot={{ r: 4, stroke: '#10b981', strokeWidth: 2, fill: '#18181b' }}
                   activeDot={{ r: 6 }}
-                  hide={!visibleSeries.Investimentos}
+                  hide={!visibleSeries.Caixa}
                 />
                 <Line
                   key="line-patrimonio"
@@ -891,13 +891,13 @@ export const PatrimonyEvolution: React.FC<PatrimonyEvolutionProps> = ({
                 <RechartsTooltip content={<CustomTooltip />} />
 
                 <Bar
-                  key="bar-caixa"
-                  dataKey="Caixa"
-                  name="Caixa"
+                  key="bar-investimentos"
+                  dataKey="Investimentos"
+                  name="Investimentos"
                   stackId="a"
-                  fill="#10b981"
-                  radius={!visibleSeries.Reservas && !visibleSeries.Investimentos ? [4, 4, 0, 0] : [0, 0, 0, 0]}
-                  hide={!visibleSeries.Caixa}
+                  fill="#f59e0b"
+                  radius={!visibleSeries.Reservas && !visibleSeries.Caixa ? [4, 4, 0, 0] : [0, 0, 0, 0]}
+                  hide={!visibleSeries.Investimentos}
                 />
                 <Bar
                   key="bar-reservas"
@@ -905,17 +905,17 @@ export const PatrimonyEvolution: React.FC<PatrimonyEvolutionProps> = ({
                   name="Reservas"
                   stackId="a"
                   fill="#ec4899"
-                  radius={!visibleSeries.Investimentos ? [4, 4, 0, 0] : [0, 0, 0, 0]}
+                  radius={!visibleSeries.Caixa ? [4, 4, 0, 0] : [0, 0, 0, 0]}
                   hide={!visibleSeries.Reservas}
                 />
                 <Bar
-                  key="bar-investimentos"
-                  dataKey="Investimentos"
-                  name="Investimentos"
+                  key="bar-caixa"
+                  dataKey="Caixa"
+                  name="Caixa"
                   stackId="a"
-                  fill="#f59e0b"
+                  fill="#10b981"
                   radius={[4, 4, 0, 0]}
-                  hide={!visibleSeries.Investimentos}
+                  hide={!visibleSeries.Caixa}
                 />
               </BarChart>
             )}
@@ -946,9 +946,9 @@ export const PatrimonyEvolution: React.FC<PatrimonyEvolutionProps> = ({
             <thead>
               <tr className="border-b border-border/60 bg-muted/40 font-extrabold text-muted-foreground uppercase text-[10px] tracking-wider">
                 <th className="py-3 px-4">Mês</th>
-                <th className="py-3 px-4 text-emerald-600 dark:text-emerald-400">Caixa</th>
-                <th className="py-3 px-4 text-pink-600 dark:text-pink-400">Reservas</th>
                 <th className="py-3 px-4 text-amber-600 dark:text-amber-400">Investimentos</th>
+                <th className="py-3 px-4 text-pink-600 dark:text-pink-400">Reservas</th>
+                <th className="py-3 px-4 text-emerald-600 dark:text-emerald-400">Caixa</th>
                 <th className="py-3 px-4 text-indigo-500">Patrimônio Total</th>
                 <th className="py-3 px-4 text-right">Variação Mensal</th>
               </tr>
@@ -961,16 +961,16 @@ export const PatrimonyEvolution: React.FC<PatrimonyEvolutionProps> = ({
                     {row.fullMonthName}
                   </td>
                   <td className="py-3 px-4 font-mono">
-                    <span className="text-foreground font-semibold">{formatCurrency(row.Caixa)}</span>
-                    <span className="text-[10px] text-muted-foreground block">({row.pctCaixa.toFixed(1)}%)</span>
+                    <span className="text-foreground font-semibold">{formatCurrency(row.Investimentos)}</span>
+                    <span className="text-[10px] text-muted-foreground block">({row.pctInvestimentos.toFixed(1)}%)</span>
                   </td>
                   <td className="py-3 px-4 font-mono">
                     <span className="text-foreground font-semibold">{formatCurrency(row.Reservas)}</span>
                     <span className="text-[10px] text-muted-foreground block">({row.pctReservas.toFixed(1)}%)</span>
                   </td>
                   <td className="py-3 px-4 font-mono">
-                    <span className="text-foreground font-semibold">{formatCurrency(row.Investimentos)}</span>
-                    <span className="text-[10px] text-muted-foreground block">({row.pctInvestimentos.toFixed(1)}%)</span>
+                    <span className="text-foreground font-semibold">{formatCurrency(row.Caixa)}</span>
+                    <span className="text-[10px] text-muted-foreground block">({row.pctCaixa.toFixed(1)}%)</span>
                   </td>
                   <td className="py-3 px-4 font-mono font-black text-indigo-500 text-sm">
                     {formatCurrency(row.PatrimonioTotal)}

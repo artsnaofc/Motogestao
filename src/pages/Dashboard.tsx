@@ -3475,7 +3475,7 @@ export function Dashboard() {
         formatCurrency={formatCurrency}
       />
 
-      {/* Evolução Patrimonial: Caixa, Reservas e Investimentos */}
+      {/* Evolução Patrimonial: Investimentos, Reservas, Caixa e Patrimônio */}
       <PatrimonyEvolution
         transactions={transactions}
         reserveTransactions={reserveTransactions}
