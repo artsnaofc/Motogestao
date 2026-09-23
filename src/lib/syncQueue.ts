@@ -205,6 +205,49 @@ class SyncQueueManager {
           .eq('id', task.targetId);
         error = updateErr;
 
+        // Auto fallback 1: If column does not exist in schema on update (42703 / PGRST204)
+        if (error && (error.code === '42703' || error.code === 'PGRST204' || error.message?.includes('column') || error.message?.includes('Could not find the'))) {
+          console.warn(`[SyncQueue] Coluna inexistente no update de ${task.table}:${task.targetId}. Tentando payload limpo...`, error);
+          const sanitizedUpdate = { ...task.payload };
+          
+          // Try to identify and remove specific column from error message
+          const match = error.message?.match(/Could not find the ['"]?([a-zA-Z0-9_]+)['"]? column/i) ||
+                        error.message?.match(/column ['"]?([a-zA-Z0-9_]+)['"]? does not exist/i) ||
+                        error.message?.match(/column ['"]?([a-zA-Z0-9_]+)['"]? of relation/i);
+          if (match && match[1] && sanitizedUpdate[match[1]] !== undefined) {
+            delete sanitizedUpdate[match[1]];
+            const { error: singleRetryErr } = await supabase
+              .from(task.table)
+              .update(sanitizedUpdate)
+              .eq('id', task.targetId);
+            if (!singleRetryErr) {
+              error = null;
+            } else {
+              error = singleRetryErr;
+            }
+          }
+
+          // If still failing and table is reserves, strip newer non-core columns
+          if (error && task.table === 'reserves') {
+            const optionalReserveKeys = ['rule_history', 'regra_inicio_validade', 'require_category_on_use', 'default_use_category', 'regra_base'];
+            const safeReserveUpdate: Record<string, any> = {};
+            for (const k of Object.keys(task.payload || {})) {
+              if (!optionalReserveKeys.includes(k)) {
+                safeReserveUpdate[k] = task.payload[k];
+              }
+            }
+            if (Object.keys(safeReserveUpdate).length > 0) {
+              const { error: coreRetryErr } = await supabase
+                .from(task.table)
+                .update(safeReserveUpdate)
+                .eq('id', task.targetId);
+              if (!coreRetryErr) {
+                error = null;
+              }
+            }
+          }
+        }
+
         if (error && error.code === '23503') {
           console.warn(`[SyncQueue] FK violation (23503) no update de ${task.table}:${task.targetId}.`);
           const fkKeysToOmit = ['linked_investment_id', 'transaction_id', 'reserve_id'];

@@ -55,7 +55,7 @@ export function SuggestionAuditModal({
 
   const getRuleLabel = () => {
     if (!reserve.regra_ativa || !reserve.regra_tipo) return 'Sem Regra Ativa';
-    switch (reserve.regra_tipo) {
+    switch (reserve.regra_tipo as string) {
       case 'km':
         return `R$ ${(reserve.regra_valor || 0).toFixed(2)} por KM`;
       case 'bruto':
@@ -63,6 +63,7 @@ export function SuggestionAuditModal({
       case 'liquido':
         return `${reserve.regra_valor}% do Lucro Líquido`;
       case 'fixo':
+      case 'fixo_diario':
         return `R$ ${(reserve.regra_valor || 0).toFixed(2)} fixos por dia`;
       default:
         return reserve.regra_tipo;

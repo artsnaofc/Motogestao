@@ -124,7 +124,7 @@ export function ReserveCard({
     if (reserve.regra_tipo === 'liquido') {
       return `📈 ${reserve.regra_valor}% do Lucro`;
     }
-    if (reserve.regra_tipo === 'fixo') {
+    if (reserve.regra_tipo === 'fixo' || (reserve.regra_tipo as string) === 'fixo_diario') {
       return `📅 R$ ${(reserve.regra_valor || 0).toFixed(2)}/dia`;
     }
     return null;

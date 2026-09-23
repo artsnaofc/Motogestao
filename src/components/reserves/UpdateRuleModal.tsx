@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   X, 
   Sparkles, 
@@ -34,10 +34,11 @@ interface UpdateRuleModalProps {
   onSaveRule: (reserveId: string, ruleData: {
     regra_ativa: boolean;
     regra_tipo?: Reserve['regra_tipo'];
-    regra_valor?: number;
+    regra_valor?: number | null;
     regra_categorias?: string[];
+    regra_inicio_validade?: string;
     require_category_on_use?: boolean;
-    default_use_category?: string;
+    default_use_category?: string | null;
   }) => Promise<void>;
 }
 
@@ -101,34 +102,52 @@ export function UpdateRuleModal({
   const [defaultUseCategory, setDefaultUseCategory] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  useEffect(() => {
-    if (reserve) {
-      setRegraAtiva(Boolean(reserve.regra_ativa));
-      setRegraTipo(reserve.regra_tipo || 'km');
-      setEffectiveDate(getTodayLocalDateStr());
-      setRegraValor(
-        reserve.regra_valor !== undefined && reserve.regra_valor !== null
-          ? String(Math.round(reserve.regra_valor * 100) / 100)
-          : ''
-      );
-      
-      const savedCats = reserve.regra_categorias && reserve.regra_categorias.length > 0
-        ? reserve.regra_categorias
-        : profileIncomeCategories;
-      setRegraCategorias(savedCats);
+  // Track open state & reserve id so we only initialize when modal opens or target reserve changes!
+  // This prevents user input from reverting while typing when background sync or parent re-renders happen.
+  const prevIsOpenRef = useRef(false);
+  const prevReserveIdRef = useRef<string | null>(null);
 
-      // Require category on use or fixed default category
-      const requireOnUse = reserve.require_category_on_use !== undefined
-        ? Boolean(reserve.require_category_on_use)
-        : !reserve.default_use_category;
-      
-      setRequireCategoryOnUse(requireOnUse);
-      setDefaultUseCategory(
-        reserve.default_use_category || 
-        (profileExpenseCategories.includes('Manutenção') ? 'Manutenção' : profileExpenseCategories[0] || 'Outros')
-      );
+  useEffect(() => {
+    if (!isOpen) {
+      prevIsOpenRef.current = false;
+      return;
     }
-  }, [reserve, isOpen, profileIncomeCategories, profileExpenseCategories]);
+
+    const isFirstOpen = !prevIsOpenRef.current;
+    const isDifferentReserve = (reserve?.id || null) !== prevReserveIdRef.current;
+
+    if (isFirstOpen || isDifferentReserve) {
+      prevIsOpenRef.current = true;
+      prevReserveIdRef.current = reserve?.id || null;
+
+      if (reserve) {
+        setRegraAtiva(Boolean(reserve.regra_ativa));
+        setRegraTipo(reserve.regra_tipo || 'km');
+        setEffectiveDate(getTodayLocalDateStr());
+        setRegraValor(
+          reserve.regra_valor !== undefined && reserve.regra_valor !== null
+            ? String(Math.round(Number(reserve.regra_valor) * 100) / 100)
+            : ''
+        );
+        
+        const savedCats = reserve.regra_categorias && reserve.regra_categorias.length > 0
+          ? reserve.regra_categorias
+          : profileIncomeCategories;
+        setRegraCategorias(savedCats);
+
+        // Require category on use or fixed default category
+        const requireOnUse = reserve.require_category_on_use !== undefined
+          ? Boolean(reserve.require_category_on_use)
+          : !reserve.default_use_category;
+        
+        setRequireCategoryOnUse(requireOnUse);
+        setDefaultUseCategory(
+          reserve.default_use_category || 
+          (profileExpenseCategories.includes('Manutenção') ? 'Manutenção' : profileExpenseCategories[0] || 'Outros')
+        );
+      }
+    }
+  }, [isOpen, reserve?.id]);
 
   if (!isOpen || !reserve) return null;
 
@@ -154,7 +173,8 @@ export function UpdateRuleModal({
   // Real-time Simulation calculation based on currently typed parameters
   const simulatedSuggestion = () => {
     if (!regraAtiva || !regraTipo) return 0;
-    const val = parseFloat(regraValor);
+    const cleanStr = String(regraValor || '').replace(',', '.').trim();
+    const val = parseFloat(cleanStr);
     if (isNaN(val) || val <= 0) return 0;
 
     const periodTxs = (transactions || []).filter(t => {
@@ -187,7 +207,7 @@ export function UpdateRuleModal({
         .reduce((sum, t) => sum + Number(t.amount || 0), 0);
       const netProfit = Math.max(0, totalIncome - totalExpense);
       total = netProfit * (val / 100);
-    } else if (regraTipo === 'fixo') {
+    } else if (regraTipo === 'fixo' || (regraTipo as string) === 'fixo_diario') {
       const eligible = periodTxs.filter(
         t => t.type === 'income' && regraCategorias.includes(t.category)
       );
@@ -208,14 +228,20 @@ export function UpdateRuleModal({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
+    const cleanStr = String(regraValor || '').replace(',', '.').trim();
+    const parsedVal = cleanStr ? Math.round((parseFloat(cleanStr) || 0) * 100) / 100 : undefined;
+
     if (regraAtiva) {
       if (!regraTipo) {
         toast.error('Selecione o tipo de cálculo para a regra.');
         return;
       }
-      const parsedVal = Math.round((parseFloat(regraValor) || 0) * 100) / 100;
-      if (isNaN(parsedVal) || parsedVal <= 0) {
+      if (parsedVal === undefined || isNaN(parsedVal) || parsedVal <= 0) {
         toast.error('Informe um valor válido maior que zero para a regra.');
+        return;
+      }
+      if ((regraTipo === 'bruto' || regraTipo === 'liquido') && parsedVal > 100) {
+        toast.error('O percentual não pode ser maior que 100%.');
         return;
       }
       if ((regraTipo === 'km' || regraTipo === 'bruto' || regraTipo === 'fixo') && regraCategorias.length === 0) {
@@ -232,16 +258,15 @@ export function UpdateRuleModal({
 
     try {
       setIsSubmitting(true);
-      const parsedVal = regraValor ? Math.round((parseFloat(regraValor) || 0) * 100) / 100 : undefined;
 
       await onSaveRule(reserve.id, {
         regra_ativa: regraAtiva,
-        regra_tipo: regraAtiva ? (regraTipo as any) : undefined,
-        regra_valor: regraAtiva ? parsedVal : undefined,
+        regra_tipo: regraAtiva ? (regraTipo as any) : null,
+        regra_valor: regraAtiva ? parsedVal : null,
         regra_categorias: regraAtiva ? regraCategorias : [],
         regra_inicio_validade: effectiveDate,
         require_category_on_use: requireCategoryOnUse,
-        default_use_category: !requireCategoryOnUse ? defaultUseCategory : undefined
+        default_use_category: !requireCategoryOnUse ? defaultUseCategory : null
       } as any);
 
       toast.success(`Regra de aporte de ${reserve.name} atualizada com sucesso!`);
@@ -371,12 +396,15 @@ export function UpdateRuleModal({
                     {regraTipo === 'bruto' || regraTipo === 'liquido' ? '%' : 'R$'}
                   </span>
                   <Input
-                    type="number"
-                    step="0.01"
+                    type="text"
+                    inputMode="decimal"
                     placeholder="0.00"
                     required={regraAtiva}
                     value={regraValor}
-                    onChange={e => setRegraValor(e.target.value)}
+                    onChange={e => {
+                      const val = e.target.value.replace(/[^0-9.,]/g, '');
+                      setRegraValor(val);
+                    }}
                     className="pl-9 h-10 text-xs font-mono font-bold rounded-xl"
                   />
                 </div>

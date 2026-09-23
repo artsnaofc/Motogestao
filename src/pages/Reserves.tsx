@@ -549,7 +549,7 @@ export function Reserves() {
 
     const effectiveDate = ruleData.regra_inicio_validade || getTodayLocalDateStr();
     const hadPrevRule = Boolean(currentRes.regra_tipo && currentRes.regra_valor);
-    let updatedHistory = [...(currentRes.rule_history || [])];
+    let updatedHistory = Array.isArray(currentRes.rule_history) ? [...currentRes.rule_history] : [];
 
     if (hadPrevRule && (currentRes.regra_tipo !== ruleData.regra_tipo || currentRes.regra_valor !== ruleData.regra_valor || currentRes.regra_ativa !== ruleData.regra_ativa)) {
       const prevStartDate = currentRes.regra_inicio_validade || currentRes.created_at?.split('T')[0] || effectiveDate;

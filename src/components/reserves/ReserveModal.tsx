@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   PiggyBank, 
   X, 
@@ -86,40 +86,57 @@ export function ReserveModal({
     return ['Combustível', 'Pedágio', 'Manutenção', 'Alimentação', 'Plano de Internet', 'Equipamento', 'Outras Despesas', 'Emergência', 'Outros'];
   }, [settings]);
 
+  // Track modal open state & reserve id so we only initialize when modal opens or target changes
+  const prevIsOpenRef = useRef(false);
+  const prevReserveIdRef = useRef<string | null>(null);
+
   useEffect(() => {
-    if (reserveToEdit) {
-      setName(reserveToEdit.name || '');
-      setDescription(reserveToEdit.description || '');
-      setMetaObjetivo(reserveToEdit.meta_objetivo ? String(reserveToEdit.meta_objetivo) : '');
-      setIcon(reserveToEdit.icon || 'PiggyBank');
-      setColor(reserveToEdit.color || '#6366f1');
-      setRegraAtiva(!!reserveToEdit.regra_ativa);
-      setRegraTipo(reserveToEdit.regra_tipo || '');
-      setRegraValor(reserveToEdit.regra_valor ? String(reserveToEdit.regra_valor) : '');
-      setRegraCategorias(reserveToEdit.regra_categorias && reserveToEdit.regra_categorias.length > 0 ? reserveToEdit.regra_categorias : allCategories);
-      
-      const reqCat = reserveToEdit.require_category_on_use !== undefined
-        ? Boolean(reserveToEdit.require_category_on_use)
-        : !reserveToEdit.default_use_category;
-      setRequireCategoryOnUse(reqCat);
-      setDefaultUseCategory(reserveToEdit.default_use_category || profileExpenseCategories[0] || 'Manutenção');
-      setInitialBalance('');
-    } else {
-      setName('');
-      setDescription('');
-      setInitialBalance('');
-      setMetaObjetivo('');
-      setIcon('PiggyBank');
-      setColor('#6366f1');
-      setRegraAtiva(false);
-      setRegraTipo('');
-      setRegraValor('');
-      setRegraCategorias(allCategories);
-      setRequireCategoryOnUse(true);
-      setDefaultUseCategory(profileExpenseCategories[0] || 'Manutenção');
+    if (!isOpen) {
+      prevIsOpenRef.current = false;
+      return;
     }
-    setActiveTab('general');
-  }, [reserveToEdit, isOpen, allCategories, profileExpenseCategories]);
+
+    const isFirstOpen = !prevIsOpenRef.current;
+    const isDifferent = (reserveToEdit?.id || null) !== prevReserveIdRef.current;
+
+    if (isFirstOpen || isDifferent) {
+      prevIsOpenRef.current = true;
+      prevReserveIdRef.current = reserveToEdit?.id || null;
+
+      if (reserveToEdit) {
+        setName(reserveToEdit.name || '');
+        setDescription(reserveToEdit.description || '');
+        setMetaObjetivo(reserveToEdit.meta_objetivo ? String(reserveToEdit.meta_objetivo) : '');
+        setIcon(reserveToEdit.icon || 'PiggyBank');
+        setColor(reserveToEdit.color || '#6366f1');
+        setRegraAtiva(!!reserveToEdit.regra_ativa);
+        setRegraTipo(reserveToEdit.regra_tipo || '');
+        setRegraValor(reserveToEdit.regra_valor !== undefined && reserveToEdit.regra_valor !== null ? String(reserveToEdit.regra_valor) : '');
+        setRegraCategorias(reserveToEdit.regra_categorias && reserveToEdit.regra_categorias.length > 0 ? reserveToEdit.regra_categorias : allCategories);
+        
+        const reqCat = reserveToEdit.require_category_on_use !== undefined
+          ? Boolean(reserveToEdit.require_category_on_use)
+          : !reserveToEdit.default_use_category;
+        setRequireCategoryOnUse(reqCat);
+        setDefaultUseCategory(reserveToEdit.default_use_category || profileExpenseCategories[0] || 'Manutenção');
+        setInitialBalance('');
+      } else {
+        setName('');
+        setDescription('');
+        setInitialBalance('');
+        setMetaObjetivo('');
+        setIcon('PiggyBank');
+        setColor('#6366f1');
+        setRegraAtiva(false);
+        setRegraTipo('');
+        setRegraValor('');
+        setRegraCategorias(allCategories);
+        setRequireCategoryOnUse(true);
+        setDefaultUseCategory(profileExpenseCategories[0] || 'Manutenção');
+      }
+      setActiveTab('general');
+    }
+  }, [isOpen, reserveToEdit?.id]);
 
   if (!isOpen) return null;
 
@@ -146,8 +163,16 @@ export function ReserveModal({
       return;
     }
 
-    if (regraAtiva && (!regraTipo || !regraValor || parseFloat(regraValor) <= 0)) {
+    const cleanRegraStr = String(regraValor || '').replace(',', '.').trim();
+    const parsedRegraVal = cleanRegraStr ? Math.round(parseFloat(cleanRegraStr) * 100) / 100 : undefined;
+
+    if (regraAtiva && (!regraTipo || parsedRegraVal === undefined || isNaN(parsedRegraVal) || parsedRegraVal <= 0)) {
       toast.error('Ao ativar a regra de aporte, defina o tipo e um valor válido.');
+      return;
+    }
+
+    if (regraAtiva && (regraTipo === 'bruto' || regraTipo === 'liquido') && parsedRegraVal && parsedRegraVal > 100) {
+      toast.error('O percentual da regra não pode ser maior que 100%.');
       return;
     }
 
@@ -159,8 +184,8 @@ export function ReserveModal({
     try {
       setIsSubmitting(true);
 
-      const parsedMeta = metaObjetivo ? Math.round(parseFloat(metaObjetivo) * 100) / 100 : 0;
-      const parsedRegraVal = regraAtiva && regraValor ? Math.round(parseFloat(regraValor) * 100) / 100 : undefined;
+      const cleanMetaStr = String(metaObjetivo || '').replace(',', '.').trim();
+      const parsedMeta = cleanMetaStr ? Math.round(parseFloat(cleanMetaStr) * 100) / 100 : 0;
 
       const payload: Partial<Reserve> = {
         name: name.trim(),
@@ -169,14 +194,15 @@ export function ReserveModal({
         icon,
         color,
         regra_ativa: regraAtiva,
-        regra_tipo: regraAtiva ? (regraTipo as any) : undefined,
-        regra_valor: parsedRegraVal !== undefined && !isNaN(parsedRegraVal) ? parsedRegraVal : undefined,
+        regra_tipo: regraAtiva ? (regraTipo as any) : null,
+        regra_valor: regraAtiva && parsedRegraVal !== undefined && !isNaN(parsedRegraVal) ? parsedRegraVal : null,
         regra_categorias: regraAtiva ? regraCategorias : [],
         require_category_on_use: requireCategoryOnUse,
-        default_use_category: !requireCategoryOnUse ? defaultUseCategory : undefined
+        default_use_category: !requireCategoryOnUse ? defaultUseCategory : null
       };
 
-      const parsedInit = initialBalance ? Math.round(parseFloat(initialBalance) * 100) / 100 : 0;
+      const cleanInitStr = String(initialBalance || '').replace(',', '.').trim();
+      const parsedInit = cleanInitStr ? Math.round(parseFloat(cleanInitStr) * 100) / 100 : 0;
       const initBalNum = isNaN(parsedInit) ? 0 : parsedInit;
       await onSave(payload, isEditing ? undefined : initBalNum);
       onClose();
@@ -387,12 +413,15 @@ export function ReserveModal({
                       {!regraTipo && 'Valor da Regra'}
                     </label>
                     <Input
-                      type="number"
-                      step="0.01"
+                      type="text"
+                      inputMode="decimal"
                       placeholder="0.00"
                       required={regraAtiva}
                       value={regraValor}
-                      onChange={e => setRegraValor(e.target.value)}
+                      onChange={e => {
+                        const val = e.target.value.replace(/[^0-9.,]/g, '');
+                        setRegraValor(val);
+                      }}
                       className="h-10 text-xs rounded-xl font-mono"
                     />
                   </div>

@@ -398,6 +398,7 @@ export function ReserveHistoryTab({
         return `${val}% do Faturamento Bruto`;
       case 'liquido':
         return `${val}% do Lucro Líquido`;
+      case 'fixo':
       case 'fixo_diario':
         return `R$ ${val.toFixed(2).replace('.', ',')} por dia fixo`;
       default:
@@ -413,6 +414,7 @@ export function ReserveHistoryTab({
         return '% Faturamento Bruto';
       case 'liquido':
         return '% Lucro Líquido';
+      case 'fixo':
       case 'fixo_diario':
         return 'Fixo Diário';
       default:
@@ -872,8 +874,9 @@ export function ReserveHistoryTab({
   // Open Edit Modal for Rule (Active in-force or Historical)
   const handleOpenEditRule = (rule: RuleHistoryItem) => {
     setRuleToEdit(rule);
-    setEditRuleType(rule.regra_tipo || 'km');
-    setEditRuleValue(rule.regra_valor !== undefined ? String(rule.regra_valor) : '');
+    const normalizedType = rule.regra_tipo === 'fixo_diario' ? 'fixo' : (rule.regra_tipo || 'km');
+    setEditRuleType(normalizedType);
+    setEditRuleValue(rule.regra_valor !== undefined && rule.regra_valor !== null ? String(rule.regra_valor) : '');
     setEditRuleStartDate(rule.start_date || rule.date || getTodayLocalDateStr());
     setEditRuleEndDate(rule.end_date || '');
     const initialCats = Array.isArray(rule.regra_categorias) ? rule.regra_categorias : [];
@@ -1963,7 +1966,7 @@ export function ReserveHistoryTab({
                   <option value="km">Por Km Rodado (R$/km)</option>
                   <option value="bruto">% do Faturamento Bruto</option>
                   <option value="liquido">% do Lucro Líquido</option>
-                  <option value="fixo_diario">Valor Fixo Diário (R$/dia)</option>
+                  <option value="fixo">Valor Fixo Diário (R$/dia)</option>
                   <option value="personalizado">Personalizado</option>
                 </select>
               </div>
@@ -1976,12 +1979,13 @@ export function ReserveHistoryTab({
                 </label>
                 <div className="relative">
                   <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    max={editRuleType === 'bruto' || editRuleType === 'liquido' ? '100' : undefined}
+                    type="text"
+                    inputMode="decimal"
                     value={editRuleValue}
-                    onChange={e => setEditRuleValue(e.target.value)}
+                    onChange={e => {
+                      const val = e.target.value.replace(/[^0-9.,]/g, '');
+                      setEditRuleValue(val);
+                    }}
                     placeholder="Ex: 0.15 ou 10"
                     className="w-full h-10 pl-3 pr-10 rounded-xl bg-background border border-border/80 font-bold text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-indigo-500/20 font-mono"
                   />
@@ -1989,7 +1993,7 @@ export function ReserveHistoryTab({
                     {editRuleType === 'bruto' || editRuleType === 'liquido' ? '%' : 'R$'}
                   </span>
                 </div>
-                {(editRuleType === 'bruto' || editRuleType === 'liquido') && parseFloat(editRuleValue) > 100 && (
+                {(editRuleType === 'bruto' || editRuleType === 'liquido') && parseFloat(String(editRuleValue || '').replace(',', '.')) > 100 && (
                   <p className="text-[10px] text-rose-500 font-bold">Atenção: Percentual não pode ser maior que 100%.</p>
                 )}
               </div>
