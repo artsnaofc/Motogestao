@@ -114,3 +114,27 @@ export async function getEffectiveUserId(): Promise<string | null> {
   const user = await getEffectiveUser();
   return user?.id || null;
 }
+
+/**
+ * Synchronous helper to get cached/stored user ID immediately
+ */
+export function getSyncEffectiveUserId(): string | null {
+  try {
+    const cachedId = cacheManager.get<string>(CURRENT_USER_ID_KEY);
+    if (cachedId) return cachedId;
+    const lastId = localStorage.getItem('financas_pro_last_user_id') || localStorage.getItem('financas_pro_last_bio_user');
+    if (lastId) return lastId;
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && (key.includes('-auth-token') || key.includes('supabase.auth.token'))) {
+        const raw = localStorage.getItem(key);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          const uid = parsed?.user?.id || parsed?.currentSession?.user?.id;
+          if (uid) return uid;
+        }
+      }
+    }
+  } catch {}
+  return null;
+}

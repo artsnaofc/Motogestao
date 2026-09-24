@@ -1,10 +1,11 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { Fingerprint, Lock, ShieldCheck, ArrowRight, LogOut, Loader2, Sparkles, RefreshCw } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { Fingerprint, Lock, ShieldCheck, ArrowRight, LogOut, Loader2, RefreshCw } from 'lucide-react';
 import { Button } from './ui/button';
 import { 
   authenticateWithBiometrics, 
   detectBiometricLabel, 
   getBiometricSettings, 
+  isBiometricsConfiguredOnDevice,
   recordAppActivity,
   shouldTriggerAppLock 
 } from '../lib/biometrics';
@@ -18,14 +19,47 @@ interface BiometricAppLockProps {
 }
 
 export function BiometricAppLock({ userId, userEmail, onUnlocked }: BiometricAppLockProps) {
-  const [isLocked, setIsLocked] = useState(false);
+  const [isLocked, setIsLocked] = useState(() => {
+    // Only lock if THIS specific browser/device has registered biometrics
+    if (!isBiometricsConfiguredOnDevice(userId)) {
+      return false;
+    }
+    const settings = getBiometricSettings(userId);
+    if (settings.enabled) {
+      if (settings.autoLockMinutes === 0) {
+        return true;
+      }
+      const unlockedSession = sessionStorage.getItem('financas_pro_app_session_unlocked');
+      return !unlockedSession;
+    }
+    return false;
+  });
+
   const [verifying, setVerifying] = useState(false);
   const [bioInfo, setBioInfo] = useState({ name: 'Biometria', type: 'generic' });
   const [autoPrompted, setAutoPrompted] = useState(false);
+  const promptTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     setBioInfo(detectBiometricLabel());
   }, []);
+
+  // Update lock state if biometrics becomes enabled or userId resolves
+  useEffect(() => {
+    if (!isBiometricsConfiguredOnDevice(userId)) {
+      setIsLocked(false);
+      return;
+    }
+    const settings = getBiometricSettings(userId);
+    if (settings.enabled) {
+      const unlockedSession = sessionStorage.getItem('financas_pro_app_session_unlocked');
+      if (settings.autoLockMinutes === 0 || !unlockedSession) {
+        setIsLocked(true);
+      }
+    } else {
+      setIsLocked(false);
+    }
+  }, [userId]);
 
   const handleUnlock = useCallback(async () => {
     if (verifying) return;
@@ -34,21 +68,25 @@ export function BiometricAppLock({ userId, userEmail, onUnlocked }: BiometricApp
       const res = await authenticateWithBiometrics(userId);
       if (res.success) {
         setIsLocked(false);
+        sessionStorage.setItem('financas_pro_app_session_unlocked', 'true');
         recordAppActivity();
-        toast.success('Desbloqueado com sucesso!');
+        toast.success(`${bioInfo.name} reconhecido! Acesso liberado.`);
         if (onUnlocked) onUnlocked();
       } else {
-        toast.error(res.error || 'Não foi possível autenticar com biometria.');
+        toast.error(res.error || 'Leitura não confirmada. Tente novamente.');
       }
     } catch (err: any) {
       toast.error('Erro na leitura biométrica: ' + (err?.message || err));
     } finally {
       setVerifying(false);
     }
-  }, [userId, verifying, onUnlocked]);
+  }, [userId, verifying, bioInfo.name, onUnlocked]);
 
-  // Monitor visibility change & inactivity
+  // Monitor visibility changes & app foregrounding (Mobile First)
   useEffect(() => {
+    if (!isBiometricsConfiguredOnDevice(userId)) {
+      return;
+    }
     const settings = getBiometricSettings(userId);
     if (!settings.enabled || settings.autoLockMinutes === -1) {
       return;
@@ -58,14 +96,23 @@ export function BiometricAppLock({ userId, userEmail, onUnlocked }: BiometricApp
       if (document.visibilityState === 'hidden') {
         recordAppActivity();
       } else if (document.visibilityState === 'visible') {
-        if (shouldTriggerAppLock(userId)) {
+        // App reopened or brought back to foreground
+        if (settings.autoLockMinutes === 0 || shouldTriggerAppLock(userId)) {
           setIsLocked(true);
           setAutoPrompted(false);
         }
       }
     };
 
-    // User activity listeners
+    const handleFocus = () => {
+      if (settings.autoLockMinutes === 0 && !sessionStorage.getItem('financas_pro_tab_focused')) {
+        setIsLocked(true);
+        setAutoPrompted(false);
+      }
+      sessionStorage.setItem('financas_pro_tab_focused', 'true');
+    };
+
+    // User interaction recorder
     const handleUserActivity = () => {
       if (!isLocked) {
         recordAppActivity();
@@ -73,34 +120,38 @@ export function BiometricAppLock({ userId, userEmail, onUnlocked }: BiometricApp
     };
 
     window.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', handleFocus);
     window.addEventListener('touchstart', handleUserActivity, { passive: true });
     window.addEventListener('mousedown', handleUserActivity, { passive: true });
     window.addEventListener('keydown', handleUserActivity, { passive: true });
 
-    // Initial activity record
-    recordAppActivity();
-
     return () => {
       window.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', handleFocus);
       window.removeEventListener('touchstart', handleUserActivity);
       window.removeEventListener('mousedown', handleUserActivity);
       window.removeEventListener('keydown', handleUserActivity);
     };
   }, [userId, isLocked]);
 
-  // Trigger prompt when locked
+  // Auto prompt sensor when locked
   useEffect(() => {
     if (isLocked && !autoPrompted && !verifying) {
       setAutoPrompted(true);
-      const timer = setTimeout(() => {
+      if (promptTimeoutRef.current) clearTimeout(promptTimeoutRef.current);
+      promptTimeoutRef.current = setTimeout(() => {
         handleUnlock();
-      }, 300);
-      return () => clearTimeout(timer);
+      }, 400);
     }
+
+    return () => {
+      if (promptTimeoutRef.current) clearTimeout(promptTimeoutRef.current);
+    };
   }, [isLocked, autoPrompted, verifying, handleUnlock]);
 
   const handleSignOut = async () => {
     try {
+      sessionStorage.clear();
       await supabase.auth.signOut();
       window.location.href = '/login';
     } catch {
@@ -112,7 +163,7 @@ export function BiometricAppLock({ userId, userEmail, onUnlocked }: BiometricApp
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col items-center justify-center p-6 bg-background/95 backdrop-blur-xl animate-in fade-in duration-300">
-      {/* Background ambient lighting */}
+      {/* Background ambient glow */}
       <div className="absolute top-1/4 -left-12 w-72 h-72 bg-indigo-500/20 rounded-full blur-3xl pointer-events-none" />
       <div className="absolute bottom-1/4 -right-12 w-72 h-72 bg-emerald-500/15 rounded-full blur-3xl pointer-events-none" />
 
@@ -138,7 +189,7 @@ export function BiometricAppLock({ userId, userEmail, onUnlocked }: BiometricApp
             Finanças Pro Bloqueado
           </h2>
           <p className="text-xs text-muted-foreground max-w-xs font-medium">
-            Confirme sua identidade via <strong className="text-foreground">{bioInfo.name}</strong> para acessar suas informações financeiras.
+            Confirme sua identidade via <strong className="text-foreground">{bioInfo.name}</strong> para abrir o aplicativo.
           </p>
           {userEmail && (
             <p className="text-[11px] font-mono text-muted-foreground/80 pt-0.5">

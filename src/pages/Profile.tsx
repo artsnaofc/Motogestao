@@ -87,12 +87,11 @@ import {
   Fingerprint,
   Smartphone,
   Lock,
-  CheckCircle,
-  Copy,
-  Code2
+  CheckCircle
 } from 'lucide-react';
 import { useData } from '../contexts/DataContext';
 import { useVehicles } from '../contexts/VehiclesContext';
+import { useNavigate } from 'react-router-dom';
 import { DEFAULT_VEHICLE_CATEGORIES } from '../lib/vehicleUtils';
 import { executeQuoteFetch, QuoteProvider, QuoteFetchResult } from '../lib/quoteService';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -120,6 +119,7 @@ interface SettingsSnapshot {
 }
 
 export function Profile() {
+  const navigate = useNavigate();
   const { settings: globalSettings, refreshData, loading: dataLoading, transactions, reserves } = useData();
   const { vehicles, activeVehicle, setActiveVehicle } = useVehicles();
   const [loading, setLoading] = useState(true);
@@ -137,7 +137,6 @@ export function Profile() {
   const [bioLabel, setBioLabel] = useState({ name: 'Biometria', type: 'generic' as 'face' | 'fingerprint' | 'generic' });
   const [enrollingBio, setEnrollingBio] = useState(false);
   const [testingBio, setTestingBio] = useState(false);
-  const [showSqlCopyModal, setShowSqlCopyModal] = useState(false);
 
   const [deleteCategoryConfirm, setDeleteCategoryConfirm] = useState<{type: 'income' | 'personal' | 'operational', name: string} | null>(null);
   const [editCategoryData, setEditCategoryData] = useState<{type: 'income' | 'personal' | 'operational', oldName: string, newName: string} | null>(null);
@@ -604,6 +603,15 @@ export function Profile() {
         category_icons: categoryIcons,
         asset_cnpjs: settings.asset_cnpjs || {},
         rebalance_targets: settings.rebalance_targets || {},
+        biometrics_enabled: bioConfigured,
+        biometrics_auto_lock_minutes: bioSettings.autoLockMinutes ?? 0,
+        biometrics_device_info: {
+          credential_id: bioSettings.credentialId || null,
+          device_name: bioSettings.deviceName || 'Este Dispositivo',
+          last_used_at: new Date().toISOString(),
+          registered_at: bioSettings.registeredAt || new Date().toISOString(),
+          type: bioSettings.biometricType || 'generic',
+        },
         updated_at: new Date().toISOString(),
       };
 
@@ -686,10 +694,14 @@ export function Profile() {
 
       const { data: userData } = await supabase.auth.getUser();
       const uid = userData?.user?.id || globalSettings?.user_id;
-      const conf = isBiometricsConfiguredOnDevice(uid);
+      const conf = Boolean(isBiometricsConfiguredOnDevice(uid));
       setBioConfigured(conf);
-      const bs = getBiometricSettings(uid);
-      setBioSettings(bs);
+      if (conf) {
+        const bs = getBiometricSettings(uid);
+        setBioSettings(bs);
+      } else {
+        setBioSettings({ enabled: false, autoLockMinutes: 0 });
+      }
     };
 
     loadBioState();
@@ -700,40 +712,44 @@ export function Profile() {
     setEnrollingBio(true);
 
     try {
+      const { data: { user } } = await supabase.auth.getUser();
+      const uid = user?.id || globalSettings?.user_id || 'current_user';
+      const uEmail = user?.email || email || 'usuario@financaspro.com';
+
       if (!bioConfigured) {
         // Enrolling biometrics
         const { data: { session } } = await supabase.auth.getSession();
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!user) {
-          toast.error('É necessário estar autenticado para registrar biometria.');
-          setEnrollingBio(false);
-          return;
-        }
 
-        const res = await registerBiometrics(
+        await registerBiometrics(
           {
-            id: user.id,
-            email: user.email || email,
+            id: uid,
+            email: uEmail,
             name: settings.full_name || undefined,
           },
           session
         );
 
-        if (res.success) {
-          setBioConfigured(true);
-          const updated = getBiometricSettings(user.id);
-          setBioSettings(updated);
-          toast.success(`${bioLabel.name} ativado com sucesso neste aparelho!`);
-        } else {
-          toast.error(res.error || 'Falha ao registrar biometria.');
-        }
+        // Guarantee persistent enable state immediately
+        saveBiometricSettings(uid, {
+          enabled: true,
+          autoLockMinutes: 0,
+        });
+
+        setBioConfigured(true);
+        const updated = getBiometricSettings(uid);
+        setBioSettings(updated);
+
+        // Refresh DataContext in background
+        refreshData(true).catch(() => {});
+
+        toast.success(`${bioLabel.name} ativado com sucesso! O app solicitará confirmação ao abrir.`);
       } else {
         // Disabling biometrics
-        const { data: { user } } = await supabase.auth.getUser();
-        const uid = user?.id || globalSettings?.user_id || '';
         await removeBiometricsFromDevice(uid);
         setBioConfigured(false);
-        setBioSettings({ enabled: false, autoLockMinutes: 5 });
+        setBioSettings({ enabled: false, autoLockMinutes: 0 });
+
+        refreshData(true).catch(() => {});
         toast.success('Biometria desativada deste dispositivo.');
       }
     } catch (err: any) {
@@ -743,11 +759,12 @@ export function Profile() {
     }
   };
 
-  const handleUpdateAutoLock = (minutes: number) => {
-    const uid = globalSettings?.user_id || 'current_user';
+  const handleUpdateAutoLock = async (minutes: number) => {
+    const { data: userData } = await supabase.auth.getUser();
+    const uid = userData?.user?.id || globalSettings?.user_id || 'current_user';
     saveBiometricSettings(uid, { autoLockMinutes: minutes });
     setBioSettings(prev => ({ ...prev, autoLockMinutes: minutes }));
-    toast.success('Tempo de bloqueio automático atualizado!');
+    toast.success(minutes === 0 ? 'Configurado para pedir sempre ao abrir ou alternar o app!' : 'Tempo de bloqueio automático atualizado!');
   };
 
   const handleTestBiometrics = async () => {
@@ -768,43 +785,6 @@ export function Profile() {
     }
   };
 
-  const supabaseSqlMigration = `-- Migration: Suporte a Autenticação Biométrica e Segurança de Dispositivos
--- Finanças Pro - Mobile First
-
--- 1. Adicionar colunas de suporte a biometria na tabela user_settings
-ALTER TABLE user_settings 
-ADD COLUMN IF NOT EXISTS biometrics_enabled BOOLEAN DEFAULT FALSE,
-ADD COLUMN IF NOT EXISTS biometrics_auto_lock_minutes INTEGER DEFAULT 5,
-ADD COLUMN IF NOT EXISTS biometrics_device_info JSONB DEFAULT '{}'::jsonb;
-
--- 2. (Opcional) Criar tabela de auditoria de credenciais biométricas por dispositivo
-CREATE TABLE IF NOT EXISTS user_biometric_credentials (
-  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
-  credential_id TEXT NOT NULL,
-  device_name TEXT NOT NULL,
-  biometric_type TEXT DEFAULT 'generic',
-  registered_at TIMESTAMPTZ DEFAULT NOW(),
-  last_used_at TIMESTAMPTZ DEFAULT NOW(),
-  is_active BOOLEAN DEFAULT TRUE,
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  CONSTRAINT unique_user_credential UNIQUE(user_id, credential_id)
-);
-
--- 3. Habilitar Row Level Security (RLS)
-ALTER TABLE user_biometric_credentials ENABLE ROW LEVEL SECURITY;
-
--- 4. Políticas de Segurança RLS
-CREATE POLICY "Usuários podem gerenciar suas próprias credenciais biométricas" 
-ON user_biometric_credentials
-FOR ALL 
-TO authenticated 
-USING (auth.uid() = user_id) 
-WITH CHECK (auth.uid() = user_id);
-
--- 5. Índice para consultas ultrarrápidas
-CREATE INDEX IF NOT EXISTS idx_biometrics_user_id ON user_biometric_credentials(user_id);`;
-
   if (loading) {
     return (
       <div className="flex-1 w-full flex flex-col justify-center items-center py-32 space-y-3">
@@ -814,9 +794,12 @@ CREATE INDEX IF NOT EXISTS idx_biometrics_user_id ON user_biometric_credentials(
     );
   }
 
+  // Active vehicle consumption or fallback
+  const activeConsumption = activeVehicle?.avg_km_per_liter || settings.vehicle_km_per_liter || 30;
+
   // Visual calculations for previews
-  const costPer100Km = settings.vehicle_km_per_liter > 0 
-    ? (100 / settings.vehicle_km_per_liter) * (settings.fuel_price || 0)
+  const costPer100Km = activeConsumption > 0 
+    ? (100 / activeConsumption) * (settings.fuel_price || 0)
     : 0;
 
   const pizzariaSimulatedDeliveries = 12;
@@ -884,7 +867,7 @@ CREATE INDEX IF NOT EXISTS idx_biometrics_user_id ON user_biometric_credentials(
                   {reserves?.length || 0} Reservas
                 </span>
                 <span className="text-[10px] font-bold bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 px-2.5 py-1 rounded-lg">
-                  Consumo: {settings.vehicle_km_per_liter} km/L
+                  Consumo: {activeConsumption} km/L
                 </span>
               </div>
             </div>
@@ -1048,7 +1031,7 @@ CREATE INDEX IF NOT EXISTS idx_biometrics_user_id ON user_biometric_credentials(
                 <ChevronRight className="w-4 h-4 text-muted-foreground group-hover:text-foreground transition-colors" />
               </div>
               <div className="pt-2 border-t border-border/50 flex items-center justify-between text-xs text-muted-foreground">
-                <div>Consumo: <strong className="text-foreground">{settings.vehicle_km_per_liter} km/L</strong></div>
+                <div>Consumo: <strong className="text-foreground">{activeConsumption} km/L</strong></div>
                 <div className="text-right">R$ / 100 KM: <strong className="text-amber-600 dark:text-amber-400 font-bold">R$ {costPer100Km.toFixed(2)}</strong></div>
               </div>
             </div>
@@ -1113,27 +1096,14 @@ CREATE INDEX IF NOT EXISTS idx_biometrics_user_id ON user_biometric_credentials(
                       <Fingerprint className="w-6 h-6" />
                     </div>
                     <div>
-                      <CardTitle className="text-base font-black tracking-tight text-foreground flex items-center gap-2">
-                        <span>Segurança & Autenticação Biométrica</span>
-                        <span className="px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 text-[10px] font-black uppercase">
-                          Mobile First
-                        </span>
+                      <CardTitle className="text-base font-black tracking-tight text-foreground">
+                        Segurança & Autenticação Biométrica
                       </CardTitle>
                       <CardDescription className="text-xs text-muted-foreground pt-0.5">
                         Configure o acesso por <strong>{bioLabel.name}</strong> para entrar no sistema com 1 toque e proteger seus dados financeiros.
                       </CardDescription>
                     </div>
                   </div>
-
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => setShowSqlCopyModal(true)}
-                    className="h-9 px-3.5 rounded-xl font-bold text-xs gap-1.5 border-border/80 hover:bg-muted cursor-pointer"
-                  >
-                    <Code2 className="w-3.5 h-3.5 text-indigo-500" />
-                    <span>SQL Supabase</span>
-                  </Button>
                 </div>
               </CardHeader>
 
@@ -1236,6 +1206,15 @@ CREATE INDEX IF NOT EXISTS idx_biometrics_user_id ON user_biometric_credentials(
                       </div>
                     </div>
                   )}
+
+                  {!bioConfigured && globalSettings?.biometrics_device_info?.device_name && (
+                    <div className="pt-3 border-t border-border/60 flex items-center gap-2.5 text-xs text-muted-foreground bg-muted/20 p-3 rounded-xl">
+                      <Smartphone className="w-4 h-4 text-indigo-500 shrink-0" />
+                      <span>
+                        Sua conta possui biometria cadastrada no <strong>{globalSettings.biometrics_device_info.device_name}</strong>. Para habilitar também neste aparelho de forma independente, clique em <strong>Ativar {bioLabel.name}</strong> acima.
+                      </span>
+                    </div>
+                  )}
                 </div>
 
                 {/* 3. App Lock & Privacy Screen Settings */}
@@ -1251,13 +1230,13 @@ CREATE INDEX IF NOT EXISTS idx_biometrics_user_id ON user_biometric_credentials(
                       </p>
                     </div>
 
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                    <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
                       {[
-                        { minutes: 0, label: 'Imediato', desc: 'Ao sair do app' },
-                        { minutes: 1, label: '1 minuto', desc: 'Inatividade leve' },
-                        { minutes: 5, label: '5 minutos', desc: 'Recomendado' },
-                        { minutes: 15, label: '15 minutos', desc: 'Uso prolongado' },
-                        { minutes: -1, label: 'Desativado', desc: 'Apenas no login' },
+                        { minutes: 0, label: 'Sempre ao abrir', desc: 'Ao abrir o app e ao alternar' },
+                        { minutes: 1, label: '1 minuto', desc: 'Após 1 min em 2º plano' },
+                        { minutes: 5, label: '5 minutos', desc: 'Após 5 min em 2º plano' },
+                        { minutes: 15, label: '15 minutos', desc: 'Após 15 min em 2º plano' },
+                        { minutes: -1, label: 'Desativado', desc: 'Apenas no login da conta' },
                       ].map((item) => {
                         const isSelected = bioSettings.autoLockMinutes === item.minutes;
                         return (
@@ -1817,104 +1796,122 @@ CREATE INDEX IF NOT EXISTS idx_biometrics_user_id ON user_biometric_credentials(
                   <Bike className="w-5 h-5" />
                 </div>
                 <div>
-                  <CardTitle className="text-base font-black tracking-tight text-foreground">Veículo & Parâmetros do Frete</CardTitle>
+                  <CardTitle className="text-base font-black tracking-tight text-foreground">Veículo & Parâmetros de Combustível</CardTitle>
                   <CardDescription className="text-xs text-muted-foreground">
-                    Gerencie o consumo de combustível, preço do litro e valores diários para orçamentos de frete precisos.
+                    O consumo médio é configurado individualmente na Garagem para cada veículo. Aqui você define o preço de referência do combustível.
                   </CardDescription>
                 </div>
               </div>
             </CardHeader>
             <CardContent className="p-5 sm:p-6 space-y-6">
               
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                 
-                {/* Consumo */}
-                <div className="space-y-2">
-                  <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                    Consumo Médio
-                  </label>
-                  <div className="relative flex items-center">
-                    <div className="absolute left-3.5 text-muted-foreground">
-                      <Fuel className="w-4 h-4 text-amber-500/90" />
+                {/* Consumo Médio - Configuração Individual na Garagem */}
+                <div className="p-4 rounded-2xl bg-muted/40 border border-border/80 flex flex-col justify-between gap-3">
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                        <Fuel className="w-4 h-4 text-amber-500" />
+                        Consumo Médio do Veículo
+                      </span>
+                      <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">
+                        Configurado na Garagem
+                      </span>
                     </div>
-                    <Input
-                      type="number"
-                      step="0.1"
-                      name="vehicle_km_per_liter"
-                      value={settings.vehicle_km_per_liter}
-                      onChange={handleChange}
-                      className="h-11 pl-10 pr-16 rounded-xl font-mono font-bold border-border/80 bg-background focus-visible:ring-indigo-500"
-                    />
-                    <div className="absolute right-3 text-[10px] font-black uppercase text-muted-foreground tracking-wider">
-                      KM / L
-                    </div>
+                    
+                    {activeVehicle ? (
+                      <div className="p-3 bg-card rounded-xl border border-border/60 space-y-1">
+                        <div className="flex items-center justify-between">
+                          <strong className="text-xs font-black text-foreground">
+                            {activeVehicle.nickname || `${activeVehicle.brand} ${activeVehicle.model}`}
+                          </strong>
+                          <span className="text-[10px] bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-extrabold px-2 py-0.5 rounded-full">
+                            Veículo Ativo
+                          </span>
+                        </div>
+                        {activeVehicle.nickname && (
+                          <span className="text-[11px] text-muted-foreground block">
+                            {activeVehicle.brand} {activeVehicle.model} {activeVehicle.plate ? `• ${activeVehicle.plate}` : ''}
+                          </span>
+                        )}
+                        <div className="text-xs text-muted-foreground pt-1 flex items-center justify-between">
+                          <span>Consumo cadastrado:</span>
+                          <strong className="text-sm font-black text-amber-600 dark:text-amber-400">
+                            {activeVehicle.avg_km_per_liter || 30} km/L
+                          </strong>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="p-3 bg-card rounded-xl border border-border/60 text-xs text-muted-foreground">
+                        Nenhum veículo ativo definido. Acesse a Garagem para cadastrar e definir o consumo da sua moto.
+                      </div>
+                    )}
+
+                    <p className="text-[11px] text-muted-foreground leading-relaxed">
+                      Cada veículo possui seu próprio consumo médio para garantir cálculos exatos de custo por KM, autonomia e abastecimentos.
+                    </p>
                   </div>
-                  
-                  {/* Convenient presets */}
-                  <div className="flex gap-1.5 pt-1 flex-wrap">
-                    {[25, 30, 35, 40].map(val => (
-                      <button
-                        key={val}
-                        type="button"
-                        onClick={() => setSettings({ ...settings, vehicle_km_per_liter: val })}
-                        className={`text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-lg border transition-all cursor-pointer ${
-                          settings.vehicle_km_per_liter === val 
-                            ? 'bg-amber-500 text-white border-amber-500 shadow-sm shadow-amber-500/10' 
-                            : 'bg-card border-border/80 text-muted-foreground hover:bg-muted'
-                        }`}
-                      >
-                        {val} km/L
-                      </button>
-                    ))}
-                  </div>
+
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => navigate(activeVehicle ? `/vehicles/${activeVehicle.id}` : '/vehicles')}
+                    className="w-full h-10 rounded-xl text-xs font-bold border-primary/30 text-primary hover:bg-primary/10 flex items-center justify-center gap-2 cursor-pointer mt-1"
+                  >
+                    <Bike className="w-4 h-4" />
+                    <span>{activeVehicle ? 'Ajustar Consumo na Garagem' : 'Acessar Garagem'}</span>
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </Button>
                 </div>
 
                 {/* Preço do Litro */}
-                <div className="space-y-2">
-                  <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                    Preço do Combustível
-                  </label>
-                  <div className="relative flex items-center">
-                    <div className="absolute left-3.5 text-xs font-black text-muted-foreground">
-                      R$
+                <div className="space-y-3 flex flex-col justify-between p-4 rounded-2xl bg-card border border-border/80">
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                      Preço de Referência do Combustível
+                    </label>
+                    <div className="relative flex items-center">
+                      <div className="absolute left-3.5 text-xs font-black text-muted-foreground">
+                        R$
+                      </div>
+                      <Input
+                        type="number"
+                        step="0.01"
+                        name="fuel_price"
+                        value={settings.fuel_price}
+                        onChange={handleChange}
+                        className="h-11 pl-10 pr-12 rounded-xl font-mono font-bold border-border/80 bg-background focus-visible:ring-indigo-500"
+                      />
+                      <div className="absolute right-3.5 text-xs font-bold text-muted-foreground">
+                        / L
+                      </div>
                     </div>
-                    <Input
-                      type="number"
-                      step="0.01"
-                      name="fuel_price"
-                      value={settings.fuel_price}
-                      onChange={handleChange}
-                      className="h-11 pl-10 pr-12 rounded-xl font-mono font-bold border-border/80 bg-background focus-visible:ring-indigo-500"
-                    />
-                    <div className="absolute right-3.5 text-xs font-bold text-muted-foreground">
-                      / L
-                    </div>
+                    <span className="text-[10px] text-muted-foreground block">
+                      Preço médio pago por litro para cálculo automático de autonomia e custos operacionais por KM.
+                    </span>
                   </div>
-                  <span className="text-[10px] text-muted-foreground block">Utilizado na calculadora de combustível interna</span>
-                </div>
 
-                {/* Diária do Motorista */}
-                <div className="space-y-2">
-                  <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                    Diária do Motorista
-                  </label>
-                  <div className="relative flex items-center">
-                    <div className="absolute left-3.5 text-xs font-black text-muted-foreground">
-                      R$
-                    </div>
-                    <Input
-                      type="number"
-                      step="0.01"
-                      name="default_driver_labor"
-                      value={settings.default_driver_labor ?? 100}
-                      onChange={handleChange}
-                      className="h-11 pl-10 pr-12 rounded-xl font-mono font-bold border-border/80 bg-background focus-visible:ring-indigo-500"
-                    />
-                    <div className="absolute right-3.5 text-[10px] font-black uppercase text-muted-foreground">
-                      Base
+                  {/* Preset buttons for common prices */}
+                  <div className="space-y-1.5 pt-1">
+                    <span className="text-[10px] font-bold text-muted-foreground uppercase">Atalhos Rápidos de Preço:</span>
+                    <div className="flex gap-1.5 flex-wrap">
+                      {[5.49, 5.79, 5.99, 6.29].map(val => (
+                        <button
+                          key={val}
+                          type="button"
+                          onClick={() => setSettings({ ...settings, fuel_price: val })}
+                          className={`text-[10px] font-bold px-2.5 py-1 rounded-lg border transition-all cursor-pointer ${
+                            settings.fuel_price === val 
+                              ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs' 
+                              : 'bg-muted/40 border-border/80 text-muted-foreground hover:bg-muted'
+                          }`}
+                        >
+                          R$ {val.toFixed(2)}/L
+                        </button>
+                      ))}
                     </div>
                   </div>
-                  <span className="text-[10px] text-muted-foreground block">Custo de mão de obra para orçar fretes</span>
                 </div>
 
               </div>
@@ -1926,8 +1923,12 @@ CREATE INDEX IF NOT EXISTS idx_biometrics_user_id ON user_biometric_credentials(
                     <Gauge className="w-5 h-5" />
                   </div>
                   <div>
-                    <span className="text-xs font-black uppercase text-amber-700 dark:text-amber-300 block tracking-wider">Custo Estimado por 100 KM</span>
-                    <span className="text-[11px] text-muted-foreground font-medium">Consumo: {settings.vehicle_km_per_liter} km/L • Combustível: R$ {Number(settings.fuel_price || 0).toFixed(2)}/L</span>
+                    <span className="text-xs font-black uppercase text-amber-700 dark:text-amber-300 block tracking-wider">
+                      Custo Estimado por 100 KM ({activeVehicle?.nickname || activeVehicle?.model || 'Veículo Ativo'})
+                    </span>
+                    <span className="text-[11px] text-muted-foreground font-medium">
+                      Consumo da moto: {activeConsumption} km/L • Combustível: R$ {Number(settings.fuel_price || 0).toFixed(2)}/L
+                    </span>
                   </div>
                 </div>
 
@@ -2550,54 +2551,6 @@ CREATE INDEX IF NOT EXISTS idx_biometrics_user_id ON user_biometric_credentials(
           <DialogFooter className="gap-2 sm:gap-0 pt-3">
             <Button variant="outline" className="rounded-xl text-xs font-bold cursor-pointer" onClick={() => setEditCategoryData(null)}>Cancelar</Button>
             <Button className="rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white cursor-pointer" onClick={performEditCategory}>Salvar Nome</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* MODAL SCRIPT SQL SUPABASE */}
-      <Dialog open={showSqlCopyModal} onOpenChange={setShowSqlCopyModal}>
-        <DialogContent className="rounded-3xl max-w-xl p-6">
-          <DialogHeader>
-            <DialogTitle className="text-base font-black flex items-center gap-2">
-              <Code2 className="w-5 h-5 text-indigo-500" />
-              <span>Script SQL Supabase (Biometria & Auditoria)</span>
-            </DialogTitle>
-            <DialogDescription className="text-xs text-muted-foreground pt-1">
-              Copie o script abaixo e execute no <strong>SQL Editor</strong> do seu painel Supabase para habilitar auditoria e persistência de biometria na nuvem:
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-3 pt-2">
-            <div className="relative">
-              <pre className="p-4 rounded-2xl bg-slate-950 text-slate-200 text-[11px] font-mono overflow-x-auto max-h-64 border border-slate-800 scrollbar-thin">
-                {supabaseSqlMigration}
-              </pre>
-              <Button
-                type="button"
-                size="sm"
-                onClick={() => {
-                  navigator.clipboard.writeText(supabaseSqlMigration);
-                  toast.success('Script SQL copiado para a área de transferência!');
-                }}
-                className="absolute top-3 right-3 h-8 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs gap-1.5 shadow-md cursor-pointer"
-              >
-                <Copy className="w-3.5 h-3.5" />
-                <span>Copiar SQL</span>
-              </Button>
-            </div>
-            <p className="text-[11px] text-muted-foreground bg-muted/30 p-3 rounded-xl border border-border">
-              💡 <strong>Nota:</strong> O sistema já possui proteção local e funciona 100% offline via WebAuthn no navegador, mesmo antes de rodar o script no Supabase.
-            </p>
-          </div>
-
-          <DialogFooter className="pt-2">
-            <Button
-              type="button"
-              className="w-full sm:w-auto rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white cursor-pointer"
-              onClick={() => setShowSqlCopyModal(false)}
-            >
-              Fechar
-            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

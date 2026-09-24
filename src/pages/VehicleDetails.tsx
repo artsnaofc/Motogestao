@@ -236,10 +236,15 @@ export const VehicleDetails: React.FC = () => {
               <Bike className="w-8 h-8" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <h1 className="text-2xl font-black text-foreground tracking-tight">
-                  {vehicle.brand} {vehicle.model}
+                  {vehicle.nickname || `${vehicle.brand} ${vehicle.model}`}
                 </h1>
+                {vehicle.nickname && (
+                  <span className="text-xs font-bold text-muted-foreground bg-muted/60 px-2.5 py-1 rounded-xl">
+                    {vehicle.brand} {vehicle.model}
+                  </span>
+                )}
                 {vehicle.is_active && (
                   <span className="text-[10px] font-extrabold uppercase bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 px-2.5 py-0.5 rounded-full flex items-center gap-1">
                     <CheckCircle2 className="w-3.5 h-3.5" />

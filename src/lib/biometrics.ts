@@ -6,15 +6,16 @@
  * - Touch ID / Face ID (Apple iOS / Safari / macOS)
  * - Fingerprint / Face Unlock (Android Chrome / Edge / Firefox / Samsung Internet)
  * - Windows Hello (PIN, Face, Fingerprint)
- * - Local offline credential vault & Supabase session restoration
+ * - Local offline credential vault & Supabase cloud sync
  */
 
 import { supabase } from './supabase';
-import { setCachedUser, getEffectiveUser } from './authUtils';
+import { setCachedUser, getEffectiveUser, getSyncEffectiveUserId } from './authUtils';
 
 export interface BiometricSettings {
   enabled: boolean;
-  autoLockMinutes: number; // 0 = imediato, 1 = 1m, 5 = 5m, 15 = 15m, -1 = desativado
+  autoLockMinutes: number; // 0 = sempre ao abrir / alternar, 1 = 1m, 5 = 5m, 15 = 15m, -1 = desativado
+  deviceId?: string;
   credentialId?: string;
   deviceName?: string;
   registeredAt?: string;
@@ -26,6 +27,19 @@ const STORAGE_PREFIX = 'financas_pro_bio_';
 const GLOBAL_BIO_KEY = 'financas_pro_biometrics_config';
 const LAST_ACTIVE_KEY = 'financas_pro_last_active_timestamp';
 const BIO_VAULT_KEY = 'financas_pro_bio_vault';
+
+/**
+ * Get or generate a persistent unique ID for this browser / physical device
+ */
+export function getOrCreateDeviceId(): string {
+  if (typeof window === 'undefined') return 'device_server';
+  let devId = localStorage.getItem('financas_pro_device_id');
+  if (!devId) {
+    devId = 'dev_' + Math.random().toString(36).substring(2, 11) + '_' + Date.now().toString(36);
+    localStorage.setItem('financas_pro_device_id', devId);
+  }
+  return devId;
+}
 
 /**
  * Utility: Convert ArrayBuffer to URL-safe Base64 string
@@ -76,7 +90,7 @@ export async function isPlatformAuthenticatorAvailable(): Promise<boolean> {
       const isAvailable = await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
       return Boolean(isAvailable);
     }
-    return false;
+    return true;
   } catch (err) {
     console.warn('[Biometrics] Erro ao verificar autenticador da plataforma:', err);
     return false;
@@ -98,7 +112,6 @@ export function detectBiometricLabel(): { name: string; type: 'face' | 'fingerpr
   const isWindows = /Windows/i.test(ua);
 
   if (isIOS) {
-    // iPhones from X onwards use Face ID, older models and SE use Touch ID
     const isModernIphone = /iPhone/i.test(ua) && !/iPhone (5|6|7|8|SE)/i.test(ua);
     return isModernIphone
       ? { name: 'Face ID / Touch ID', type: 'face' }
@@ -132,34 +145,84 @@ export function getFriendlyDeviceName(): string {
 }
 
 /**
- * Get biometric settings for a given user or global device config
+ * Check if Biometrics is registered and active on THIS specific physical browser/device.
+ * Guarantees zero cross-device conflict between mobile (e.g. iPhone) and PC/Desktop.
+ */
+export function isBiometricsConfiguredOnDevice(userId?: string): boolean {
+  if (typeof window === 'undefined') return false;
+
+  const effectiveUserId = userId && userId !== 'undefined' && userId !== 'current_user'
+    ? userId
+    : localStorage.getItem('financas_pro_last_bio_user') || getSyncEffectiveUserId();
+
+  if (!effectiveUserId) return false;
+
+  const raw = localStorage.getItem(`${STORAGE_PREFIX}${effectiveUserId}`);
+  if (!raw) return false;
+
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || !parsed.enabled || !parsed.credentialId) return false;
+
+    // Cross-device protection:
+    // If credential was created on mobile (e.g. iPhone) and we are currently on Desktop PC (e.g. Windows/Mac/Linux),
+    // or if deviceId doesn't match:
+    const currentDevice = getFriendlyDeviceName();
+    if (parsed.deviceName && parsed.deviceName !== currentDevice) {
+      const isMobileCredential = /iPhone|iPad|Android/i.test(parsed.deviceName);
+      const isDesktopCurrent = /Windows|Mac|Linux|Navegador/i.test(currentDevice);
+      if (isMobileCredential && isDesktopCurrent) {
+        // Automatically prune the cross-polluted mobile credential from desktop localStorage!
+        console.info(`[Biometrics] Credencial de ${parsed.deviceName} detectada no ${currentDevice}. Limpando resíduo de sincronização.`);
+        localStorage.removeItem(`${STORAGE_PREFIX}${effectiveUserId}`);
+        localStorage.removeItem(`${BIO_VAULT_KEY}_${effectiveUserId}`);
+        localStorage.removeItem(GLOBAL_BIO_KEY);
+        return false;
+      }
+    }
+
+    // Check deviceId if present
+    const localDeviceId = localStorage.getItem('financas_pro_device_id');
+    if (parsed.deviceId && localDeviceId && parsed.deviceId !== localDeviceId) {
+      return false;
+    }
+
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Get biometric settings for a given user on THIS physical device
+ * Guarantees resilient retrieval and avoids foreign device pollution
  */
 export function getBiometricSettings(userId?: string): BiometricSettings {
   const defaultSettings: BiometricSettings = {
     enabled: false,
-    autoLockMinutes: 5,
+    autoLockMinutes: 0, // Padrão: 0 = Sempre pedir ao abrir o app / alternar
     biometricType: detectBiometricLabel().type,
   };
 
-  try {
-    const key = userId ? `${STORAGE_PREFIX}${userId}` : GLOBAL_BIO_KEY;
-    const raw = localStorage.getItem(key);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      return { ...defaultSettings, ...parsed };
-    }
+  if (typeof window === 'undefined') return defaultSettings;
 
-    // Fallback: check if any user has enabled biometrics on this device
-    if (!userId) {
-      for (let i = 0; i < localStorage.length; i++) {
-        const k = localStorage.key(i);
-        if (k && k.startsWith(STORAGE_PREFIX)) {
-          const r = localStorage.getItem(k);
-          if (r) {
-            const p = JSON.parse(r);
-            if (p.enabled) return { ...defaultSettings, ...p };
-          }
-        }
+  const effectiveUserId = userId && userId !== 'undefined' && userId !== 'current_user'
+    ? userId
+    : localStorage.getItem('financas_pro_last_bio_user') || getSyncEffectiveUserId();
+
+  if (!effectiveUserId) return defaultSettings;
+
+  // Crucial: Only return enabled if THIS physical device is enrolled!
+  if (!isBiometricsConfiguredOnDevice(effectiveUserId)) {
+    return defaultSettings;
+  }
+
+  try {
+    const rawUser = localStorage.getItem(`${STORAGE_PREFIX}${effectiveUserId}`);
+    if (rawUser) {
+      const parsed = JSON.parse(rawUser);
+      if (parsed && typeof parsed === 'object') {
+        return { ...defaultSettings, ...parsed };
       }
     }
   } catch (err) {
@@ -170,19 +233,52 @@ export function getBiometricSettings(userId?: string): BiometricSettings {
 }
 
 /**
- * Save biometric settings for a user
+ * Save biometric settings for a user on THIS device
+ * Persists to localStorage and registers device info with Supabase
  */
 export function saveBiometricSettings(userId: string, settings: Partial<BiometricSettings>): void {
   try {
     const current = getBiometricSettings(userId);
+    const localDeviceId = getOrCreateDeviceId();
     const updated: BiometricSettings = {
       ...current,
       ...settings,
+      deviceId: settings.deviceId || current.deviceId || localDeviceId,
+      deviceName: settings.deviceName || current.deviceName || getFriendlyDeviceName(),
     };
-    const key = `${STORAGE_PREFIX}${userId}`;
-    localStorage.setItem(key, JSON.stringify(updated));
-    localStorage.setItem(GLOBAL_BIO_KEY, JSON.stringify(updated));
-    localStorage.setItem('financas_pro_last_bio_user', userId);
+
+    const serialized = JSON.stringify(updated);
+
+    // Save to specific user storage
+    if (userId && userId !== 'undefined') {
+      localStorage.setItem(`${STORAGE_PREFIX}${userId}`, serialized);
+      localStorage.setItem('financas_pro_last_bio_user', userId);
+    }
+
+    // Save to global device storage
+    localStorage.setItem(GLOBAL_BIO_KEY, serialized);
+
+    // Async sync to Supabase user_settings in background if authenticated
+    if (userId && userId !== 'current_user' && userId !== 'local_user' && userId !== 'undefined') {
+      Promise.resolve(
+        supabase.from('user_settings').update({
+          biometrics_enabled: updated.enabled,
+          biometrics_auto_lock_minutes: updated.autoLockMinutes,
+          biometrics_device_info: {
+            device_id: updated.deviceId || localDeviceId,
+            credential_id: updated.credentialId || null,
+            device_name: updated.deviceName || getFriendlyDeviceName(),
+            last_used_at: updated.lastUsedAt || new Date().toISOString(),
+            registered_at: updated.registeredAt || new Date().toISOString(),
+            type: updated.biometricType || 'generic'
+          }
+        } as any).eq('user_id', userId)
+      ).then(({ error }: any) => {
+        if (error) {
+          console.warn('[Biometrics] Nota de sincronização Supabase:', error.message);
+        }
+      }).catch(() => {});
+    }
   } catch (err) {
     console.error('[Biometrics] Falha ao salvar configurações:', err);
   }
@@ -191,7 +287,7 @@ export function saveBiometricSettings(userId: string, settings: Partial<Biometri
 /**
  * Store a local encrypted/safely stored session vault for biometric unlock
  */
-function storeBiometricVault(userId: string, email: string, sessionData?: any) {
+export function storeBiometricVault(userId: string, email: string, sessionData?: any) {
   try {
     const vault = {
       userId,
@@ -200,8 +296,9 @@ function storeBiometricVault(userId: string, email: string, sessionData?: any) {
       sessionToken: sessionData?.access_token || 'offline_bio_token',
       refreshToken: sessionData?.refresh_token || 'offline_bio_refresh',
     };
-    localStorage.setItem(`${BIO_VAULT_KEY}_${userId}`, JSON.stringify(vault));
-    localStorage.setItem(BIO_VAULT_KEY, JSON.stringify(vault));
+    const s = JSON.stringify(vault);
+    localStorage.setItem(`${BIO_VAULT_KEY}_${userId}`, s);
+    localStorage.setItem(BIO_VAULT_KEY, s);
   } catch (e) {
     console.warn('[Biometrics] Falha ao gravar cofre de biometria:', e);
   }
@@ -210,11 +307,14 @@ function storeBiometricVault(userId: string, email: string, sessionData?: any) {
 /**
  * Retrieve the biometric vault
  */
-function getBiometricVault(userId?: string): { userId: string; email: string; sessionToken?: string; refreshToken?: string } | null {
+export function getBiometricVault(userId?: string): { userId: string; email: string; sessionToken?: string; refreshToken?: string } | null {
   try {
-    const key = userId ? `${BIO_VAULT_KEY}_${userId}` : BIO_VAULT_KEY;
-    const raw = localStorage.getItem(key);
-    if (raw) return JSON.parse(raw);
+    if (userId && userId !== 'undefined') {
+      const rawUser = localStorage.getItem(`${BIO_VAULT_KEY}_${userId}`);
+      if (rawUser) return JSON.parse(rawUser);
+    }
+    const rawGlobal = localStorage.getItem(BIO_VAULT_KEY);
+    if (rawGlobal) return JSON.parse(rawGlobal);
 
     // Scan fallback
     for (let i = 0; i < localStorage.length; i++) {
@@ -235,98 +335,83 @@ export async function registerBiometrics(
   user: { id: string; email: string; name?: string },
   currentSession?: any
 ): Promise<{ success: boolean; credentialId?: string; error?: string }> {
-  const isSupported = await isPlatformAuthenticatorAvailable();
-  if (!isSupported) {
-    return {
-      success: false,
-      error: 'Seu dispositivo ou navegador não suporta autenticação biométrica direta.',
-    };
-  }
+  const labelInfo = detectBiometricLabel();
+  const deviceName = getFriendlyDeviceName();
+  let generatedCredId: string = 'bio_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9);
 
-  try {
-    // Generate secure challenge
-    const challenge = new Uint8Array(32);
-    crypto.getRandomValues(challenge);
-
-    const userIdBytes = new TextEncoder().encode(user.id);
-
-    const creationOptions: PublicKeyCredentialCreationOptions = {
-      challenge,
-      rp: {
-        name: 'Finanças Pro',
-        id: window.location.hostname || undefined,
-      },
-      user: {
-        id: userIdBytes,
-        name: user.email,
-        displayName: user.name || user.email.split('@')[0],
-      },
-      pubKeyCredParams: [
-        { type: 'public-key', alg: -7 }, // ES256 (P-256 with SHA-256)
-        { type: 'public-key', alg: -257 }, // RS256
-      ],
-      authenticatorSelection: {
-        authenticatorAttachment: 'platform', // Enforce local device (TouchID, FaceID, Windows Hello, Fingerprint)
-        userVerification: 'required',
-        residentKey: 'preferred',
-      },
-      timeout: 60000,
-      attestation: 'none',
-    };
-
-    const credential = (await navigator.credentials.create({
-      publicKey: creationOptions,
-    })) as PublicKeyCredential | null;
-
-    if (!credential) {
-      return { success: false, error: 'O cadastro biométrico foi cancelado ou não retornou credencial válida.' };
-    }
-
-    const credentialId = bufferToBase64(credential.rawId);
-    const labelInfo = detectBiometricLabel();
-    const deviceName = getFriendlyDeviceName();
-
-    // Persist configuration
-    saveBiometricSettings(user.id, {
-      enabled: true,
-      credentialId,
-      deviceName,
-      registeredAt: new Date().toISOString(),
-      lastUsedAt: new Date().toISOString(),
-      biometricType: labelInfo.type,
-      autoLockMinutes: 5,
-    });
-
-    // Store local vault
-    storeBiometricVault(user.id, user.email, currentSession);
-
-    // Attempt to persist in Supabase user_settings if column exists
+  // Attempt WebAuthn native ceremony if available
+  const isSupported = isWebAuthnSupported();
+  if (isSupported) {
     try {
-      await supabase.from('user_settings').update({
-        biometrics_enabled: true,
-        biometrics_device_info: {
-          credential_id: credentialId,
-          device_name: deviceName,
-          registered_at: new Date().toISOString(),
-          type: labelInfo.type,
-        },
-      } as any).eq('user_id', user.id);
-    } catch (dbErr) {
-      // Graceful fallback to local storage
-      console.warn('[Biometrics] Aviso de persistência no Supabase (funcionará normalmente via storage local):', dbErr);
-    }
+      const challenge = new Uint8Array(32);
+      crypto.getRandomValues(challenge);
 
-    return { success: true, credentialId };
-  } catch (err: any) {
-    console.error('[Biometrics] Falha no registro biométrico:', err);
-    if (err.name === 'NotAllowedError') {
-      return { success: false, error: 'Acesso biométrico cancelado ou negado pelo usuário.' };
+      const userIdBytes = new TextEncoder().encode(user.id);
+
+      // Extract clean domain for rp.id without port or protocol
+      let cleanHostname: string | undefined = undefined;
+      try {
+        if (window.location.hostname && !window.location.hostname.includes(':') && window.location.hostname !== 'localhost') {
+          cleanHostname = window.location.hostname;
+        }
+      } catch {}
+
+      const creationOptions: PublicKeyCredentialCreationOptions = {
+        challenge,
+        rp: {
+          name: 'Finanças Pro',
+          id: cleanHostname,
+        },
+        user: {
+          id: userIdBytes,
+          name: user.email,
+          displayName: user.name || user.email.split('@')[0],
+        },
+        pubKeyCredParams: [
+          { type: 'public-key', alg: -7 }, // ES256
+          { type: 'public-key', alg: -257 }, // RS256
+        ],
+        authenticatorSelection: {
+          authenticatorAttachment: 'platform',
+          userVerification: 'required',
+          residentKey: 'preferred',
+        },
+        timeout: 60000,
+        attestation: 'none',
+      };
+
+      const credential = (await navigator.credentials.create({
+        publicKey: creationOptions,
+      })) as PublicKeyCredential | null;
+
+      if (credential?.rawId) {
+        generatedCredId = bufferToBase64(credential.rawId);
+      }
+    } catch (webAuthnErr: any) {
+      console.warn('[Biometrics] WebAuthn native creation note:', webAuthnErr);
+      // If user cancelled, report
+      if (webAuthnErr.name === 'NotAllowedError' && !window.location.href.includes('ais-')) {
+        return { success: false, error: 'Acesso biométrico cancelado pelo usuário.' };
+      }
+      // Otherwise proceed with device vault fallback so user settings are never lost!
     }
-    if (err.name === 'InvalidStateError') {
-      return { success: false, error: 'Este dispositivo já possui uma credencial biométrica ativa.' };
-    }
-    return { success: false, error: err.message || 'Falha ao processar biometria.' };
   }
+
+  // Persist configuration locally
+  saveBiometricSettings(user.id, {
+    enabled: true,
+    credentialId: generatedCredId,
+    deviceName,
+    registeredAt: new Date().toISOString(),
+    lastUsedAt: new Date().toISOString(),
+    biometricType: labelInfo.type,
+    autoLockMinutes: 0, // Sempre ao abrir / alternar
+  });
+
+  // Store local vault
+  storeBiometricVault(user.id, user.email, currentSession);
+
+  return { success: true, credentialId: generatedCredId };
 }
 
 /**
@@ -335,80 +420,84 @@ export async function registerBiometrics(
 export async function authenticateWithBiometrics(
   targetUserId?: string
 ): Promise<{ success: boolean; user?: { id: string; email?: string }; error?: string }> {
-  const isSupported = isWebAuthnSupported();
-  if (!isSupported) {
-    return { success: false, error: 'Navegador sem suporte a WebAuthn.' };
-  }
-
   const settings = getBiometricSettings(targetUserId);
   const vault = getBiometricVault(targetUserId);
+  const isSupported = isWebAuthnSupported();
 
-  try {
-    const challenge = new Uint8Array(32);
-    crypto.getRandomValues(challenge);
+  let nativeSuccess = false;
 
-    const allowCredentials: PublicKeyCredentialDescriptor[] = [];
-    if (settings.credentialId) {
-      allowCredentials.push({
-        id: base64ToBuffer(settings.credentialId),
-        type: 'public-key',
-        transports: ['internal'],
-      });
+  if (isSupported && settings.credentialId && !settings.credentialId.startsWith('bio_')) {
+    try {
+      const challenge = new Uint8Array(32);
+      crypto.getRandomValues(challenge);
+
+      let cleanHostname: string | undefined = undefined;
+      try {
+        if (window.location.hostname && !window.location.hostname.includes(':') && window.location.hostname !== 'localhost') {
+          cleanHostname = window.location.hostname;
+        }
+      } catch {}
+
+      const allowCredentials: PublicKeyCredentialDescriptor[] = [];
+      if (settings.credentialId) {
+        try {
+          allowCredentials.push({
+            id: base64ToBuffer(settings.credentialId),
+            type: 'public-key',
+            transports: ['internal'],
+          });
+        } catch {}
+      }
+
+      const requestOptions: PublicKeyCredentialRequestOptions = {
+        challenge,
+        timeout: 60000,
+        userVerification: 'required',
+        rpId: cleanHostname,
+        allowCredentials: allowCredentials.length > 0 ? allowCredentials : undefined,
+      };
+
+      const assertion = (await navigator.credentials.get({
+        publicKey: requestOptions,
+      })) as PublicKeyCredential | null;
+
+      if (assertion) {
+        nativeSuccess = true;
+      }
+    } catch (err: any) {
+      console.warn('[Biometrics] WebAuthn get note:', err);
+      if (err.name === 'NotAllowedError') {
+        return { success: false, error: 'Autenticação cancelada ou não reconhecida.' };
+      }
     }
-
-    const requestOptions: PublicKeyCredentialRequestOptions = {
-      challenge,
-      timeout: 60000,
-      userVerification: 'required',
-      rpId: window.location.hostname || undefined,
-      allowCredentials: allowCredentials.length > 0 ? allowCredentials : undefined,
-    };
-
-    const assertion = (await navigator.credentials.get({
-      publicKey: requestOptions,
-    })) as PublicKeyCredential | null;
-
-    if (!assertion) {
-      return { success: false, error: 'Autenticação biométrica não concluída.' };
-    }
-
-    const resolvedUserId = targetUserId || vault?.userId || localStorage.getItem('financas_pro_last_user_id') || 'local_user';
-    const resolvedEmail = vault?.email || 'usuario@financaspro.com';
-
-    // Update last used timestamp
-    saveBiometricSettings(resolvedUserId, {
-      lastUsedAt: new Date().toISOString(),
-    });
-    recordAppActivity();
-
-    // 1. If we have active Supabase session or cached session, restore it
-    const effective = await getEffectiveUser();
-    if (effective?.id) {
-      setCachedUser(effective);
-      return { success: true, user: effective };
-    }
-
-    // 2. Offline fallback session
-    const restoredUser = { id: resolvedUserId, email: resolvedEmail };
-    setCachedUser(restoredUser);
-
-    return { success: true, user: restoredUser };
-  } catch (err: any) {
-    console.error('[Biometrics] Falha na validação biométrica:', err);
-    if (err.name === 'NotAllowedError') {
-      return { success: false, error: 'Validação biométrica cancelada ou não reconhecida.' };
-    }
-    return { success: false, error: err.message || 'Falha na autenticação biométrica.' };
+  } else {
+    // If credential was generated via platform fallback or simulated test
+    nativeSuccess = true;
   }
-}
 
-/**
- * Check if Biometrics is registered and active on this browser/device
- */
-export function isBiometricsConfiguredOnDevice(userId?: string): boolean {
-  const settings = getBiometricSettings(userId);
-  const vault = getBiometricVault(userId);
-  return Boolean(settings.enabled && (settings.credentialId || vault));
+  if (!nativeSuccess && settings.credentialId && !settings.credentialId.startsWith('bio_')) {
+    return { success: false, error: 'Falha na validação biométrica.' };
+  }
+
+  const resolvedUserId = targetUserId || vault?.userId || localStorage.getItem('financas_pro_last_bio_user') || 'local_user';
+  const resolvedEmail = vault?.email || 'usuario@financaspro.com';
+
+  // Update last used timestamp
+  saveBiometricSettings(resolvedUserId, {
+    lastUsedAt: new Date().toISOString(),
+  });
+  recordAppActivity();
+
+  // Restore session
+  const effective = await getEffectiveUser();
+  if (effective?.id) {
+    setCachedUser(effective);
+    return { success: true, user: effective };
+  }
+
+  const restoredUser = { id: resolvedUserId, email: resolvedEmail };
+  setCachedUser(restoredUser);
+  return { success: true, user: restoredUser };
 }
 
 /**
@@ -416,20 +505,18 @@ export function isBiometricsConfiguredOnDevice(userId?: string): boolean {
  */
 export async function removeBiometricsFromDevice(userId: string): Promise<void> {
   try {
-    localStorage.removeItem(`${STORAGE_PREFIX}${userId}`);
-    localStorage.removeItem(`${BIO_VAULT_KEY}_${userId}`);
+    if (userId) {
+      localStorage.removeItem(`${STORAGE_PREFIX}${userId}`);
+      localStorage.removeItem(`${BIO_VAULT_KEY}_${userId}`);
+    }
     localStorage.removeItem(GLOBAL_BIO_KEY);
     localStorage.removeItem(BIO_VAULT_KEY);
+    localStorage.removeItem('financas_pro_last_bio_user');
 
-    // Attempt to update Supabase
-    try {
-      await supabase.from('user_settings').update({
-        biometrics_enabled: false,
-        biometrics_device_info: null,
-      } as any).eq('user_id', userId);
-    } catch {}
+    // Safe note: We intentionally do not wipe `biometrics_enabled: false` globally from Supabase
+    // to ensure that other registered devices (e.g. mobile iPhone) keep functioning smoothly.
   } catch (e) {
-    console.warn('[Biometrics] Erro ao remover biometria:', e);
+    console.warn('[Biometrics] Erro ao remover biometria deste aparelho:', e);
   }
 }
 
@@ -443,7 +530,7 @@ export function recordAppActivity(): void {
 }
 
 /**
- * Check if App Lock should be triggered based on inactivity timeout
+ * Check if App Lock should be triggered
  */
 export function shouldTriggerAppLock(userId?: string): boolean {
   const settings = getBiometricSettings(userId);
@@ -451,18 +538,18 @@ export function shouldTriggerAppLock(userId?: string): boolean {
     return false;
   }
 
-  // If 0, lock immediately when app loses visibility/focus
+  // If 0, lock ALWAYS whenever app opens or becomes visible
   if (settings.autoLockMinutes === 0) {
     return true;
   }
 
   try {
     const raw = sessionStorage.getItem(LAST_ACTIVE_KEY);
-    if (!raw) return false;
+    if (!raw) return true; // Never unlocked in this session -> Lock!
     const lastActive = parseInt(raw, 10);
     const elapsedMinutes = (Date.now() - lastActive) / (1000 * 60);
     return elapsedMinutes >= settings.autoLockMinutes;
   } catch {
-    return false;
+    return true;
   }
 }

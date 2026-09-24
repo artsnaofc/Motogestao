@@ -181,6 +181,7 @@ export const VehiclesProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     const isFirstVehicle = vehicles.length === 0;
     const newVehicle: Vehicle = {
       ...data,
+      nickname: data.nickname ? data.nickname.trim() : null,
       id: newId,
       user_id: userId,
       is_active: isFirstVehicle || Boolean(data.is_active),
@@ -196,16 +197,24 @@ export const VehiclesProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       return [...updated, newVehicle];
     });
 
-    // Enqueue for offline sync
+    // Enqueue for offline sync and immediate Supabase persistence
     syncQueueManager.enqueue('vehicles', 'insert', newId, newVehicle);
-    toast.success(`Moto ${newVehicle.brand} ${newVehicle.model} adicionada com sucesso!`);
+    toast.success(`Moto ${newVehicle.nickname ? `${newVehicle.nickname} (${newVehicle.brand} ${newVehicle.model})` : `${newVehicle.brand} ${newVehicle.model}`} adicionada com sucesso!`);
     return newVehicle;
   };
 
   // Update Vehicle
   const updateVehicle = async (id: string, updates: Partial<Vehicle>) => {
-    setVehicles(prev => prev.map(v => v.id === id ? { ...v, ...updates, updated_at: new Date().toISOString() } : v));
-    syncQueueManager.enqueue('vehicles', 'update', id, updates);
+    const sanitizedUpdates: Partial<Vehicle> = {
+      ...updates,
+      updated_at: new Date().toISOString(),
+    };
+    if ('nickname' in updates) {
+      sanitizedUpdates.nickname = updates.nickname ? updates.nickname.trim() : null;
+    }
+
+    setVehicles(prev => prev.map(v => v.id === id ? { ...v, ...sanitizedUpdates } : v));
+    syncQueueManager.enqueue('vehicles', 'update', id, sanitizedUpdates);
   };
 
   // Delete Vehicle

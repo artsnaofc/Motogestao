@@ -85,6 +85,9 @@ export interface UserSettings {
   weekly_goal?: number;
   weekly_net_goal?: number;
   default_driver_labor?: number;
+  biometrics_enabled?: boolean;
+  biometrics_auto_lock_minutes?: number;
+  biometrics_device_info?: any;
 }
 
 export interface DashboardSummary {
@@ -223,6 +226,7 @@ export interface ValuationTarget {
 export interface Vehicle {
   id: string;
   user_id: string;
+  nickname?: string | null; // Apelido do veículo para identificação rápida (ex: Titan Vermelha)
   brand: string;
   model: string;
   version?: string;

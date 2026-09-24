@@ -18,6 +18,7 @@ export const VehicleFormModal: React.FC<VehicleFormModalProps> = ({
   onSave,
   initialData,
 }) => {
+  const [nickname, setNickname] = useState(initialData?.nickname || '');
   const [brand, setBrand] = useState(initialData?.brand || '');
   const [model, setModel] = useState(initialData?.model || '');
   const [version, setVersion] = useState(initialData?.version || '');
@@ -48,6 +49,33 @@ export const VehicleFormModal: React.FC<VehicleFormModalProps> = ({
   const [fipeResult, setFipeResult] = useState<FipeResult | null>(null);
   const [isFetchingFipe, setIsFetchingFipe] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Sync fields when initialData or isOpen changes
+  useEffect(() => {
+    if (isOpen) {
+      setNickname(initialData?.nickname || '');
+      setBrand(initialData?.brand || '');
+      setModel(initialData?.model || '');
+      setVersion(initialData?.version || '');
+      setYearModel(initialData?.year_model || new Date().getFullYear());
+      setColor(initialData?.color || 'Preta');
+      setPlate(initialData?.plate || '');
+      setRenavam(initialData?.renavam || '');
+      setCurrentKm(initialData?.current_km || 0);
+      setAvgKmPerLiter(initialData?.avg_km_per_liter || 30);
+      setDefaultLoadCapacityKg(initialData?.default_load_capacity_kg || 50);
+      setBaseFee(initialData?.base_fee ?? 15.00);
+      setPricePerKm(initialData?.price_per_km ?? 0.80);
+      setExtraStopFee(initialData?.extra_stop_fee ?? 6.00);
+      setFuelType(initialData?.fuel_type || 'Gasolina');
+      setAcquisitionDate(initialData?.acquisition_date || new Date().toISOString().split('T')[0]);
+      setAcquisitionValue(initialData?.acquisition_value || 0);
+      setAcquisitionType(initialData?.acquisition_type || 'À Vista');
+      setNotes(initialData?.notes || '');
+      setIsActive(initialData?.is_active ?? true);
+      setFipeResult(null);
+    }
+  }, [isOpen, initialData]);
 
   // Load FIPE brands on mount
   useEffect(() => {
@@ -119,6 +147,7 @@ export const VehicleFormModal: React.FC<VehicleFormModalProps> = ({
     try {
       setIsSubmitting(true);
       await onSave({
+        nickname: nickname.trim() ? nickname.trim() : null,
         brand,
         model,
         version,
@@ -272,6 +301,28 @@ export const VehicleFormModal: React.FC<VehicleFormModalProps> = ({
           {/* Manual / General Identification */}
           <div className="space-y-3">
             <h4 className="text-xs font-bold text-foreground uppercase tracking-wider">Identificação do Veículo</h4>
+            
+            {/* Apelido do Veículo (Mobile First & Fácil Identificação) */}
+            <div className="p-3.5 bg-primary/5 border border-primary/20 rounded-2xl space-y-1.5">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-primary" />
+                  Apelido da Moto / Veículo
+                </label>
+                <span className="text-[10px] text-muted-foreground font-semibold">Identificação Rápida</span>
+              </div>
+              <input
+                type="text"
+                placeholder="Ex: Titan Vermelha, Biz da Entrega, Fazer 250, Moto 1"
+                value={nickname}
+                onChange={e => setNickname(e.target.value)}
+                className="w-full h-10 px-3 bg-card border border-border/80 rounded-xl text-xs font-bold text-foreground placeholder:text-muted-foreground/60 focus:ring-2 focus:ring-primary/30"
+              />
+              <p className="text-[11px] text-muted-foreground">
+                Dê um nome para identificar esta moto facilmente no extrato, orçamentos e relatórios.
+              </p>
+            </div>
+
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-xs font-semibold text-muted-foreground">Marca *</label>

@@ -149,22 +149,36 @@ class SyncQueueManager {
         error = insertErr;
 
         // Auto fallback 1: If column does not exist in schema
-        if (error && (error.code === '42703' || error.code === 'PGRST204' || error.message?.includes('column'))) {
-          console.warn(`[SyncQueue] Tentando payload simplificado para ${task.table}:${task.targetId}`);
-          const coreKeys = [
-            'id', 'user_id', 'reserve_id', 'type', 'amount', 'date', 'description', 
-            'category', 'operation', 'ticker', 'price', 'quantity', 'costs', 'cnpj', 
-            'transaction_id', 'linked_investment_id', 'asset_type', 'unit_amount', 
-            'status', 'data_com', 'data_ex', 'created_at', 'saldo_inicial', 'color', 
-            'payment_status', 'payment_date', 'due_date'
-          ];
-          const simplified: Record<string, any> = {};
-          for (const k of coreKeys) {
-            if (payloadToInsert[k] !== undefined) simplified[k] = payloadToInsert[k];
-          }
-          const { error: fallbackErr } = await supabase.from(task.table).insert(simplified);
-          if (!fallbackErr) {
-            error = null;
+        if (error && (error.code === '42703' || error.code === 'PGRST204' || error.message?.includes('column') || error.message?.includes('Could not find the'))) {
+          console.warn(`[SyncQueue] Tentando payload simplificado para ${task.table}:${task.targetId}`, error);
+          if (task.table === 'vehicles') {
+            const sanitizedVehicle = { ...payloadToInsert };
+            const match = error.message?.match(/Could not find the ['"]?([a-zA-Z0-9_]+)['"]? column/i) ||
+                          error.message?.match(/column ['"]?([a-zA-Z0-9_]+)['"]? does not exist/i) ||
+                          error.message?.match(/column ['"]?([a-zA-Z0-9_]+)['"]? of relation/i);
+            if (match && match[1] && sanitizedVehicle[match[1]] !== undefined) {
+              delete sanitizedVehicle[match[1]];
+              const { error: vehicleRetryErr } = await supabase.from('vehicles').insert(sanitizedVehicle);
+              if (!vehicleRetryErr) {
+                error = null;
+              }
+            }
+          } else {
+            const coreKeys = [
+              'id', 'user_id', 'reserve_id', 'type', 'amount', 'date', 'description', 
+              'category', 'operation', 'ticker', 'price', 'quantity', 'costs', 'cnpj', 
+              'transaction_id', 'linked_investment_id', 'asset_type', 'unit_amount', 
+              'status', 'data_com', 'data_ex', 'created_at', 'saldo_inicial', 'color', 
+              'payment_status', 'payment_date', 'due_date'
+            ];
+            const simplified: Record<string, any> = {};
+            for (const k of coreKeys) {
+              if (payloadToInsert[k] !== undefined) simplified[k] = payloadToInsert[k];
+            }
+            const { error: fallbackErr } = await supabase.from(task.table).insert(simplified);
+            if (!fallbackErr) {
+              error = null;
+            }
           }
         }
 

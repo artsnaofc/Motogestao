@@ -332,6 +332,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
             rebalance_targets: settingsData.rebalance_targets || {},
             category_icons: settingsData.category_icons || {},
             cached_quotes: settingsData.cached_quotes || {},
+            biometrics_enabled: settingsData.biometrics_enabled ?? false,
+            biometrics_auto_lock_minutes: settingsData.biometrics_auto_lock_minutes ?? 0,
+            biometrics_device_info: settingsData.biometrics_device_info || {},
           };
           setSettings(finalSettings);
           cacheManager.set(`user_settings_${userId}`, finalSettings, undefined, 'settings');

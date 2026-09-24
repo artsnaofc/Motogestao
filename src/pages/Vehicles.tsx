@@ -200,10 +200,21 @@ export const Vehicles: React.FC = () => {
                       <Bike className="w-6 h-6" />
                     </div>
                     <div>
-                      <div className="flex items-center gap-2">
-                        <h3 className="text-base font-black text-foreground">
-                          {v.brand} {v.model}
-                        </h3>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {v.nickname ? (
+                          <>
+                            <h3 className="text-base font-black text-foreground">
+                              {v.nickname}
+                            </h3>
+                            <span className="text-[11px] font-semibold text-muted-foreground bg-muted/60 px-2 py-0.5 rounded-lg">
+                              {v.brand} {v.model}
+                            </span>
+                          </>
+                        ) : (
+                          <h3 className="text-base font-black text-foreground">
+                            {v.brand} {v.model}
+                          </h3>
+                        )}
                         {v.is_active && (
                           <span className="text-[10px] font-extrabold uppercase bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded-full flex items-center gap-1">
                             <CheckCircle2 className="w-3 h-3" />
@@ -212,7 +223,7 @@ export const Vehicles: React.FC = () => {
                         )}
                       </div>
                       <p className="text-xs text-muted-foreground">
-                        {v.year_model ? `Ano ${v.year_model}` : ''} {v.plate ? `• Placa ${v.plate}` : ''} {v.fuel_type ? `• ${v.fuel_type}` : ''}
+                        {v.year_model ? `Ano ${v.year_model}` : ''} {v.plate ? `• Placa ${v.plate}` : ''} {v.fuel_type ? `• ${v.fuel_type}` : ''} • Consumo: <strong className="text-foreground">{v.avg_km_per_liter || 30} km/L</strong>
                       </p>
                     </div>
                   </div>

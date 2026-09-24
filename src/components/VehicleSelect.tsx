@@ -28,11 +28,14 @@ export const VehicleSelect: React.FC<VehicleSelectProps> = ({
       {label && (
         <label className="text-xs font-semibold text-muted-foreground flex items-center justify-between">
           <span>{label}</span>
-          {selectedId && (
-            <span className="text-[10px] text-primary font-bold">
-              {vehicles.find(v => v.id === selectedId)?.brand} {vehicles.find(v => v.id === selectedId)?.model}
-            </span>
-          )}
+          {selectedId && (() => {
+            const cur = vehicles.find(v => v.id === selectedId);
+            return (
+              <span className="text-[10px] text-primary font-bold">
+                {cur?.nickname || `${cur?.brand} ${cur?.model}`}
+              </span>
+            );
+          })()}
         </label>
       )}
 
@@ -47,7 +50,7 @@ export const VehicleSelect: React.FC<VehicleSelectProps> = ({
           <option value="">Nenhum Veículo (Geral)</option>
           {vehicles.map(v => (
             <option key={v.id} value={v.id}>
-              🚗 {v.brand} {v.model} {v.year_model ? `(${v.year_model})` : ''} {v.plate ? `- ${v.plate}` : ''} {v.is_active ? '★ (Ativo)' : ''}
+              🏍️ {v.nickname ? `${v.nickname} (${v.brand} ${v.model})` : `${v.brand} ${v.model}`} {v.plate ? `• ${v.plate}` : ''} {v.is_active ? '★ (Ativo)' : ''}
             </option>
           ))}
         </select>
