@@ -29,6 +29,108 @@ import {
 } from 'lucide-react';
 import { parseLocalDate, isOperationalCategory } from '@/components/reserves/reserveUtils';
 
+interface RobustMetricStats {
+  scaleCap: number;            // Teto de referência para os 4 níveis de cor (1 a 4)
+  outlierCutoff: number;       // Ponto de corte acima do qual o valor é estatisticamente atípico
+  outlierDates: Set<string>;   // Datas classificadas como anomalias/extraordinárias
+  typicalValues: number[];     // Valores da rotina habitual (excluindo os extraordinários)
+  rawMax: number;              // Valor máximo absoluto bruto
+}
+
+/**
+ * Algoritmo de Estatística Robusta (Tukey's Fences + Percentil P90/P95)
+ * Protege a escala do heatmap e médias contra gastos gigantescos (ex: entrada de veículos)
+ * ou ganhos atípicos (ex: prêmios, heranças, vendas patrimoniais), garantindo que os dias normais
+ * mantenham contraste vívido de intensidade e distribuição visual correta.
+ */
+function computeRobustMetricBounds(
+  dateValuePairs: Array<{ date: string; value: number }>
+): RobustMetricStats {
+  const nonZero = dateValuePairs.filter(p => p.value > 0);
+  if (nonZero.length === 0) {
+    return {
+      scaleCap: 1,
+      outlierCutoff: 1,
+      outlierDates: new Set<string>(),
+      typicalValues: [],
+      rawMax: 1
+    };
+  }
+
+  // Ordenar em ordem crescente
+  const sorted = [...nonZero].sort((a, b) => a.value - b.value);
+  const n = sorted.length;
+  const rawMax = sorted[n - 1].value;
+
+  const getPercentile = (p: number): number => {
+    if (n === 1) return sorted[0].value;
+    const index = p * (n - 1);
+    const lower = Math.floor(index);
+    const upper = Math.ceil(index);
+    const weight = index - lower;
+    return sorted[lower].value * (1 - weight) + sorted[upper].value * weight;
+  };
+
+  const p25 = getPercentile(0.25); // Q1
+  const p50 = getPercentile(0.50); // Mediana
+  const p75 = getPercentile(0.75); // Q3
+  const p90 = getPercentile(0.90);
+  const p95 = getPercentile(0.95);
+  const iqr = Math.max(p75 - p25, p50 * 0.25);
+
+  let outlierCutoff = rawMax + 1;
+  let scaleCap = rawMax;
+
+  if (n >= 4) {
+    // Critério de Tukey: Q3 + 1.5 * IQR, reforçado para finanças diárias
+    const statisticalFence = Math.max(p75 + 1.5 * iqr, p90);
+    const minDivergenceFloor = Math.max(p50 * 2.2, p75 * 1.35);
+    outlierCutoff = Math.max(statisticalFence, minDivergenceFloor);
+
+    // Se o valor máximo ultrapassa significativamente o corte, ativa teto robusto automático
+    if (rawMax >= outlierCutoff) {
+      scaleCap = Math.max(p90, p75 + 0.8 * iqr);
+      // Garantir que a escala fique calibrada com a rotina diária
+      if (scaleCap >= rawMax * 0.9) {
+        scaleCap = Math.max(p75, p50 * 1.5);
+      }
+    } else {
+      scaleCap = rawMax;
+    }
+  } else if (n >= 2) {
+    // Amostra pequena (2 ou 3 dias com valores):
+    // Se o maior valor for mais de 2.5x o segundo maior e superior a R$ 400
+    const secondLargest = sorted[n - 2].value;
+    if (rawMax >= secondLargest * 2.5 && rawMax > 400) {
+      outlierCutoff = secondLargest * 1.8;
+      scaleCap = secondLargest * 1.25;
+    } else {
+      scaleCap = rawMax;
+    }
+  }
+
+  const outlierDates = new Set<string>();
+  const typicalValues: number[] = [];
+
+  // Classificação estatística automática
+  dateValuePairs.forEach(p => {
+    const isOutlier = p.value >= outlierCutoff;
+    if (isOutlier) {
+      outlierDates.add(p.date);
+    } else {
+      typicalValues.push(p.value);
+    }
+  });
+
+  return {
+    scaleCap: Math.max(scaleCap, 1),
+    outlierCutoff,
+    outlierDates,
+    typicalValues,
+    rawMax
+  };
+}
+
 interface DailyProductivityHeatmapProps {
   transactions: Transaction[];
   settings?: UserSettings | null;
@@ -67,6 +169,9 @@ export const DailyProductivityHeatmap: React.FC<DailyProductivityHeatmapProps> =
     formattedDate: string;
     data: any;
   } | null>(null);
+
+  // Proteção 100% automática contra gastos e ganhos extraordinários (Anti-outlier para preservar a escala de cores e médias)
+  const protectOutliers = true;
 
   const now = useMemo(() => new Date(), []);
 
@@ -345,30 +450,85 @@ export const DailyProductivityHeatmap: React.FC<DailyProductivityHeatmapProps> =
     }
   }, [dateInterval]);
 
-  // Encontrar valores máximos e perdas máximas para a escala de cores (0 a 4 e -1 a -4)
-  const maxValues = useMemo(() => {
-    let maxProfit = 1;
-    let minProfit = 0; // Guardará o pior prejuízo (número negativo)
-    let maxIncome = 1;
-    let maxDeliveries = 1;
-    let maxKm = 1;
+  // 3. Limiares Estatísticos Robustos (Anti-Outlier) e Máximos Tradicionais
+  const robustThresholds = useMemo(() => {
+    const positiveProfits: Array<{ date: string; value: number }> = [];
+    const negativeProfits: Array<{ date: string; value: number }> = [];
+    const incomes: Array<{ date: string; value: number }> = [];
+    const deliveriesList: Array<{ date: string; value: number }> = [];
+    const kmList: Array<{ date: string; value: number }> = [];
 
-    Object.values(dailyStatsMap).forEach(st => {
-      if (st.profit > maxProfit) maxProfit = st.profit;
-      if (st.profit < minProfit) minProfit = st.profit;
-      if (st.income > maxIncome) maxIncome = st.income;
-      if (st.deliveries > maxDeliveries) maxDeliveries = st.deliveries;
-      if (st.km > maxKm) maxKm = st.km;
+    let rawMaxProfit = 1;
+    let rawAbsMinProfit = 1;
+    let rawMaxIncome = 1;
+    let rawMaxDeliveries = 1;
+    let rawMaxKm = 1;
+
+    Object.entries(dailyStatsMap).forEach(([dateStr, st]) => {
+      if (st.txCount === 0 && st.income === 0) return;
+
+      if (st.profit > 0) {
+        positiveProfits.push({ date: dateStr, value: st.profit });
+        if (st.profit > rawMaxProfit) rawMaxProfit = st.profit;
+      } else if (st.profit < 0) {
+        const absVal = Math.abs(st.profit);
+        negativeProfits.push({ date: dateStr, value: absVal });
+        if (absVal > rawAbsMinProfit) rawAbsMinProfit = absVal;
+      }
+
+      if (st.income > 0) {
+        incomes.push({ date: dateStr, value: st.income });
+        if (st.income > rawMaxIncome) rawMaxIncome = st.income;
+      }
+
+      if (st.deliveries > 0) {
+        deliveriesList.push({ date: dateStr, value: st.deliveries });
+        if (st.deliveries > rawMaxDeliveries) rawMaxDeliveries = st.deliveries;
+      }
+
+      if (st.km > 0) {
+        kmList.push({ date: dateStr, value: st.km });
+        if (st.km > rawMaxKm) rawMaxKm = st.km;
+      }
     });
 
+    const robustPosProfit = computeRobustMetricBounds(positiveProfits);
+    const robustNegProfit = computeRobustMetricBounds(negativeProfits);
+    const robustIncome = computeRobustMetricBounds(incomes);
+    const robustDeliveries = computeRobustMetricBounds(deliveriesList);
+    const robustKm = computeRobustMetricBounds(kmList);
+
     return {
-      maxProfit,
-      absMinProfit: Math.abs(minProfit),
-      maxIncome,
-      maxDeliveries,
-      maxKm
+      rawMaxProfit,
+      rawAbsMinProfit,
+      rawMaxIncome,
+      rawMaxDeliveries,
+      rawMaxKm,
+      robustPosProfit,
+      robustNegProfit,
+      robustIncome,
+      robustDeliveries,
+      robustKm,
+      allOutlierExpenseDates: robustNegProfit.outlierDates,
+      allOutlierGainDates: new Set([...robustPosProfit.outlierDates, ...robustIncome.outlierDates])
     };
   }, [dailyStatsMap]);
+
+  const isDayOutlier = (dateStr: string): {
+    isOutlier: boolean;
+    type: 'expense' | 'gain' | null;
+  } => {
+    const isExpenseOutlier = robustThresholds.allOutlierExpenseDates.has(dateStr);
+    const isGainOutlier = robustThresholds.allOutlierGainDates.has(dateStr);
+
+    if (isExpenseOutlier) {
+      return { isOutlier: true, type: 'expense' };
+    }
+    if (isGainOutlier) {
+      return { isOutlier: true, type: 'gain' };
+    }
+    return { isOutlier: false, type: null };
+  };
 
   const getDayIntensity = (day: Date): number => {
     const dateStr = format(day, 'yyyy-MM-dd');
@@ -376,41 +536,51 @@ export const DailyProductivityHeatmap: React.FC<DailyProductivityHeatmapProps> =
     if (!data || data.txCount === 0) return 0;
 
     let val = 0;
-    let max = 1;
-    let absMin = 0;
+    let effectiveMax = 1;
+    let effectiveAbsMin = 1;
 
     switch (selectedMetric) {
       case 'profit':
         val = data.profit;
-        max = maxValues.maxProfit;
-        absMin = maxValues.absMinProfit;
+        effectiveMax = protectOutliers 
+          ? robustThresholds.robustPosProfit.scaleCap 
+          : robustThresholds.rawMaxProfit;
+        effectiveAbsMin = protectOutliers 
+          ? robustThresholds.robustNegProfit.scaleCap 
+          : robustThresholds.rawAbsMinProfit;
         break;
       case 'income':
         val = data.income;
-        max = maxValues.maxIncome;
+        effectiveMax = protectOutliers 
+          ? robustThresholds.robustIncome.scaleCap 
+          : robustThresholds.rawMaxIncome;
         break;
       case 'deliveries':
         val = data.deliveries;
-        max = maxValues.maxDeliveries;
+        effectiveMax = protectOutliers 
+          ? robustThresholds.robustDeliveries.scaleCap 
+          : robustThresholds.rawMaxDeliveries;
         break;
       case 'km':
         val = data.km;
-        max = maxValues.maxKm;
+        effectiveMax = protectOutliers 
+          ? robustThresholds.robustKm.scaleCap 
+          : robustThresholds.rawMaxKm;
         break;
     }
 
     if (val === 0) return 0;
 
     if (val < 0) {
-      // Prejuízo -> gera escala de -1 a -4 baseada na intensidade da perda
-      const ratio = Math.abs(val) / (absMin || 1);
+      // Prejuízo -> gera escala de -1 a -4 baseada na intensidade da perda calibrada
+      const ratio = Math.abs(val) / (effectiveAbsMin || 1);
       if (ratio <= 0.25) return -1;
       if (ratio <= 0.50) return -2;
       if (ratio <= 0.75) return -3;
       return -4;
     } else {
-      // Rendimento positivo -> escala tradicional de 1 a 4
-      const ratio = val / (max || 1);
+      // Rendimento positivo -> escala tradicional de 1 a 4 calibrada
+      const ratio = val / (effectiveMax || 1);
       if (ratio <= 0.25) return 1;
       if (ratio <= 0.50) return 2;
       if (ratio <= 0.75) return 3;
@@ -526,6 +696,16 @@ export const DailyProductivityHeatmap: React.FC<DailyProductivityHeatmapProps> =
     let bestDay = { date: '', profit: 0, cashBalance: 0 };
     let worstDay = { date: '', profit: 0, cashBalance: 0 };
 
+    // Estatísticas Típicas (sem anomalias/outliers)
+    let typicalActiveDays = 0;
+    let typicalTotalIncome = 0;
+    let typicalTotalProfit = 0;
+    let outlierDaysCount = 0;
+    let outlierExpenseCount = 0;
+    let outlierGainCount = 0;
+    let outlierExpenseTotal = 0;
+    let outlierGainTotal = 0;
+
     allDays.forEach(day => {
       const dateStr = format(day, 'yyyy-MM-dd');
       const data = dailyStatsMap[dateStr];
@@ -536,6 +716,26 @@ export const DailyProductivityHeatmap: React.FC<DailyProductivityHeatmapProps> =
         totalCashBalance += data.cashBalance;
         totalKm += data.km;
         totalDeliveries += data.deliveries;
+
+        const isExpOutlier = robustThresholds.allOutlierExpenseDates.has(dateStr);
+        const isGainOutlier = robustThresholds.allOutlierGainDates.has(dateStr);
+        const isAnyOutlier = isExpOutlier || isGainOutlier;
+
+        if (isAnyOutlier) {
+          outlierDaysCount += 1;
+          if (isExpOutlier) {
+            outlierExpenseCount += 1;
+            outlierExpenseTotal += Math.abs(data.profit);
+          }
+          if (isGainOutlier) {
+            outlierGainCount += 1;
+            outlierGainTotal += (data.profit > 0 ? data.profit : data.income);
+          }
+        } else {
+          typicalActiveDays += 1;
+          typicalTotalIncome += data.income;
+          typicalTotalProfit += data.profit;
+        }
 
         // Classificação do dia por resultado líquido
         if (data.profit > 0) {
@@ -557,9 +757,14 @@ export const DailyProductivityHeatmap: React.FC<DailyProductivityHeatmapProps> =
       }
     });
 
-    // Média real por dia trabalhado (evita distorção com dias off)
-    const avgDailyIncome = activeDays > 0 ? totalIncome / activeDays : 0;
-    const avgDailyProfit = activeDays > 0 ? totalProfit / activeDays : 0;
+    // Média real bruta por dia trabalhado
+    const rawAvgDailyIncome = activeDays > 0 ? totalIncome / activeDays : 0;
+    const rawAvgDailyProfit = activeDays > 0 ? totalProfit / activeDays : 0;
+
+    // Média típica (excluindo os dias de compras/ganhos extraordinários)
+    const typicalAvgDailyIncome = typicalActiveDays > 0 ? typicalTotalIncome / typicalActiveDays : rawAvgDailyIncome;
+    const typicalAvgDailyProfit = typicalActiveDays > 0 ? typicalTotalProfit / typicalActiveDays : rawAvgDailyProfit;
+
     const consistencyRate = allDays.length > 0 ? (activeDays / allDays.length) * 100 : 0;
     const profitRate = activeDays > 0 ? (profitDays / activeDays) * 100 : 0;
     const lossRate = activeDays > 0 ? (lossDays / activeDays) * 100 : 0;
@@ -580,12 +785,23 @@ export const DailyProductivityHeatmap: React.FC<DailyProductivityHeatmapProps> =
       totalLossFromNegativeDays,
       profitRate,
       lossRate,
-      avgDailyIncome,
-      avgDailyProfit,
+      rawAvgDailyIncome,
+      rawAvgDailyProfit,
+      typicalAvgDailyIncome,
+      typicalAvgDailyProfit,
+      typicalActiveDays,
+      outlierDaysCount,
+      outlierExpenseCount,
+      outlierGainCount,
+      outlierExpenseTotal,
+      outlierGainTotal,
+      // Se a proteção estiver ativa, a média principal mostrada é a média típica sem distorção
+      avgDailyIncome: protectOutliers ? typicalAvgDailyIncome : rawAvgDailyIncome,
+      avgDailyProfit: protectOutliers ? typicalAvgDailyProfit : rawAvgDailyProfit,
       bestDay,
       worstDay
     };
-  }, [allDays, dailyStatsMap]);
+  }, [allDays, dailyStatsMap, robustThresholds, protectOutliers]);
 
   // Se não houver nenhuma transação em nenhum dia, oculta o componente para não poluir
   if (!hasAnyData && summaryStats.totalIncome === 0 && summaryStats.totalProfit === 0) {
@@ -639,8 +855,8 @@ export const DailyProductivityHeatmap: React.FC<DailyProductivityHeatmapProps> =
           </div>
 
           {/* Seletor de Intervalo de Período */}
-          <div className="flex items-center justify-end gap-1.5 self-start md:self-auto w-full md:w-auto">
-            <div className="inline-flex items-center p-1 bg-muted/60 dark:bg-muted/40 rounded-xl border border-border/60 gap-1 w-full sm:w-auto justify-between sm:justify-start">
+          <div className="flex items-center justify-between sm:justify-end gap-2 self-stretch md:self-auto w-full md:w-auto">
+            <div className="inline-flex items-center p-1 bg-muted/60 dark:bg-muted/40 rounded-xl border border-border/60 gap-1 flex-1 sm:flex-initial justify-between sm:justify-start">
               {(['auto', '3months', '6months', 'year'] as const).map((rng) => {
                 const labels = {
                   'auto': 'Auto',
@@ -764,7 +980,16 @@ export const DailyProductivityHeatmap: React.FC<DailyProductivityHeatmapProps> =
 
           <div className="bg-muted/30 border border-border/50 rounded-xl p-2.5 flex items-center justify-between">
             <div>
-              <span className="text-[10px] font-bold text-muted-foreground uppercase block">Média p/ Dia Ativo</span>
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] font-bold text-muted-foreground uppercase block">
+                  {protectOutliers && summaryStats.outlierDaysCount > 0 ? 'Média Típica / Dia' : 'Média p/ Dia Ativo'}
+                </span>
+                {protectOutliers && summaryStats.outlierDaysCount > 0 && (
+                  <span className="text-[8px] font-black px-1 rounded bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/25 uppercase tracking-wider" title="Média calculada isolando compras e ganhos extraordinários para refletir sua rotina real">
+                    Típica
+                  </span>
+                )}
+              </div>
               <span className={`font-mono font-black text-sm ${
                 selectedMetric === 'deliveries'
                   ? 'text-amber-500'
@@ -784,6 +1009,14 @@ export const DailyProductivityHeatmap: React.FC<DailyProductivityHeatmapProps> =
                   ? formatCurrency(summaryStats.avgDailyIncome) 
                   : formatCurrency(summaryStats.avgDailyProfit)}
               </span>
+              {protectOutliers && summaryStats.outlierDaysCount > 0 && (selectedMetric === 'profit' || selectedMetric === 'income') && !hideValues && (
+                <span 
+                  className="text-[9px] text-muted-foreground block truncate" 
+                  title={`Média bruta sem proteção: ${formatCurrency(selectedMetric === 'profit' ? summaryStats.rawAvgDailyProfit : summaryStats.rawAvgDailyIncome)}`}
+                >
+                  Bruta: {formatCurrency(selectedMetric === 'profit' ? summaryStats.rawAvgDailyProfit : summaryStats.rawAvgDailyIncome)}
+                </span>
+              )}
             </div>
             <Zap className="w-4 h-4 text-amber-500/70" />
           </div>
@@ -953,6 +1186,8 @@ export const DailyProductivityHeatmap: React.FC<DailyProductivityHeatmapProps> =
                       const data = dailyStatsMap[dateStr];
                       const isSelected = selectedDayDetails?.dateStr === dateStr;
                       const isTodayDay = isSameDay(day, now);
+                      const outlierInfo = isDayOutlier(dateStr);
+                      const hasOutlier = protectOutliers && outlierInfo.isOutlier;
 
                       return (
                         <button
@@ -978,7 +1213,7 @@ export const DailyProductivityHeatmap: React.FC<DailyProductivityHeatmapProps> =
                           }}
                           onMouseLeave={() => setHoveredDay(null)}
                           disabled={isFuture || !isCurrentMonth}
-                          title={`${format(day, 'dd/MM/yyyy')}${isTodayDay ? ' (Hoje)' : ''}${data ? ` - ${
+                          title={`${format(day, 'dd/MM/yyyy')}${isTodayDay ? ' (Hoje)' : ''}${hasOutlier ? ` - ⚡ ${outlierInfo.type === 'expense' ? 'Gasto' : 'Ganho'} Extraordinário Protegido` : ''}${data ? ` - ${
                             selectedMetric === 'deliveries' 
                               ? `${data.deliveries} entregas` 
                               : selectedMetric === 'km' 
@@ -993,6 +1228,10 @@ export const DailyProductivityHeatmap: React.FC<DailyProductivityHeatmapProps> =
                             isTodayDay 
                               ? 'ring-2 ring-primary ring-offset-1 ring-offset-background shadow-[0_0_8px_rgba(59,130,246,0.5)] dark:shadow-[0_0_8px_rgba(96,165,250,0.6)] font-bold z-10' 
                               : ''
+                          } ${
+                            hasOutlier && !isSelected
+                              ? 'ring-1.5 ring-amber-400 dark:ring-amber-300 shadow-[0_0_6px_rgba(245,158,11,0.45)]'
+                              : ''
                           } ${isSelected ? (
                             selectedMetric === 'deliveries' 
                               ? 'ring-2 ring-amber-500 ring-offset-1 scale-115 z-20' 
@@ -1000,11 +1239,20 @@ export const DailyProductivityHeatmap: React.FC<DailyProductivityHeatmapProps> =
                               ? 'ring-2 ring-blue-500 ring-offset-1 scale-115 z-20' 
                               : 'ring-2 ring-emerald-500 ring-offset-1 scale-115 z-20'
                           ) : 'hover:scale-115'}`}
-                          aria-label={`Dia ${dateStr}${isTodayDay ? ' (Hoje)' : ''}`}
+                          aria-label={`Dia ${dateStr}${isTodayDay ? ' (Hoje)' : ''}${hasOutlier ? ' (Extraordinário)' : ''}`}
                         >
                           {/* Marcador pontual sutil no canto para reforçar visualmente o dia de hoje sem esconder a cor de fundo */}
                           {isTodayDay && (
                             <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
+                          )}
+                          {/* Marcador de gasto ou ganho extraordinário protegido contra distorção da escala */}
+                          {hasOutlier && (
+                            <span 
+                              className="absolute -top-1 -left-1 text-[7px] leading-none z-10 select-none pointer-events-none drop-shadow-xs" 
+                              title={outlierInfo.type === 'expense' ? 'Gasto extraordinário protegido da escala' : 'Ganho extraordinário protegido da escala'}
+                            >
+                              ⚡
+                            </span>
                           )}
                         </button>
                       );
@@ -1018,7 +1266,7 @@ export const DailyProductivityHeatmap: React.FC<DailyProductivityHeatmapProps> =
 
         {/* Hover Tooltip Flutuante */}
         {hoveredDay && !selectedDayDetails && (
-          <div className="p-2.5 bg-popover border border-border/80 shadow-lg rounded-xl text-xs space-y-1 max-w-xs animate-in fade-in duration-150">
+          <div className="p-2.5 bg-popover border border-border/80 shadow-lg rounded-xl text-xs space-y-1.5 max-w-xs animate-in fade-in duration-150">
             <div className="font-extrabold text-foreground border-b border-border/40 pb-1 flex justify-between items-center capitalize">
               <div className="flex items-center gap-1.5">
                 <span>{hoveredDay.formattedDate}</span>
@@ -1056,6 +1304,19 @@ export const DailyProductivityHeatmap: React.FC<DailyProductivityHeatmapProps> =
                   : formatCurrency(hoveredDay.data.profit)}
               </span>
             </div>
+
+            {/* Aviso se o dia for um outlier protegido */}
+            {protectOutliers && isDayOutlier(hoveredDay.dateStr).isOutlier && (
+              <div className="flex items-center gap-1 text-[9.5px] font-extrabold text-amber-700 dark:text-amber-300 bg-amber-500/15 px-2 py-0.5 rounded border border-amber-500/30">
+                <Zap className="w-3 h-3 text-amber-500 shrink-0" />
+                <span>
+                  {isDayOutlier(hoveredDay.dateStr).type === 'expense' 
+                    ? '⚡ Gasto Extraordinário Protegido' 
+                    : '⚡ Ganho Extraordinário Protegido'}
+                </span>
+              </div>
+            )}
+
             <div className="grid grid-cols-2 gap-2 text-[10.5px] font-mono">
               <div>Fat: <strong className="text-foreground">{hideValues ? '••••' : formatCurrency(hoveredDay.data.income)}</strong></div>
               <div>Balanço: <strong className={hoveredDay.data.cashBalance >= 0 ? "text-emerald-500" : "text-rose-500"}>{hideValues ? '••••' : formatCurrency(hoveredDay.data.cashBalance)}</strong></div>
@@ -1119,6 +1380,16 @@ export const DailyProductivityHeatmap: React.FC<DailyProductivityHeatmapProps> =
                 </div>
               </div>
             )}
+
+            {/* Marcador Extraordinário na Legenda */}
+            <div className="flex items-center gap-1.5 border-l border-border/40 pl-3">
+              <span className="inline-flex items-center justify-center w-3.5 h-3.5 rounded bg-amber-500/20 text-amber-600 dark:text-amber-400 text-[9px] font-black border border-amber-500/30">
+                ⚡
+              </span>
+              <span className="text-[10px] text-muted-foreground font-semibold">
+                Extraordinário (Protegido)
+              </span>
+            </div>
           </div>
 
           <div className="text-[10.5px] flex items-center gap-1 shrink-0">
@@ -1147,6 +1418,12 @@ export const DailyProductivityHeatmap: React.FC<DailyProductivityHeatmapProps> =
                 }`}>
                   {selectedDayDetails.profit > 0 ? 'Dia de Lucro' : selectedDayDetails.profit < 0 ? 'Dia de Prejuízo' : 'Dia Neutro'}
                 </span>
+                {isDayOutlier(selectedDayDetails.dateStr).isOutlier && (
+                  <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full border bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30 flex items-center gap-1">
+                    <Zap className="w-3 h-3 text-amber-500" />
+                    <span>{isDayOutlier(selectedDayDetails.dateStr).type === 'expense' ? 'Gasto Extraordinário' : 'Ganho Extraordinário'}</span>
+                  </span>
+                )}
                 <span className="text-[10px] font-bold text-muted-foreground bg-muted/60 px-2 py-0.5 rounded-full border border-border/50">
                   {selectedDayDetails.txs.length} lançamento{selectedDayDetails.txs.length !== 1 ? 's' : ''}
                 </span>
