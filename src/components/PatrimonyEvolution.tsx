@@ -277,9 +277,9 @@ export const PatrimonyEvolution: React.FC<PatrimonyEvolutionProps> = ({
         monthKey,
         month: monthNameCapitalized,
         fullMonthName: format(monthDate, 'MMMM yyyy', { locale: ptBR }),
-        Caixa: Number(caixaBalance.toFixed(2)),
-        Reservas: Number(totalInResv.toFixed(2)),
         Investimentos: Number(totalInvestmentEquity.toFixed(2)),
+        Reservas: Number(totalInResv.toFixed(2)),
+        Caixa: Number(caixaBalance.toFixed(2)),
         PatrimonioTotal: Number(totalPatrimonyVal.toFixed(2)),
         isFuture,
         hasTransactionsInMonth

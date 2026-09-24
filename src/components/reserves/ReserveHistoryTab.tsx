@@ -44,7 +44,8 @@ import {
   iconOptions, 
   isTxInPeriod,
   parseLocalDate,
-  getTodayLocalDateStr
+  getTodayLocalDateStr,
+  toDateInputString
 } from './reserveUtils';
 import { toast } from '@/lib/toast';
 
@@ -282,7 +283,8 @@ export function ReserveHistoryTab({
     reserves.forEach(res => {
       // 1. Current active rule configuration in vigor (if reserve has rule parameters configured)
       if (res.regra_tipo && res.regra_valor !== undefined && res.regra_valor !== null) {
-        const activeStartDate = res.regra_inicio_validade || (res.created_at ? res.created_at.split('T')[0] : '2026-01-01');
+        const rawStart = res.regra_inicio_validade || res.created_at || getTodayLocalDateStr();
+        const activeStartDate = toDateInputString(rawStart) || getTodayLocalDateStr();
         activeEvents.push({
           id: `rule_current_${res.id}`,
           reserve_id: res.id,
@@ -302,7 +304,9 @@ export function ReserveHistoryTab({
       // 2. Historical past rules from res.rule_history
       const historyList = res.rule_history || [];
       historyList.forEach((h: any, idx: number) => {
-        const startDate = h.start_date || (h.updated_at ? h.updated_at.split('T')[0] : (res.created_at ? res.created_at.split('T')[0] : '2026-01-01'));
+        const rawStart = h.start_date || h.date || h.updated_at || res.created_at || '2026-01-01';
+        const startDate = toDateInputString(rawStart) || '2026-01-01';
+        const endDate = toDateInputString(h.end_date) || null;
         historyEvents.push({
           id: `rule_hist_${res.id}_${idx}_${h.updated_at || startDate || idx}`,
           reserve_id: res.id,
@@ -313,8 +317,8 @@ export function ReserveHistoryTab({
           regra_valor: Number(h.regra_valor || 0),
           regra_categorias: h.regra_categorias || [],
           regra_ativa: h.regra_ativa !== undefined ? Boolean(h.regra_ativa) : true,
-          start_date: h.start_date,
-          end_date: h.end_date || null,
+          start_date: startDate,
+          end_date: endDate,
           description: h.description || `Regra anterior arquivada`,
           isCurrentActive: false
         });
@@ -877,8 +881,10 @@ export function ReserveHistoryTab({
     const normalizedType = rule.regra_tipo === 'fixo_diario' ? 'fixo' : (rule.regra_tipo || 'km');
     setEditRuleType(normalizedType);
     setEditRuleValue(rule.regra_valor !== undefined && rule.regra_valor !== null ? String(rule.regra_valor) : '');
-    setEditRuleStartDate(rule.start_date || rule.date || getTodayLocalDateStr());
-    setEditRuleEndDate(rule.end_date || '');
+    const cleanStart = toDateInputString(rule.start_date || rule.date) || getTodayLocalDateStr();
+    const cleanEnd = toDateInputString(rule.end_date);
+    setEditRuleStartDate(cleanStart);
+    setEditRuleEndDate(cleanEnd);
     const initialCats = Array.isArray(rule.regra_categorias) ? rule.regra_categorias : [];
     setEditRuleCategories(initialCats.join(', '));
     setEditRuleCategoryList(initialCats);
@@ -951,12 +957,13 @@ export function ReserveHistoryTab({
         
         // Auto-archive previous active configuration to history if requested & there was an active rule
         if (editRuleAutoArchive && reserve.regra_tipo && reserve.regra_valor) {
-          const prevStart = reserve.regra_inicio_validade || (reserve.created_at ? reserve.created_at.split('T')[0] : editRuleStartDate);
+          const rawPrevStart = reserve.regra_inicio_validade || reserve.created_at || editRuleStartDate;
+          const prevStart = toDateInputString(rawPrevStart) || getTodayLocalDateStr();
           const formulaLabel = getRuleFormulaLabel(reserve.regra_tipo, reserve.regra_valor);
           
           currentHist.push({
             start_date: prevStart,
-            end_date: editRuleStartDate || getTodayLocalDateStr(),
+            end_date: toDateInputString(editRuleStartDate) || getTodayLocalDateStr(),
             regra_tipo: reserve.regra_tipo,
             regra_valor: reserve.regra_valor,
             regra_categorias: reserve.regra_categorias || [],
@@ -968,11 +975,13 @@ export function ReserveHistoryTab({
           });
         }
 
+        const cleanStart = toDateInputString(editRuleStartDate) || getTodayLocalDateStr();
+
         await onUpdateReserve(ruleToEdit.reserve_id, {
           regra_tipo: editRuleType as any,
           regra_valor: numVal,
           regra_categorias: parsedCats,
-          regra_inicio_validade: editRuleStartDate || getTodayLocalDateStr(),
+          regra_inicio_validade: cleanStart,
           regra_ativa: editRuleActive,
           rule_history: currentHist,
           updated_at: new Date().toISOString()
@@ -982,6 +991,8 @@ export function ReserveHistoryTab({
         // Updating Historical Rule in reserve.rule_history array
         const currentHistory = Array.isArray(reserve.rule_history) ? [...reserve.rule_history] : [];
         const targetIdx = ruleToEdit.historyIndex !== undefined ? ruleToEdit.historyIndex : -1;
+        const cleanHistStart = toDateInputString(editRuleStartDate) || getTodayLocalDateStr();
+        const cleanHistEnd = toDateInputString(editRuleEndDate) || null;
 
         if (targetIdx >= 0 && targetIdx < currentHistory.length) {
           currentHistory[targetIdx] = {
@@ -989,8 +1000,8 @@ export function ReserveHistoryTab({
             regra_tipo: editRuleType,
             regra_valor: numVal,
             regra_categorias: parsedCats,
-            start_date: editRuleStartDate,
-            end_date: editRuleEndDate || null,
+            start_date: cleanHistStart,
+            end_date: cleanHistEnd,
             regra_ativa: editRuleActive,
             description: editRuleDescription,
             updated_at: new Date().toISOString()
@@ -1003,8 +1014,8 @@ export function ReserveHistoryTab({
               regra_tipo: editRuleType,
               regra_valor: numVal,
               regra_categorias: parsedCats,
-              start_date: editRuleStartDate,
-              end_date: editRuleEndDate || null,
+              start_date: cleanHistStart,
+              end_date: cleanHistEnd,
               regra_ativa: editRuleActive,
               description: editRuleDescription,
               updated_at: new Date().toISOString()

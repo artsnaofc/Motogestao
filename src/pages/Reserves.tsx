@@ -22,7 +22,8 @@ import {
   generateUUID,
   calculateNextOccurrence,
   RecurrenceFrequency,
-  getTodayLocalDateStr
+  getTodayLocalDateStr,
+  toDateInputString
 } from '../components/reserves/reserveUtils';
 import { cacheManager } from '../lib/cacheManager';
 import { syncQueueManager } from '../lib/syncQueue';
@@ -547,12 +548,13 @@ export function Reserves() {
       return;
     }
 
-    const effectiveDate = ruleData.regra_inicio_validade || getTodayLocalDateStr();
+    const effectiveDate = toDateInputString(ruleData.regra_inicio_validade) || getTodayLocalDateStr();
     const hadPrevRule = Boolean(currentRes.regra_tipo && currentRes.regra_valor);
     let updatedHistory = Array.isArray(currentRes.rule_history) ? [...currentRes.rule_history] : [];
 
     if (hadPrevRule && (currentRes.regra_tipo !== ruleData.regra_tipo || currentRes.regra_valor !== ruleData.regra_valor || currentRes.regra_ativa !== ruleData.regra_ativa)) {
-      const prevStartDate = currentRes.regra_inicio_validade || currentRes.created_at?.split('T')[0] || effectiveDate;
+      const rawPrev = currentRes.regra_inicio_validade || currentRes.created_at || effectiveDate;
+      const prevStartDate = toDateInputString(rawPrev) || effectiveDate;
       const typeLabel = currentRes.regra_tipo === 'km' 
         ? `R$ ${currentRes.regra_valor}/km` 
         : currentRes.regra_tipo === 'bruto' 
@@ -580,6 +582,9 @@ export function Reserves() {
     };
 
     await updateReserve(reserveId, payload);
+    if (auditReserve?.id === reserveId) {
+      setAuditReserve(prev => prev ? { ...prev, ...payload } : null);
+    }
     toast.success('Regra da reserva atualizada com sucesso!');
     if (refreshData) await refreshData(true);
   };
@@ -774,9 +779,10 @@ export function Reserves() {
 
       {/* 1b. Modal Auditoria da Sugestão de Aportes */}
       <SuggestionAuditModal
+        key={auditReserve ? `${auditReserve.id}-${auditReserve.regra_inicio_validade}-${auditReserve.regra_valor}-${auditReserve.regra_tipo}` : 'audit-closed'}
         isOpen={Boolean(auditReserve)}
         onClose={() => setAuditReserve(null)}
-        reserve={auditReserve}
+        reserve={auditReserve ? (reserves.find(r => r.id === auditReserve.id) || auditReserve) : null}
         transactions={transactions}
         reserveTransactions={reserveTransactions}
         globalPeriod={FIXED_SUGGESTION_PERIOD}
@@ -855,8 +861,9 @@ export function Reserves() {
 
       {/* 6. Modal Histórico de Regras & Auditoria */}
       <RuleHistoryModal
+        key={selectedReserveForAction ? `${selectedReserveForAction.id}-${selectedReserveForAction.regra_inicio_validade}-${selectedReserveForAction.regra_valor}` : 'history-closed'}
         isOpen={actionModalType === 'rule_history'}
-        reserve={selectedReserveForAction}
+        reserve={selectedReserveForAction ? (reserves.find(r => r.id === selectedReserveForAction.id) || selectedReserveForAction) : null}
         onClose={() => {
           setActionModalType(null);
           setSelectedReserveForAction(null);

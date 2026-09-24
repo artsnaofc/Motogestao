@@ -128,6 +128,26 @@ export const formatDateDisplay = (dateStr: string | undefined | null): string =>
   }
 };
 
+export const toDateInputString = (dateVal?: string | null): string => {
+  if (!dateVal) return '';
+  const str = String(dateVal).trim();
+  if (str.includes('T')) {
+    return str.split('T')[0];
+  }
+  if (str.includes(' ')) {
+    return str.split(' ')[0];
+  }
+  if (str.includes('/')) {
+    const parts = str.split('/');
+    if (parts.length === 3) {
+      if (parts[0].length === 2 && parts[2].length === 4) {
+        return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+      }
+    }
+  }
+  return str.slice(0, 10);
+};
+
 export interface PeriodOption {
   id: string;
   label: string;
@@ -370,83 +390,82 @@ export const calculateSuggestion = (
   const isGoalReached = Boolean(roundedGoal > 0 && roundedBalance >= roundedGoal);
   const isPaused = res.status === 'inactive' || res.is_paused;
 
-  if (isPaused || isGoalReached) {
+  if (isPaused || isGoalReached || !res.regra_ativa || !res.regra_tipo) {
     return 0;
   }
 
   const lastWDate = getLatestWithdrawalDate(res, reserveTransactions);
+  const cleanLastWDate = lastWDate ? toDateInputString(lastWDate) : null;
+  const ruleStartDate = toDateInputString(res.regra_inicio_validade);
+
   const periodTxs = (transactions || []).filter(t => {
     // Ignore pending revenue or expense transactions for contribution suggestions
     if (t.payment_status === 'pending' || (t as any).status === 'pending') return false;
     const inPeriod = isTxInPeriod(t.date, globalPeriod, customDateRange);
     if (!inPeriod) return false;
     const isDefaultRes = res.name === 'Reserva de Manutenção' || res.name === 'Reserva de Emergência';
+    const txDay = toDateInputString(t.date) || (t.date ? t.date.split('T')[0] : '');
     if (res.created_at && !isDefaultRes) {
-      const creationDay = res.created_at.split('T')[0];
-      if (t.date < creationDay) return false;
+      const creationDay = toDateInputString(res.created_at) || res.created_at.split('T')[0];
+      if (txDay < creationDay) return false;
     }
-    if (lastWDate && t.date <= lastWDate) return false;
+    if (cleanLastWDate && txDay <= cleanLastWDate) return false;
+    // Rule counts strictly starting from its effective validity date (zerando sugestões anteriores à vigência)
+    if (ruleStartDate && txDay < ruleStartDate) return false;
     return true;
   });
   
+  const ruleCats = res.regra_categorias || [];
+  const ruleValue = Number(res.regra_valor) || 0;
+  const ruleType = res.regra_tipo as string;
+
   let totalSuggestion = 0;
-  
-  const buckets = periodTxs.reduce((acc, t) => {
-    const ruleInfo = getActiveRuleForDate(res, t.date);
-    const ruleKey = ruleInfo.source === 'history' ? `hist_${ruleInfo.index}` : 'current';
-    const activeRule = {
-      regra_ativa: ruleInfo.regra_ativa && !isPaused && !isGoalReached,
-      regra_tipo: ruleInfo.regra_tipo,
-      regra_valor: ruleInfo.regra_valor,
-      regra_categorias: ruleInfo.regra_categorias,
-    };
 
-    if (!acc[ruleKey]) {
-      acc[ruleKey] = { rule: activeRule, txs: [] };
-    }
-    acc[ruleKey].txs.push(t);
-    return acc;
-  }, {} as Record<string, { rule: any, txs: typeof periodTxs }>);
-
-  Object.values(buckets).forEach((bucket: any) => {
-    const { rule, txs } = bucket;
-    if (!rule.regra_ativa || !rule.regra_tipo) return;
-
-    const ruleValue = Number(rule.regra_valor) || 0;
-    const ruleCats = rule.regra_categorias || [];
-    
-    if (rule.regra_tipo === 'km') {
-      const eligible = txs.filter((t: Transaction) => t.type === 'income' && ruleCats.includes(t.category) && t.start_km !== null && t.end_km !== null);
-      eligible.forEach((t: Transaction) => {
+  if (ruleType === 'km') {
+    let totalKm = 0;
+    periodTxs.forEach(t => {
+      const matchesCategory = ruleCats.length === 0 || ruleCats.includes(t.category);
+      if (t.type === 'income' && matchesCategory) {
         const distance = (Number(t.end_km) || 0) - (Number(t.start_km) || 0);
-        if (distance > 0) {
-          totalSuggestion += Math.round(distance * ruleValue * 100) / 100;
+        if (distance > 0) totalKm += distance;
+      }
+    });
+    totalSuggestion = Math.round(totalKm * ruleValue * 100) / 100;
+  } else if (ruleType === 'bruto') {
+    let grossSum = 0;
+    periodTxs.forEach(t => {
+      const matchesCategory = ruleCats.length === 0 || ruleCats.includes(t.category);
+      if (t.type === 'income' && matchesCategory) {
+        grossSum += Number(t.amount || 0);
+      }
+    });
+    totalSuggestion = Math.round(grossSum * (ruleValue / 100) * 100) / 100;
+  } else if (ruleType === 'liquido') {
+    let totalIncome = 0;
+    let totalExpense = 0;
+    periodTxs.forEach(t => {
+      const matchesCategory = ruleCats.length === 0 || ruleCats.includes(t.category);
+      if (t.type === 'income' && matchesCategory) {
+        totalIncome += Number(t.amount || 0);
+      } else if (t.type === 'expense') {
+        const isReserveUse = (t as any).isReserveTx === true || t.category === 'Aporte Reserva';
+        if (!isReserveUse) {
+          totalExpense += Number(t.amount || 0);
         }
-      });
-    } else if (rule.regra_tipo === 'bruto') {
-      const eligible = txs.filter((t: Transaction) => t.type === 'income' && ruleCats.includes(t.category));
-      const grossSum = eligible.reduce((sum: number, t: Transaction) => sum + Number(t.amount || 0), 0);
-      totalSuggestion += Math.round(grossSum * (ruleValue / 100) * 100) / 100;
-    } else if (rule.regra_tipo === 'liquido') {
-      const totalIncome = txs
-        .filter((t: Transaction) => t.type === 'income')
-        .reduce((sum: number, t: Transaction) => sum + Number(t.amount || 0), 0);
-      const totalExpense = txs
-        .filter((t: Transaction) => t.type === 'expense')
-        .filter((t: Transaction) => {
-          const isReserveUse = (t as any).isReserveTx === true || 
-                               t.category === 'Aporte Reserva';
-          return !isReserveUse;
-        })
-        .reduce((sum: number, t: Transaction) => sum + Number(t.amount || 0), 0);
-      const netProfit = totalIncome - totalExpense;
-      totalSuggestion += Math.round(Math.max(0, netProfit) * (ruleValue / 100) * 100) / 100;
-    } else if (rule.regra_tipo === 'fixo') {
-      const eligible = txs.filter((t: Transaction) => t.type === 'income' && ruleCats.includes(t.category));
-      const uniqueDays = new Set(eligible.map((t: Transaction) => t.date));
-      totalSuggestion += Math.round(uniqueDays.size * ruleValue * 100) / 100;
-    }
-  });
+      }
+    });
+    const netProfit = Math.max(0, totalIncome - totalExpense);
+    totalSuggestion = Math.round(netProfit * (ruleValue / 100) * 100) / 100;
+  } else if (ruleType === 'fixo' || ruleType === 'fixo_diario') {
+    const eligibleDates = new Set<string>();
+    periodTxs.forEach(t => {
+      const matchesCategory = ruleCats.length === 0 || ruleCats.includes(t.category);
+      if (t.type === 'income' && matchesCategory) {
+        eligibleDates.add(toDateInputString(t.date) || t.date);
+      }
+    });
+    totalSuggestion = Math.round(eligibleDates.size * ruleValue * 100) / 100;
+  }
 
   if (res.meta_objetivo && res.meta_objetivo > 0) {
     if (totalSuggestion > res.meta_objetivo) {
@@ -461,6 +480,7 @@ export interface SuggestionAuditResult {
   ruleType: string;
   ruleValue: number;
   categories: string[];
+  ruleStartDate: string | null;
   details: string[];
   totalSuggested: number;
   effectiveAportes: number;
@@ -487,6 +507,8 @@ export const getSuggestionAudit = (
   customDateRange: { start: string; end: string }
 ): SuggestionAuditResult => {
   const lastWDate = getLatestWithdrawalDate(res, reserveTransactions);
+  const cleanLastWDate = lastWDate ? toDateInputString(lastWDate) : null;
+  const ruleStartDate = toDateInputString(res.regra_inicio_validade);
   
   // Count pending withdrawals that were correctly ignored
   const pendingWithdrawalsIgnored = (reserveTransactions || []).filter(
@@ -500,11 +522,13 @@ export const getSuggestionAudit = (
     const inPeriod = isTxInPeriod(t.date, globalPeriod, customDateRange);
     if (!inPeriod) return false;
     const isDefaultRes = res.name === 'Reserva de Manutenção' || res.name === 'Reserva de Emergência';
+    const txDay = toDateInputString(t.date) || (t.date ? t.date.split('T')[0] : '');
     if (res.created_at && !isDefaultRes) {
-      const creationDay = res.created_at.split('T')[0];
-      if (t.date < creationDay) return false;
+      const creationDay = toDateInputString(res.created_at) || res.created_at.split('T')[0];
+      if (txDay < creationDay) return false;
     }
-    if (lastWDate && t.date <= lastWDate) return false;
+    if (cleanLastWDate && txDay <= cleanLastWDate) return false;
+    if (ruleStartDate && txDay < ruleStartDate) return false;
     return true;
   });
 
@@ -549,7 +573,7 @@ export const getSuggestionAudit = (
   });
 
   const netProfit = Math.max(0, grossRevenue - totalExpense);
-  const uniqueDays = new Set(eligibleTxs.map(t => t.date));
+  const uniqueDays = new Set(eligibleTxs.map(t => toDateInputString(t.date) || t.date));
   const workedDays = uniqueDays.size;
 
   let formulaExplanation = '';
@@ -573,7 +597,7 @@ export const getSuggestionAudit = (
     const val = Number(res.regra_valor || 0);
     details.push(`Regra: ${val}% sobre o lucro líquido do período (${formatCurrency(netProfit)}).`);
     formulaExplanation = `Lucro Líquido (${formatCurrency(grossRevenue)} - ${formatCurrency(totalExpense)} = ${formatCurrency(netProfit)}) × ${val}% = ${formatCurrency(calculated)}`;
-  } else if (res.regra_tipo === 'fixo') {
+  } else if (res.regra_tipo === 'fixo' || (res.regra_tipo as string) === 'fixo_diario') {
     const val = Number(res.regra_valor || 0);
     details.push(`Regra: R$ ${val.toFixed(2)} fixos por dia trabalhado (${workedDays} dias com receitas).`);
     formulaExplanation = `${workedDays} dia(s) com receita × R$ ${val.toFixed(2)} = ${formatCurrency(calculated)}`;
@@ -582,8 +606,13 @@ export const getSuggestionAudit = (
     formulaExplanation = 'Sem regra de cálculo ativa.';
   }
 
-  if (lastWDate) {
-    details.push(`Contagem reiniciada após o último resgate pago em ${new Date(lastWDate + 'T00:00:00').toLocaleDateString('pt-BR')}.`);
+  if (ruleStartDate) {
+    const formattedRuleDate = new Date(ruleStartDate + 'T00:00:00').toLocaleDateString('pt-BR');
+    details.push(`Vigência da regra ativa: A partir de ${formattedRuleDate} (lançamentos anteriores desconsiderados).`);
+  }
+
+  if (cleanLastWDate) {
+    details.push(`Contagem reiniciada após o último resgate pago em ${new Date(cleanLastWDate + 'T00:00:00').toLocaleDateString('pt-BR')}.`);
   }
   if (pendingWithdrawalsIgnored > 0) {
     details.push(`${pendingWithdrawalsIgnored} resgate(s) recorrente(s) pendente(s) foram desconsiderados até a sua quitação.`);
@@ -593,13 +622,14 @@ export const getSuggestionAudit = (
     ruleType: res.regra_tipo || '',
     ruleValue: Number(res.regra_valor) || 0,
     categories: res.regra_categorias || [],
+    ruleStartDate,
     details,
     totalSuggested: calculated,
     effectiveAportes,
     pendingSuggestion,
     txCount: eligibleTxs.length,
     eligibleTxs,
-    lastWithdrawalDate: lastWDate,
+    lastWithdrawalDate: cleanLastWDate,
     pendingWithdrawalsIgnored,
     grossRevenue,
     totalExpense,
@@ -619,6 +649,7 @@ export const getEffectiveAportesInPeriod = (
   customDateRange: { start: string; end: string }
 ): number => {
   const lastWDate = getLatestWithdrawalDate(res, reserveTransactions);
+  const ruleStartDate = toDateInputString(res.regra_inicio_validade);
   const total = (reserveTransactions || [])
     .filter(rt => {
       const matches = rt.reserve_id === res.id && 
@@ -630,6 +661,7 @@ export const getEffectiveAportesInPeriod = (
                       rt.category !== 'Rendimento';
       if (!matches) return false;
       if (lastWDate && rt.date <= lastWDate) return false;
+      if (ruleStartDate && rt.date < ruleStartDate) return false;
       return true;
     })
     .reduce((sum, rt) => sum + Number(rt.amount || 0), 0);

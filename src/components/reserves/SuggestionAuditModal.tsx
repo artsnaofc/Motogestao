@@ -223,6 +223,14 @@ export function SuggestionAuditModal({
                   <strong>Período avaliado:</strong> {globalPeriod === 'custom' ? `${customDateRange.start} até ${customDateRange.end}` : globalPeriod}.
                 </span>
               </li>
+              {audit.ruleStartDate && (
+                <li className="flex items-start gap-2 text-indigo-600 dark:text-indigo-400 font-semibold">
+                  <span className="font-bold">•</span>
+                  <span>
+                    <strong>Início da vigência da regra:</strong> {new Date(audit.ruleStartDate + 'T00:00:00').toLocaleDateString('pt-BR')} (Sugestões reiniciadas a partir desta data).
+                  </span>
+                </li>
+              )}
               {audit.lastWithdrawalDate ? (
                 <li className="flex items-start gap-2 text-foreground">
                   <span className="text-amber-500 font-bold">•</span>

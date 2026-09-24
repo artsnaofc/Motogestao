@@ -19,7 +19,14 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Reserve, Transaction, UserSettings, ReserveTransaction } from '../../types';
-import { iconOptions, formatCurrency, isTxInPeriod, getPeriodDisplayLabel, getTodayLocalDateStr } from './reserveUtils';
+import { 
+  iconOptions, 
+  formatCurrency, 
+  isTxInPeriod, 
+  getPeriodDisplayLabel, 
+  getTodayLocalDateStr,
+  toDateInputString
+} from './reserveUtils';
 import { toast } from '@/lib/toast';
 
 interface UpdateRuleModalProps {
@@ -123,7 +130,8 @@ export function UpdateRuleModal({
       if (reserve) {
         setRegraAtiva(Boolean(reserve.regra_ativa));
         setRegraTipo(reserve.regra_tipo || 'km');
-        setEffectiveDate(getTodayLocalDateStr());
+        const initialDate = toDateInputString(reserve.regra_inicio_validade) || getTodayLocalDateStr();
+        setEffectiveDate(initialDate);
         setRegraValor(
           reserve.regra_valor !== undefined && reserve.regra_valor !== null
             ? String(Math.round(Number(reserve.regra_valor) * 100) / 100)
@@ -177,7 +185,9 @@ export function UpdateRuleModal({
     const val = parseFloat(cleanStr);
     if (isNaN(val) || val <= 0) return 0;
 
+    const effDate = toDateInputString(effectiveDate);
     const periodTxs = (transactions || []).filter(t => {
+      if (effDate && t.date < effDate) return false;
       return isTxInPeriod(t.date, globalPeriod, customDateRange);
     });
 
@@ -264,7 +274,7 @@ export function UpdateRuleModal({
         regra_tipo: regraAtiva ? (regraTipo as any) : null,
         regra_valor: regraAtiva ? parsedVal : null,
         regra_categorias: regraAtiva ? regraCategorias : [],
-        regra_inicio_validade: effectiveDate,
+        regra_inicio_validade: toDateInputString(effectiveDate) || getTodayLocalDateStr(),
         require_category_on_use: requireCategoryOnUse,
         default_use_category: !requireCategoryOnUse ? defaultUseCategory : null
       } as any);

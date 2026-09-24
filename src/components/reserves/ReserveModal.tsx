@@ -16,7 +16,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Reserve, Transaction, UserSettings } from '../../types';
-import { iconOptions, COLOR_PALETTE, formatCurrency } from './reserveUtils';
+import { iconOptions, COLOR_PALETTE, formatCurrency, toDateInputString, getTodayLocalDateStr } from './reserveUtils';
 import { toast } from '@/lib/toast';
 
 interface ReserveModalProps {
@@ -51,6 +51,7 @@ export function ReserveModal({
   const [regraTipo, setRegraTipo] = useState<Reserve['regra_tipo'] | ''>('');
   const [regraValor, setRegraValor] = useState('');
   const [regraCategorias, setRegraCategorias] = useState<string[]>([]);
+  const [regraInicioValidade, setRegraInicioValidade] = useState<string>(getTodayLocalDateStr());
   const [requireCategoryOnUse, setRequireCategoryOnUse] = useState<boolean>(true);
   const [defaultUseCategory, setDefaultUseCategory] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -113,6 +114,8 @@ export function ReserveModal({
         setRegraTipo(reserveToEdit.regra_tipo || '');
         setRegraValor(reserveToEdit.regra_valor !== undefined && reserveToEdit.regra_valor !== null ? String(reserveToEdit.regra_valor) : '');
         setRegraCategorias(reserveToEdit.regra_categorias && reserveToEdit.regra_categorias.length > 0 ? reserveToEdit.regra_categorias : allCategories);
+        const initValidade = toDateInputString(reserveToEdit.regra_inicio_validade) || getTodayLocalDateStr();
+        setRegraInicioValidade(initValidade);
         
         const reqCat = reserveToEdit.require_category_on_use !== undefined
           ? Boolean(reserveToEdit.require_category_on_use)
@@ -197,6 +200,7 @@ export function ReserveModal({
         regra_tipo: regraAtiva ? (regraTipo as any) : null,
         regra_valor: regraAtiva && parsedRegraVal !== undefined && !isNaN(parsedRegraVal) ? parsedRegraVal : null,
         regra_categorias: regraAtiva ? regraCategorias : [],
+        regra_inicio_validade: regraAtiva ? (toDateInputString(regraInicioValidade) || getTodayLocalDateStr()) : null,
         require_category_on_use: requireCategoryOnUse,
         default_use_category: !requireCategoryOnUse ? defaultUseCategory : null
       };
@@ -422,6 +426,20 @@ export function ReserveModal({
                         const val = e.target.value.replace(/[^0-9.,]/g, '');
                         setRegraValor(val);
                       }}
+                      className="h-10 text-xs rounded-xl font-mono"
+                    />
+                  </div>
+
+                  {/* Data de Início da Vigência */}
+                  <div className="space-y-1.5 text-left">
+                    <label className="text-xs font-bold text-muted-foreground flex items-center justify-between">
+                      <span>Início da Vigência da Regra:</span>
+                      <span className="text-[10px] text-indigo-500 font-medium">A partir desta data</span>
+                    </label>
+                    <Input
+                      type="date"
+                      value={regraInicioValidade}
+                      onChange={e => setRegraInicioValidade(e.target.value)}
                       className="h-10 text-xs rounded-xl font-mono"
                     />
                   </div>

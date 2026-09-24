@@ -2836,13 +2836,13 @@ export function Dashboard() {
       return {
         monthKey: format(monthDate, 'yyyy-MM'),
         month: format(monthDate, 'MMM', { locale: ptBR }),
-        Caixa: Number(caixaBalance.toFixed(2)),
-        Reservas: Number(totalInResv.toFixed(2)),
         Investimentos: Number(totalInvestmentEquity.toFixed(2)),
+        Reservas: Number(totalInResv.toFixed(2)),
+        Caixa: Number(caixaBalance.toFixed(2)),
         PatrimonioTotal: Number(totalPatrimonyVal.toFixed(2)),
         isFuture: monthDate > now
       };
-    }).filter(m => !m.isFuture || m.Caixa !== 0 || m.Reservas !== 0 || m.Investimentos !== 0);
+    }).filter(m => !m.isFuture || m.Investimentos !== 0 || m.Reservas !== 0 || m.Caixa !== 0);
   }, [transactions, reserveTransactions, investmentTransactions, reserves, settings, quotes]);
 
   const expensesDataRaw = useMemo(() => {

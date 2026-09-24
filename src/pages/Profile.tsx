@@ -83,7 +83,13 @@ import {
   RotateCcw,
   AlertCircle,
   Key,
-  CarFront
+  CarFront,
+  Fingerprint,
+  Smartphone,
+  Lock,
+  CheckCircle,
+  Copy,
+  Code2
 } from 'lucide-react';
 import { useData } from '../contexts/DataContext';
 import { useVehicles } from '../contexts/VehiclesContext';
@@ -91,6 +97,17 @@ import { DEFAULT_VEHICLE_CATEGORIES } from '../lib/vehicleUtils';
 import { executeQuoteFetch, QuoteProvider, QuoteFetchResult } from '../lib/quoteService';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import {
+  BiometricSettings,
+  detectBiometricLabel,
+  getBiometricSettings,
+  saveBiometricSettings,
+  registerBiometrics,
+  removeBiometricsFromDevice,
+  isPlatformAuthenticatorAvailable,
+  isBiometricsConfiguredOnDevice,
+  authenticateWithBiometrics
+} from '../lib/biometrics';
 
 interface SettingsSnapshot {
   settings: UserSettings;
@@ -108,8 +125,20 @@ export function Profile() {
   const [loading, setLoading] = useState(true);
   const [savingSettings, setSavingSettings] = useState(false);
   const [savingAuth, setSavingAuth] = useState(false);
-  const [activeTab, setActiveTab] = useState<'all' | 'account' | 'categories' | 'vehicle' | 'pizzaria' | 'financial'>('all');
+  const [activeTab, setActiveTab] = useState<'all' | 'security' | 'account' | 'categories' | 'vehicle' | 'pizzaria' | 'financial'>('all');
   
+  // Biometrics states
+  const [bioSupported, setBioSupported] = useState(false);
+  const [bioConfigured, setBioConfigured] = useState(false);
+  const [bioSettings, setBioSettings] = useState<BiometricSettings>({
+    enabled: false,
+    autoLockMinutes: 5,
+  });
+  const [bioLabel, setBioLabel] = useState({ name: 'Biometria', type: 'generic' as 'face' | 'fingerprint' | 'generic' });
+  const [enrollingBio, setEnrollingBio] = useState(false);
+  const [testingBio, setTestingBio] = useState(false);
+  const [showSqlCopyModal, setShowSqlCopyModal] = useState(false);
+
   const [deleteCategoryConfirm, setDeleteCategoryConfirm] = useState<{type: 'income' | 'personal' | 'operational', name: string} | null>(null);
   const [editCategoryData, setEditCategoryData] = useState<{type: 'income' | 'personal' | 'operational', oldName: string, newName: string} | null>(null);
   
@@ -647,6 +676,135 @@ export function Profile() {
     await supabase.auth.signOut();
   };
 
+  // Biometrics handlers
+  useEffect(() => {
+    const loadBioState = async () => {
+      const label = detectBiometricLabel();
+      setBioLabel(label);
+      const available = await isPlatformAuthenticatorAvailable();
+      setBioSupported(available);
+
+      const { data: userData } = await supabase.auth.getUser();
+      const uid = userData?.user?.id || globalSettings?.user_id;
+      const conf = isBiometricsConfiguredOnDevice(uid);
+      setBioConfigured(conf);
+      const bs = getBiometricSettings(uid);
+      setBioSettings(bs);
+    };
+
+    loadBioState();
+  }, [globalSettings?.user_id]);
+
+  const handleToggleBiometrics = async () => {
+    if (enrollingBio) return;
+    setEnrollingBio(true);
+
+    try {
+      if (!bioConfigured) {
+        // Enrolling biometrics
+        const { data: { session } } = await supabase.auth.getSession();
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) {
+          toast.error('É necessário estar autenticado para registrar biometria.');
+          setEnrollingBio(false);
+          return;
+        }
+
+        const res = await registerBiometrics(
+          {
+            id: user.id,
+            email: user.email || email,
+            name: settings.full_name || undefined,
+          },
+          session
+        );
+
+        if (res.success) {
+          setBioConfigured(true);
+          const updated = getBiometricSettings(user.id);
+          setBioSettings(updated);
+          toast.success(`${bioLabel.name} ativado com sucesso neste aparelho!`);
+        } else {
+          toast.error(res.error || 'Falha ao registrar biometria.');
+        }
+      } else {
+        // Disabling biometrics
+        const { data: { user } } = await supabase.auth.getUser();
+        const uid = user?.id || globalSettings?.user_id || '';
+        await removeBiometricsFromDevice(uid);
+        setBioConfigured(false);
+        setBioSettings({ enabled: false, autoLockMinutes: 5 });
+        toast.success('Biometria desativada deste dispositivo.');
+      }
+    } catch (err: any) {
+      toast.error('Erro na configuração biométrica: ' + (err?.message || err));
+    } finally {
+      setEnrollingBio(false);
+    }
+  };
+
+  const handleUpdateAutoLock = (minutes: number) => {
+    const uid = globalSettings?.user_id || 'current_user';
+    saveBiometricSettings(uid, { autoLockMinutes: minutes });
+    setBioSettings(prev => ({ ...prev, autoLockMinutes: minutes }));
+    toast.success('Tempo de bloqueio automático atualizado!');
+  };
+
+  const handleTestBiometrics = async () => {
+    if (testingBio) return;
+    setTestingBio(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      const res = await authenticateWithBiometrics(user?.id);
+      if (res.success) {
+        toast.success(`Leitura biométrica confirmada com sucesso (${bioLabel.name})!`);
+      } else {
+        toast.error(res.error || 'Leitura não reconhecida.');
+      }
+    } catch (err: any) {
+      toast.error('Falha no teste biométrico: ' + (err?.message || err));
+    } finally {
+      setTestingBio(false);
+    }
+  };
+
+  const supabaseSqlMigration = `-- Migration: Suporte a Autenticação Biométrica e Segurança de Dispositivos
+-- Finanças Pro - Mobile First
+
+-- 1. Adicionar colunas de suporte a biometria na tabela user_settings
+ALTER TABLE user_settings 
+ADD COLUMN IF NOT EXISTS biometrics_enabled BOOLEAN DEFAULT FALSE,
+ADD COLUMN IF NOT EXISTS biometrics_auto_lock_minutes INTEGER DEFAULT 5,
+ADD COLUMN IF NOT EXISTS biometrics_device_info JSONB DEFAULT '{}'::jsonb;
+
+-- 2. (Opcional) Criar tabela de auditoria de credenciais biométricas por dispositivo
+CREATE TABLE IF NOT EXISTS user_biometric_credentials (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
+  credential_id TEXT NOT NULL,
+  device_name TEXT NOT NULL,
+  biometric_type TEXT DEFAULT 'generic',
+  registered_at TIMESTAMPTZ DEFAULT NOW(),
+  last_used_at TIMESTAMPTZ DEFAULT NOW(),
+  is_active BOOLEAN DEFAULT TRUE,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  CONSTRAINT unique_user_credential UNIQUE(user_id, credential_id)
+);
+
+-- 3. Habilitar Row Level Security (RLS)
+ALTER TABLE user_biometric_credentials ENABLE ROW LEVEL SECURITY;
+
+-- 4. Políticas de Segurança RLS
+CREATE POLICY "Usuários podem gerenciar suas próprias credenciais biométricas" 
+ON user_biometric_credentials
+FOR ALL 
+TO authenticated 
+USING (auth.uid() = user_id) 
+WITH CHECK (auth.uid() = user_id);
+
+-- 5. Índice para consultas ultrarrápidas
+CREATE INDEX IF NOT EXISTS idx_biometrics_user_id ON user_biometric_credentials(user_id);`;
+
   if (loading) {
     return (
       <div className="flex-1 w-full flex flex-col justify-center items-center py-32 space-y-3">
@@ -754,6 +912,7 @@ export function Profile() {
       <div className="flex items-center gap-2 overflow-x-auto pb-2 -mx-3 px-3 scrollbar-none snap-x">
         {[
           { id: 'all', label: 'Visão Geral', icon: Layers },
+          { id: 'security', label: 'Segurança & Biometria', icon: Fingerprint },
           { id: 'account', label: 'Conta & Login', icon: User },
           { id: 'categories', label: 'Categorias', icon: Sliders },
           { id: 'vehicle', label: 'Veículo & Combustível', icon: Bike },
@@ -792,6 +951,29 @@ export function Profile() {
         {activeTab === 'all' && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5 animate-in fade-in duration-300">
             
+            {/* CARD 0: SEGURANÇA & BIOMETRIA */}
+            <div 
+              onClick={() => setActiveTab('security')}
+              className="group p-5 rounded-2xl border border-border/80 bg-card hover:border-indigo-500/40 hover:shadow-md transition-all cursor-pointer flex flex-col justify-between gap-4"
+            >
+              <div className="flex items-start justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 group-hover:bg-emerald-500/20 transition-colors">
+                    <Fingerprint className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-black text-foreground">Segurança & Biometria</h3>
+                    <p className="text-[11px] text-muted-foreground">{bioLabel.name} e bloqueio de tela</p>
+                  </div>
+                </div>
+                <ChevronRight className="w-4 h-4 text-muted-foreground group-hover:text-foreground transition-colors" />
+              </div>
+              <div className="pt-2 border-t border-border/50 flex items-center justify-between text-xs text-muted-foreground">
+                <div>Status: <strong className={bioConfigured ? "text-emerald-600 dark:text-emerald-400 font-bold" : "text-amber-600 dark:text-amber-400 font-bold"}>{bioConfigured ? 'Ativo neste Aparelho' : 'Desativado'}</strong></div>
+                <div className="text-right">Sensor: <strong className="text-foreground">{bioSupported ? 'Disponível' : 'Indisponível'}</strong></div>
+              </div>
+            </div>
+
             {/* CARD 1: CONTA & LOGIN */}
             <div 
               onClick={() => setActiveTab('account')}
@@ -920,6 +1102,220 @@ export function Profile() {
           </div>
         )}
         
+        {/* SECTION -1: SECURITY & BIOMETRICS - FINTECH GRADE CARD */}
+        {activeTab === 'security' && (
+          <div className="space-y-6 animate-in fade-in duration-300">
+            <Card className="border border-border/80 shadow-sm rounded-3xl overflow-hidden bg-card">
+              <CardHeader className="border-b border-border/50 p-5 sm:p-6 bg-muted/20">
+                <div className="flex items-center justify-between flex-wrap gap-3">
+                  <div className="flex items-center gap-3.5">
+                    <div className="p-3 rounded-2xl bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20 shadow-sm">
+                      <Fingerprint className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <CardTitle className="text-base font-black tracking-tight text-foreground flex items-center gap-2">
+                        <span>Segurança & Autenticação Biométrica</span>
+                        <span className="px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 text-[10px] font-black uppercase">
+                          Mobile First
+                        </span>
+                      </CardTitle>
+                      <CardDescription className="text-xs text-muted-foreground pt-0.5">
+                        Configure o acesso por <strong>{bioLabel.name}</strong> para entrar no sistema com 1 toque e proteger seus dados financeiros.
+                      </CardDescription>
+                    </div>
+                  </div>
+
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setShowSqlCopyModal(true)}
+                    className="h-9 px-3.5 rounded-xl font-bold text-xs gap-1.5 border-border/80 hover:bg-muted cursor-pointer"
+                  >
+                    <Code2 className="w-3.5 h-3.5 text-indigo-500" />
+                    <span>SQL Supabase</span>
+                  </Button>
+                </div>
+              </CardHeader>
+
+              <CardContent className="p-5 sm:p-6 space-y-6">
+                {/* 1. Device Hardware Diagnostic Banner */}
+                <div className={`p-4 rounded-2xl border flex items-start gap-3.5 ${
+                  bioSupported 
+                    ? 'bg-emerald-500/5 border-emerald-500/20 text-emerald-950 dark:text-emerald-200' 
+                    : 'bg-amber-500/5 border-amber-500/20 text-amber-950 dark:text-amber-200'
+                }`}>
+                  <div className={`p-2 rounded-xl mt-0.5 shrink-0 ${
+                    bioSupported 
+                      ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' 
+                      : 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
+                  }`}>
+                    {bioSupported ? <ShieldCheck className="w-5 h-5" /> : <AlertCircle className="w-5 h-5" />}
+                  </div>
+                  <div className="space-y-1 text-xs">
+                    <div className="font-black flex items-center gap-2">
+                      <span>Status do Sensor no Navegador:</span>
+                      <span className={`px-2 py-0.5 rounded-md font-bold text-[10.5px] ${
+                        bioSupported 
+                          ? 'bg-emerald-500/20 text-emerald-700 dark:text-emerald-300' 
+                          : 'bg-amber-500/20 text-amber-700 dark:text-amber-300'
+                      }`}>
+                        {bioSupported ? `Sensor ${bioLabel.name} Reconhecido` : 'Sensor Não Detectado'}
+                      </span>
+                    </div>
+                    <p className="text-muted-foreground leading-relaxed">
+                      {bioSupported 
+                        ? `Seu navegador e sistema operacional suportam autenticação biométrica via WebAuthn Platform Authenticator (${bioLabel.name}). Suas credenciais são protegidas pelo chip de segurança física do seu dispositivo (Secure Enclave / TPM / KeyStore).`
+                        : 'Seu navegador atual ou sistema operacional não informou suporte à API de autenticação biométrica nativa de plataforma.'}
+                    </p>
+                  </div>
+                </div>
+
+                {/* 2. Main Biometric Enrollment Switch */}
+                <div className="p-5 rounded-2xl bg-muted/30 border border-border/70 space-y-4">
+                  <div className="flex items-center justify-between gap-4 flex-wrap">
+                    <div className="space-y-1 max-w-md">
+                      <h4 className="text-sm font-black text-foreground flex items-center gap-2">
+                        <Fingerprint className="w-4 h-4 text-indigo-500" />
+                        <span>Login com {bioLabel.name}</span>
+                      </h4>
+                      <p className="text-xs text-muted-foreground">
+                        Permite autenticação instantânea na tela de login sem digitar email e senha a cada sessão.
+                      </p>
+                    </div>
+
+                    <Button
+                      type="button"
+                      onClick={handleToggleBiometrics}
+                      disabled={enrollingBio || (!bioSupported && !bioConfigured)}
+                      className={`h-11 px-6 rounded-2xl font-extrabold text-xs uppercase tracking-wider transition-all cursor-pointer shadow-sm flex items-center gap-2 ${
+                        bioConfigured
+                          ? 'bg-rose-500/10 hover:bg-rose-600/20 text-rose-600 dark:text-rose-400 border border-rose-500/30'
+                          : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-600/25'
+                      }`}
+                    >
+                      {enrollingBio ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          <span>Processando...</span>
+                        </>
+                      ) : bioConfigured ? (
+                        <>
+                          <X className="w-4 h-4" />
+                          <span>Desativar neste Aparelho</span>
+                        </>
+                      ) : (
+                        <>
+                          <Fingerprint className="w-4 h-4" />
+                          <span>Ativar {bioLabel.name}</span>
+                        </>
+                      )}
+                    </Button>
+                  </div>
+
+                  {bioConfigured && (
+                    <div className="pt-3 border-t border-border/60 grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                      <div className="p-3 rounded-xl bg-background border border-border/60">
+                        <span className="text-[10px] uppercase font-bold text-muted-foreground block">Dispositivo</span>
+                        <strong className="text-foreground font-bold">{bioSettings.deviceName || 'Este Aparelho'}</strong>
+                      </div>
+                      <div className="p-3 rounded-xl bg-background border border-border/60">
+                        <span className="text-[10px] uppercase font-bold text-muted-foreground block">Vinculado em</span>
+                        <strong className="text-foreground font-bold">
+                          {bioSettings.registeredAt 
+                            ? new Date(bioSettings.registeredAt).toLocaleDateString('pt-BR') 
+                            : 'Hoje'}
+                        </strong>
+                      </div>
+                      <div className="p-3 rounded-xl bg-background border border-border/60">
+                        <span className="text-[10px] uppercase font-bold text-muted-foreground block">Último Acesso</span>
+                        <strong className="text-foreground font-bold">
+                          {bioSettings.lastUsedAt 
+                            ? new Date(bioSettings.lastUsedAt).toLocaleDateString('pt-BR') 
+                            : 'Agora'}
+                        </strong>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* 3. App Lock & Privacy Screen Settings */}
+                {bioConfigured && (
+                  <div className="space-y-3">
+                    <div className="space-y-0.5">
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
+                        <Lock className="w-3.5 h-3.5 text-indigo-500" />
+                        <span>Bloqueio Automático do App (Privacidade Financeira)</span>
+                      </h4>
+                      <p className="text-xs text-muted-foreground">
+                        Exige leitura de {bioLabel.name} quando o aplicativo ficar em segundo plano ou inativo.
+                      </p>
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                      {[
+                        { minutes: 0, label: 'Imediato', desc: 'Ao sair do app' },
+                        { minutes: 1, label: '1 minuto', desc: 'Inatividade leve' },
+                        { minutes: 5, label: '5 minutos', desc: 'Recomendado' },
+                        { minutes: 15, label: '15 minutos', desc: 'Uso prolongado' },
+                        { minutes: -1, label: 'Desativado', desc: 'Apenas no login' },
+                      ].map((item) => {
+                        const isSelected = bioSettings.autoLockMinutes === item.minutes;
+                        return (
+                          <button
+                            key={item.minutes}
+                            type="button"
+                            onClick={() => handleUpdateAutoLock(item.minutes)}
+                            className={`p-3 rounded-2xl border text-left transition-all cursor-pointer flex flex-col justify-between gap-1 ${
+                              isSelected
+                                ? 'bg-indigo-500/10 border-indigo-500 text-indigo-600 dark:text-indigo-400 font-extrabold shadow-xs'
+                                : 'bg-card border-border/70 text-muted-foreground hover:bg-muted/50 hover:text-foreground'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs font-bold text-foreground">{item.label}</span>
+                              {isSelected && <CheckCircle className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />}
+                            </div>
+                            <span className="text-[10px] text-muted-foreground font-medium">{item.desc}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* 4. Sensor Diagnostic Test Action */}
+                {bioConfigured && (
+                  <div className="pt-2 flex items-center justify-between flex-wrap gap-3 border-t border-border/60">
+                    <div className="text-xs text-muted-foreground">
+                      Deseja testar se o sensor está respondendo corretamente?
+                    </div>
+
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={handleTestBiometrics}
+                      disabled={testingBio}
+                      className="h-10 px-4 rounded-xl font-bold text-xs gap-2 border-border/80 hover:bg-muted cursor-pointer"
+                    >
+                      {testingBio ? (
+                        <>
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          <span>Lendo sensor...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Fingerprint className="w-3.5 h-3.5 text-indigo-500" />
+                          <span>Testar Leitura de {bioLabel.name}</span>
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        )}
+
         {/* SECTION 1: ACCOUNT & CREDENTIALS - CLEAN INTUITIVE CARD */}
         {activeTab === 'account' && (
           <Card className="border border-border/80 shadow-sm rounded-2xl overflow-hidden transition-all hover:border-indigo-500/20 bg-card">
@@ -2154,6 +2550,54 @@ export function Profile() {
           <DialogFooter className="gap-2 sm:gap-0 pt-3">
             <Button variant="outline" className="rounded-xl text-xs font-bold cursor-pointer" onClick={() => setEditCategoryData(null)}>Cancelar</Button>
             <Button className="rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white cursor-pointer" onClick={performEditCategory}>Salvar Nome</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* MODAL SCRIPT SQL SUPABASE */}
+      <Dialog open={showSqlCopyModal} onOpenChange={setShowSqlCopyModal}>
+        <DialogContent className="rounded-3xl max-w-xl p-6">
+          <DialogHeader>
+            <DialogTitle className="text-base font-black flex items-center gap-2">
+              <Code2 className="w-5 h-5 text-indigo-500" />
+              <span>Script SQL Supabase (Biometria & Auditoria)</span>
+            </DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground pt-1">
+              Copie o script abaixo e execute no <strong>SQL Editor</strong> do seu painel Supabase para habilitar auditoria e persistência de biometria na nuvem:
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3 pt-2">
+            <div className="relative">
+              <pre className="p-4 rounded-2xl bg-slate-950 text-slate-200 text-[11px] font-mono overflow-x-auto max-h-64 border border-slate-800 scrollbar-thin">
+                {supabaseSqlMigration}
+              </pre>
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => {
+                  navigator.clipboard.writeText(supabaseSqlMigration);
+                  toast.success('Script SQL copiado para a área de transferência!');
+                }}
+                className="absolute top-3 right-3 h-8 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs gap-1.5 shadow-md cursor-pointer"
+              >
+                <Copy className="w-3.5 h-3.5" />
+                <span>Copiar SQL</span>
+              </Button>
+            </div>
+            <p className="text-[11px] text-muted-foreground bg-muted/30 p-3 rounded-xl border border-border">
+              💡 <strong>Nota:</strong> O sistema já possui proteção local e funciona 100% offline via WebAuthn no navegador, mesmo antes de rodar o script no Supabase.
+            </p>
+          </div>
+
+          <DialogFooter className="pt-2">
+            <Button
+              type="button"
+              className="w-full sm:w-auto rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white cursor-pointer"
+              onClick={() => setShowSqlCopyModal(false)}
+            >
+              Fechar
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

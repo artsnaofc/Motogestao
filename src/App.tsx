@@ -21,6 +21,7 @@ import { PageLoadingFallback } from './components/PageLoadingFallback';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ScrollManager } from './components/ScrollManager';
 import { DebugConsoleModal } from './components/DebugConsoleModal';
+import { BiometricAppLock } from './components/BiometricAppLock';
 
 // Auth guard outside App to prevent recreation
 const PrivateRoute = ({ session, children }: { session: Session | null; children: React.ReactNode }) => {
@@ -180,6 +181,9 @@ export default function App() {
           </Routes>
         )}
         <Toaster position="top-center" richColors />
+        {session?.user && (
+          <BiometricAppLock userId={session.user.id} userEmail={session.user.email} />
+        )}
       </BrowserRouter>
       <DebugConsoleModal open={showDebugModal} onOpenChange={setShowDebugModal} />
     </ErrorBoundary>
