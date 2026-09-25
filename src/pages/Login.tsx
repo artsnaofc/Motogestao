@@ -9,7 +9,8 @@ import {
   authenticateWithBiometrics, 
   detectBiometricLabel, 
   isBiometricsConfiguredOnDevice, 
-  isPlatformAuthenticatorAvailable 
+  isPlatformAuthenticatorAvailable,
+  storeBiometricVault
 } from '@/lib/biometrics';
 
 export function Login() {
@@ -72,11 +73,15 @@ export function Login() {
     setLoading(true);
 
     try {
-      const { error } = await supabase.auth.signInWithPassword({
+      const { data, error } = await supabase.auth.signInWithPassword({
         email,
         password,
       });
       if (error) throw error;
+      if (data?.user) {
+        localStorage.setItem('financas_pro_last_bio_user', data.user.id);
+        storeBiometricVault(data.user.id, data.user.email || email, data.session);
+      }
       toast.success('Login bem-sucedido!');
     } catch (error: any) {
       toast.error(error.message || 'Ocorreu um erro durante a autenticação.');

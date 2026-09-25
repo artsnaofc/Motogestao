@@ -5890,75 +5890,211 @@ export function Dashboard() {
                 </div>
               </div>
               
-              {/* Saídas */}
-              <div className="space-y-4">
-                <h3 className="font-bold text-xs uppercase text-rose-500 flex items-center border-b border-rose-500/10 pb-2">
-                  <TrendingDown className="w-4 h-4 mr-1.5 shrink-0" /> Saídas / Despesas ({formatCurrency((Object.values(expensesByCategory) as number[]).reduce((a, b) => a + b, 0))})
+              {/* Saídas Separadas por Operacional e Pessoal */}
+              <div className="space-y-5">
+                <h3 className="font-bold text-xs uppercase text-rose-500 flex items-center justify-between border-b border-rose-500/10 pb-2">
+                  <span className="flex items-center">
+                    <TrendingDown className="w-4 h-4 mr-1.5 shrink-0" /> Saídas / Despesas ({formatCurrency((Object.values(expensesByCategory) as number[]).reduce((a, b) => a + b, 0))})
+                  </span>
                 </h3>
-                <div className="space-y-3">
-                  {(Object.entries(expensesByCategory) as [string, number][])
-                    .sort(([, a], [, b]) => b - a)
-                    .map(([cat, val]) => {
-                      const meta = getCategoryMeta(cat, 'expense', settings);
-                      const IconComponent = meta.icon;
-                      const isOp = opCats.includes(cat);
-                      const totalExpenseSum = (Object.values(expensesByCategory) as number[]).reduce((a, b) => a + b, 0);
-                      const percentage = totalExpenseSum > 0 ? (val / totalExpenseSum) * 100 : 0;
-                      const pastVal = pastExpensesByCategory[cat] || 0;
-                      const totalIncomeSum = (Object.values(incomeByCategory) as number[]).reduce((a, b) => a + b, 0);
-                      const percentageOfBilling = totalIncomeSum > 0 ? (val / totalIncomeSum) * 100 : 0;
- 
-                      return (
-                        <div 
-                          key={cat} 
-                          onClick={() => {
-                            if (cat.includes('Investimentos')) {
-                              navigate('/investments');
-                            } else {
-                              navigate(`/history?category=${encodeURIComponent(cat)}`);
-                            }
-                          }}
-                          className="space-y-1.5 cursor-pointer group"
-                        >
-                          <div className="flex justify-between items-center bg-muted/10 p-2 border border-border/50 rounded-xl group-hover:border-rose-500/30 group-hover:bg-muted/30 transition-all active:scale-[0.99]">
-                            <div className="flex items-center gap-2 overflow-hidden">
-                              <div className={`p-1.5 rounded-lg border ${meta.color} shrink-0`}>
-                                <IconComponent className="w-3.5 h-3.5" />
+
+                {Object.keys(expensesByCategory).length === 0 ? (
+                  <div className="text-xs text-muted-foreground italic py-6 text-center">Nenhuma despesa registrada no período</div>
+                ) : (
+                  (() => {
+                    const allExpenseEntries = Object.entries(expensesByCategory) as [string, number][];
+                    const opEntries = allExpenseEntries
+                      .filter(([cat]) => isPersonalOpCategory(cat))
+                      .sort(([, a], [, b]) => b - a);
+                    const personalEntries = allExpenseEntries
+                      .filter(([cat]) => !isPersonalOpCategory(cat))
+                      .sort(([, a], [, b]) => b - a);
+
+                    const totalExpenseSum = allExpenseEntries.reduce((acc, [, v]) => acc + v, 0);
+                    const totalOpSum = opEntries.reduce((acc, [, v]) => acc + v, 0);
+                    const totalPersonalSum = personalEntries.reduce((acc, [, v]) => acc + v, 0);
+                    const totalIncomeSum = (Object.values(incomeByCategory) as number[]).reduce((a, b) => a + b, 0);
+
+                    const opBillingPct = totalIncomeSum > 0 ? (totalOpSum / totalIncomeSum) * 100 : 0;
+                    const personalBillingPct = totalIncomeSum > 0 ? (totalPersonalSum / totalIncomeSum) * 100 : 0;
+                    const opSharePct = totalExpenseSum > 0 ? (totalOpSum / totalExpenseSum) * 100 : 0;
+                    const personalSharePct = totalExpenseSum > 0 ? (totalPersonalSum / totalExpenseSum) * 100 : 0;
+
+                    return (
+                      <div className="space-y-6">
+                        {/* Sub-bloco: Gastos Operacionais */}
+                        <div className="space-y-3 rounded-2xl border border-amber-500/20 bg-amber-500/[0.03] p-3.5">
+                          <div className="flex items-center justify-between gap-2 border-b border-amber-500/15 pb-2">
+                            <div className="flex items-center gap-1.5">
+                              <div className="p-1 rounded-md bg-amber-500/15 text-amber-500">
+                                <Wrench className="w-3.5 h-3.5 shrink-0" />
                               </div>
-                              <div className="flex flex-col min-w-0">
-                                <span className="text-xs font-bold text-foreground truncate flex items-center gap-1.5 group-hover:text-rose-500 transition-all">
-                                  {cat}
-                                  {isOp && (
-                                    <span className="text-[9px] font-extrabold bg-amber-500/10 text-amber-500 border border-amber-500/20 px-1 py-0.2 rounded-sm uppercase tracking-wider shrink-0 scale-95">Op</span>
-                                  )}
-                                  {cat === 'Aporte Reserva' && (
-                                    <span className="text-[9px] font-extrabold bg-pink-500/10 text-pink-500 border border-pink-500/20 px-1 py-0.2 rounded-sm uppercase tracking-wider shrink-0 scale-95">RES</span>
-                                  )}
-                                </span>
-                                {globalPeriod !== 'all' && renderCategoryTrend(val, pastVal, true)}
-                              </div>
+                              <span className="text-[11px] font-extrabold uppercase tracking-wider text-amber-500">
+                                Gastos Operacionais
+                              </span>
+                              <span className="text-[10px] font-bold text-muted-foreground bg-muted/40 px-1.5 py-0.5 rounded-md">
+                                {opSharePct.toFixed(0)}% das saídas
+                              </span>
                             </div>
-                            <div className="text-right shrink-0 flex flex-col items-end">
-                              <span className="font-extrabold text-xs text-rose-500 font-mono">{formatCurrency(val)}</span>
-                              <span className="text-[10px] text-muted-foreground font-medium font-mono">
-                                {percentageOfBilling.toFixed(1)}% do fat.
+                            <div className="text-right">
+                              <span className="text-xs font-black text-amber-500 font-mono block">
+                                {formatCurrency(totalOpSum)}
+                              </span>
+                              <span className="text-[9px] text-muted-foreground font-mono">
+                                {opBillingPct.toFixed(1)}% do fat.
                               </span>
                             </div>
                           </div>
-                          {/* Rich horizontal subtle progress indicator */}
-                          <div className="w-full bg-muted h-1 rounded-full overflow-hidden px-1">
-                            <div 
-                              className={`h-full rounded-full transition-all ${cat === 'Aporte Reserva' ? 'bg-pink-500' : (isOp ? 'bg-amber-500' : 'bg-rose-500')}`} 
-                              style={{ width: `${percentage}%` }}
-                            />
-                          </div>
+
+                          {opEntries.length === 0 ? (
+                            <div className="text-xs text-muted-foreground italic py-3 text-center">
+                              Nenhum gasto operacional no período
+                            </div>
+                          ) : (
+                            <div className="space-y-3">
+                              {opEntries.map(([cat, val]) => {
+                                const meta = getCategoryMeta(cat, 'expense', settings);
+                                const IconComponent = meta.icon;
+                                const percentageOfGroup = totalOpSum > 0 ? (val / totalOpSum) * 100 : 0;
+                                const pastVal = pastExpensesByCategory[cat] || 0;
+                                const percentageOfBilling = totalIncomeSum > 0 ? (val / totalIncomeSum) * 100 : 0;
+
+                                return (
+                                  <div
+                                    key={cat}
+                                    onClick={() => {
+                                      if (cat.includes('Investimentos')) {
+                                        navigate('/investments');
+                                      } else {
+                                        navigate(`/history?category=${encodeURIComponent(cat)}`);
+                                      }
+                                    }}
+                                    className="space-y-1.5 cursor-pointer group"
+                                  >
+                                    <div className="flex justify-between items-center bg-card/70 p-2 border border-border/50 rounded-xl group-hover:border-amber-500/40 group-hover:bg-muted/30 transition-all active:scale-[0.99]">
+                                      <div className="flex items-center gap-2 overflow-hidden">
+                                        <div className={`p-1.5 rounded-lg border ${meta.color} shrink-0`}>
+                                          <IconComponent className="w-3.5 h-3.5" />
+                                        </div>
+                                        <div className="flex flex-col min-w-0">
+                                          <span className="text-xs font-bold text-foreground truncate flex items-center gap-1.5 group-hover:text-amber-500 transition-all">
+                                            {cat}
+                                            <span className="text-[9px] font-extrabold bg-amber-500/10 text-amber-500 border border-amber-500/20 px-1 py-0.2 rounded-sm uppercase tracking-wider shrink-0 scale-95">
+                                              Op
+                                            </span>
+                                          </span>
+                                          {globalPeriod !== 'all' && renderCategoryTrend(val, pastVal, true)}
+                                        </div>
+                                      </div>
+                                      <div className="text-right shrink-0 flex flex-col items-end">
+                                        <span className="font-extrabold text-xs text-amber-500 font-mono">{formatCurrency(val)}</span>
+                                        <span className="text-[10px] text-muted-foreground font-medium font-mono">
+                                          {percentageOfBilling.toFixed(1)}% do fat.
+                                        </span>
+                                      </div>
+                                    </div>
+                                    <div className="w-full bg-muted h-1 rounded-full overflow-hidden px-1">
+                                      <div
+                                        className="h-full rounded-full transition-all bg-amber-500"
+                                        style={{ width: `${percentageOfGroup}%` }}
+                                      />
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
                         </div>
-                      );
-                    })}
-                  {Object.keys(expensesByCategory).length === 0 && (
-                     <div className="text-xs text-muted-foreground italic py-6 text-center">Nenhuma despesa registrada no período</div>
-                  )}
-                </div>
+
+                        {/* Sub-bloco: Gastos Pessoais */}
+                        <div className="space-y-3 rounded-2xl border border-rose-500/20 bg-rose-500/[0.03] p-3.5">
+                          <div className="flex items-center justify-between gap-2 border-b border-rose-500/15 pb-2">
+                            <div className="flex items-center gap-1.5">
+                              <div className="p-1 rounded-md bg-rose-500/15 text-rose-500">
+                                <User className="w-3.5 h-3.5 shrink-0" />
+                              </div>
+                              <span className="text-[11px] font-extrabold uppercase tracking-wider text-rose-500">
+                                Gastos Pessoais
+                              </span>
+                              <span className="text-[10px] font-bold text-muted-foreground bg-muted/40 px-1.5 py-0.5 rounded-md">
+                                {personalSharePct.toFixed(0)}% das saídas
+                              </span>
+                            </div>
+                            <div className="text-right">
+                              <span className="text-xs font-black text-rose-500 font-mono block">
+                                {formatCurrency(totalPersonalSum)}
+                              </span>
+                              <span className="text-[9px] text-muted-foreground font-mono">
+                                {personalBillingPct.toFixed(1)}% do fat.
+                              </span>
+                            </div>
+                          </div>
+
+                          {personalEntries.length === 0 ? (
+                            <div className="text-xs text-muted-foreground italic py-3 text-center">
+                              Nenhum gasto pessoal no período
+                            </div>
+                          ) : (
+                            <div className="space-y-3">
+                              {personalEntries.map(([cat, val]) => {
+                                const meta = getCategoryMeta(cat, 'expense', settings);
+                                const IconComponent = meta.icon;
+                                const percentageOfGroup = totalPersonalSum > 0 ? (val / totalPersonalSum) * 100 : 0;
+                                const pastVal = pastExpensesByCategory[cat] || 0;
+                                const percentageOfBilling = totalIncomeSum > 0 ? (val / totalIncomeSum) * 100 : 0;
+
+                                return (
+                                  <div
+                                    key={cat}
+                                    onClick={() => {
+                                      if (cat.includes('Investimentos')) {
+                                        navigate('/investments');
+                                      } else {
+                                        navigate(`/history?category=${encodeURIComponent(cat)}`);
+                                      }
+                                    }}
+                                    className="space-y-1.5 cursor-pointer group"
+                                  >
+                                    <div className="flex justify-between items-center bg-card/70 p-2 border border-border/50 rounded-xl group-hover:border-rose-500/40 group-hover:bg-muted/30 transition-all active:scale-[0.99]">
+                                      <div className="flex items-center gap-2 overflow-hidden">
+                                        <div className={`p-1.5 rounded-lg border ${meta.color} shrink-0`}>
+                                          <IconComponent className="w-3.5 h-3.5" />
+                                        </div>
+                                        <div className="flex flex-col min-w-0">
+                                          <span className="text-xs font-bold text-foreground truncate flex items-center gap-1.5 group-hover:text-rose-500 transition-all">
+                                            {cat}
+                                            {cat === 'Aporte Reserva' && (
+                                              <span className="text-[9px] font-extrabold bg-pink-500/10 text-pink-500 border border-pink-500/20 px-1 py-0.2 rounded-sm uppercase tracking-wider shrink-0 scale-95">
+                                                RES
+                                              </span>
+                                            )}
+                                          </span>
+                                          {globalPeriod !== 'all' && renderCategoryTrend(val, pastVal, true)}
+                                        </div>
+                                      </div>
+                                      <div className="text-right shrink-0 flex flex-col items-end">
+                                        <span className="font-extrabold text-xs text-rose-500 font-mono">{formatCurrency(val)}</span>
+                                        <span className="text-[10px] text-muted-foreground font-medium font-mono">
+                                          {percentageOfBilling.toFixed(1)}% do fat.
+                                        </span>
+                                      </div>
+                                    </div>
+                                    <div className="w-full bg-muted h-1 rounded-full overflow-hidden px-1">
+                                      <div
+                                        className={`h-full rounded-full transition-all ${cat === 'Aporte Reserva' ? 'bg-pink-500' : 'bg-rose-500'}`}
+                                        style={{ width: `${percentageOfGroup}%` }}
+                                      />
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })()
+                )}
               </div>
             </div>
           </CardContent>

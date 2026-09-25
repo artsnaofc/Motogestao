@@ -145,57 +145,54 @@ export function getFriendlyDeviceName(): string {
 }
 
 /**
- * Check if Biometrics is registered and active on THIS specific physical browser/device.
- * Guarantees zero cross-device conflict between mobile (e.g. iPhone) and PC/Desktop.
+ * Check if Biometrics is registered and active on THIS specific browser/device.
  */
 export function isBiometricsConfiguredOnDevice(userId?: string): boolean {
   if (typeof window === 'undefined') return false;
 
-  const effectiveUserId = userId && userId !== 'undefined' && userId !== 'current_user'
+  const effectiveUserId = userId && userId !== 'undefined' && userId !== 'current_user' && userId !== 'local_user'
     ? userId
     : localStorage.getItem('financas_pro_last_bio_user') || getSyncEffectiveUserId();
 
-  if (!effectiveUserId) return false;
+  // 1. Check user-specific key
+  if (effectiveUserId) {
+    const raw = localStorage.getItem(`${STORAGE_PREFIX}${effectiveUserId}`);
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw);
+        if (parsed && parsed.enabled) return true;
+      } catch {}
+    }
+  }
 
-  const raw = localStorage.getItem(`${STORAGE_PREFIX}${effectiveUserId}`);
-  if (!raw) return false;
+  // 2. Check global biometric key
+  const globalRaw = localStorage.getItem(GLOBAL_BIO_KEY);
+  if (globalRaw) {
+    try {
+      const parsedGlobal = JSON.parse(globalRaw);
+      if (parsedGlobal && parsedGlobal.enabled) return true;
+    } catch {}
+  }
 
+  // 3. Scan all financas_pro_bio_* keys in localStorage
   try {
-    const parsed = JSON.parse(raw);
-    if (!parsed || !parsed.enabled || !parsed.credentialId) return false;
-
-    // Cross-device protection:
-    // If credential was created on mobile (e.g. iPhone) and we are currently on Desktop PC (e.g. Windows/Mac/Linux),
-    // or if deviceId doesn't match:
-    const currentDevice = getFriendlyDeviceName();
-    if (parsed.deviceName && parsed.deviceName !== currentDevice) {
-      const isMobileCredential = /iPhone|iPad|Android/i.test(parsed.deviceName);
-      const isDesktopCurrent = /Windows|Mac|Linux|Navegador/i.test(currentDevice);
-      if (isMobileCredential && isDesktopCurrent) {
-        // Automatically prune the cross-polluted mobile credential from desktop localStorage!
-        console.info(`[Biometrics] Credencial de ${parsed.deviceName} detectada no ${currentDevice}. Limpando resíduo de sincronização.`);
-        localStorage.removeItem(`${STORAGE_PREFIX}${effectiveUserId}`);
-        localStorage.removeItem(`${BIO_VAULT_KEY}_${effectiveUserId}`);
-        localStorage.removeItem(GLOBAL_BIO_KEY);
-        return false;
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith(STORAGE_PREFIX)) {
+        const val = localStorage.getItem(k);
+        if (val) {
+          const parsed = JSON.parse(val);
+          if (parsed && parsed.enabled) return true;
+        }
       }
     }
+  } catch {}
 
-    // Check deviceId if present
-    const localDeviceId = localStorage.getItem('financas_pro_device_id');
-    if (parsed.deviceId && localDeviceId && parsed.deviceId !== localDeviceId) {
-      return false;
-    }
-
-    return true;
-  } catch {
-    return false;
-  }
+  return false;
 }
 
 /**
  * Get biometric settings for a given user on THIS physical device
- * Guarantees resilient retrieval and avoids foreign device pollution
  */
 export function getBiometricSettings(userId?: string): BiometricSettings {
   const defaultSettings: BiometricSettings = {
@@ -206,28 +203,51 @@ export function getBiometricSettings(userId?: string): BiometricSettings {
 
   if (typeof window === 'undefined') return defaultSettings;
 
-  const effectiveUserId = userId && userId !== 'undefined' && userId !== 'current_user'
+  const effectiveUserId = userId && userId !== 'undefined' && userId !== 'current_user' && userId !== 'local_user'
     ? userId
     : localStorage.getItem('financas_pro_last_bio_user') || getSyncEffectiveUserId();
 
-  if (!effectiveUserId) return defaultSettings;
-
-  // Crucial: Only return enabled if THIS physical device is enrolled!
-  if (!isBiometricsConfiguredOnDevice(effectiveUserId)) {
-    return defaultSettings;
+  // Try user-specific storage first
+  if (effectiveUserId) {
+    try {
+      const rawUser = localStorage.getItem(`${STORAGE_PREFIX}${effectiveUserId}`);
+      if (rawUser) {
+        const parsed = JSON.parse(rawUser);
+        if (parsed && typeof parsed === 'object') {
+          return { ...defaultSettings, ...parsed };
+        }
+      }
+    } catch (err) {
+      console.warn('[Biometrics] Falha ao carregar configurações biométricas:', err);
+    }
   }
 
+  // Fallback to global bio key
   try {
-    const rawUser = localStorage.getItem(`${STORAGE_PREFIX}${effectiveUserId}`);
-    if (rawUser) {
-      const parsed = JSON.parse(rawUser);
-      if (parsed && typeof parsed === 'object') {
+    const rawGlobal = localStorage.getItem(GLOBAL_BIO_KEY);
+    if (rawGlobal) {
+      const parsed = JSON.parse(rawGlobal);
+      if (parsed && typeof parsed === 'object' && parsed.enabled) {
         return { ...defaultSettings, ...parsed };
       }
     }
-  } catch (err) {
-    console.warn('[Biometrics] Falha ao carregar configurações biométricas:', err);
-  }
+  } catch {}
+
+  // Scan fallback
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith(STORAGE_PREFIX)) {
+        const val = localStorage.getItem(k);
+        if (val) {
+          const parsed = JSON.parse(val);
+          if (parsed && parsed.enabled) {
+            return { ...defaultSettings, ...parsed };
+          }
+        }
+      }
+    }
+  } catch {}
 
   return defaultSettings;
 }
@@ -250,7 +270,7 @@ export function saveBiometricSettings(userId: string, settings: Partial<Biometri
     const serialized = JSON.stringify(updated);
 
     // Save to specific user storage
-    if (userId && userId !== 'undefined') {
+    if (userId && userId !== 'undefined' && userId !== 'current_user' && userId !== 'local_user') {
       localStorage.setItem(`${STORAGE_PREFIX}${userId}`, serialized);
       localStorage.setItem('financas_pro_last_bio_user', userId);
     }
@@ -260,18 +280,20 @@ export function saveBiometricSettings(userId: string, settings: Partial<Biometri
 
     // Async sync to Supabase user_settings in background if authenticated
     if (userId && userId !== 'current_user' && userId !== 'local_user' && userId !== 'undefined') {
+      const devInfo = {
+        device_id: updated.deviceId || localDeviceId,
+        credential_id: updated.credentialId || null,
+        device_name: updated.deviceName || getFriendlyDeviceName(),
+        last_used_at: updated.lastUsedAt || new Date().toISOString(),
+        registered_at: updated.registeredAt || new Date().toISOString(),
+        type: updated.biometricType || 'generic',
+      };
+
       Promise.resolve(
         supabase.from('user_settings').update({
           biometrics_enabled: updated.enabled,
           biometrics_auto_lock_minutes: updated.autoLockMinutes,
-          biometrics_device_info: {
-            device_id: updated.deviceId || localDeviceId,
-            credential_id: updated.credentialId || null,
-            device_name: updated.deviceName || getFriendlyDeviceName(),
-            last_used_at: updated.lastUsedAt || new Date().toISOString(),
-            registered_at: updated.registeredAt || new Date().toISOString(),
-            type: updated.biometricType || 'generic'
-          }
+          biometrics_device_info: devInfo,
         } as any).eq('user_id', userId)
       ).then(({ error }: any) => {
         if (error) {
@@ -285,20 +307,44 @@ export function saveBiometricSettings(userId: string, settings: Partial<Biometri
 }
 
 /**
- * Store a local encrypted/safely stored session vault for biometric unlock
+ * Store a local safely stored session vault for biometric quick unlock
  */
 export function storeBiometricVault(userId: string, email: string, sessionData?: any) {
   try {
+    let access_token = sessionData?.access_token;
+    let refresh_token = sessionData?.refresh_token;
+
+    // If sessionData wasn't passed directly, try getting from localStorage Supabase tokens
+    if (!access_token || !refresh_token) {
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && (k.includes('-auth-token') || k.includes('supabase.auth.token'))) {
+          const raw = localStorage.getItem(k);
+          if (raw) {
+            try {
+              const parsed = JSON.parse(raw);
+              access_token = parsed?.access_token || parsed?.currentSession?.access_token;
+              refresh_token = parsed?.refresh_token || parsed?.currentSession?.refresh_token;
+              if (access_token) break;
+            } catch {}
+          }
+        }
+      }
+    }
+
     const vault = {
       userId,
       email,
       savedAt: new Date().toISOString(),
-      sessionToken: sessionData?.access_token || 'offline_bio_token',
-      refreshToken: sessionData?.refresh_token || 'offline_bio_refresh',
+      sessionToken: access_token || 'offline_bio_token',
+      refreshToken: refresh_token || 'offline_bio_refresh',
     };
     const s = JSON.stringify(vault);
-    localStorage.setItem(`${BIO_VAULT_KEY}_${userId}`, s);
+    if (userId && userId !== 'undefined') {
+      localStorage.setItem(`${BIO_VAULT_KEY}_${userId}`, s);
+    }
     localStorage.setItem(BIO_VAULT_KEY, s);
+    localStorage.setItem('financas_pro_last_bio_user', userId);
   } catch (e) {
     console.warn('[Biometrics] Falha ao gravar cofre de biometria:', e);
   }
@@ -389,11 +435,9 @@ export async function registerBiometrics(
       }
     } catch (webAuthnErr: any) {
       console.warn('[Biometrics] WebAuthn native creation note:', webAuthnErr);
-      // If user cancelled, report
       if (webAuthnErr.name === 'NotAllowedError' && !window.location.href.includes('ais-')) {
         return { success: false, error: 'Acesso biométrico cancelado pelo usuário.' };
       }
-      // Otherwise proceed with device vault fallback so user settings are never lost!
     }
   }
 
@@ -410,6 +454,27 @@ export async function registerBiometrics(
 
   // Store local vault
   storeBiometricVault(user.id, user.email, currentSession);
+  localStorage.setItem('financas_pro_last_bio_user', user.id);
+
+  // Explicit sync to Supabase
+  if (user.id && user.id !== 'undefined' && user.id !== 'current_user' && user.id !== 'local_user') {
+    try {
+      await supabase.from('user_settings').update({
+        biometrics_enabled: true,
+        biometrics_auto_lock_minutes: 0,
+        biometrics_device_info: {
+          device_id: getOrCreateDeviceId(),
+          credential_id: generatedCredId,
+          device_name: deviceName,
+          last_used_at: new Date().toISOString(),
+          registered_at: new Date().toISOString(),
+          type: labelInfo.type,
+        }
+      } as any).eq('user_id', user.id);
+    } catch (e) {
+      console.warn('[Biometrics] Supabase update warning:', e);
+    }
+  }
 
   return { success: true, credentialId: generatedCredId };
 }
@@ -488,15 +553,29 @@ export async function authenticateWithBiometrics(
   });
   recordAppActivity();
 
+  // Try to restore Supabase session if tokens are in vault
+  if (vault?.sessionToken && vault.sessionToken !== 'offline_bio_token' && vault?.refreshToken && vault.refreshToken !== 'offline_bio_refresh') {
+    try {
+      await supabase.auth.setSession({
+        access_token: vault.sessionToken,
+        refresh_token: vault.refreshToken,
+      });
+    } catch (e) {
+      console.warn('[Biometrics] SetSession note:', e);
+    }
+  }
+
   // Restore session
   const effective = await getEffectiveUser();
   if (effective?.id) {
     setCachedUser(effective);
+    localStorage.setItem('financas_pro_last_bio_user', effective.id);
     return { success: true, user: effective };
   }
 
   const restoredUser = { id: resolvedUserId, email: resolvedEmail };
   setCachedUser(restoredUser);
+  localStorage.setItem('financas_pro_last_bio_user', resolvedUserId);
   return { success: true, user: restoredUser };
 }
 
@@ -513,8 +592,12 @@ export async function removeBiometricsFromDevice(userId: string): Promise<void> 
     localStorage.removeItem(BIO_VAULT_KEY);
     localStorage.removeItem('financas_pro_last_bio_user');
 
-    // Safe note: We intentionally do not wipe `biometrics_enabled: false` globally from Supabase
-    // to ensure that other registered devices (e.g. mobile iPhone) keep functioning smoothly.
+    if (userId && userId !== 'undefined' && userId !== 'current_user' && userId !== 'local_user') {
+      await supabase.from('user_settings').update({
+        biometrics_enabled: false,
+        biometrics_device_info: null,
+      } as any).eq('user_id', userId);
+    }
   } catch (e) {
     console.warn('[Biometrics] Erro ao remover biometria deste aparelho:', e);
   }

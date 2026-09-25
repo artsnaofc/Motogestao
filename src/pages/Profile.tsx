@@ -105,7 +105,8 @@ import {
   removeBiometricsFromDevice,
   isPlatformAuthenticatorAvailable,
   isBiometricsConfiguredOnDevice,
-  authenticateWithBiometrics
+  authenticateWithBiometrics,
+  getFriendlyDeviceName
 } from '../lib/biometrics';
 
 interface SettingsSnapshot {
@@ -603,15 +604,15 @@ export function Profile() {
         category_icons: categoryIcons,
         asset_cnpjs: settings.asset_cnpjs || {},
         rebalance_targets: settings.rebalance_targets || {},
-        biometrics_enabled: bioConfigured,
-        biometrics_auto_lock_minutes: bioSettings.autoLockMinutes ?? 0,
-        biometrics_device_info: {
-          credential_id: bioSettings.credentialId || null,
-          device_name: bioSettings.deviceName || 'Este Dispositivo',
+        biometrics_enabled: bioConfigured || Boolean(globalSettings?.biometrics_enabled),
+        biometrics_auto_lock_minutes: bioConfigured ? (bioSettings.autoLockMinutes ?? 0) : (globalSettings?.biometrics_auto_lock_minutes ?? 0),
+        biometrics_device_info: bioConfigured ? {
+          credential_id: bioSettings.credentialId || globalSettings?.biometrics_device_info?.credential_id || null,
+          device_name: bioSettings.deviceName || globalSettings?.biometrics_device_info?.device_name || 'Este Dispositivo',
           last_used_at: new Date().toISOString(),
-          registered_at: bioSettings.registeredAt || new Date().toISOString(),
-          type: bioSettings.biometricType || 'generic',
-        },
+          registered_at: bioSettings.registeredAt || globalSettings?.biometrics_device_info?.registered_at || new Date().toISOString(),
+          type: bioSettings.biometricType || globalSettings?.biometrics_device_info?.type || 'generic',
+        } : (globalSettings?.biometrics_device_info || {}),
         updated_at: new Date().toISOString(),
       };
 
@@ -694,18 +695,33 @@ export function Profile() {
 
       const { data: userData } = await supabase.auth.getUser();
       const uid = userData?.user?.id || globalSettings?.user_id;
-      const conf = Boolean(isBiometricsConfiguredOnDevice(uid));
-      setBioConfigured(conf);
-      if (conf) {
-        const bs = getBiometricSettings(uid);
-        setBioSettings(bs);
-      } else {
-        setBioSettings({ enabled: false, autoLockMinutes: 0 });
+      
+      let conf = Boolean(isBiometricsConfiguredOnDevice(uid));
+      let bs = getBiometricSettings(uid);
+
+      // If local device didn't have it in user key, but Supabase globalSettings has biometrics_enabled
+      if (!conf && globalSettings?.biometrics_enabled) {
+        conf = true;
+        bs = {
+          enabled: true,
+          autoLockMinutes: globalSettings.biometrics_auto_lock_minutes ?? 0,
+          credentialId: globalSettings.biometrics_device_info?.credential_id || 'bio_synced',
+          deviceName: globalSettings.biometrics_device_info?.device_name || getFriendlyDeviceName(),
+          registeredAt: globalSettings.biometrics_device_info?.registered_at || new Date().toISOString(),
+          lastUsedAt: globalSettings.biometrics_device_info?.last_used_at || new Date().toISOString(),
+          biometricType: globalSettings.biometrics_device_info?.type || label.type,
+        };
+        if (uid) {
+          saveBiometricSettings(uid, bs);
+        }
       }
+
+      setBioConfigured(conf);
+      setBioSettings(bs);
     };
 
     loadBioState();
-  }, [globalSettings?.user_id]);
+  }, [globalSettings?.user_id, globalSettings?.biometrics_enabled]);
 
   const handleToggleBiometrics = async () => {
     if (enrollingBio) return;
