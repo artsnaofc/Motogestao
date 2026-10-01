@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useCallback } from 'react';
+import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { motion } from 'motion/react';
 import { cacheManager } from '../lib/cacheManager';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -82,7 +82,10 @@ import {
   CalendarRange,
   Activity,
   LogOut,
-  RotateCw
+  RotateCw,
+  RotateCcw,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
@@ -122,9 +125,11 @@ import {
   startOfMonth,
   endOfMonth,
   subMonths,
+  addMonths,
   isWithinInterval,
   format,
   subDays,
+  addDays,
   parseISO,
   eachDayOfInterval,
   isSameMonth,
@@ -135,7 +140,9 @@ import {
   subWeeks,
   startOfYear,
   endOfYear,
-  subYears
+  subYears,
+  addYears,
+  differenceInCalendarDays
 } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
@@ -236,11 +243,12 @@ const getCategoryMeta = (category: string, type: 'income' | 'expense', settings?
 
 export function Dashboard() {
   const navigate = useNavigate();
+  const savedDashboardPrefs = useMemo(() => cacheManager.get<any>('dashboard_preferences_v1') || null, []);
   const [showMonthlyReport, setShowMonthlyReport] = useState(false);
-  const [showEffOpCost, setShowEffOpCost] = useState(true);
-  const [showEffFat, setShowEffFat] = useState(true);
-  const [showEffLucro, setShowEffLucro] = useState(true);
-  const [pizzariaOrFreteTab, setPizzariaOrFreteTab] = useState<'pizzaria' | 'frete'>('pizzaria');
+  const [showEffOpCost, setShowEffOpCost] = useState<boolean>(savedDashboardPrefs?.showEffOpCost ?? true);
+  const [showEffFat, setShowEffFat] = useState<boolean>(savedDashboardPrefs?.showEffFat ?? true);
+  const [showEffLucro, setShowEffLucro] = useState<boolean>(savedDashboardPrefs?.showEffLucro ?? true);
+  const [pizzariaOrFreteTab, setPizzariaOrFreteTab] = useState<'pizzaria' | 'frete'>(savedDashboardPrefs?.pizzariaOrFreteTab || 'pizzaria');
 
   // Customizable margin thresholds
   const [marginThresholds, setMarginThresholds] = useState<{ 
@@ -510,19 +518,24 @@ export function Dashboard() {
     return isNegative ? `-R$ ${formattedVal}` : `R$ ${formattedVal}`;
   };
 
-  const [visibleLines, setVisibleLines] = useState<Record<string, boolean>>({
-    Faturamento: true,
-    DespesasTotais: true,
-    LucroLiquido: false,
-    DespesasOperacionais: false,
-    DespesasPessoais: false,
-    LucroPatrimonio: true,
-    FaturamentoAnt: true,
-    DespesasTotaisAnt: true,
-    LucroPatrimonioAnt: true,
-    LucroLiquidoAnt: false,
-    DespesasOperacionaisAnt: false,
-    DespesasPessoaisAnt: false,
+  const [visibleLines, setVisibleLines] = useState<Record<string, boolean>>(() => {
+    if (savedDashboardPrefs?.visibleLines && typeof savedDashboardPrefs.visibleLines === 'object') {
+      return savedDashboardPrefs.visibleLines;
+    }
+    return {
+      Faturamento: true,
+      DespesasTotais: true,
+      LucroLiquido: false,
+      DespesasOperacionais: false,
+      DespesasPessoais: false,
+      LucroPatrimonio: true,
+      FaturamentoAnt: true,
+      DespesasTotaisAnt: true,
+      LucroPatrimonioAnt: true,
+      LucroLiquidoAnt: false,
+      DespesasOperacionaisAnt: false,
+      DespesasPessoaisAnt: false,
+    };
   });
 
   const [selectedIndicator, setSelectedIndicator] = useState<IndicatorType | null>(null);
@@ -541,14 +554,28 @@ export function Dashboard() {
       case 'last90Days': return '90 dias';
       case 'month': return 'Mês Atual';
       case 'lastMonth': return 'Mês Passado';
+      case 'nextMonth': return 'Próximo Mês';
+      case 'next30Days': return 'Próximos 30 dias';
+      case 'future': return 'Futuro Agendado';
       case 'last3Months': return 'Últimos 3 meses';
       case 'thisYear': return 'Este Ano';
       case 'lastYear': return 'Ano Passado';
       case 'custom':
         if (customDateRange?.start && customDateRange?.end) {
           try {
-            const startF = format(parseLocalDate(customDateRange.start), 'dd/MM/yyyy');
-            const endF = format(parseLocalDate(customDateRange.end), 'dd/MM/yyyy');
+            const sDate = parseLocalDate(customDateRange.start);
+            const eDate = parseLocalDate(customDateRange.end);
+            const isFullMonth =
+              sDate.getDate() === 1 &&
+              sDate.getMonth() === eDate.getMonth() &&
+              sDate.getFullYear() === eDate.getFullYear() &&
+              eDate.getDate() === endOfMonth(sDate).getDate();
+            if (isFullMonth) {
+              const mName = format(sDate, "MMMM 'de' yyyy", { locale: ptBR });
+              return mName.charAt(0).toUpperCase() + mName.slice(1);
+            }
+            const startF = format(sDate, 'dd/MM/yyyy');
+            const endF = format(eDate, 'dd/MM/yyyy');
             return `${startF} até ${endF}`;
           } catch {
             return 'Personalizado';
@@ -577,7 +604,12 @@ export function Dashboard() {
   };
 
   // Escala para o gráfico Ganhos vs Despesas proporcional ao período
-  const [gainsExpensesScale, setGainsExpensesScale] = useState<'daily' | 'weekly' | 'monthly'>('weekly');
+  const [gainsExpensesScale, setGainsExpensesScale] = useState<'daily' | 'weekly' | 'monthly'>(() => {
+    if (savedDashboardPrefs?.gainsExpensesScale) {
+      return savedDashboardPrefs.gainsExpensesScale;
+    }
+    return 'weekly';
+  });
 
   const availableGainsExpensesScales = useMemo((): ('daily' | 'weekly' | 'monthly')[] => {
     if (globalPeriod === 'thisYear' || globalPeriod === 'lastYear' || globalPeriod === 'all') {
@@ -590,11 +622,12 @@ export function Dashboard() {
     return ['daily', 'weekly'];
   }, [globalPeriod]);
 
-  // Sincroniza a escala padrão proporcionalmente quando o período é alterado:
-  // 30 dias -> Semanal (padrão solicitado)
-  // 90 dias -> Semanal (padrão com opções diária, semanal e mensal)
-  // Este Ano -> Mensal (padrão com opções semanal e mensal)
+  const prevGlobalPeriodRef = useRef(globalPeriod);
+
+  // Sincroniza a escala padrão proporcionalmente apenas quando o usuário altera o período:
   useEffect(() => {
+    if (prevGlobalPeriodRef.current === globalPeriod) return;
+    prevGlobalPeriodRef.current = globalPeriod;
     if (globalPeriod === 'last30Days') {
       setGainsExpensesScale('weekly');
     } else if (globalPeriod === 'last90Days' || globalPeriod === 'last3Months') {
@@ -605,6 +638,23 @@ export function Dashboard() {
       setGainsExpensesScale('weekly');
     }
   }, [globalPeriod]);
+
+  // Persistência automática das preferências de visualização do Dashboard
+  useEffect(() => {
+    cacheManager.set(
+      'dashboard_preferences_v1',
+      {
+        showEffOpCost,
+        showEffFat,
+        showEffLucro,
+        pizzariaOrFreteTab,
+        visibleLines,
+        gainsExpensesScale,
+      },
+      undefined,
+      'settings'
+    );
+  }, [showEffOpCost, showEffFat, showEffLucro, pizzariaOrFreteTab, visibleLines, gainsExpensesScale]);
 
   const activeGainsExpensesScale = useMemo(() => {
     return availableGainsExpensesScales.includes(gainsExpensesScale)
@@ -712,6 +762,22 @@ export function Dashboard() {
       const pastM = subMonths(nowDate, 1);
       pStart = startOfMonth(pastM);
       pEnd = pastM; // Compare up to same point in previous month
+    } else if (globalPeriod === 'nextMonth') {
+      const nextM = addMonths(nowDate, 1);
+      cStart = startOfMonth(nextM);
+      cEnd = endOfMonth(nextM);
+      pStart = startOfMonth(nowDate);
+      pEnd = endOfMonth(nowDate);
+    } else if (globalPeriod === 'next30Days') {
+      cStart = startOfDay(nowDate);
+      cEnd = endOfDay(addDays(nowDate, 30));
+      pStart = startOfDay(subDays(nowDate, 30));
+      pEnd = endOfDay(nowDate);
+    } else if (globalPeriod === 'future') {
+      cStart = startOfDay(addDays(nowDate, 1));
+      cEnd = endOfYear(addYears(nowDate, 5));
+      pStart = startOfMonth(nowDate);
+      pEnd = endOfMonth(nowDate);
     } else if (globalPeriod === 'last3Months') {
       cStart = startOfDay(subMonths(nowDate, 3));
       cEnd = endOfDay(nowDate);
@@ -736,9 +802,20 @@ export function Dashboard() {
         if (!isNaN(parsedStart.getTime()) && !isNaN(parsedEnd.getTime())) {
           cStart = startOfDay(parsedStart);
           cEnd = endOfDay(parsedEnd);
-          const duration = cEnd.getTime() - cStart.getTime();
-          pEnd = new Date(cStart.getTime() - 1);
-          pStart = new Date(pEnd.getTime() - duration);
+          const isFullSingleMonth =
+            cStart.getDate() === 1 &&
+            cStart.getMonth() === cEnd.getMonth() &&
+            cStart.getFullYear() === cEnd.getFullYear() &&
+            cEnd.getDate() === endOfMonth(cStart).getDate();
+          if (isFullSingleMonth) {
+            const prevM = subMonths(cStart, 1);
+            pStart = startOfMonth(prevM);
+            pEnd = endOfMonth(prevM);
+          } else {
+            const duration = cEnd.getTime() - cStart.getTime();
+            pEnd = new Date(cStart.getTime() - 1);
+            pStart = new Date(pEnd.getTime() - duration);
+          }
         }
       } catch {
         // Fallback already prefilled
@@ -767,6 +844,75 @@ export function Dashboard() {
   }, [globalPeriod, customDateRange]);
 
   const now = useMemo(() => new Date(), []);
+
+  const handleStepDashboardPeriod = useCallback((direction: -1 | 1) => {
+    const nowDate = new Date();
+    const isSingleMonthCustom =
+      globalPeriod === 'custom' &&
+      customDateRange?.start &&
+      customDateRange?.end &&
+      (() => {
+        const s = parseLocalDate(customDateRange.start);
+        const e = parseLocalDate(customDateRange.end);
+        return (
+          s.getDate() === 1 &&
+          s.getMonth() === e.getMonth() &&
+          s.getFullYear() === e.getFullYear() &&
+          e.getDate() === endOfMonth(s).getDate()
+        );
+      })();
+
+    if (globalPeriod === 'month' || globalPeriod === 'lastMonth' || globalPeriod === 'nextMonth' || isSingleMonthCustom) {
+      const targetMonth = addMonths(currentStart, direction);
+      const isCurrM = targetMonth.getMonth() === nowDate.getMonth() && targetMonth.getFullYear() === nowDate.getFullYear();
+      const prevM = subMonths(nowDate, 1);
+      const isLastM = targetMonth.getMonth() === prevM.getMonth() && targetMonth.getFullYear() === prevM.getFullYear();
+      const nextM = addMonths(nowDate, 1);
+      const isNextM = targetMonth.getMonth() === nextM.getMonth() && targetMonth.getFullYear() === nextM.getFullYear();
+
+      if (isCurrM) {
+        setGlobalPeriod('month');
+      } else if (isLastM) {
+        setGlobalPeriod('lastMonth');
+      } else if (isNextM) {
+        setGlobalPeriod('nextMonth');
+      } else {
+        setCustomDateRange({
+          start: format(startOfMonth(targetMonth), 'yyyy-MM-dd'),
+          end: format(endOfMonth(targetMonth), 'yyyy-MM-dd'),
+        });
+        setGlobalPeriod('custom');
+      }
+      return;
+    }
+
+    if (globalPeriod === 'thisYear' || globalPeriod === 'lastYear') {
+      const targetYear = addYears(currentStart, direction);
+      const isCurrY = targetYear.getFullYear() === nowDate.getFullYear();
+      const isLastY = targetYear.getFullYear() === nowDate.getFullYear() - 1;
+      if (isCurrY) {
+        setGlobalPeriod('thisYear');
+      } else if (isLastY) {
+        setGlobalPeriod('lastYear');
+      } else {
+        setCustomDateRange({
+          start: format(startOfYear(targetYear), 'yyyy-MM-dd'),
+          end: format(endOfYear(targetYear), 'yyyy-MM-dd'),
+        });
+        setGlobalPeriod('custom');
+      }
+      return;
+    }
+
+    const daysSpan = Math.max(1, differenceInCalendarDays(currentEnd, currentStart) + 1);
+    const nextStart = addDays(currentStart, direction * daysSpan);
+    const nextEnd = addDays(currentEnd, direction * daysSpan);
+    setCustomDateRange({
+      start: format(nextStart, 'yyyy-MM-dd'),
+      end: format(nextEnd, 'yyyy-MM-dd'),
+    });
+    setGlobalPeriod('custom');
+  }, [globalPeriod, customDateRange, currentStart, currentEnd, setGlobalPeriod, setCustomDateRange]);
 
   // Create virtual transaction objects for reserve transactions (aporte, rendimento, utilizacao)
   const reserveAportesAsTxs = useMemo(() => {
@@ -3071,90 +3217,37 @@ export function Dashboard() {
             Analise seu faturamento, metas financeiras e rentabilidade por quilômetro.
           </p>
         </div>
-        <div className="flex flex-col sm:items-end gap-2.5 w-full sm:w-auto shrink-0 justify-end">
-          <div className="flex items-center justify-between gap-2 w-full sm:w-auto">
-            <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="icon"
-                onClick={() => setHideValues(!hideValues)}
-                className="rounded-full h-9 w-9 shrink-0 bg-muted/20 border-border/50 hover:bg-muted/40 text-muted-foreground hover:text-foreground active:scale-95 transition-all"
-                title={hideValues ? "Mostrar valores" : "Ocultar valores"}
-              >
-                {hideValues ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setShowMonthlyReport(true)}
-                className="rounded-full h-9 px-3.5 shrink-0 bg-muted/20 border-border/50 hover:bg-muted/40 font-bold text-xs active:scale-95 transition-all"
-              >
-                <BarChart className="w-3.5 h-3.5 mr-1.5 text-primary" />
-                Relatório
-              </Button>
-            </div>
+        <div className="flex items-center justify-between sm:justify-end gap-2 w-full sm:w-auto shrink-0">
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={() => setHideValues(!hideValues)}
+              className="rounded-full h-9 w-9 shrink-0 bg-muted/20 border-border/50 hover:bg-muted/40 text-muted-foreground hover:text-foreground active:scale-95 transition-all"
+              title={hideValues ? "Mostrar valores" : "Ocultar valores"}
+            >
+              {hideValues ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+            </Button>
             <Button
               variant="outline"
               size="sm"
-              onClick={handleLogout}
-              className="rounded-full h-9 px-3 shrink-0 bg-rose-500/10 border-rose-500/30 text-rose-500 hover:bg-rose-500/20 font-bold text-xs active:scale-95 transition-all"
-              title="Sair da Conta (Logout Temporário)"
+              onClick={() => setShowMonthlyReport(true)}
+              className="rounded-full h-9 px-3.5 shrink-0 bg-muted/20 border-border/50 hover:bg-muted/40 font-bold text-xs active:scale-95 transition-all"
             >
-              <LogOut className="w-3.5 h-3.5 mr-1.5" />
-              Sair
+              <BarChart className="w-3.5 h-3.5 mr-1.5 text-primary" />
+              Relatório
             </Button>
           </div>
-          <div className="flex overflow-x-auto scrollbar-none gap-1 p-1 bg-muted/30 border border-border/40 rounded-full w-full sm:w-auto max-w-full">
-            {[
-              { id: 'last30Days', label: '30 dias' },
-              { id: 'last90Days', label: '90 dias' },
-              { id: 'month', label: 'Mês Atual' },
-              { id: 'lastMonth', label: 'Mês Passado' },
-              { id: 'thisYear', label: 'Este Ano' },
-              { id: 'lastYear', label: 'Ano Passado' },
-              { id: 'custom', label: 'Personalizado' }
-            ].map((period) => {
-              const isSelected = globalPeriod === period.id;
-              return (
-                <button
-                  key={period.id}
-                  type="button"
-                  onClick={() => setGlobalPeriod(period.id)}
-                  className="relative px-3 py-1 text-xs font-bold rounded-full transition-all whitespace-nowrap focus:outline-none text-center flex-1 sm:flex-initial active:scale-95"
-                  style={{ WebkitTapHighlightColor: 'transparent' }}
-                >
-                  {isSelected && (
-                    <motion.span
-                      layoutId="dashboard-active-period"
-                      className="absolute inset-0 bg-background border border-border/60 shadow-xs rounded-full"
-                      transition={{ type: 'spring', stiffness: 380, damping: 28 }}
-                    />
-                  )}
-                  <span className={`relative z-10 transition-colors duration-200 ${isSelected ? 'text-foreground font-black' : 'text-muted-foreground hover:text-foreground'}`}>
-                    {period.label}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-          {globalPeriod === 'custom' && (
-            <div className="flex items-center gap-2 justify-end animate-in fade-in slide-in-from-top-2 mx-1 mt-0.5">
-              <span className="text-muted-foreground text-xs font-medium">Período:</span>
-              <input
-                type="date"
-                className="bg-background border border-border/60 rounded-lg px-2.5 py-1 text-xs text-foreground focus:ring-1 focus:ring-primary outline-none max-w-[130px]"
-                value={customDateRange?.start || ''}
-                onChange={(e) => setCustomDateRange({ start: e.target.value, end: customDateRange?.end || getTodayLocalDateStr() })}
-              />
-              <span className="text-muted-foreground text-xs">até</span>
-              <input
-                type="date"
-                className="bg-background border border-border/60 rounded-lg px-2.5 py-1 text-xs text-foreground focus:ring-1 focus:ring-primary outline-none max-w-[130px]"
-                value={customDateRange?.end || ''}
-                onChange={(e) => setCustomDateRange({ start: customDateRange?.start || getTodayLocalDateStr(), end: e.target.value })}
-              />
-            </div>
-          )}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleLogout}
+            className="rounded-full h-9 px-3 shrink-0 bg-rose-500/10 border-rose-500/30 text-rose-500 hover:bg-rose-500/20 font-bold text-xs active:scale-95 transition-all"
+            title="Sair da Conta (Logout Temporário)"
+          >
+            <LogOut className="w-3.5 h-3.5 mr-1.5" />
+            Sair
+          </Button>
         </div>
       </header>
 
@@ -3489,6 +3582,38 @@ export function Dashboard() {
         formatCurrency={formatCurrency}
       />
 
+      {/* Monthly Trend (Evolução Mensal) */}
+      <Card className="border border-border/80 shadow-xs rounded-2xl overflow-hidden">
+        <CardHeader className="pb-2">
+          <div className="flex items-center gap-2">
+            <div className="w-2.5 h-2.5 rounded-full bg-blue-500 shrink-0" />
+            <CardTitle className="text-xs sm:text-sm font-extrabold uppercase tracking-wider text-muted-foreground">
+              Evolução Mensal
+            </CardTitle>
+          </div>
+          <CardDescription className="text-xs">Faturamento bruto, gasto total e lucro líquido nos últimos 6 meses.</CardDescription>
+        </CardHeader>
+        <CardContent className="h-[360px] w-full pt-4">
+          <ResponsiveContainer width="100%" height={340}>
+            <LineChart data={monthlyTrend} margin={{ top: 15, right: 15, left: -15, bottom: 15 }}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#27272a" />
+              <XAxis dataKey="month" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#71717a', fontWeight: 'bold' }} />
+              <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#71717a', fontWeight: 'bold' }} tickFormatter={(val) => `R$ ${Math.round(val).toLocaleString('pt-BR')}`} />
+              <RechartsTooltip
+                contentStyle={{ backgroundColor: '#18181b', borderColor: '#27272a', borderRadius: '12px' }}
+                labelStyle={{ fontWeight: 'bold', fontSize: 12, color: '#f4f4f5' }}
+                itemStyle={{ fontSize: 12, fontWeight: 'medium' }}
+                formatter={(value: any, name: any) => [formatCurrency(Number(value)), name]}
+              />
+              <Legend iconSize={8} iconType="circle" verticalAlign="bottom" height={36} wrapperStyle={{ fontSize: 11, paddingTop: 10, fontWeight: 'bold' }} />
+              <Line type="monotone" dataKey="faturamento" name="Faturamento Bruto" stroke="#10b981" strokeWidth={3} dot={{ r: 4, stroke: '#10b981', strokeWidth: 2, fill: '#18181b' }} activeDot={{ r: 6 }} />
+              <Line type="monotone" dataKey="despesas" name="Gasto Total" stroke="#ef4444" strokeWidth={3} dot={{ r: 4, stroke: '#ef4444', strokeWidth: 2, fill: '#18181b' }} activeDot={{ r: 6 }} />
+              <Line type="monotone" dataKey="lucroPatrimonio" name="Lucro Líquido" stroke="#06b6d4" strokeWidth={3} dot={{ r: 4, stroke: '#06b6d4', strokeWidth: 2, fill: '#18181b' }} activeDot={{ r: 6 }} />
+            </LineChart>
+          </ResponsiveContainer>
+        </CardContent>
+      </Card>
+
       {/* Curva de Proventos & Renda Passiva */}
       <PassiveIncomeEvolutionChart
         dividends={dividends}
@@ -3651,24 +3776,120 @@ export function Dashboard() {
         </Card>
       )}
 
-      {/* Date & Period Info */}
-      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-card border border-border/60 px-4 py-3 rounded-2xl shadow-sm">
-        <div className="flex flex-col items-center sm:items-start">
-          <p className="text-sm font-black text-foreground capitalize tracking-tight">
-            {format(now, "EEEE, dd 'de' MMMM 'de' yyyy", { locale: ptBR })}
-          </p>
-          <p className="text-[10px] sm:text-xs text-muted-foreground font-medium mt-0.5">
-            Data atual do sistema
-          </p>
-        </div>
-        <div className="flex flex-col items-center sm:items-end">
-          <p className="text-[10px] font-extrabold uppercase tracking-widest text-muted-foreground mb-1">
-            Período em Visualização
-          </p>
-          <div className="px-2.5 py-1 bg-primary/10 border border-primary/20 text-primary text-xs font-black rounded-lg">
-            {getPeriodLabel()}
+      {/* Barra de Períodos & Navegação (acima dos quadrados informativos de Faturamento, Lucro, Despesas, etc.) */}
+      <div className="bg-card border border-border/70 p-3.5 sm:p-4 rounded-2xl shadow-xs space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pb-2.5 border-b border-border/40">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 rounded-xl bg-primary/10 text-primary shrink-0">
+              <Calendar className="w-4 h-4" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs sm:text-sm font-black text-foreground tracking-tight">
+                  {getPeriodLabel()}
+                </span>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">
+                  {format(currentStart, 'dd/MM/yyyy')} — {format(currentEnd, 'dd/MM/yyyy')}
+                </span>
+              </div>
+              <p className="text-[10.5px] text-muted-foreground font-medium capitalize mt-0.5">
+                Hoje: {format(now, "EEEE, dd 'de' MMMM 'de' yyyy", { locale: ptBR })}
+              </p>
+            </div>
+          </div>
+
+          {/* Controles de Avanço / Retrocesso de Período */}
+          <div className="flex items-center gap-1.5 self-start sm:self-auto">
+            <button
+              type="button"
+              onClick={() => handleStepDashboardPeriod(-1)}
+              className="h-8 px-2.5 rounded-xl border border-border/70 bg-muted/20 hover:bg-muted text-xs font-bold text-foreground flex items-center gap-1 transition-all cursor-pointer"
+              title="Período / Mês Anterior"
+            >
+              <ChevronLeft className="w-4 h-4" />
+              <span className="hidden xs:inline">Anterior</span>
+            </button>
+
+            {globalPeriod !== 'month' && (
+              <button
+                type="button"
+                onClick={() => setGlobalPeriod('month')}
+                className="h-8 px-2.5 rounded-xl border border-primary/30 bg-primary/10 hover:bg-primary/20 text-[11px] font-extrabold text-primary flex items-center gap-1 transition-all cursor-pointer"
+                title="Voltar para o Mês Atual"
+              >
+                <RotateCcw className="w-3 h-3" />
+                <span>Mês Atual</span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={() => handleStepDashboardPeriod(1)}
+              className="h-8 px-2.5 rounded-xl border border-border/70 bg-muted/20 hover:bg-muted text-xs font-bold text-foreground flex items-center gap-1 transition-all cursor-pointer"
+              title="Próximo Período / Mês"
+            >
+              <span className="hidden xs:inline">Próximo</span>
+              <ChevronRight className="w-4 h-4" />
+            </button>
           </div>
         </div>
+
+        {/* Botões Rápidos de Período */}
+        <div className="flex overflow-x-auto scrollbar-none gap-1.5 p-1 bg-muted/25 border border-border/40 rounded-xl w-full max-w-full">
+          {[
+            { id: 'today', label: 'Hoje' },
+            { id: 'last7Days', label: '7 dias' },
+            { id: 'last30Days', label: '30 dias' },
+            { id: 'last90Days', label: '90 dias' },
+            { id: 'lastMonth', label: 'Mês Passado' },
+            { id: 'month', label: 'Mês Atual' },
+            { id: 'nextMonth', label: 'Próx. Mês' },
+            { id: 'thisYear', label: 'Este Ano' },
+            { id: 'lastYear', label: 'Ano Passado' },
+            { id: 'custom', label: 'Personalizado' }
+          ].map((period) => {
+            const isSelected = globalPeriod === period.id;
+            return (
+              <button
+                key={period.id}
+                type="button"
+                onClick={() => setGlobalPeriod(period.id)}
+                className="relative px-3.5 py-1.5 text-xs font-bold rounded-lg transition-all whitespace-nowrap focus:outline-none shrink-0 text-center active:scale-95 cursor-pointer"
+                style={{ WebkitTapHighlightColor: 'transparent' }}
+              >
+                {isSelected && (
+                  <motion.span
+                    layoutId="dashboard-active-period"
+                    className="absolute inset-0 bg-background border border-border/60 shadow-xs rounded-lg"
+                    transition={{ type: 'spring', stiffness: 380, damping: 28 }}
+                  />
+                )}
+                <span className={`relative z-10 transition-colors duration-200 ${isSelected ? 'text-foreground font-black' : 'text-muted-foreground hover:text-foreground'}`}>
+                  {period.label}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        {globalPeriod === 'custom' && (
+          <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-border/40 animate-in fade-in slide-in-from-top-2">
+            <span className="text-muted-foreground text-xs font-bold">Intervalo de Datas:</span>
+            <input
+              type="date"
+              className="bg-background border border-border/60 rounded-xl px-2.5 py-1.5 text-xs font-semibold text-foreground focus:ring-1 focus:ring-primary outline-none"
+              value={customDateRange?.start || ''}
+              onChange={(e) => setCustomDateRange({ start: e.target.value, end: customDateRange?.end || getTodayLocalDateStr() })}
+            />
+            <span className="text-muted-foreground text-xs font-bold">até</span>
+            <input
+              type="date"
+              className="bg-background border border-border/60 rounded-xl px-2.5 py-1.5 text-xs font-semibold text-foreground focus:ring-1 focus:ring-primary outline-none"
+              value={customDateRange?.end || ''}
+              onChange={(e) => setCustomDateRange({ start: customDateRange?.start || getTodayLocalDateStr(), end: e.target.value })}
+            />
+          </div>
+        )}
       </div>
 
 
@@ -4599,38 +4820,6 @@ export function Dashboard() {
               <Line type="monotone" name="Lucro Líquido (Ant)" dataKey="LucroPatrimonioAnt" legendType="none" stroke="#06b6d4" strokeWidth={2} opacity={0.3} strokeDasharray="5 5" dot={false} activeDot={{ r: 4 }} hide={!visibleLines.LucroPatrimonio || !visibleLines.LucroPatrimonioAnt} />
               <Line type="monotone" name="Lucro do Caixa" dataKey="LucroLiquido" stroke="#3b82f6" strokeWidth={2.5} dot={false} activeDot={{ r: 4 }} hide={!visibleLines.LucroLiquido} />
               <Line type="monotone" name="Lucro do Caixa (Ant)" dataKey="LucroLiquidoAnt" legendType="none" stroke="#3b82f6" strokeWidth={2} opacity={0.3} strokeDasharray="5 5" dot={false} activeDot={{ r: 4 }} hide={!visibleLines.LucroLiquido || !visibleLines.LucroLiquidoAnt} />
-            </LineChart>
-          </ResponsiveContainer>
-        </CardContent>
-      </Card>
-
-      {/* Monthly Trend (Evolução Mensal) */}
-      <Card className="border border-border/80 shadow-xs rounded-2xl overflow-hidden">
-        <CardHeader className="pb-2">
-          <div className="flex items-center gap-2">
-            <div className="w-2.5 h-2.5 rounded-full bg-blue-500 shrink-0" />
-            <CardTitle className="text-xs sm:text-sm font-extrabold uppercase tracking-wider text-muted-foreground">
-              Evolução Mensal
-            </CardTitle>
-          </div>
-          <CardDescription className="text-xs">Faturamento bruto, gasto total e lucro líquido nos últimos 6 meses.</CardDescription>
-        </CardHeader>
-        <CardContent className="h-[360px] w-full pt-4">
-          <ResponsiveContainer width="100%" height={340}>
-            <LineChart data={monthlyTrend} margin={{ top: 15, right: 15, left: -15, bottom: 15 }}>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#27272a" />
-              <XAxis dataKey="month" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#71717a', fontWeight: 'bold' }} />
-              <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#71717a', fontWeight: 'bold' }} tickFormatter={(val) => `R$ ${Math.round(val).toLocaleString('pt-BR')}`} />
-              <RechartsTooltip
-                contentStyle={{ backgroundColor: '#18181b', borderColor: '#27272a', borderRadius: '12px' }}
-                labelStyle={{ fontWeight: 'bold', fontSize: 12, color: '#f4f4f5' }}
-                itemStyle={{ fontSize: 12, fontWeight: 'medium' }}
-                formatter={(value: any, name: any) => [formatCurrency(Number(value)), name]}
-              />
-              <Legend iconSize={8} iconType="circle" verticalAlign="bottom" height={36} wrapperStyle={{ fontSize: 11, paddingTop: 10, fontWeight: 'bold' }} />
-              <Line type="monotone" dataKey="faturamento" name="Faturamento Bruto" stroke="#10b981" strokeWidth={3} dot={{ r: 4, stroke: '#10b981', strokeWidth: 2, fill: '#18181b' }} activeDot={{ r: 6 }} />
-              <Line type="monotone" dataKey="despesas" name="Gasto Total" stroke="#ef4444" strokeWidth={3} dot={{ r: 4, stroke: '#ef4444', strokeWidth: 2, fill: '#18181b' }} activeDot={{ r: 6 }} />
-              <Line type="monotone" dataKey="lucroPatrimonio" name="Lucro Líquido" stroke="#06b6d4" strokeWidth={3} dot={{ r: 4, stroke: '#06b6d4', strokeWidth: 2, fill: '#18181b' }} activeDot={{ r: 6 }} />
             </LineChart>
           </ResponsiveContainer>
         </CardContent>

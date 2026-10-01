@@ -1,4 +1,5 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { cacheManager } from '@/lib/cacheManager';
 import { Transaction, UserSettings } from '@/types';
 import { 
   format, 
@@ -146,8 +147,18 @@ export const DailyProductivityHeatmap: React.FC<DailyProductivityHeatmapProps> =
   hideValues,
   formatCurrency
 }) => {
-  const [selectedMetric, setSelectedMetric] = useState<MetricType>('profit');
-  const [selectedRange, setSelectedRange] = useState<'auto' | '3months' | '6months' | 'year'>('auto');
+  const savedPrefs = useMemo(() => cacheManager.get<any>('daily_heatmap_prefs_v1') || null, []);
+  const [selectedMetric, setSelectedMetric] = useState<MetricType>(savedPrefs?.selectedMetric || 'profit');
+  const [selectedRange, setSelectedRange] = useState<'auto' | '3months' | '6months' | 'year'>(savedPrefs?.selectedRange || 'auto');
+
+  useEffect(() => {
+    cacheManager.set(
+      'daily_heatmap_prefs_v1',
+      { selectedMetric, selectedRange },
+      undefined,
+      'settings'
+    );
+  }, [selectedMetric, selectedRange]);
   const [selectedDayDetails, setSelectedDayDetails] = useState<{
     dateStr: string;
     formattedDate: string;

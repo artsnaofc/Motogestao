@@ -42,9 +42,26 @@ export function TransactionsProvider({
   const [transactions, setTransactions] = useState<Transaction[]>(initialTransactions);
   const [settings, setSettings] = useState<UserSettings | null>(initialSettings);
   const [loading, setLoading] = useState(initialLoading);
-  const [globalPeriod, setGlobalPeriod] = useState('last30Days');
+  const [globalPeriod, setGlobalPeriod] = useState<string>(() => {
+    const cached = cacheManager.get<string>('global_period');
+    if (cached && typeof cached === 'string') return cached;
+    try {
+      const stored = localStorage.getItem('financas_pro_raw_global_period');
+      if (stored) return stored;
+    } catch {}
+    return 'last30Days';
+  });
   const [hideValues, setHideValues] = useState(() => cacheManager.get<boolean>('privacyMode') === true);
   const [customDateRange, setCustomDateRange] = useState<{ start: string, end: string } | null>(() => {
+    const cached = cacheManager.get<{ start: string, end: string }>('custom_date_range');
+    if (cached && cached.start && cached.end) return cached;
+    try {
+      const stored = localStorage.getItem('financas_pro_raw_custom_date_range');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed && parsed.start && parsed.end) return parsed;
+      }
+    } catch {}
     try {
       const now = new Date();
       const startStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
@@ -70,6 +87,22 @@ export function TransactionsProvider({
   useEffect(() => {
     cacheManager.set('privacyMode', hideValues, undefined, 'settings');
   }, [hideValues]);
+
+  useEffect(() => {
+    cacheManager.set('global_period', globalPeriod, undefined, 'settings');
+    try {
+      localStorage.setItem('financas_pro_raw_global_period', globalPeriod);
+    } catch {}
+  }, [globalPeriod]);
+
+  useEffect(() => {
+    if (customDateRange && customDateRange.start && customDateRange.end) {
+      cacheManager.set('custom_date_range', customDateRange, undefined, 'settings');
+      try {
+        localStorage.setItem('financas_pro_raw_custom_date_range', JSON.stringify(customDateRange));
+      } catch {}
+    }
+  }, [customDateRange]);
 
   const refreshData = useCallback(async (silent = false) => {
     if (onRefresh) {

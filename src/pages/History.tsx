@@ -5,7 +5,7 @@ import { getEffectiveUserId } from '../lib/authUtils';
 import { motion } from 'motion/react';
 import { supabase } from '../lib/supabase';
 import { Transaction, ReserveTransaction } from '../types';
-import { format, parseISO, startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth, subMonths, isWithinInterval, startOfYear, endOfYear, subYears, subDays, addDays } from 'date-fns';
+import { format, parseISO, startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth, subMonths, addMonths, isWithinInterval, startOfYear, endOfYear, subYears, addYears, subDays, addDays, differenceInCalendarDays } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { 
@@ -35,6 +35,8 @@ import {
   Utensils,
   ChevronDown,
   ChevronUp,
+  ChevronLeft,
+  ChevronRight,
   FileText,
   Percent,
   CheckCircle2,
@@ -62,7 +64,9 @@ import {
   CalendarClock,
   AlertCircle,
   Check,
-  RefreshCw
+  RefreshCw,
+  RotateCcw,
+  Globe
 } from 'lucide-react';
 import { ExecutiveReportModal } from '../components/ExecutiveReportModal';
 import { TransactionDetailView } from '../components/history/TransactionDetailView';
@@ -85,6 +89,15 @@ const HISTORY_FILTERS_KEY = 'motogestao_history_filters_v2';
 
 const loadSavedFilters = () => {
   return cacheManager.get<any>(HISTORY_FILTERS_KEY) || null;
+};
+
+const normalizeSearchText = (str: string | number | undefined | null): string => {
+  if (str === undefined || str === null) return '';
+  return String(str)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
 };
 
 const iconOptions = {
@@ -434,6 +447,7 @@ export function History() {
 
   // Filters
   const [searchTerm, setSearchTerm] = useState(savedFilters?.searchTerm || '');
+  const [searchAllPeriods, setSearchAllPeriods] = useState<boolean>(savedFilters?.searchAllPeriods ?? true);
   const [filterType, setFilterType] = useState(savedFilters?.filterType || 'all');
   const [filterCategory, setFilterCategory] = useState(searchParams.get('category') || savedFilters?.filterCategory || 'all');
   const [filterStatus, setFilterStatus] = useState(savedFilters?.filterStatus || 'all');
@@ -510,6 +524,7 @@ export function History() {
   React.useEffect(() => {
     const filterState = {
       searchTerm,
+      searchAllPeriods,
       filterType,
       filterCategory,
       filterStatus,
@@ -527,7 +542,7 @@ export function History() {
     };
     cacheManager.set(HISTORY_FILTERS_KEY, filterState, undefined, 'settings');
   }, [
-    searchTerm, filterType, filterCategory, filterStatus, filterPaymentStatus, minAmount, maxAmount,
+    searchTerm, searchAllPeriods, filterType, filterCategory, filterStatus, filterPaymentStatus, minAmount, maxAmount,
     sortBy, showAdvanced, includeCash, includeReserves, includeInvestments,
     filterReserveId, filterTicker, activeQuickChip
   ]);
@@ -1499,13 +1514,325 @@ export function History() {
     });
   }, [allTransactions, settings]);
 
+  // Compute active period range and friendly label for Period Navigator
+  const activePeriodRangeInfo = useMemo(() => {
+    const now = new Date();
+    let start: Date | null = null;
+    let end: Date | null = null;
+    let label = 'Últimos 30 dias';
+    let stepUnit: 'month' | 'year' | 'days' | 'none' = 'days';
+
+    if (filterStatus === 'scheduled') {
+      start = startOfDay(addDays(now, 1));
+      end = null;
+      label = 'Todos os Lançamentos Futuros / Agendados';
+      stepUnit = 'none';
+    } else if (filterStatus === 'scheduled_30') {
+      start = startOfDay(addDays(now, 1));
+      end = endOfDay(addDays(now, 30));
+      label = 'Futuros — Próximos 30 dias';
+      stepUnit = 'days';
+    } else if (filterStatus === 'scheduled_90') {
+      start = startOfDay(addDays(now, 1));
+      end = endOfDay(addDays(now, 90));
+      label = 'Futuros — Próximos 90 dias';
+      stepUnit = 'days';
+    } else if (globalPeriod === 'all') {
+      start = null;
+      end = null;
+      label = 'Todo o Histórico (Passado + Futuro)';
+      stepUnit = 'none';
+    } else if (globalPeriod === 'future') {
+      start = startOfDay(addDays(now, 1));
+      end = null;
+      label = 'Todo o Futuro Agendado';
+      stepUnit = 'none';
+    } else if (globalPeriod === 'next30Days') {
+      start = startOfDay(now);
+      end = endOfDay(addDays(now, 30));
+      label = 'Próximos 30 dias (Hoje + Futuro)';
+      stepUnit = 'days';
+    } else if (globalPeriod === 'nextMonth') {
+      const nextM = addMonths(now, 1);
+      start = startOfMonth(nextM);
+      end = endOfMonth(nextM);
+      const mName = format(nextM, "MMMM 'de' yyyy", { locale: ptBR });
+      label = `${mName.charAt(0).toUpperCase() + mName.slice(1)} (Próximo Mês)`;
+      stepUnit = 'month';
+    } else if (globalPeriod === 'today') {
+      start = startOfDay(now);
+      end = endOfDay(now);
+      label = `Hoje (${format(now, 'dd/MM/yyyy')})`;
+      stepUnit = 'days';
+    } else if (globalPeriod === 'yesterday') {
+      const y = subDays(now, 1);
+      start = startOfDay(y);
+      end = endOfDay(y);
+      label = `Ontem (${format(y, 'dd/MM/yyyy')})`;
+      stepUnit = 'days';
+    } else if (globalPeriod === 'last7Days') {
+      start = startOfDay(subDays(now, 6));
+      end = endOfDay(now);
+      label = 'Últimos 7 dias';
+      stepUnit = 'days';
+    } else if (globalPeriod === 'last30Days') {
+      start = startOfDay(subDays(now, 29));
+      end = endOfDay(now);
+      label = 'Últimos 30 dias';
+      stepUnit = 'days';
+    } else if (globalPeriod === 'last90Days') {
+      start = startOfDay(subDays(now, 89));
+      end = endOfDay(now);
+      label = 'Últimos 90 dias';
+      stepUnit = 'days';
+    } else if (globalPeriod === 'week') {
+      start = startOfWeek(now, { weekStartsOn: 0 });
+      end = endOfWeek(now, { weekStartsOn: 0 });
+      label = 'Esta Semana';
+      stepUnit = 'days';
+    } else if (globalPeriod === 'month') {
+      start = startOfMonth(now);
+      end = endOfMonth(now);
+      const mName = format(now, "MMMM 'de' yyyy", { locale: ptBR });
+      label = `${mName.charAt(0).toUpperCase() + mName.slice(1)} (Mês Atual)`;
+      stepUnit = 'month';
+    } else if (globalPeriod === 'lastMonth') {
+      const lastM = subMonths(now, 1);
+      start = startOfMonth(lastM);
+      end = endOfMonth(lastM);
+      const mName = format(lastM, "MMMM 'de' yyyy", { locale: ptBR });
+      label = `${mName.charAt(0).toUpperCase() + mName.slice(1)} (Mês Passado)`;
+      stepUnit = 'month';
+    } else if (globalPeriod === 'last3Months') {
+      start = startOfDay(subMonths(now, 3));
+      end = endOfDay(now);
+      label = 'Últimos 3 Meses';
+      stepUnit = 'days';
+    } else if (globalPeriod === 'thisYear') {
+      start = startOfYear(now);
+      end = endOfYear(now);
+      label = `Ano de ${format(now, 'yyyy')} (Completo)`;
+      stepUnit = 'year';
+    } else if (globalPeriod === 'lastYear') {
+      const lastY = subYears(now, 1);
+      start = startOfYear(lastY);
+      end = endOfYear(lastY);
+      label = `Ano de ${format(lastY, 'yyyy')}`;
+      stepUnit = 'year';
+    } else if (globalPeriod === 'custom' && customDateRange && customDateRange.start && customDateRange.end) {
+      const s = parseLocalDate(customDateRange.start);
+      const e = parseLocalDate(customDateRange.end);
+      start = startOfDay(s);
+      end = endOfDay(e);
+
+      // Detect if custom range is an exact full calendar month
+      const isExactMonth =
+        s.getFullYear() === e.getFullYear() &&
+        s.getMonth() === e.getMonth() &&
+        s.getDate() === 1 &&
+        e.getDate() === endOfMonth(s).getDate();
+
+      // Detect if custom range is an exact full calendar year
+      const isExactYear =
+        s.getFullYear() === e.getFullYear() &&
+        s.getMonth() === 0 &&
+        s.getDate() === 1 &&
+        e.getMonth() === 11 &&
+        e.getDate() === 31;
+
+      if (isExactMonth) {
+        const mName = format(s, "MMMM 'de' yyyy", { locale: ptBR });
+        const isFutMonth = start > endOfMonth(now);
+        label = `${mName.charAt(0).toUpperCase() + mName.slice(1)}${isFutMonth ? ' (Futuro)' : ''}`;
+        stepUnit = 'month';
+      } else if (isExactYear) {
+        label = `Ano de ${format(s, 'yyyy')}`;
+        stepUnit = 'year';
+      } else {
+        label = `${format(s, 'dd/MM/yyyy')} até ${format(e, 'dd/MM/yyyy')}`;
+        stepUnit = 'days';
+      }
+    }
+
+    const rangeSubLabel = start && end
+      ? `${format(start, 'dd/MM/yyyy')} — ${format(end, 'dd/MM/yyyy')}`
+      : start && !end
+        ? `A partir de ${format(start, 'dd/MM/yyyy')} em diante`
+        : 'Todas as datas registradas';
+
+    return { start, end, label, rangeSubLabel, stepUnit };
+  }, [globalPeriod, customDateRange, filterStatus]);
+
+  // Step period backward (-1) or forward (+1)
+  const handleStepPeriod = (direction: -1 | 1) => {
+    const now = new Date();
+    // If filterStatus was locking to future, clear it so manual period navigation takes control cleanly
+    if (filterStatus !== 'all') {
+      setFilterStatus('all');
+    }
+
+    const { start, end, stepUnit } = activePeriodRangeInfo;
+    const baseStart = start || startOfMonth(now);
+    const baseEnd = end || endOfMonth(now);
+
+    if (stepUnit === 'month' || globalPeriod === 'all' || globalPeriod === 'future') {
+      const targetMonth = addMonths(baseStart, direction);
+      const newStart = startOfMonth(targetMonth);
+      const newEnd = endOfMonth(targetMonth);
+
+      // Check if it matches current, last, or next month presets
+      if (newStart.getFullYear() === now.getFullYear() && newStart.getMonth() === now.getMonth()) {
+        setGlobalPeriod('month');
+      } else if (
+        newStart.getFullYear() === subMonths(now, 1).getFullYear() &&
+        newStart.getMonth() === subMonths(now, 1).getMonth()
+      ) {
+        setGlobalPeriod('lastMonth');
+      } else if (
+        newStart.getFullYear() === addMonths(now, 1).getFullYear() &&
+        newStart.getMonth() === addMonths(now, 1).getMonth()
+      ) {
+        setGlobalPeriod('nextMonth');
+      } else {
+        setCustomDateRange({
+          start: format(newStart, 'yyyy-MM-dd'),
+          end: format(newEnd, 'yyyy-MM-dd'),
+        });
+        setGlobalPeriod('custom');
+      }
+    } else if (stepUnit === 'year') {
+      const targetYear = addYears(baseStart, direction);
+      const newStart = startOfYear(targetYear);
+      const newEnd = endOfYear(targetYear);
+      if (newStart.getFullYear() === now.getFullYear()) {
+        setGlobalPeriod('thisYear');
+      } else if (newStart.getFullYear() === subYears(now, 1).getFullYear()) {
+        setGlobalPeriod('lastYear');
+      } else {
+        setCustomDateRange({
+          start: format(newStart, 'yyyy-MM-dd'),
+          end: format(newEnd, 'yyyy-MM-dd'),
+        });
+        setGlobalPeriod('custom');
+      }
+    } else {
+      const spanDays = Math.max(1, differenceInCalendarDays(baseEnd, baseStart) + 1);
+      const newStart = addDays(baseStart, direction * spanDays);
+      const newEnd = addDays(baseEnd, direction * spanDays);
+      setCustomDateRange({
+        start: format(newStart, 'yyyy-MM-dd'),
+        end: format(newEnd, 'yyyy-MM-dd'),
+      });
+      setGlobalPeriod('custom');
+    }
+  };
+
+  // Available months with transaction counts (including future months!) for quick 1-click navigation
+  const availableMonthsTimeline = useMemo(() => {
+    const map = new Map<string, { key: string; year: number; month: number; count: number; isFuture: boolean; isCurrent: boolean }>();
+    const now = new Date();
+    const curYear = now.getFullYear();
+    const curMonth = now.getMonth() + 1;
+    const curKey = `${curYear}-${String(curMonth).padStart(2, '0')}`;
+
+    // Always include last month, current month, and next month even if empty
+    [-1, 0, 1].forEach(offset => {
+      const d = addMonths(now, offset);
+      const y = d.getFullYear();
+      const m = d.getMonth() + 1;
+      const k = `${y}-${String(m).padStart(2, '0')}`;
+      map.set(k, {
+        key: k,
+        year: y,
+        month: m,
+        count: 0,
+        isFuture: k > curKey,
+        isCurrent: k === curKey
+      });
+    });
+
+    allTransactionsAdjusted.forEach(t => {
+      if (!t.date || t.date.length < 7) return;
+      const k = t.date.slice(0, 7);
+      const [yStr, mStr] = k.split('-');
+      const y = Number(yStr);
+      const m = Number(mStr);
+      if (!y || !m) return;
+      const existing = map.get(k);
+      if (existing) {
+        existing.count += 1;
+      } else {
+        map.set(k, {
+          key: k,
+          year: y,
+          month: m,
+          count: 1,
+          isFuture: k > curKey,
+          isCurrent: k === curKey
+        });
+      }
+    });
+
+    return Array.from(map.values()).sort((a, b) => a.key.localeCompare(b.key));
+  }, [allTransactionsAdjusted]);
+
+  const handleSelectMonthFromTimeline = (year: number, month: number) => {
+    const now = new Date();
+    if (filterStatus !== 'all') {
+      setFilterStatus('all');
+    }
+    const targetDate = new Date(year, month - 1, 1, 12, 0, 0);
+    const startStr = format(startOfMonth(targetDate), 'yyyy-MM-dd');
+    const endStr = format(endOfMonth(targetDate), 'yyyy-MM-dd');
+
+    if (year === now.getFullYear() && month - 1 === now.getMonth()) {
+      setGlobalPeriod('month');
+    } else if (
+      year === subMonths(now, 1).getFullYear() &&
+      month - 1 === subMonths(now, 1).getMonth()
+    ) {
+      setGlobalPeriod('lastMonth');
+    } else if (
+      year === addMonths(now, 1).getFullYear() &&
+      month - 1 === addMonths(now, 1).getMonth()
+    ) {
+      setGlobalPeriod('nextMonth');
+    } else {
+      setCustomDateRange({ start: startStr, end: endStr });
+      setGlobalPeriod('custom');
+    }
+  };
+
   const periodFiltered = useMemo(() => {
     const now = new Date();
+    const todayEnd = endOfDay(now);
+    const tomorrowStart = startOfDay(addDays(now, 1));
+
     return allTransactionsAdjusted.filter(t => {
-      if (globalPeriod === 'all') return true;
       const d = parseLocalDate(t.date);
-      // Ajuste para não precisar considerar fuso, mas simplificado para a data do lancamento vs período atual
-      // O add/subMonths baseia-se na data/hora do sistema, é razoável para a comparação.
+
+      // When "Data (Ativo vs Futuro)" is set to a future mode, automatically pull future transactions without needing manual period changes!
+      if (filterStatus === 'scheduled') {
+        return d > todayEnd;
+      }
+      if (filterStatus === 'scheduled_30') {
+        return isWithinInterval(d, { start: tomorrowStart, end: endOfDay(addDays(now, 30)) });
+      }
+      if (filterStatus === 'scheduled_90') {
+        return isWithinInterval(d, { start: tomorrowStart, end: endOfDay(addDays(now, 90)) });
+      }
+
+      if (globalPeriod === 'all') return true;
+      if (globalPeriod === 'future') {
+        return d > todayEnd;
+      }
+      if (globalPeriod === 'next30Days') {
+        return isWithinInterval(d, { start: startOfDay(now), end: endOfDay(addDays(now, 30)) });
+      }
+      if (globalPeriod === 'nextMonth') {
+        const nextM = addMonths(now, 1);
+        return isWithinInterval(d, { start: startOfMonth(nextM), end: endOfMonth(nextM) });
+      }
       if (globalPeriod === 'today') {
         return isWithinInterval(d, { start: startOfDay(now), end: endOfDay(now) });
       } else if (globalPeriod === 'yesterday') {
@@ -1526,7 +1853,7 @@ export function History() {
       } else if (globalPeriod === 'last3Months') {
         return isWithinInterval(d, { start: startOfDay(subMonths(now, 3)), end: endOfDay(now) });
       } else if (globalPeriod === 'thisYear') {
-        return isWithinInterval(d, { start: startOfYear(now), end: endOfDay(now) });
+        return isWithinInterval(d, { start: startOfYear(now), end: endOfYear(now) });
       } else if (globalPeriod === 'lastYear') {
         const lastY = subYears(now, 1);
         return isWithinInterval(d, { start: startOfYear(lastY), end: endOfYear(lastY) });
@@ -1543,7 +1870,7 @@ export function History() {
       }
       return true;
     });
-  }, [allTransactionsAdjusted, globalPeriod, customDateRange]);
+  }, [allTransactionsAdjusted, globalPeriod, customDateRange, filterStatus]);
 
   const summaries = useMemo(() => {
     let patrimonio = settings?.initial_balance || 0;
@@ -2073,13 +2400,13 @@ export function History() {
 
   const uniqueCategories = useMemo(() => {
     const cats = new Set<string>();
-    periodFiltered.forEach(t => {
+    allTransactionsAdjusted.forEach(t => {
       if (t.category) {
         cats.add(t.category);
       }
     });
     return Array.from(cats).sort((a, b) => a.localeCompare(b));
-  }, [periodFiltered]);
+  }, [allTransactionsAdjusted]);
 
   const uniqueTickers = useMemo(() => {
     const tickers = new Set<string>();
@@ -2092,14 +2419,111 @@ export function History() {
     return Array.from(tickers).sort();
   }, [investmentTransactions, dividends]);
 
+  // Multi-field, accent-insensitive & value-aware smart search matcher
+  const matchesSmartTransactionSearch = React.useCallback((t: Transaction, rawQuery: string, opCats: string[], todayStr: string) => {
+    const trimmed = rawQuery.trim();
+    if (!trimmed) return true;
+
+    const amt = Number((t as any).rawAmount !== undefined ? (t as any).rawAmount : t.amount) || 0;
+    const dateObj = parseLocalDate(t.date);
+    const dateBR = format(dateObj, 'dd/MM/yyyy');
+    const dateShortBR = format(dateObj, 'dd/MM');
+    const monthName = format(dateObj, 'MMMM', { locale: ptBR });
+    const weekdayName = format(dateObj, 'EEEE', { locale: ptBR });
+    const isFuture = dateObj > endOfDay(new Date());
+    const isPending = t.payment_status === 'pending' || (t as any).dividendStatus === 'provisioned';
+    const dueDateStr = (t.due_date || t.date || '').split('T')[0];
+    const isOverdue = t.payment_status === 'pending' && dueDateStr < todayStr;
+    const effectiveCat = (t as any).originalCategory || t.category || '';
+    const isOp = t.type === 'expense' && isOperationalCategory(effectiveCat, opCats);
+
+    const statusKeywords = [
+      isFuture ? 'futuro agendado programado' : 'passado efetivado ativo',
+      isPending ? 'pendente a pagar a receber provisionado' : 'pago quitado recebido',
+      isOverdue ? 'vencido atrasado em atraso' : '',
+      t.is_recurring ? 'recorrente parcelado parcela mensal semanal' : '',
+      t.type === 'income' ? 'receita entrada ganho faturamento' : 'despesa saida gasto custo',
+      isOp ? 'operacional' : (t.type === 'expense' ? 'pessoal' : ''),
+      (t as any).isReserveTx ? `reserva cofrinho ${(t as any).reserveName || ''} ${(t as any).reserveTxType || ''}` : '',
+      (t as any).isInvestmentTx ? `investimento ativo ${(t as any).ticker || ''}` : '',
+      (t as any).isDividendTx ? `provento dividendo jscp rendimento ${(t as any).ticker || ''}` : '',
+    ].join(' ');
+
+    const searchableBlob = normalizeSearchText([
+      t.category,
+      (t as any).originalCategory,
+      t.description,
+      (t as any).rawDescription,
+      (t as any).ticker,
+      (t as any).reserveName,
+      t.id,
+      dateBR,
+      dateShortBR,
+      t.date,
+      monthName,
+      weekdayName,
+      amt.toFixed(2),
+      amt.toFixed(2).replace('.', ','),
+      String(Math.round(amt)),
+      statusKeywords
+    ].filter(Boolean).join(' '));
+
+    const tokens = trimmed.split(/\s+/).filter(Boolean);
+
+    return tokens.every(token => {
+      const cleanToken = token.replace(/R\$\s?/gi, '').trim();
+
+      // Range operator: e.g. 50..150 or 50-150
+      const rangeMatch = cleanToken.match(/^(\d+(?:[.,]\d+)?)\s*(?:\.\.|-)\s*(\d+(?:[.,]\d+)?)$/);
+      if (rangeMatch) {
+        const minV = parseFloat(rangeMatch[1].replace(',', '.'));
+        const maxV = parseFloat(rangeMatch[2].replace(',', '.'));
+        if (!isNaN(minV) && !isNaN(maxV)) {
+          return amt >= Math.min(minV, maxV) && amt <= Math.max(minV, maxV);
+        }
+      }
+
+      // Greater/Less/Equal operators: >100, >=100, <50, <=50, =120
+      const cmpMatch = cleanToken.match(/^(>=|<=|>|<|=)\s*(\d+(?:[.,]\d+)?)$/);
+      if (cmpMatch) {
+        const op = cmpMatch[1];
+        const targetV = parseFloat(cmpMatch[2].replace(',', '.'));
+        if (!isNaN(targetV)) {
+          if (op === '>') return amt > targetV;
+          if (op === '>=') return amt >= targetV;
+          if (op === '<') return amt < targetV;
+          if (op === '<=') return amt <= targetV;
+          if (op === '=') return Math.abs(amt - targetV) < 0.01 || Math.floor(amt) === Math.floor(targetV);
+        }
+      }
+
+      const normToken = normalizeSearchText(cleanToken);
+      if (!normToken) return true;
+      return searchableBlob.includes(normToken);
+    });
+  }, []);
+
   const filteredTransactions = useMemo(() => {
     const opCats = settings?.operational_expense_categories || ['Combustível', 'Pedágio', 'Manutenção'];
     
+    const isFutureFilterActive =
+      filterStatus === 'scheduled' ||
+      filterStatus === 'scheduled_30' ||
+      filterStatus === 'scheduled_90';
     const isPendingFilterActive = filterPaymentStatus === 'pending' || filterPaymentStatus === 'overdue';
-    const baseList = isPendingFilterActive ? allTransactionsAdjusted : periodFiltered;
+    const isGlobalSearchActive = searchTerm.trim().length > 0 && searchAllPeriods;
 
-    const todayStr = format(new Date(), 'yyyy-MM-dd');
-    const in30DaysStr = format(addDays(new Date(), 30), 'yyyy-MM-dd');
+    // Bypass past-only period lock when searching all periods, viewing pending/overdue, or viewing scheduled/future!
+    const baseList = (isPendingFilterActive || isFutureFilterActive || isGlobalSearchActive)
+      ? allTransactionsAdjusted
+      : periodFiltered;
+
+    const now = new Date();
+    const todayStr = format(now, 'yyyy-MM-dd');
+    const todayEnd = endOfDay(now);
+    const tomorrowStart = startOfDay(addDays(now, 1));
+    const in30DaysEnd = endOfDay(addDays(now, 30));
+    const in90DaysEnd = endOfDay(addDays(now, 90));
 
     let result = baseList.filter(t => {
       // Data Source Filters
@@ -2123,11 +2547,10 @@ export function History() {
         if (!tk || tk.toUpperCase() !== filterTicker.toUpperCase()) return false;
       }
 
-      // 1. Text Search Filter (Description or Category or ID)
-      const matchesSearch = (t.description?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
-                            t.category.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                            (t.id && t.id.toLowerCase().includes(searchTerm.toLowerCase()));
-      if (!matchesSearch) return false;
+      // 1. Smart Multi-Field Search Filter
+      if (searchTerm.trim() && !matchesSmartTransactionSearch(t, searchTerm, opCats, todayStr)) {
+        return false;
+      }
 
       // 2. Type/Subtype Filter
       const isReserveUse = t.is_reserve_use || t.description?.startsWith('[Reserva]') || ((t as any).isReserveTx === true && (t as any).reserveTxType === 'utilizacao');
@@ -2163,22 +2586,21 @@ export function History() {
       // 5. Status Filter (Confirmed: today/past vs Scheduled: future)
       if (filterStatus !== 'all') {
         const d = parseLocalDate(t.date);
-        const isFuture = d > endOfDay(new Date());
+        const isFuture = d > todayEnd;
         if (filterStatus === 'confirmed' && isFuture) return false;
         if (filterStatus === 'scheduled' && !isFuture) return false;
+        if (filterStatus === 'scheduled_30' && !isWithinInterval(d, { start: tomorrowStart, end: in30DaysEnd })) return false;
+        if (filterStatus === 'scheduled_90' && !isWithinInterval(d, { start: tomorrowStart, end: in90DaysEnd })) return false;
       }
 
       // 6. Payment Status Filter (Pending / Overdue / Paid)
       if (filterPaymentStatus !== 'all') {
-        const isPending = t.payment_status === 'pending';
-        const isPaid = t.payment_status === 'paid' || !t.payment_status;
+        const isPending = t.payment_status === 'pending' || (t as any).dividendStatus === 'provisioned';
+        const isPaid = !isPending && (t.payment_status === 'paid' || !t.payment_status);
         const dueDateStr = (t.due_date || t.date || '').split('T')[0];
-        const isOverdue = isPending && (dueDateStr < todayStr);
+        const isOverdue = t.payment_status === 'pending' && (dueDateStr < todayStr);
 
-        if (filterPaymentStatus === 'pending') {
-          if (!isPending) return false;
-          if (dueDateStr > in30DaysStr) return false;
-        }
+        if (filterPaymentStatus === 'pending' && !isPending) return false;
         if (filterPaymentStatus === 'overdue' && !isOverdue) return false;
         if (filterPaymentStatus === 'paid' && !isPaid) return false;
       }
@@ -2202,7 +2624,33 @@ export function History() {
     }
 
     return result;
-  }, [periodFiltered, allTransactionsAdjusted, searchTerm, filterType, filterCategory, filterStatus, filterPaymentStatus, minAmount, maxAmount, sortBy, settings, includeCash, includeReserves, includeInvestments, filterReserveId, filterTicker]);
+  }, [periodFiltered, allTransactionsAdjusted, searchTerm, searchAllPeriods, matchesSmartTransactionSearch, filterType, filterCategory, filterStatus, filterPaymentStatus, minAmount, maxAmount, sortBy, settings, includeCash, includeReserves, includeInvestments, filterReserveId, filterTicker]);
+
+  // Future / Scheduled summary across all transactions so user always knows what is coming up
+  const futureSummary = useMemo(() => {
+    const now = new Date();
+    const todayEnd = endOfDay(now);
+    let futureCount = 0;
+    let futureIncome = 0;
+    let futureExpense = 0;
+
+    allTransactionsAdjusted.forEach(t => {
+      const d = parseLocalDate(t.date);
+      if (d > todayEnd) {
+        const amt = Number((t as any).rawAmount !== undefined ? (t as any).rawAmount : t.amount) || 0;
+        futureCount++;
+        if (t.type === 'income') futureIncome += amt;
+        else futureExpense += amt;
+      }
+    });
+
+    return {
+      futureCount,
+      futureIncome,
+      futureExpense,
+      futureNet: futureIncome - futureExpense
+    };
+  }, [allTransactionsAdjusted]);
 
   const pendingSummary = useMemo(() => {
     const todayStr = format(new Date(), 'yyyy-MM-dd');
@@ -2408,8 +2856,18 @@ export function History() {
   const filteredTotals = useMemo(() => {
     let income = 0;
     let expense = 0;
+    const includePendingInTotals =
+      filterPaymentStatus === 'pending' ||
+      filterPaymentStatus === 'overdue' ||
+      filterStatus === 'scheduled' ||
+      filterStatus === 'scheduled_30' ||
+      filterStatus === 'scheduled_90' ||
+      globalPeriod === 'future' ||
+      globalPeriod === 'next30Days' ||
+      globalPeriod === 'nextMonth';
+
     filteredTransactions.forEach(t => {
-      if (t.payment_status === 'pending') return;
+      if (t.payment_status === 'pending' && !includePendingInTotals) return;
       const amt = Number((t as any).rawAmount !== undefined ? (t as any).rawAmount : t.amount);
       if (t.type === 'income') {
         income += amt;
@@ -2419,7 +2877,7 @@ export function History() {
     });
     const net = income - expense;
     return { income, expense, net, count: filteredTransactions.length };
-  }, [filteredTransactions]);
+  }, [filteredTransactions, filterPaymentStatus, filterStatus, globalPeriod]);
 
   const selectedTotals = useMemo(() => {
     let total = 0;
@@ -2536,6 +2994,17 @@ export function History() {
       setFilterType('all');
       setFilterCategory('all');
       setFilterPaymentStatus('all');
+      setFilterStatus('all');
+      setIncludeCash(true);
+      setIncludeReserves(true);
+      setIncludeInvestments(true);
+      setSearchTerm('');
+    } else if (chipId === 'future_scheduled') {
+      setFilterType('all');
+      setFilterCategory('all');
+      setFilterPaymentStatus('all');
+      setFilterStatus('scheduled');
+      setSortBy('date-asc');
       setIncludeCash(true);
       setIncludeReserves(true);
       setIncludeInvestments(true);
@@ -2544,6 +3013,7 @@ export function History() {
       setFilterType('all');
       setFilterCategory('all');
       setFilterPaymentStatus('pending');
+      setFilterStatus('all');
       setIncludeCash(true);
       setIncludeReserves(true);
       setIncludeInvestments(false);
@@ -2552,6 +3022,7 @@ export function History() {
       setFilterType('income');
       setFilterCategory('all');
       setFilterPaymentStatus('all');
+      setFilterStatus('all');
       setIncludeCash(true);
       setIncludeReserves(true);
       setIncludeInvestments(true);
@@ -2559,6 +3030,7 @@ export function History() {
       setFilterType('expense');
       setFilterCategory('all');
       setFilterPaymentStatus('all');
+      setFilterStatus('all');
       setIncludeCash(true);
       setIncludeReserves(true);
       setIncludeInvestments(true);
@@ -2566,6 +3038,7 @@ export function History() {
       setFilterCategory('Combustível');
       setFilterType('all');
       setFilterPaymentStatus('all');
+      setFilterStatus('all');
       setIncludeCash(true);
       setIncludeReserves(true);
       setIncludeInvestments(true);
@@ -2573,6 +3046,7 @@ export function History() {
       setFilterType('all');
       setFilterCategory('all');
       setFilterPaymentStatus('all');
+      setFilterStatus('all');
       setIncludeCash(true);
       setIncludeReserves(true);
       setIncludeInvestments(true);
@@ -2581,6 +3055,7 @@ export function History() {
       setFilterCategory('Pizzaria');
       setFilterType('all');
       setFilterPaymentStatus('all');
+      setFilterStatus('all');
       setIncludeCash(true);
       setIncludeReserves(true);
       setIncludeInvestments(true);
@@ -2588,6 +3063,7 @@ export function History() {
       setFilterType('all');
       setFilterCategory('all');
       setFilterPaymentStatus('all');
+      setFilterStatus('all');
       setIncludeCash(false);
       setIncludeReserves(true);
       setIncludeInvestments(false);
@@ -2595,6 +3071,7 @@ export function History() {
       setFilterType('all');
       setFilterCategory('all');
       setFilterPaymentStatus('all');
+      setFilterStatus('all');
       setIncludeCash(false);
       setIncludeReserves(false);
       setIncludeInvestments(true);
@@ -3173,80 +3650,248 @@ export function History() {
         </Card>
       </div>
 
-      {/* Period Selection Segmented Pill */}
-      <div className="flex flex-col gap-2">
-        <div className="flex items-center justify-between border-b border-border/40 pb-2">
-          <label className="text-[10px] sm:text-xs font-extrabold uppercase tracking-widest text-muted-foreground flex items-center gap-1.5 animate-pulse-subtle">
-            <Calendar className="w-3.5 h-3.5 text-primary" /> Visualizar Período
-          </label>
+      {/* Smart Period Navigator & Timeline */}
+      <div className="p-3.5 sm:p-4 rounded-2xl border border-border/80 bg-card shadow-xs space-y-3">
+        {/* Top Row: Stepper (< Anterior | Período Ativo | Próximo >) + Reset */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pb-2.5 border-b border-border/40">
+          <div className="flex items-center gap-2">
+            <div className="p-2 rounded-xl bg-primary/10 text-primary shrink-0">
+              <Calendar className="w-4 h-4" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs sm:text-sm font-black text-foreground tracking-tight">
+                  {activePeriodRangeInfo.label}
+                </span>
+                {(filterStatus === 'scheduled' || filterStatus === 'scheduled_30' || filterStatus === 'scheduled_90' || globalPeriod === 'future') && (
+                  <span className="text-[9.5px] font-black uppercase px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30">
+                    Visão Futura Automática
+                  </span>
+                )}
+              </div>
+              <p className="text-[10.5px] text-muted-foreground font-semibold">
+                {activePeriodRangeInfo.rangeSubLabel}
+              </p>
+            </div>
+          </div>
+
+          {/* Stepper Controls */}
+          <div className="flex items-center gap-1.5 self-start sm:self-auto">
+            <button
+              type="button"
+              onClick={() => handleStepPeriod(-1)}
+              className="h-8 px-2.5 rounded-xl border border-border/70 bg-muted/20 hover:bg-muted text-xs font-bold text-foreground flex items-center gap-1 transition-all cursor-pointer"
+              title="Período / Mês Anterior"
+            >
+              <ChevronLeft className="w-4 h-4" />
+              <span className="hidden xs:inline">Anterior</span>
+            </button>
+
+            {(globalPeriod !== 'month' || filterStatus !== 'all') && (
+              <button
+                type="button"
+                onClick={() => {
+                  setFilterStatus('all');
+                  setGlobalPeriod('month');
+                }}
+                className="h-8 px-2.5 rounded-xl border border-primary/30 bg-primary/10 hover:bg-primary/20 text-[11px] font-extrabold text-primary flex items-center gap-1 transition-all cursor-pointer"
+                title="Voltar para o Mês Atual"
+              >
+                <RotateCcw className="w-3 h-3" />
+                <span>Mês Atual</span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={() => handleStepPeriod(1)}
+              className="h-8 px-2.5 rounded-xl border border-border/70 bg-muted/20 hover:bg-muted text-xs font-bold text-foreground flex items-center gap-1 transition-all cursor-pointer"
+              title="Próximo Período / Mês Seguinte (Futuro)"
+            >
+              <span className="hidden xs:inline">Próximo</span>
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
         </div>
-        <div className="flex flex-col gap-2 w-full max-w-full">
-          <div className="flex overflow-x-auto scrollbar-none gap-1.5 p-1 bg-muted/20 border border-border/30 rounded-full w-full max-w-full">
-            {[
-              { id: 'last30Days', label: '30 dias' },
-              { id: 'last90Days', label: '90 dias' },
-              { id: 'month', label: 'Mês Atual' },
-              { id: 'lastMonth', label: 'Mês Passado' },
-              { id: 'thisYear', label: 'Este Ano' },
-              { id: 'lastYear', label: 'Ano Passado' },
-              { id: 'custom', label: 'Personalizado' },
-            ].map((period) => {
-              const isSelected = globalPeriod === period.id;
+
+        {/* Row 2: Preset Period Buttons (Past, Present & Future) */}
+        <div className="flex overflow-x-auto scrollbar-none gap-1.5 p-1 bg-muted/20 border border-border/30 rounded-2xl w-full max-w-full">
+          {[
+            { id: 'all', label: 'Tudo' },
+            { id: 'today', label: 'Hoje' },
+            { id: 'last7Days', label: '7 dias' },
+            { id: 'last30Days', label: '30 dias' },
+            { id: 'lastMonth', label: 'Mês Passado' },
+            { id: 'month', label: 'Mês Atual' },
+            { id: 'nextMonth', label: 'Próx. Mês' },
+            { id: 'next30Days', label: 'Próx. 30d' },
+            { id: 'future', label: `Futuro 📅${futureSummary.futureCount > 0 ? ` (${futureSummary.futureCount})` : ''}`, isFuturePreset: true },
+            { id: 'thisYear', label: 'Este Ano' },
+            { id: 'custom', label: 'Personalizado' },
+          ].map((period) => {
+            const isFutureActive =
+              period.id === 'future' &&
+              (globalPeriod === 'future' || filterStatus === 'scheduled');
+            const isSelected =
+              isFutureActive ||
+              (filterStatus === 'all' && globalPeriod === period.id);
+
+            return (
+              <button
+                key={period.id}
+                type="button"
+                onClick={() => {
+                  if (period.id === 'future') {
+                    setGlobalPeriod('future');
+                    setFilterStatus('scheduled');
+                    setSortBy('date-asc');
+                  } else {
+                    if (filterStatus === 'scheduled' || filterStatus === 'scheduled_30' || filterStatus === 'scheduled_90') {
+                      setFilterStatus('all');
+                    }
+                    setGlobalPeriod(period.id);
+                  }
+                }}
+                className="relative px-3.5 py-1.5 text-xs font-bold rounded-xl transition-all whitespace-nowrap focus:outline-none shrink-0 text-center cursor-pointer"
+                style={{ WebkitTapHighlightColor: 'transparent' }}
+              >
+                {isSelected && (
+                  <motion.span
+                    layoutId="history-active-period"
+                    className={`absolute inset-0 border shadow-xs rounded-xl ${
+                      (period as any).isFuturePreset
+                        ? 'bg-amber-500/15 border-amber-500/40'
+                        : 'bg-background border-border/45'
+                    }`}
+                    transition={{ type: 'spring', stiffness: 350, damping: 28 }}
+                  />
+                )}
+                <span className={`relative z-10 transition-colors duration-200 ${
+                  isSelected
+                    ? (period as any).isFuturePreset
+                      ? 'text-amber-600 dark:text-amber-400 font-black'
+                      : 'text-foreground font-extrabold'
+                    : (period as any).isFuturePreset && futureSummary.futureCount > 0
+                      ? 'text-amber-600 dark:text-amber-400 font-bold hover:text-amber-500'
+                      : 'text-muted-foreground hover:text-foreground'
+                }`}>
+                  {period.label}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Row 3: Quick Month Scrubber (Past, Current & Future Months with Transaction Counts) */}
+        {availableMonthsTimeline.length > 0 && (
+          <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none pt-1">
+            <span className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground shrink-0 mr-1">
+              Meses:
+            </span>
+            {availableMonthsTimeline.map(item => {
+              const monthShortNames = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+              const mLabel = `${monthShortNames[item.month - 1]}/${String(item.year).slice(2)}`;
+              const isSelectedMonth =
+                filterStatus === 'all' &&
+                activePeriodRangeInfo.stepUnit === 'month' &&
+                activePeriodRangeInfo.start?.getFullYear() === item.year &&
+                (activePeriodRangeInfo.start?.getMonth() ?? -1) + 1 === item.month;
+
               return (
                 <button
-                  key={period.id}
+                  key={item.key}
                   type="button"
-                  onClick={() => setGlobalPeriod(period.id)}
-                  className="relative px-4 py-2 sm:py-1.5 text-xs font-bold rounded-full transition-all whitespace-nowrap focus:outline-none flex-1 text-center"
-                  style={{ WebkitTapHighlightColor: 'transparent' }}
+                  onClick={() => handleSelectMonthFromTimeline(item.year, item.month)}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold shrink-0 flex items-center gap-1.5 border transition-all cursor-pointer ${
+                    isSelectedMonth
+                      ? 'bg-primary text-primary-foreground border-primary shadow-2xs font-black'
+                      : item.isFuture
+                        ? 'bg-amber-500/5 hover:bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/25'
+                        : item.isCurrent
+                          ? 'bg-primary/5 hover:bg-primary/15 text-primary border-primary/25'
+                          : 'bg-muted/30 hover:bg-muted text-muted-foreground hover:text-foreground border-border/50'
+                  }`}
                 >
-                  {isSelected && (
-                    <motion.span
-                      layoutId="history-active-period"
-                      className="absolute inset-0 bg-background border border-border/45 shadow-xs rounded-full"
-                      transition={{ type: 'spring', stiffness: 350, damping: 28 }}
-                    />
+                  <span>{mLabel}</span>
+                  {item.count > 0 && (
+                    <span className={`text-[9px] px-1.5 py-0.2 rounded-full font-extrabold ${
+                      isSelectedMonth
+                        ? 'bg-primary-foreground/20 text-primary-foreground'
+                        : item.isFuture
+                          ? 'bg-amber-500/20 text-amber-700 dark:text-amber-300'
+                          : 'bg-muted text-muted-foreground'
+                    }`}>
+                      {item.count}
+                    </span>
                   )}
-                  <span className={`relative z-10 transition-colors duration-200 ${isSelected ? 'text-foreground font-extrabold' : 'text-muted-foreground hover:text-foreground'}`}>
-                    {period.label}
-                  </span>
                 </button>
               );
             })}
           </div>
-          {globalPeriod === 'custom' && (
-            <div className="flex items-center gap-2 animate-in fade-in slide-in-from-top-2 mx-1 mt-1">
-              <span className="text-muted-foreground text-xs font-medium">Período:</span>
-              <input
-                type="date"
-                className="bg-background border border-border/60 rounded-md px-2 py-1.5 text-xs text-foreground focus:ring-1 focus:ring-primary outline-none max-w-[130px]"
-                value={customDateRange?.start || ''}
-                onChange={(e) => setCustomDateRange({ start: e.target.value, end: customDateRange?.end || getTodayLocalDateStr() })}
-              />
-              <span className="text-muted-foreground text-xs">até</span>
-              <input
-                type="date"
-                className="bg-background border border-border/60 rounded-md px-2 py-1.5 text-xs text-foreground focus:ring-1 focus:ring-primary outline-none max-w-[130px]"
-                value={customDateRange?.end || ''}
-                onChange={(e) => setCustomDateRange({ start: customDateRange?.start || getTodayLocalDateStr(), end: e.target.value })}
-              />
-            </div>
-          )}
-        </div>
+        )}
+
+        {/* Custom Date Inputs */}
+        {globalPeriod === 'custom' && (
+          <div className="flex flex-wrap items-center gap-2 animate-in fade-in slide-in-from-top-2 pt-2 border-t border-border/40">
+            <span className="text-muted-foreground text-xs font-bold">Intervalo de Datas:</span>
+            <input
+              type="date"
+              className="bg-background border border-border/60 rounded-xl px-2.5 py-1.5 text-xs font-semibold text-foreground focus:ring-1 focus:ring-primary outline-none"
+              value={customDateRange?.start || ''}
+              onChange={(e) => setCustomDateRange({ start: e.target.value, end: customDateRange?.end || getTodayLocalDateStr() })}
+            />
+            <span className="text-muted-foreground text-xs font-bold">até</span>
+            <input
+              type="date"
+              className="bg-background border border-border/60 rounded-xl px-2.5 py-1.5 text-xs font-semibold text-foreground focus:ring-1 focus:ring-primary outline-none"
+              value={customDateRange?.end || ''}
+              onChange={(e) => setCustomDateRange({ start: customDateRange?.start || getTodayLocalDateStr(), end: e.target.value })}
+            />
+          </div>
+        )}
       </div>
 
-      {/* Filters Card */}
+      {/* Filters & Smart Search Card */}
       <Card className="border border-border/80 shadow-xs bg-card overflow-hidden rounded-2xl">
         <div className="p-4 sm:p-5 space-y-4">
-          <div className="flex flex-col md:flex-row gap-3 items-center">
-            <div className="relative flex-1 w-full">
-              <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground/75" />
+          <div className="flex flex-col md:flex-row gap-3 items-stretch md:items-center">
+            <div className="relative flex-1 w-full flex items-center">
+              <Search className="absolute left-3.5 h-4 w-4 text-muted-foreground/75 pointer-events-none" />
               <Input
-                placeholder="Pesquisar categoria, descrição ou ID do lançamento..."
-                className="pl-9.5 h-10 border-border bg-muted/10 font-semibold focus-visible:ring-primary text-xs sm:text-sm rounded-xl"
+                placeholder="Pesquisar por descrição, categoria, valor (ex: >100, 50..200), data (15/10), dia ou ativo..."
+                className="pl-10 pr-36 h-11 border-border bg-muted/10 font-semibold focus-visible:ring-primary text-xs sm:text-sm rounded-xl"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
               />
+              <div className="absolute right-1.5 flex items-center gap-1">
+                {searchTerm && (
+                  <button
+                    type="button"
+                    onClick={() => setSearchTerm('')}
+                    className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors cursor-pointer"
+                    title="Limpar pesquisa"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setSearchAllPeriods(!searchAllPeriods)}
+                  className={`px-2.5 py-1 rounded-lg text-[10px] font-extrabold border transition-all flex items-center gap-1 cursor-pointer ${
+                    searchAllPeriods
+                      ? 'bg-primary/10 text-primary border-primary/30'
+                      : 'bg-muted/50 text-muted-foreground border-border/60 hover:text-foreground'
+                  }`}
+                  title={
+                    searchAllPeriods
+                      ? 'Buscando em todo o histórico (passado, presente e futuro). Clique para restringir ao período selecionado.'
+                      : 'Buscando apenas no período selecionado. Clique para buscar em todo o histórico.'
+                  }
+                >
+                  <Globe className="w-3 h-3" />
+                  <span>{searchAllPeriods ? 'Em Tudo' : 'No Período'}</span>
+                </button>
+              </div>
             </div>
             
             <div className="flex gap-2 w-full md:w-auto shrink-0 justify-end">
@@ -3254,7 +3899,7 @@ export function History() {
                 type="button"
                 variant="outline"
                 onClick={() => setShowAdvanced(!showAdvanced)}
-                className={`h-10 text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 px-4 select-none transition-colors border ${
+                className={`h-11 text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 px-4 select-none transition-colors border cursor-pointer ${
                   showAdvanced || activeFiltersCount > 0
                     ? 'border-primary/30 bg-primary/5 text-primary'
                     : 'border-border bg-card text-muted-foreground hover:text-foreground'
@@ -3270,7 +3915,7 @@ export function History() {
                 <ChevronDown className={`w-3.5 h-3.5 shrink-0 transition-transform duration-250 ${showAdvanced ? 'rotate-180' : ''}`} />
               </Button>
 
-              {activeFiltersCount > 0 && (
+              {(activeFiltersCount > 0 || searchTerm.trim() !== '') && (
                 <Button
                   type="button"
                   onClick={() => {
@@ -3278,6 +3923,7 @@ export function History() {
                     setFilterType('all');
                     setFilterCategory('all');
                     setFilterStatus('all');
+                    setFilterPaymentStatus('all');
                     setMinAmount('');
                     setMaxAmount('');
                     setSortBy('date-desc');
@@ -3289,7 +3935,7 @@ export function History() {
                     setActiveQuickChip('all');
                   }}
                   variant="outline"
-                  className="h-10 text-xs font-bold border-rose-500/20 bg-rose-500/5 hover:bg-rose-500/10 text-rose-500 hover:text-rose-600 rounded-xl px-3 transition-colors flex items-center gap-1.5"
+                  className="h-11 text-xs font-bold border-rose-500/20 bg-rose-500/5 hover:bg-rose-500/10 text-rose-500 hover:text-rose-600 rounded-xl px-3 transition-colors flex items-center gap-1.5 cursor-pointer"
                   title="Limpar todos os filtros ativos"
                 >
                   <Trash className="w-3.5 h-3.5 shrink-0" />
@@ -3299,10 +3945,48 @@ export function History() {
             </div>
           </div>
 
+          {/* Smart Search Shortcuts & Operators Helper */}
+          <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none text-[11px]">
+            <span className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground shrink-0">
+              Busca Rápida:
+            </span>
+            {[
+              { label: 'Acima de R$ 100', query: '>100' },
+              { label: 'Até R$ 50', query: '<=50' },
+              { label: 'Recorrentes 🔄', query: 'recorrente' },
+              { label: 'Agendados 📅', query: 'futuro' },
+              { label: 'Vencidos ⚠️', query: 'vencido' },
+              { label: 'Operacional ⛽', query: 'operacional' },
+              { label: 'Pessoal ❤️', query: 'pessoal' },
+              { label: 'Proventos 💰', query: 'provento' },
+            ].map(suggestion => {
+              const isSelectedQuery = searchTerm.trim().toLowerCase() === suggestion.query.toLowerCase();
+              return (
+                <button
+                  key={suggestion.query}
+                  type="button"
+                  onClick={() => setSearchTerm(isSelectedQuery ? '' : suggestion.query)}
+                  className={`px-2.5 py-1 rounded-lg font-bold shrink-0 border transition-all cursor-pointer ${
+                    isSelectedQuery
+                      ? 'bg-primary/15 text-primary border-primary/40 font-extrabold'
+                      : 'bg-muted/20 hover:bg-muted/60 text-muted-foreground hover:text-foreground border-border/40'
+                  }`}
+                >
+                  {suggestion.label}
+                </button>
+              );
+            })}
+          </div>
+
           {/* Quick Filter Chips */}
-          <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none pb-1 pt-1 border-t border-border/30">
+          <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none pb-1 pt-2 border-t border-border/30">
             {[
               { id: 'all', label: 'Tudo' },
+              {
+                id: 'future_scheduled',
+                label: `Futuros / Agendados 📅${futureSummary.futureCount > 0 ? ` (${futureSummary.futureCount})` : ''}`,
+                highlight: futureSummary.futureCount > 0
+              },
               { 
                 id: 'pending_expenses', 
                 label: `Pendentes ⏳${pendingSummary.pendingCount > 0 ? ` (${pendingSummary.pendingCount})` : ''}`,
@@ -3316,7 +4000,9 @@ export function History() {
               { id: 'reservas', label: 'Reservas 🐷' },
               { id: 'investimentos', label: 'Investimentos 📈' },
             ].map((chip) => {
-              const isActive = activeQuickChip === chip.id;
+              const isActive =
+                activeQuickChip === chip.id ||
+                (chip.id === 'future_scheduled' && (filterStatus === 'scheduled' || filterStatus === 'scheduled_30' || filterStatus === 'scheduled_90'));
               return (
                 <button
                   key={chip.id}
@@ -3478,21 +4164,37 @@ export function History() {
                     <label className="text-[10px] font-extrabold uppercase tracking-widest text-muted-foreground">
                       Data (Ativo vs Futuro)
                     </label>
-                    <Select value={filterStatus} onValueChange={setFilterStatus}>
+                    <Select
+                      value={filterStatus}
+                      onValueChange={(val) => {
+                        setFilterStatus(val);
+                        if (val === 'scheduled' || val === 'scheduled_30' || val === 'scheduled_90') {
+                          setSortBy('date-asc');
+                          setActiveQuickChip('future_scheduled');
+                        } else if (activeQuickChip === 'future_scheduled') {
+                          setActiveQuickChip('all');
+                          setSortBy('date-desc');
+                        }
+                      }}
+                    >
                       <SelectTrigger className="w-full h-10 text-xs font-semibold border-border bg-card rounded-xl">
-                        <div className="flex items-center gap-2 truncate text-[#e0e0e0] dark:text-[#ffffff]">
+                        <div className="flex items-center gap-2 truncate text-foreground">
                           <Clock className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                           <span>
                             {filterStatus === 'all' && 'Todas as Datas'}
                             {filterStatus === 'confirmed' && 'Hoje e Passados'}
-                            {filterStatus === 'scheduled' && 'Agendados (Futuros)'}
+                            {filterStatus === 'scheduled' && '📅 Todos os Agendados (Futuros)'}
+                            {filterStatus === 'scheduled_30' && '📅 Futuros (Próx. 30 dias)'}
+                            {filterStatus === 'scheduled_90' && '📅 Futuros (Próx. 90 dias)'}
                           </span>
                         </div>
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="all">Todas as Datas</SelectItem>
                         <SelectItem value="confirmed">Hoje e Passados</SelectItem>
-                        <SelectItem value="scheduled">Agendados (Futuros)</SelectItem>
+                        <SelectItem value="scheduled">📅 Todos os Agendados (Futuros)</SelectItem>
+                        <SelectItem value="scheduled_30">📅 Futuros (Próximos 30 dias)</SelectItem>
+                        <SelectItem value="scheduled_90">📅 Futuros (Próximos 90 dias)</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -3794,7 +4496,7 @@ export function History() {
                   <div className="flex items-center gap-2 shrink-0">
                     <Calendar className="w-4 h-4 text-primary shrink-0" />
                     <h3 className="font-extrabold text-xs sm:text-sm capitalize text-foreground tracking-tight">
-                      {format(group.date, "EEEE, dd 'de' MMMM", { locale: ptBR })}
+                      {format(group.date, "EEEE, dd 'de' MMMM 'de' yyyy", { locale: ptBR })}
                     </h3>
                   </div>
                   

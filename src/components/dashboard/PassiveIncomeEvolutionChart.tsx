@@ -1,4 +1,5 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { cacheManager } from '@/lib/cacheManager';
 import { Dividend, ReserveTransaction, InvestmentTransaction, Reserve } from '@/types';
 import { format, subMonths, parseISO } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -40,9 +41,19 @@ export const PassiveIncomeEvolutionChart: React.FC<PassiveIncomeEvolutionChartPr
   hideValues,
   formatCurrency
 }) => {
-  const [viewMode, setViewMode] = useState<'monthly' | 'accumulated'>('monthly');
-  const [selectedRangeOption, setSelectedRangeOption] = useState<'auto' | '6' | '12' | '24'>('auto');
-  const [passiveIncomeGoal, setPassiveIncomeGoal] = useState<number>(100);
+  const savedPrefs = useMemo(() => cacheManager.get<any>('passive_income_chart_prefs_v1') || null, []);
+  const [viewMode, setViewMode] = useState<'monthly' | 'accumulated'>(savedPrefs?.viewMode || 'monthly');
+  const [selectedRangeOption, setSelectedRangeOption] = useState<'auto' | '6' | '12' | '24'>(savedPrefs?.selectedRangeOption || 'auto');
+  const [passiveIncomeGoal, setPassiveIncomeGoal] = useState<number>(savedPrefs?.passiveIncomeGoal ?? 100);
+
+  useEffect(() => {
+    cacheManager.set(
+      'passive_income_chart_prefs_v1',
+      { viewMode, selectedRangeOption, passiveIncomeGoal },
+      undefined,
+      'settings'
+    );
+  }, [viewMode, selectedRangeOption, passiveIncomeGoal]);
 
   const now = useMemo(() => new Date(), []);
 

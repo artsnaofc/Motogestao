@@ -1,4 +1,5 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { cacheManager } from '../lib/cacheManager';
 import { 
   Transaction, 
   ReserveTransaction, 
@@ -81,13 +82,14 @@ export const PatrimonyEvolution: React.FC<PatrimonyEvolutionProps> = ({
 }) => {
   const now = useMemo(() => new Date(), []);
   const currentYear = now.getFullYear();
+  const savedPrefs = useMemo(() => cacheManager.get<any>('patrimony_evolution_prefs_v1') || null, []);
 
   // Selected Year
-  const [selectedYear, setSelectedYear] = useState<number>(currentYear);
+  const [selectedYear, setSelectedYear] = useState<number>(savedPrefs?.selectedYear || currentYear);
   // Chart Visual Mode (default: 'bar')
-  const [chartType, setChartType] = useState<ChartType>('bar');
+  const [chartType, setChartType] = useState<ChartType>(savedPrefs?.chartType || 'bar');
   // Show Table Detail
-  const [showTable, setShowTable] = useState<boolean>(false);
+  const [showTable, setShowTable] = useState<boolean>(savedPrefs?.showTable ?? false);
 
   // Active Series Visibility
   const [visibleSeries, setVisibleSeries] = useState<{
@@ -95,12 +97,26 @@ export const PatrimonyEvolution: React.FC<PatrimonyEvolutionProps> = ({
     Reservas: boolean;
     Caixa: boolean;
     PatrimonioTotal: boolean;
-  }>({
-    Investimentos: true,
-    Reservas: true,
-    Caixa: true,
-    PatrimonioTotal: true
+  }>(() => {
+    if (savedPrefs?.visibleSeries && typeof savedPrefs.visibleSeries === 'object') {
+      return savedPrefs.visibleSeries;
+    }
+    return {
+      Investimentos: true,
+      Reservas: true,
+      Caixa: true,
+      PatrimonioTotal: true
+    };
   });
+
+  useEffect(() => {
+    cacheManager.set(
+      'patrimony_evolution_prefs_v1',
+      { selectedYear, chartType, showTable, visibleSeries },
+      undefined,
+      'settings'
+    );
+  }, [selectedYear, chartType, showTable, visibleSeries]);
 
   // Filter out any virtual or pending transactions to ensure clean cash calculation
   const realTransactions = useMemo(() => {
