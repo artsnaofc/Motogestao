@@ -453,7 +453,7 @@ export function DividendSummaryCards({
                   <div className="flex items-center gap-2">
                     <span className="font-black text-sm">{div.ticker}</span>
                     <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-secondary text-secondary-foreground uppercase">
-                      {div.type}
+                      {div.type === 'JCP' || (div.type as string) === 'JSCP' ? 'JSCP' : div.type}
                     </span>
                   </div>
                   <p className="text-xs text-muted-foreground font-medium mt-0.5">

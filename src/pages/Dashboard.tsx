@@ -827,6 +827,7 @@ export function Dashboard() {
   const dividendTxsAsVirtual = useMemo(() => {
     return (dividends || [])
       .map(d => {
+        const displayType = d.type === 'JCP' || (d.type as string) === 'JSCP' ? 'JSCP' : d.type;
         return {
           id: d.id,
           user_id: d.user_id,
@@ -834,9 +835,9 @@ export function Dashboard() {
           amount: Number(d.amount),
           date: d.date,
           category: 'Dividendos',
-          description: d.description || `Recebimento de proventos (${d.type}) do ativo ${d.ticker.toUpperCase()}`,
+          description: d.description || `Recebimento de proventos (${displayType}) do ativo ${d.ticker.toUpperCase()}`,
           isDividendTx: true,
-          dividendType: d.type,
+          dividendType: displayType,
           ticker: d.ticker.toUpperCase(),
           created_at: d.created_at,
         } as unknown as Transaction;

@@ -230,6 +230,7 @@ export function InvestmentsProvider({
           const reserveTxId = generateUUID();
           const userId = div.user_id;
 
+          const displayDivType = div.type === 'JCP' || (div.type as string) === 'JSCP' ? 'JSCP' : div.type;
           const newReserveTx: ReserveTransaction = {
             id: reserveTxId,
             user_id: userId,
@@ -237,7 +238,7 @@ export function InvestmentsProvider({
             type: 'rendimento',
             amount: div.amount,
             date: div.data_ex || today,
-            description: `Provento: ${div.ticker} (${div.type})`,
+            description: `Provento: ${div.ticker} (${displayDivType})`,
             created_at: new Date().toISOString()
           };
 

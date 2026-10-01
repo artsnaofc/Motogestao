@@ -486,7 +486,7 @@ export function AssetRaioXModal({
                                       </td>
                                       <td className="px-4 sm:px-8 py-3 sm:py-5 text-center">
                                         <span className="text-[8px] sm:text-[9px] font-black px-2 sm:px-3 py-1 rounded-md sm:rounded-lg bg-slate-800 text-slate-400 uppercase border border-slate-700">
-                                          {div.type}
+                                          {div.type === 'JCP' || (div.type as string) === 'JSCP' ? 'JSCP' : div.type}
                                         </span>
                                       </td>
                                       <td className="px-4 sm:px-8 py-3 sm:py-5">

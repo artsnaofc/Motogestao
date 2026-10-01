@@ -192,7 +192,8 @@ export function TransactionDetailView({
     // 1. DIVIDEND TRANSACTION
     if (isDividendTx) {
       const ticker = (t as any).ticker || 'ATIVO';
-      const divType = (t as any).dividendType || 'Dividendo';
+      const rawDivType = (t as any).dividendType || 'Dividendo';
+      const divType = rawDivType === 'JCP' ? 'JSCP' : rawDivType;
       const unitAmt = (t as any).unitAmount;
       const divStatus = (t as any).dividendStatus || 'received';
 

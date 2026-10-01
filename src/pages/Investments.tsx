@@ -209,6 +209,7 @@ export function Investments() {
   const [editDiv, setEditDiv] = useState<Dividend | null>(null);
   const [divTicker, setDivTicker] = useState('');
   const [divAmount, setDivAmount] = useState('');
+  const [divGrossAmount, setDivGrossAmount] = useState('');
   const [divType, setDivType] = useState<DividendType>('Dividendo');
   const [divDataCom, setDivDataCom] = useState('');
   const [divDataEx, setDivDataEx] = useState('');
@@ -410,6 +411,7 @@ export function Investments() {
     setEditDiv(null);
     setDivTicker(prefilledTicker || '');
     setDivAmount('');
+    setDivGrossAmount('');
     setDivType('Dividendo');
     setDivDataCom('');
     const today = getTodayLocalDateStr();
@@ -443,8 +445,16 @@ export function Investments() {
       }
     }
 
-    setDivAmount(unitAmountVal.toString().replace('.', ','));
-    setDivType(div.type);
+    const normalizedType: DividendType = (div.type as string) === 'JSCP' ? 'JCP' : div.type;
+    const netStr = unitAmountVal.toString().replace('.', ',');
+    setDivAmount(netStr);
+    if (normalizedType === 'JCP') {
+      const grossVal = Math.round((unitAmountVal / 0.85) * 100000) / 100000;
+      setDivGrossAmount(grossVal.toString().replace('.', ','));
+    } else {
+      setDivGrossAmount(netStr);
+    }
+    setDivType(normalizedType);
     setDivDataCom(div.data_com || '');
     setDivDataEx(div.data_ex || '');
     setIsDivModalOpen(true);
@@ -866,7 +876,10 @@ export function Investments() {
     return dividends
       .filter(d => {
         const matchesSearch = d.ticker.toLowerCase().includes(divSearch.toLowerCase());
-        const matchesType = divTypeFilter === 'all' || d.type === divTypeFilter;
+        const matchesType =
+          divTypeFilter === 'all' ||
+          d.type === divTypeFilter ||
+          (divTypeFilter === 'JCP' && (d.type === 'JCP' || (d.type as string) === 'JSCP'));
         const matchesStatus = divStatusFilter === 'all' || d.status === divStatusFilter;
         return matchesSearch && matchesType && matchesStatus;
       })
@@ -1926,7 +1939,7 @@ export function Investments() {
               >
                 <option value="all">Todos Tipos</option>
                 <option value="Dividendo">Dividendo</option>
-                <option value="JCP">JCP</option>
+                <option value="JCP">JSCP</option>
                 <option value="Rendimento">Rendimento</option>
               </select>
 
@@ -1970,7 +1983,7 @@ export function Investments() {
                         <td className="px-4 py-3 font-black text-foreground">{div.ticker}</td>
                         <td className="px-4 py-3">
                           <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-secondary text-secondary-foreground uppercase">
-                            {div.type}
+                            {div.type === 'JCP' || (div.type as string) === 'JSCP' ? 'JSCP' : div.type}
                           </span>
                         </td>
                         <td className="px-4 py-3">
@@ -2461,6 +2474,9 @@ export function Investments() {
                             onClick={() => {
                               setDivTicker(p.ticker);
                               if (p.type === 'FII') {
+                                if (divType === 'JCP' && parseNumericValue(divGrossAmount) > 0) {
+                                  setDivAmount(divGrossAmount);
+                                }
                                 setDivType('Rendimento');
                               } else if (p.type === 'Ação' && divType === 'Rendimento') {
                                 setDivType('Dividendo');
@@ -2504,53 +2520,209 @@ export function Investments() {
               </div>
 
               <div className="space-y-1.5 sm:col-span-2">
-                <label className="text-xs font-bold text-muted-foreground">Tipo de Provento</label>
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-muted-foreground">Tipo de Provento</label>
+                  {divType === 'JCP' && (
+                    <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
+                      Desconto automático de 15% (IRRF)
+                    </span>
+                  )}
+                </div>
                 <select 
                   value={divType} 
-                  onChange={e => setDivType(e.target.value as DividendType)}
+                  onChange={e => {
+                    const nextType = e.target.value as DividendType;
+                    if (nextType === 'JCP' && divType !== 'JCP') {
+                      const currentVal = parseNumericValue(divAmount);
+                      const existingGross = parseNumericValue(divGrossAmount);
+                      const baseGross = currentVal > 0 ? currentVal : existingGross;
+                      if (baseGross > 0) {
+                        setDivGrossAmount(baseGross.toFixed(5));
+                        const netVal = Math.round(baseGross * 0.85 * 100000) / 100000;
+                        setDivAmount(netVal.toFixed(5));
+                      }
+                    } else if (nextType !== 'JCP' && divType === 'JCP') {
+                      const grossVal = parseNumericValue(divGrossAmount);
+                      if (grossVal > 0) {
+                        setDivAmount(grossVal.toFixed(5));
+                      }
+                    }
+                    setDivType(nextType);
+                  }}
                   className="w-full bg-muted/50 border border-border/50 rounded-xl px-3 py-2 text-xs font-bold focus:ring-2 focus:ring-emerald-500/30 outline-none transition-all"
                 >
                   <option value="Dividendo">Dividendo</option>
-                  <option value="JCP">JCP (Juros s/ Capital Próprio)</option>
+                  <option value="JCP">JSCP (Juros s/ Capital Próprio)</option>
                   <option value="Rendimento">Rendimento</option>
                 </select>
               </div>
 
-              <div className="space-y-1.5 sm:col-span-2">
-                <label className="text-xs font-bold text-muted-foreground">Valor por Cota (R$/cota)</label>
-                <CurrencyInput 
-                  value={divAmount} 
-                  onChange={setDivAmount}
-                  placeholder="0,00000"
-                  decimals={5}
-                  className="w-full bg-muted/50 border border-border/50 rounded-xl px-3 py-2 text-xs font-bold focus:ring-2 focus:ring-primary/20 outline-none transition-all"
-                  required
-                />
-                
-                {/* LIVE ESTIMATED TOTAL PAYOUT PREVIEW */}
-                {(() => {
-                  const valUnit = parseNumericValue(divAmount);
-                  const matchingPos = positions.find(p => p.ticker.toUpperCase() === divTicker.toUpperCase());
-                  const q = matchingPos ? matchingPos.totalQuantity : 0;
-                  const totalEst = valUnit * q;
-
-                  if (valUnit <= 0) return null;
-
-                  return (
-                    <div className="mt-2 p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 space-y-1">
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="text-emerald-700 dark:text-emerald-300 font-bold">Total a Receber Estimado:</span>
-                        <span className="font-black text-emerald-600 dark:text-emerald-400 text-sm">
-                          {formatCurrency(totalEst)}
+              {divType === 'JCP' ? (
+                <div className="sm:col-span-2 space-y-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 rounded-2xl bg-amber-500/5 border border-amber-500/20">
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-bold text-muted-foreground flex items-center justify-between">
+                        <span>Valor Bruto / Cota (R$)</span>
+                        <span className="text-[9.5px] font-extrabold uppercase px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
+                          Anunciado
                         </span>
-                      </div>
-                      <p className="text-[10px] text-muted-foreground font-medium">
-                        Cálculo: {formatCurrency(valUnit)} x {q} {q === 1 ? 'cota' : 'cotas'} na carteira atual.
-                      </p>
+                      </label>
+                      <CurrencyInput 
+                        value={divGrossAmount} 
+                        onChange={(val) => {
+                          setDivGrossAmount(val);
+                          const grossNum = parseNumericValue(val);
+                          if (grossNum > 0) {
+                            const netNum = Math.round(grossNum * 0.85 * 100000) / 100000;
+                            setDivAmount(netNum.toFixed(5));
+                          } else {
+                            setDivAmount('');
+                          }
+                        }}
+                        placeholder="0,00000"
+                        decimals={5}
+                        className="w-full bg-background border border-border/60 rounded-xl px-3 py-2 text-xs font-bold focus:ring-2 focus:ring-amber-500/30 outline-none transition-all"
+                      />
                     </div>
-                  );
-                })()}
-              </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-bold text-emerald-600 dark:text-emerald-400 flex items-center justify-between">
+                        <span>Valor Líquido / Cota (R$)</span>
+                        <span className="text-[9.5px] font-extrabold uppercase px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">
+                          -15% IRRF
+                        </span>
+                      </label>
+                      <CurrencyInput 
+                        value={divAmount} 
+                        onChange={(val) => {
+                          setDivAmount(val);
+                          const netNum = parseNumericValue(val);
+                          if (netNum > 0) {
+                            const grossNum = Math.round((netNum / 0.85) * 100000) / 100000;
+                            setDivGrossAmount(grossNum.toFixed(5));
+                          } else {
+                            setDivGrossAmount('');
+                          }
+                        }}
+                        placeholder="0,00000"
+                        decimals={5}
+                        className="w-full bg-emerald-500/5 border border-emerald-500/30 rounded-xl px-3 py-2 text-xs font-black text-emerald-600 dark:text-emerald-400 focus:ring-2 focus:ring-emerald-500/30 outline-none transition-all"
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  {/* LIVE ESTIMATED TOTAL PAYOUT PREVIEW FOR JSCP */}
+                  {(() => {
+                    const valNetUnit = parseNumericValue(divAmount);
+                    const valGrossUnit = parseNumericValue(divGrossAmount) || (valNetUnit > 0 ? valNetUnit / 0.85 : 0);
+                    const taxUnit = Math.max(0, valGrossUnit - valNetUnit);
+
+                    const targetDate = (divDataCom || divDataEx || '').split('T')[0];
+                    const tickerSearch = divTicker.toUpperCase().trim();
+                    const txQtyOnDate = targetDate && tickerSearch
+                      ? investmentTransactions
+                          .filter(tx => tx.ticker.toUpperCase().trim() === tickerSearch && tx.date.split('T')[0] <= targetDate)
+                          .reduce((acc, tx) => tx.operation === 'buy' ? acc + tx.quantity : acc - tx.quantity, 0)
+                      : 0;
+                    const matchingPos = positions.find(p => p.ticker.toUpperCase() === tickerSearch);
+                    const q = txQtyOnDate > 0 ? txQtyOnDate : (matchingPos ? matchingPos.totalQuantity : 0);
+
+                    const totalGrossEst = valGrossUnit * q;
+                    const totalTaxEst = taxUnit * q;
+                    const totalNetEst = valNetUnit * q;
+
+                    if (valNetUnit <= 0 && valGrossUnit <= 0) return null;
+
+                    return (
+                      <div className="p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 space-y-2">
+                        <div className="flex flex-wrap items-center justify-between gap-1 text-[11px] pb-2 border-b border-emerald-500/15">
+                          <span className="text-muted-foreground font-semibold">
+                            Bruto/cota: <strong className="text-foreground">R$ {valGrossUnit.toFixed(5).replace('.', ',')}</strong> ({formatCurrency(valGrossUnit)})
+                          </span>
+                          <span className="text-rose-500 font-bold">
+                            -15% IR: -R$ {taxUnit.toFixed(5).replace('.', ',')}
+                          </span>
+                          <span className="text-emerald-600 dark:text-emerald-400 font-black">
+                            Líquido/cota: R$ {valNetUnit.toFixed(5).replace('.', ',')} ({formatCurrency(valNetUnit)})
+                          </span>
+                        </div>
+
+                        {q > 0 && (
+                          <div className="space-y-1 text-xs pt-0.5">
+                            <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                              <span>Total Bruto ({q} {q === 1 ? 'cota' : 'cotas'}):</span>
+                              <span className="font-bold text-foreground">{formatCurrency(totalGrossEst)}</span>
+                            </div>
+                            <div className="flex items-center justify-between text-[11px] text-rose-500">
+                              <span>Imposto de Renda Retido na Fonte (15%):</span>
+                              <span className="font-bold">- {formatCurrency(totalTaxEst)}</span>
+                            </div>
+                          </div>
+                        )}
+
+                        <div className="flex items-center justify-between text-xs pt-1">
+                          <span className="text-emerald-700 dark:text-emerald-300 font-bold">
+                            Total Líquido a Receber (Creditado):
+                          </span>
+                          <span className="font-black text-emerald-600 dark:text-emerald-400 text-sm">
+                            {formatCurrency(totalNetEst)}
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-muted-foreground font-medium">
+                          Cálculo líquido: R$ {valNetUnit.toFixed(5).replace('.', ',')} x {q} {q === 1 ? 'cota' : 'cotas'}.
+                        </p>
+                      </div>
+                    );
+                  })()}
+                </div>
+              ) : (
+                <div className="space-y-1.5 sm:col-span-2">
+                  <label className="text-xs font-bold text-muted-foreground">Valor por Cota (R$/cota)</label>
+                  <CurrencyInput 
+                    value={divAmount} 
+                    onChange={(val) => {
+                      setDivAmount(val);
+                      setDivGrossAmount(val);
+                    }}
+                    placeholder="0,00000"
+                    decimals={5}
+                    className="w-full bg-muted/50 border border-border/50 rounded-xl px-3 py-2 text-xs font-bold focus:ring-2 focus:ring-primary/20 outline-none transition-all"
+                    required
+                  />
+                  
+                  {/* LIVE ESTIMATED TOTAL PAYOUT PREVIEW */}
+                  {(() => {
+                    const valUnit = parseNumericValue(divAmount);
+                    const targetDate = (divDataCom || divDataEx || '').split('T')[0];
+                    const tickerSearch = divTicker.toUpperCase().trim();
+                    const txQtyOnDate = targetDate && tickerSearch
+                      ? investmentTransactions
+                          .filter(tx => tx.ticker.toUpperCase().trim() === tickerSearch && tx.date.split('T')[0] <= targetDate)
+                          .reduce((acc, tx) => tx.operation === 'buy' ? acc + tx.quantity : acc - tx.quantity, 0)
+                      : 0;
+                    const matchingPos = positions.find(p => p.ticker.toUpperCase() === tickerSearch);
+                    const q = txQtyOnDate > 0 ? txQtyOnDate : (matchingPos ? matchingPos.totalQuantity : 0);
+                    const totalEst = valUnit * q;
+
+                    if (valUnit <= 0) return null;
+
+                    return (
+                      <div className="mt-2 p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 space-y-1">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="text-emerald-700 dark:text-emerald-300 font-bold">Total a Receber Estimado:</span>
+                          <span className="font-black text-emerald-600 dark:text-emerald-400 text-sm">
+                            {formatCurrency(totalEst)}
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-muted-foreground font-medium">
+                          Cálculo: R$ {valUnit.toFixed(5).replace('.', ',')} x {q} {q === 1 ? 'cota' : 'cotas'}.
+                        </p>
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
 
               {divDataEx && (
                 <div className="sm:col-span-2 text-[11px] text-muted-foreground bg-muted/40 p-2.5 rounded-xl flex items-center justify-between border border-border/40">

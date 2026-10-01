@@ -1459,6 +1459,7 @@ export function History() {
     const dividendTxsAsVirtual = (dividends || [])
       .map(d => {
         const isProvisioned = d.status === 'provisioned';
+        const displayType = d.type === 'JCP' || (d.type as string) === 'JSCP' ? 'JSCP' : d.type;
         return {
           id: d.id,
           user_id: d.user_id,
@@ -1467,10 +1468,10 @@ export function History() {
           date: d.date,
           category: 'Dividendos',
           description: isProvisioned
-            ? `[A Receber] ${d.description || `Provento (${d.type}) do ativo ${d.ticker.toUpperCase()}`}`
-            : `[Recebido] ${d.description || `Recebimento de proventos (${d.type}) do ativo ${d.ticker.toUpperCase()}`}`,
+            ? `[A Receber] ${d.description || `Provento (${displayType}) do ativo ${d.ticker.toUpperCase()}`}`
+            : `[Recebido] ${d.description || `Recebimento de proventos (${displayType}) do ativo ${d.ticker.toUpperCase()}`}`,
           isDividendTx: true,
-          dividendType: d.type,
+          dividendType: displayType,
           dividendStatus: d.status,
           ticker: d.ticker.toUpperCase(),
           created_at: d.created_at,
