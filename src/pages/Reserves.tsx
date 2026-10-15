@@ -313,24 +313,31 @@ export function Reserves() {
     amount: number;
     date: string;
     description: string;
+    isSuggestion?: boolean;
   }) => {
     if (!selectedReserveForAction) return;
     const res = selectedReserveForAction;
     const cleanAmount = Math.round(data.amount * 100) / 100;
+    const isSugg = Boolean(data.isSuggestion ?? isSuggestionAporte);
 
     await addReserveTransaction({
       reserve_id: res.id,
       type: 'aporte',
       amount: cleanAmount,
       date: data.date,
-      description: data.description || `[Aporte Manual] ${res.name}`,
-      source: 'manual'
+      category: isSugg ? 'Aporte Sugerido' : 'Aporte Manual',
+      description: data.description || (isSugg ? `[Aporte Sugerido] ${res.name}` : `[Aporte Manual] ${res.name}`),
+      source: isSugg ? 'automation' : 'manual'
     });
 
     const newBal = Math.round(((res.saldo_atual || 0) + cleanAmount) * 100) / 100;
     await updateReserve(res.id, { saldo_atual: newBal });
 
-    toast.success(`Aporte de ${formatCurrency(cleanAmount)} confirmado em ${res.name}!`);
+    toast.success(
+      isSugg 
+        ? `Aporte sugerido de ${formatCurrency(cleanAmount)} confirmado em ${res.name}!` 
+        : `Aporte manual de ${formatCurrency(cleanAmount)} confirmado em ${res.name}!`
+    );
     if (refreshData) await refreshData(true);
   };
 
@@ -710,6 +717,9 @@ export function Reserves() {
                   customDateRange={FIXED_CUSTOM_RANGE}
                   onAporteManual={r => {
                     setSelectedReserveForAction(r);
+                    setIsSuggestionAporte(false);
+                    setAporteInitialAmount(undefined);
+                    setAporteInitialDesc(undefined);
                     setActionModalType('aporte_manual');
                   }}
                   onWithdraw={r => {

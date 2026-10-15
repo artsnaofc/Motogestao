@@ -157,13 +157,13 @@ export function SuggestionAuditModal({
 
             <div className="p-3 rounded-xl bg-muted/40 border border-border">
               <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider block">
-                Aportes Já Realizados
+                Aportes das Regras
               </span>
               <span className="text-lg font-black text-emerald-600 dark:text-emerald-400 font-mono mt-0.5 block">
                 {formatCurrency(audit.effectiveAportes)}
               </span>
               <span className="text-[10px] text-muted-foreground">
-                Aportes quitados no ciclo
+                Sugestões quitadas no ciclo
               </span>
             </div>
 
@@ -179,6 +179,20 @@ export function SuggestionAuditModal({
               </span>
             </div>
           </div>
+
+          {/* Destaque para Aportes Manuais do Período */}
+          {audit.manualAportes !== undefined && audit.manualAportes > 0 && (
+            <div className="p-2.5 rounded-xl bg-muted/30 border border-border/80 flex items-center justify-between text-xs">
+              <div className="flex items-center gap-1.5 text-muted-foreground font-medium">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+                <span>Aportes manuais realizados no período:</span>
+              </div>
+              <span className="font-mono font-bold text-foreground">
+                {formatCurrency(audit.manualAportes)}{' '}
+                <span className="text-[10px] text-muted-foreground font-normal">(não abatem a sugestão)</span>
+              </span>
+            </div>
+          )}
 
           {/* Formula & Rule Memory Box */}
           <div className="p-3.5 rounded-xl bg-card border border-border shadow-2xs space-y-2">

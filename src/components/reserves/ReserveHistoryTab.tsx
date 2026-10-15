@@ -331,10 +331,34 @@ export function ReserveHistoryTab({
 
   // Helper to categorize transaction source & UI presentation
   const getTxCategoryInfo = (tx: ReserveTransaction) => {
+    const isSuggestion = tx.category === 'Aporte Sugerido' || 
+                         tx.source === 'automation' || 
+                         Boolean(tx.description && (
+                           tx.description.includes('[Aporte Sugerido]') || 
+                           tx.description.toLowerCase().includes('aporte sugerido')
+                         ));
+
     const isMass = tx.source === 'mass_contribution' || 
-                   (tx.description && (tx.description.includes('[Aporte em Massa]') || tx.description.includes('[Consolidador]')));
+                   Boolean(tx.batch_id) ||
+                   Boolean(tx.description && (
+                     tx.description.includes('[Consolidador em Massa]') ||
+                     tx.description.includes('[Aporte em Massa]') || 
+                     tx.description.includes('[Consolidador]')
+                   ));
     
     if (tx.type === 'aporte') {
+      if (isSuggestion) {
+        return {
+          label: 'Aporte Sugerido',
+          shortLabel: 'Sugerido',
+          categoryKey: 'suggestion_aporte',
+          badgeClass: 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20',
+          icon: Sparkles,
+          color: 'text-amber-600 dark:text-amber-400',
+          isMass: false,
+          isSuggestion: true
+        };
+      }
       if (isMass) {
         return {
           label: 'Aporte em Lote',
@@ -343,7 +367,8 @@ export function ReserveHistoryTab({
           badgeClass: 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/20',
           icon: Zap,
           color: 'text-indigo-600 dark:text-indigo-400',
-          isMass: true
+          isMass: true,
+          isSuggestion: false
         };
       }
       return {
@@ -353,7 +378,8 @@ export function ReserveHistoryTab({
         badgeClass: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20',
         icon: ArrowDownLeft,
         color: 'text-emerald-600 dark:text-emerald-400',
-        isMass: false
+        isMass: false,
+        isSuggestion: false
       };
     }
 
@@ -515,6 +541,7 @@ export function ReserveHistoryTab({
             const info = getTxCategoryInfo(item.tx);
             if (selectedType === 'aporte' && item.tx.type !== 'aporte') return false;
             if (selectedType === 'manual_aporte' && info.categoryKey !== 'manual_aporte') return false;
+            if (selectedType === 'suggestion_aporte' && info.categoryKey !== 'suggestion_aporte') return false;
             if (selectedType === 'mass_aporte' && info.categoryKey !== 'mass_aporte') return false;
             if (selectedType === 'utilizacao' && info.categoryKey !== 'utilizacao') return false;
             if (selectedType === 'rendimento' && info.categoryKey !== 'rendimento') return false;
@@ -665,6 +692,7 @@ export function ReserveHistoryTab({
   // Financial & Rule Summary Metrics for filtered view
   const summary = useMemo(() => {
     let totalAportesManuais = 0;
+    let totalAportesSugeridos = 0;
     let totalAportesMassa = 0;
     let countAportes = 0;
     let totalUtilizacoes = 0;
@@ -681,6 +709,9 @@ export function ReserveHistoryTab({
 
         if (info.categoryKey === 'manual_aporte') {
           totalAportesManuais += amount;
+          countAportes++;
+        } else if (info.categoryKey === 'suggestion_aporte') {
+          totalAportesSugeridos += amount;
           countAportes++;
         } else if (info.categoryKey === 'mass_aporte') {
           totalAportesMassa += amount;
@@ -700,11 +731,12 @@ export function ReserveHistoryTab({
       }
     });
 
-    const totalAportes = totalAportesManuais + totalAportesMassa;
+    const totalAportes = totalAportesManuais + totalAportesSugeridos + totalAportesMassa;
     const netFlow = (totalAportes + totalRendimentos) - totalUtilizacoes;
 
     return {
       totalAportesManuais: Math.round(totalAportesManuais * 100) / 100,
+      totalAportesSugeridos: Math.round(totalAportesSugeridos * 100) / 100,
       totalAportesMassa: Math.round(totalAportesMassa * 100) / 100,
       totalAportesTotal: Math.round(totalAportes * 100) / 100,
       countAportes,
@@ -1245,7 +1277,12 @@ export function ReserveHistoryTab({
           </p>
           <div className="text-[10px] text-muted-foreground flex flex-wrap gap-x-2 gap-y-0.5 pt-0.5 border-t border-emerald-500/10 font-medium">
             <span>Manuais: <strong>{hideValues ? '••••' : formatCurrency(summary.totalAportesManuais)}</strong></span>
-            <span>• Lote: <strong>{hideValues ? '••••' : formatCurrency(summary.totalAportesMassa)}</strong></span>
+            {summary.totalAportesSugeridos > 0 && (
+              <span>• Sugeridos: <strong>{hideValues ? '••••' : formatCurrency(summary.totalAportesSugeridos)}</strong></span>
+            )}
+            {summary.totalAportesMassa > 0 && (
+              <span>• Lote: <strong>{hideValues ? '••••' : formatCurrency(summary.totalAportesMassa)}</strong></span>
+            )}
           </div>
         </div>
 
@@ -1386,6 +1423,7 @@ export function ReserveHistoryTab({
             { id: 'transactions_only', label: '💸 Apenas Movimentações' },
             { id: 'aporte', label: '📥 Aportes (Geral)' },
             { id: 'manual_aporte', label: '👤 Manuais' },
+            { id: 'suggestion_aporte', label: '✨ Sugeridos' },
             { id: 'mass_aporte', label: '⚡ Em Lote' },
             { id: 'utilizacao', label: '📤 Resgates' },
             { id: 'rendimento', label: '📈 Rendimentos' }

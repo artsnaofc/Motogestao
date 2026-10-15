@@ -15,7 +15,8 @@ import {
   Zap,
   RefreshCw,
   Clock,
-  ArrowRight
+  ArrowRight,
+  Info
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -45,6 +46,7 @@ interface AporteManualModalProps {
     amount: number;
     date: string;
     description: string;
+    isSuggestion?: boolean;
   }) => Promise<void>;
 }
 
@@ -64,7 +66,7 @@ export function AporteManualModal({
 
   useEffect(() => {
     if (reserve) {
-      setDescription(initialDescription || (isSuggestion ? `Aporte sugerido - ${reserve.name}` : `Aporte manual - ${reserve.name}`));
+      setDescription(initialDescription || (isSuggestion ? `[Aporte Sugerido] Regra calculada: ${reserve.name}` : `[Aporte Manual] ${reserve.name}`));
       setAmount(initialAmount && initialAmount > 0 ? String(Math.round(initialAmount * 100) / 100) : '');
       setDate(getTodayLocalDateStr());
     }
@@ -93,7 +95,8 @@ export function AporteManualModal({
       await onSubmit({
         amount: val,
         date,
-        description: description || `Aporte manual - ${reserve.name}`
+        description: description || (isSuggestion ? `[Aporte Sugerido] ${reserve.name}` : `[Aporte Manual] ${reserve.name}`),
+        isSuggestion: Boolean(isSuggestion),
       });
       onClose();
     } catch (err) {
@@ -118,11 +121,15 @@ export function AporteManualModal({
             <div>
               <div className="flex items-center gap-2">
                 <h3 className="text-base font-black text-foreground">
-                  {isSuggestion ? 'Confirmar Aporte Sugerido' : 'Confirmar Aporte Unitário'}
+                  {isSuggestion ? 'Confirmar Aporte Sugerido' : 'Confirmar Aporte Manual'}
                 </h3>
-                {isSuggestion && (
+                {isSuggestion ? (
                   <span className="px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wider bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
                     Sugerido
+                  </span>
+                ) : (
+                  <span className="px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wider bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                    Manual
                   </span>
                 )}
               </div>
@@ -136,6 +143,14 @@ export function AporteManualModal({
             <X className="w-4 h-4" />
           </Button>
         </div>
+
+        {/* Informative notice about manual vs suggestion aportes */}
+        {!isSuggestion && (
+          <div className="mx-5 mt-4 p-2.5 rounded-xl bg-indigo-500/5 border border-indigo-500/20 flex items-center gap-2 text-[11px] text-muted-foreground">
+            <Info className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+            <span>Este aporte manual soma ao saldo da reserva e <strong>não abate as sugestões</strong> calculadas pelas regras.</span>
+          </div>
+        )}
 
         {/* Form */}
         <form onSubmit={handleSave} className="p-5 space-y-4 text-left">
