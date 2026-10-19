@@ -1,0 +1,6 @@
+{
+  "summary": "Plano de correção do saldo fantasma na Reserva de Investimentos, resolução do loop de duplicação automática de proventos e script SQL para auditoria no Supabase.",
+  "updatedAt": "2026-10-19T15:56:56.489200641Z",
+  "requestFeedback": true,
+  "userFacing": true
+}

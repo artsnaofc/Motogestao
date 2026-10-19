@@ -371,6 +371,21 @@ export function ReserveHistoryTab({
           isSuggestion: false
         };
       }
+      const isProvento = tx.category === 'Proventos' || 
+                         tx.source === 'dividends' || 
+                         Boolean(tx.description && (tx.description.includes('Provento:') || tx.description.toLowerCase().includes('provento')));
+      if (isProvento) {
+        return {
+          label: 'Aporte de Provento',
+          shortLabel: 'Provento',
+          categoryKey: 'provento_aporte',
+          badgeClass: 'bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20',
+          icon: ArrowDownLeft,
+          color: 'text-purple-600 dark:text-purple-400',
+          isMass: false,
+          isSuggestion: false
+        };
+      }
       return {
         label: 'Aporte Manual',
         shortLabel: 'Manual',

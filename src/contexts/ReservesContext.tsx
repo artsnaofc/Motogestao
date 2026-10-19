@@ -194,9 +194,26 @@ export function ReservesProvider({
       syncQueueManager.enqueue('transactions', 'delete', rtToDelete.transaction_id);
     }
 
+    // Check if this reserve transaction was generated from or linked to a dividend
+    const localDivs = cacheManager.get<any[]>(`dividends_${userId}`) || [];
+    const linkedDiv = localDivs.find(d => 
+      d.transaction_id === id || 
+      (rtToDelete?.transaction_id && d.id === rtToDelete.transaction_id) ||
+      ((rtToDelete?.type === 'aporte' || rtToDelete?.type === 'rendimento') && 
+       d.ticker && rtToDelete.description?.toUpperCase().includes(d.ticker.toUpperCase()) && 
+       Math.abs(Number(d.amount) - Number(rtToDelete.amount)) < 0.001 &&
+       (d.data_ex === rtToDelete.date || d.date === rtToDelete.date))
+    );
+
+    if (linkedDiv) {
+      cacheManager.set(`dividends_${userId}`, localDivs.filter(d => d.id !== linkedDiv.id), undefined, 'investments');
+      syncQueueManager.enqueue('dividends', 'delete', linkedDiv.id);
+    }
+
     syncQueueManager.enqueue('reserve_transactions', 'delete', id);
+    if (onDataChange) await onDataChange();
     if (!options?.silent) toast.success('Movimentação excluída com sucesso!', { id: 'reserve-action' });
-  }, [reserveTransactions]);
+  }, [reserveTransactions, onDataChange]);
 
   const updateReserveTransaction = useCallback(async (id: string, updatedFields: Partial<ReserveTransaction>, options?: { silent?: boolean }) => {
     const userId = await getEffectiveUserId();

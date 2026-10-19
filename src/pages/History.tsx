@@ -1399,7 +1399,16 @@ export function History() {
           return false;
         }
         // Evita duplicar provento/dividendo gerenciado pela página de investimentos com o lançamento das reservas
-        const isLinkedToDividend = (dividends || []).some(d => d.transaction_id === rt.id);
+        const isLinkedToDividend = (dividends || []).some(d => 
+          d.transaction_id === rt.id || 
+          rt.transaction_id === d.id ||
+          (
+            (rt.type === 'aporte' || rt.type === 'rendimento') &&
+            d.ticker && rt.description?.toUpperCase().includes(d.ticker.toUpperCase()) &&
+            Math.abs(Number(d.amount) - Number(rt.amount)) < 0.001 &&
+            (d.data_ex === rt.date || d.date === rt.date)
+          )
+        );
         if (isLinkedToDividend) {
           return false;
         }

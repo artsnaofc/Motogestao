@@ -296,7 +296,9 @@ class SyncQueueManager {
               await supabase.from('reserve_transactions').update({ linked_investment_id: null }).eq('linked_investment_id', task.targetId);
             } else if (task.table === 'reserve_transactions') {
               await supabase.from('investment_transactions').update({ transaction_id: null }).eq('transaction_id', task.targetId);
-              await supabase.from('dividends').update({ transaction_id: null }).eq('transaction_id', task.targetId);
+              await supabase.from('dividends').delete().eq('transaction_id', task.targetId);
+            } else if (task.table === 'dividends') {
+              await supabase.from('reserve_transactions').delete().eq('transaction_id', task.targetId);
             } else if (task.table === 'transactions') {
               await supabase.from('reserve_transactions').update({ transaction_id: null }).eq('transaction_id', task.targetId);
             }

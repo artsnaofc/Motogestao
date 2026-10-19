@@ -137,7 +137,7 @@ export interface ReserveTransaction {
   description?: string;
   linked_investment_id?: string;
   transaction_id?: string;
-  source?: 'manual' | 'mass_contribution' | 'automation' | 'investment';
+  source?: 'manual' | 'mass_contribution' | 'automation' | 'investment' | 'dividends';
   batch_id?: string;
 
   // Status de Pagamento e Vencimento
