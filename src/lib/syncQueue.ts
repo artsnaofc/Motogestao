@@ -133,6 +133,7 @@ class SyncQueueManager {
 
     this.processing = true;
     const task = queue[0];
+    let shouldScheduleImmediateNext = false;
 
     try {
       let error: any = null;
@@ -326,6 +327,9 @@ class SyncQueueManager {
           console.warn(`[SyncQueue] Descartando item por limite de tentativas ou restrição irremediável:`, task);
           const remaining = this.getQueue().filter(t => t.id !== task.id);
           this.saveQueue(remaining);
+          if (remaining.length > 0) {
+            shouldScheduleImmediateNext = true;
+          }
         } else {
           // Rotate task to back with incremented attempt
           const currentQueue = this.getQueue();
@@ -334,15 +338,21 @@ class SyncQueueManager {
             this.saveQueue([...rest, { ...failedTask, attempts: failedTask.attempts + 1 }]);
           }
           this.processing = false;
-          // Exponential backoff
-          const delay = Math.min(1000 * Math.pow(1.5, task.attempts), 10000);
-          this.retryBackoffTimeout = setTimeout(() => this.processQueue(), delay);
+          // Strict Exponential backoff without concurrent 100ms throttle override
+          const delay = Math.min(1000 * Math.pow(2, Math.min(task.attempts, 5)), 30000);
+          this.retryBackoffTimeout = setTimeout(() => {
+            this.retryBackoffTimeout = null;
+            this.processQueue();
+          }, delay);
           return;
         }
       } else {
         // Succeeded syncing mutation!
         const remaining = this.getQueue().filter(t => t.id !== task.id);
         this.saveQueue(remaining);
+        if (remaining.length > 0) {
+          shouldScheduleImmediateNext = true;
+        }
 
         if (remaining.length === 0 && this.hadMultipleOfflineTasks) {
           this.hadMultipleOfflineTasks = false;
@@ -353,8 +363,9 @@ class SyncQueueManager {
       console.error('[SyncQueue] Erro inesperado ao processar tarefa da fila:', err);
     } finally {
       this.processing = false;
-      // Loop sequentially with small throttle
-      setTimeout(() => this.processQueue(), 100);
+      if (shouldScheduleImmediateNext && !this.retryBackoffTimeout) {
+        setTimeout(() => this.processQueue(), 100);
+      }
     }
   }
 

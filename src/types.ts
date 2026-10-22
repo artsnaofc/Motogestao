@@ -182,9 +182,11 @@ export interface InvestmentTransaction {
   created_at?: string;
 }
 
-export type DividendType = 'Dividendo' | 'JCP' | 'Rendimento';
-export type DividendStatus = 'received' | 'provisioned';
+export type DividendType = 'Dividendo' | 'JCP' | 'Rendimento' | 'Amortizacao' | 'Outros';
+export type DividendStatus = 'received' | 'provisioned' | 'cancelled';
 export type DividendAnalysisMode = 'received_only' | 'include_provisioned';
+export type CorporateEventProvider = 'cvm_ipe' | 'fnet_b3' | 'brapi' | 'manual';
+export type EventValidationStatus = 'valid' | 'pending_review' | 'cancelled';
 
 export interface Dividend {
   id: string;
@@ -200,6 +202,69 @@ export interface Dividend {
   description?: string;
   transaction_id?: string;
   created_at?: string;
+
+  // Corporate Event & Auto-Import Provenance Metadata
+  source_provider?: CorporateEventProvider;
+  source_event_id?: string; // Deterministic hash or event unique key
+  source_document_id?: string; // e.g. CVM Protocol / FNET ID
+  source_document_version?: number; // e.g. 1, 2, 3 (retificação)
+  source_url?: string;
+  source_published_at?: string;
+  source_updated_at?: string;
+  last_synced_at?: string;
+  eligible_quantity?: number; // Quantity on data_com
+  validation_status?: EventValidationStatus;
+  notes?: string;
+}
+
+export interface CorporateEvent {
+  eventId: string; // Deterministic identifier
+  provider: CorporateEventProvider;
+  ticker: string;
+  companyName?: string;
+  companyCnpj?: string;
+  isin?: string;
+  type: DividendType;
+  unitAmount: number;
+  dateCom: string; // YYYY-MM-DD
+  dateEx?: string; // YYYY-MM-DD
+  paymentDate: string; // YYYY-MM-DD
+  announcementDate?: string; // YYYY-MM-DD
+  documentId?: string;
+  documentVersion?: number;
+  documentUrl?: string;
+  referenceMonthYear?: string;
+  status: 'active' | 'revised' | 'cancelled';
+  validationStatus: EventValidationStatus;
+  notes?: string;
+  rawPayload?: any;
+}
+
+export interface DividendSyncResult {
+  provider: CorporateEventProvider | string;
+  discovered: number;
+  imported: number;
+  updated: number;
+  ignored: number;
+  errors: number;
+  durationMs: number;
+  timestamp: string;
+  details: {
+    ticker: string;
+    type: string;
+    unitAmount: number;
+    paymentDate: string;
+    status: string;
+    reason?: string;
+  }[];
+}
+
+export interface DividendSyncStatus {
+  lastSyncAt: string | null;
+  isRunning: boolean;
+  activeProvider: string;
+  lastResult?: DividendSyncResult;
+  history: DividendSyncResult[];
 }
 
 export interface ValuationTarget {

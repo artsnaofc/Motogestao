@@ -25,8 +25,11 @@ import {
   Filter,
   Info,
   Layers,
-  Zap
+  Zap,
+  RefreshCw,
+  Database
 } from 'lucide-react';
+import { DividendSyncStatusModal } from './DividendSyncStatusModal';
 
 interface DividendSummaryCardsProps {
   dividends: Dividend[];
@@ -47,6 +50,7 @@ export function DividendSummaryCards({
 }: DividendSummaryCardsProps) {
   const dataContext = useData();
   const transactions = dataContext?.transactions || [];
+  const [isSyncModalOpen, setIsSyncModalOpen] = useState(false);
 
   // Active mode from props, context, or fallback
   const activeMode = externalMode !== undefined 
@@ -213,7 +217,21 @@ export function DividendSummaryCards({
           </div>
         </div>
 
-        <div className="flex items-center p-1 bg-muted/50 rounded-xl border border-border/50 self-start sm:self-auto">
+        <div className="flex items-center gap-2 flex-wrap">
+          <button
+            type="button"
+            onClick={() => setIsSyncModalOpen(true)}
+            className="px-3 py-1.5 text-xs font-black rounded-xl border border-border/60 bg-muted/40 hover:bg-muted text-foreground transition-all flex items-center gap-1.5 shadow-xs"
+            title="Ver status da sincronização automática CVM / FNET / B3"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 text-primary ${dataContext?.isSyncingDividends ? 'animate-spin' : ''}`} />
+            <span>Sincronização CVM / B3</span>
+            {dataContext?.dividendSyncStatus?.lastSyncAt && (
+              <span className="w-2 h-2 rounded-full bg-emerald-500" />
+            )}
+          </button>
+
+          <div className="flex items-center p-1 bg-muted/50 rounded-xl border border-border/50 self-start sm:self-auto">
           <button
             type="button"
             onClick={() => handleModeChange('received_only')}
@@ -245,6 +263,7 @@ export function DividendSummaryCards({
             )}
           </button>
         </div>
+      </div>
       </div>
 
       {/* KPI METRICS */}
@@ -329,12 +348,33 @@ export function DividendSummaryCards({
             </p>
           </div>
 
-          <button
-            onClick={() => onOpenAddDivModal()}
-            className="px-3.5 py-1.5 text-xs font-bold rounded-xl bg-emerald-500 text-white hover:bg-emerald-600 transition-all flex items-center gap-1.5 self-start sm:self-auto shadow-sm cursor-pointer"
-          >
-            + Novo Provento
-          </button>
+          <div className="flex items-center gap-2 flex-wrap self-start sm:self-auto">
+            <button
+              onClick={() => dataContext?.syncDividends()}
+              disabled={dataContext?.isSyncingDividends}
+              title="Descobrir e importar novos proventos da CVM e FNET/B3"
+              className="px-3 py-1.5 text-xs font-bold rounded-xl bg-purple-500/10 border border-purple-500/30 text-purple-600 dark:text-purple-400 hover:bg-purple-500/20 transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${dataContext?.isSyncingDividends ? 'animate-spin' : ''}`} />
+              <span>{dataContext?.isSyncingDividends ? 'Sincronizando...' : 'Sincronizar CVM/B3'}</span>
+            </button>
+
+            <button
+              onClick={() => setIsSyncModalOpen(true)}
+              title="Histórico e detalhes de sincronização oficial"
+              className="px-2.5 py-1.5 text-xs font-bold rounded-xl bg-card border border-border/60 text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-all flex items-center gap-1.5 cursor-pointer"
+            >
+              <Database className="w-3.5 h-3.5 text-blue-500" />
+              <span className="hidden sm:inline">Status</span>
+            </button>
+
+            <button
+              onClick={() => onOpenAddDivModal()}
+              className="px-3.5 py-1.5 text-xs font-bold rounded-xl bg-emerald-500 text-white hover:bg-emerald-600 transition-all flex items-center gap-1.5 shadow-sm cursor-pointer"
+            >
+              + Novo Provento
+            </button>
+          </div>
         </div>
 
         <div className="h-64 w-full pt-4">

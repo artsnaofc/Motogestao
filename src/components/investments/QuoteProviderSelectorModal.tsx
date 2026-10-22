@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { cacheManager } from '../../lib/cacheManager';
+import { getEffectiveUserId } from '../../lib/authUtils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -144,8 +145,7 @@ export function QuoteProviderSelectorModal({ open, onOpenChange }: QuoteProvider
     setSaving(true);
     try {
       const cleanToken = brapiToken.trim() || null;
-      const { data: userData } = await supabase.auth.getUser();
-      const userId = userData?.user?.id;
+      const userId = (await getEffectiveUserId()) || settings?.user_id;
 
       if (userId) {
         const newSettingsPayload = {

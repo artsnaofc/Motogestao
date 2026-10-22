@@ -47,10 +47,15 @@ export function QuotesProvider({ children }: { children: ReactNode }) {
   const [isFetchingQuotes, setIsFetchingQuotes] = useState(false);
   const [lastQuoteFetchResult, setLastQuoteFetchResult] = useState<QuoteFetchResult | null>(null);
 
-  // Sync quotes cached in Supabase on load
+  // Sync quotes cached in Supabase on load (only if local cache is empty)
   useEffect(() => {
     const syncQuotesFromDb = async () => {
       if (!navigator.onLine) return;
+
+      // Skip Supabase network query if cached quotes already exist in memory / local cache
+      const cached = cacheManager.get<Record<string, number>>('cached_quotes');
+      if (cached && Object.keys(cached).length > 0) return;
+
       try {
         const userId = await getEffectiveUserId();
         if (userId) {

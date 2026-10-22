@@ -1,8 +1,9 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { cacheManager } from '../lib/cacheManager';
 import { syncQueueManager } from '../lib/syncQueue';
 import { toast } from '../lib/toast';
+import { getEffectiveUserId } from '../lib/authUtils';
 import {
   Vehicle,
   VehicleFipeHistory,
@@ -115,13 +116,20 @@ export const VehiclesProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     cacheManager.set('vehicle_fipe_cache', fipeHistory, undefined, 'vehicles');
   }, [fipeHistory]);
 
-  const refreshVehicles = useCallback(async () => {
+  const lastVehiclesFetchTimeRef = useRef<number>(0);
+
+  const refreshVehicles = useCallback(async (force = false) => {
+    const now = Date.now();
+    if (!force && now - lastVehiclesFetchTimeRef.current < 15000) {
+      return; // Skip if fetched in the last 15 seconds to prevent spam
+    }
+
     try {
       setIsLoadingVehicles(true);
-      const { data: authData } = await supabase.auth.getUser();
-      if (!authData.user) return;
+      const userId = await getEffectiveUserId();
+      if (!userId) return;
 
-      const userId = authData.user.id;
+      lastVehiclesFetchTimeRef.current = now;
 
       // Parallel fetch for all vehicle collections
       const [vRes, oRes, mRes, fRes] = await Promise.allSettled([
@@ -174,8 +182,7 @@ export const VehiclesProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   // Add Vehicle
   const addVehicle = async (data: Omit<Vehicle, 'id' | 'user_id' | 'created_at'>): Promise<Vehicle> => {
-    const { data: authData } = await supabase.auth.getUser();
-    const userId = authData.user?.id || 'offline_user';
+    const userId = (await getEffectiveUserId()) || 'offline_user';
     const newId = crypto.randomUUID();
 
     const isFirstVehicle = vehicles.length === 0;
@@ -248,8 +255,7 @@ export const VehiclesProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     notes?: string,
     source: VehicleOdometerLog['source'] = 'manual'
   ) => {
-    const { data: authData } = await supabase.auth.getUser();
-    const userId = authData.user?.id || 'offline_user';
+    const userId = (await getEffectiveUserId()) || 'offline_user';
     const newId = crypto.randomUUID();
 
     const log: VehicleOdometerLog = {
@@ -281,8 +287,7 @@ export const VehiclesProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const addMaintenanceRecord = async (
     data: Omit<VehicleMaintenanceRecord, 'id' | 'user_id' | 'created_at'>
   ): Promise<VehicleMaintenanceRecord> => {
-    const { data: authData } = await supabase.auth.getUser();
-    const userId = authData.user?.id || 'offline_user';
+    const userId = (await getEffectiveUserId()) || 'offline_user';
     const newId = crypto.randomUUID();
 
     const record: VehicleMaintenanceRecord = {
@@ -332,8 +337,7 @@ export const VehiclesProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     fipeValue: number,
     refMonth: string
   ) => {
-    const { data: authData } = await supabase.auth.getUser();
-    const userId = authData.user?.id || 'offline_user';
+    const userId = (await getEffectiveUserId()) || 'offline_user';
     const newId = crypto.randomUUID();
 
     const entry: VehicleFipeHistory = {

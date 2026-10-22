@@ -1,13 +1,13 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback, useMemo, useRef } from 'react';
 import { supabase } from '../lib/supabase';
-import { InvestmentTransaction, Dividend, UserSettings, ReserveTransaction, DividendAnalysisMode, ValuationTarget, Reserve } from '../types';
+import { InvestmentTransaction, Dividend, UserSettings, ReserveTransaction, DividendAnalysisMode, ValuationTarget, Reserve, DividendSyncResult, DividendSyncStatus } from '../types';
 import { AssetAllocationTarget, RebalanceRulesConfig, DEFAULT_REBALANCE_RULES } from '../lib/rebalanceEngine';
 import { B3AssetHistoryRecord, getAssetTypeForTicker } from '../lib/b3Fundamentals';
 import { toast } from '../lib/toast';
 import { cacheManager } from '../lib/cacheManager';
 import { syncQueueManager } from '../lib/syncQueue';
 import { getTodayLocalDateStr } from '../lib/utils';
-import { getEffectiveUserId } from '../lib/authUtils';
+import { getEffectiveUserId, getEffectiveUser } from '../lib/authUtils';
 
 export interface InvestmentsContextType {
   investmentTransactions: InvestmentTransaction[];
@@ -22,6 +22,10 @@ export interface InvestmentsContextType {
   updateAssetCnpj: (ticker: string, cnpj: string) => Promise<void>;
   dividendAnalysisMode: DividendAnalysisMode;
   setDividendAnalysisMode: (mode: DividendAnalysisMode) => void;
+  syncDividends: (tickers?: string[]) => Promise<DividendSyncResult | null>;
+  isSyncingDividends: boolean;
+  dividendSyncStatus: DividendSyncStatus | null;
+  fetchDividendSyncStatus: () => Promise<DividendSyncStatus | null>;
   valuationTargets: Record<string, ValuationTarget>;
   saveValuationTarget: (target: ValuationTarget) => Promise<void>;
   deleteValuationTarget: (ticker: string) => Promise<void>;
@@ -99,28 +103,35 @@ export function InvestmentsProvider({
     return cacheManager.get<Record<string, any>>('b3_assets_metadata_cache') || {};
   });
 
-  // Load from Supabase on mount
+  // Load from Supabase on mount (optimized with cache checks to reduce Supabase egress)
   useEffect(() => {
     const loadSupabaseData = async () => {
       try {
-        const { data: { user } } = await supabase.auth.getUser();
+        const user = await getEffectiveUser();
 
-        // Load b3_assets_metadata
+        // Load b3_assets_metadata: only query if cache is empty or older than 24h
         try {
-          const { data: metadataRows, error: metaErr } = await supabase
-            .from('b3_assets_metadata')
-            .select('*');
+          const cachedMeta = cacheManager.get<Record<string, any>>('b3_assets_metadata_cache');
+          const cacheTimestamp = cacheManager.get<number>('b3_assets_metadata_time');
+          const isStale = !cacheTimestamp || (Date.now() - cacheTimestamp > 24 * 60 * 60 * 1000);
 
-          if (!metaErr && metadataRows && metadataRows.length > 0) {
-            const metaMap: Record<string, any> = {};
-            metadataRows.forEach((row: any) => {
-              metaMap[row.ticker] = row;
-            });
-            setB3AssetsMetadata(prev => {
-              const merged = { ...prev, ...metaMap };
-              cacheManager.set('b3_assets_metadata_cache', merged, undefined, 'investments');
-              return merged;
-            });
+          if (!cachedMeta || Object.keys(cachedMeta).length === 0 || isStale) {
+            const { data: metadataRows, error: metaErr } = await supabase
+              .from('b3_assets_metadata')
+              .select('*');
+
+            if (!metaErr && metadataRows && metadataRows.length > 0) {
+              const metaMap: Record<string, any> = {};
+              metadataRows.forEach((row: any) => {
+                metaMap[row.ticker] = row;
+              });
+              setB3AssetsMetadata(prev => {
+                const merged = { ...prev, ...metaMap };
+                cacheManager.set('b3_assets_metadata_cache', merged, undefined, 'investments');
+                cacheManager.set('b3_assets_metadata_time', Date.now(), undefined, 'investments');
+                return merged;
+              });
+            }
           }
         } catch (mErr) {
           console.warn('Could not load b3_assets_metadata from supabase:', mErr);
@@ -128,57 +139,63 @@ export function InvestmentsProvider({
 
         if (!user) return;
 
-        // 1. Target Allocations
-        const { data: allocData } = await supabase
-          .from('portfolio_target_allocations')
-          .select('*')
-          .eq('user_id', user.id);
+        // 1. Target Allocations: only query if not present in cache
+        const cachedAlloc = cacheManager.get<Record<string, AssetAllocationTarget>>('portfolio_target_allocations_cache');
+        if (!cachedAlloc || Object.keys(cachedAlloc).length === 0) {
+          const { data: allocData } = await supabase
+            .from('portfolio_target_allocations')
+            .select('*')
+            .eq('user_id', user.id);
 
-        if (allocData && allocData.length > 0) {
-          const map: Record<string, AssetAllocationTarget> = {};
-          allocData.forEach((row: any) => {
-            map[row.ticker] = {
-              ticker: row.ticker,
-              type: row.asset_type || 'Ação',
-              minPct: Number(row.min_pct || 1),
-              targetPct: Number(row.target_pct || 5),
-              maxPct: Number(row.max_pct || 15),
-              locked: Boolean(row.is_locked),
-              notes: row.notes
-            };
-          });
-          setTargetAllocations(map);
-          cacheManager.set('portfolio_target_allocations_cache', map, undefined, 'investments');
+          if (allocData && allocData.length > 0) {
+            const map: Record<string, AssetAllocationTarget> = {};
+            allocData.forEach((row: any) => {
+              map[row.ticker] = {
+                ticker: row.ticker,
+                type: row.asset_type || 'Ação',
+                minPct: Number(row.min_pct || 1),
+                targetPct: Number(row.target_pct || 5),
+                maxPct: Number(row.max_pct || 15),
+                locked: Boolean(row.is_locked),
+                notes: row.notes
+              };
+            });
+            setTargetAllocations(map);
+            cacheManager.set('portfolio_target_allocations_cache', map, undefined, 'investments');
+          }
         }
 
-        // 2. Rules Config
-        const { data: rulesData } = await supabase
-          .from('portfolio_rules_config')
-          .select('*')
-          .eq('user_id', user.id)
-          .single();
+        // 2. Rules Config: only query if not present in cache
+        const cachedRules = cacheManager.get<RebalanceRulesConfig>('portfolio_rules_config_cache');
+        if (!cachedRules) {
+          const { data: rulesData } = await supabase
+            .from('portfolio_rules_config')
+            .select('*')
+            .eq('user_id', user.id)
+            .maybeSingle();
 
-        if (rulesData) {
-          const conf: RebalanceRulesConfig = {
-            activeStrategy: rulesData.active_strategy || 'rebalance',
-            customWeights: {
-              gapWeight: rulesData.gap_weight ?? 40,
-              qualityWeight: rulesData.quality_weight ?? 25,
-              valuationWeight: rulesData.valuation_weight ?? 20,
-              dividendWeight: rulesData.dividend_weight ?? 10,
-              liquidityWeight: rulesData.liquidity_weight ?? 5,
-            },
-            maxAssetAllocationPct: Number(rulesData.max_asset_allocation_pct ?? 15),
-            maxSectorAllocationPct: Number(rulesData.max_sector_allocation_pct ?? 25),
-            minDailyLiquidity: Number(rulesData.min_daily_liquidity ?? 1000000),
-            maxDebtEbitdaAllowed: Number(rulesData.max_debt_ebitda_allowed ?? 3.5),
-            maxFiiPhysicalVacancyAllowed: Number(rulesData.max_fii_physical_vacancy_allowed ?? 15),
-            maxFiiPvpAllowed: Number(rulesData.max_fii_pvp_allowed ?? 1.08),
-            minScoreAllowed: Number(rulesData.min_score_allowed ?? 45),
-            allowNewPositions: Boolean(rulesData.allow_new_positions ?? false),
-          };
-          setRulesConfig(conf);
-          cacheManager.set('portfolio_rules_config_cache', conf, undefined, 'investments');
+          if (rulesData) {
+            const conf: RebalanceRulesConfig = {
+              activeStrategy: rulesData.active_strategy || 'rebalance',
+              customWeights: {
+                gapWeight: rulesData.gap_weight ?? 40,
+                qualityWeight: rulesData.quality_weight ?? 25,
+                valuationWeight: rulesData.valuation_weight ?? 20,
+                dividendWeight: rulesData.dividend_weight ?? 10,
+                liquidityWeight: rulesData.liquidity_weight ?? 5,
+              },
+              maxAssetAllocationPct: Number(rulesData.max_asset_allocation_pct ?? 15),
+              maxSectorAllocationPct: Number(rulesData.max_sector_allocation_pct ?? 25),
+              minDailyLiquidity: Number(rulesData.min_daily_liquidity ?? 1000000),
+              maxDebtEbitdaAllowed: Number(rulesData.max_debt_ebitda_allowed ?? 3.5),
+              maxFiiPhysicalVacancyAllowed: Number(rulesData.max_fii_physical_vacancy_allowed ?? 15),
+              maxFiiPvpAllowed: Number(rulesData.max_fii_pvp_allowed ?? 1.08),
+              minScoreAllowed: Number(rulesData.min_score_allowed ?? 45),
+              allowNewPositions: Boolean(rulesData.allow_new_positions ?? false),
+            };
+            setRulesConfig(conf);
+            cacheManager.set('portfolio_rules_config_cache', conf, undefined, 'investments');
+          }
         }
       } catch (e) {
         console.warn('Silent fallback loading supabase investment tables:', e);
@@ -201,6 +218,31 @@ export function InvestmentsProvider({
     setDividendAnalysisModeState(mode);
     cacheManager.set('dividend_analysis_mode', mode, undefined, 'investments');
   }, []);
+
+  // Automatic Corporate Actions Discovery & Sync State
+  const [isSyncingDividends, setIsSyncingDividends] = useState(false);
+  const [dividendSyncStatus, setDividendSyncStatus] = useState<DividendSyncStatus | null>(() => {
+    return cacheManager.get<DividendSyncStatus>('dividend_sync_status_cache') || null;
+  });
+
+  const fetchDividendSyncStatus = useCallback(async (): Promise<DividendSyncStatus | null> => {
+    try {
+      const res = await fetch('/api/dividends/sync-status', { signal: AbortSignal.timeout(4000) });
+      if (res.ok) {
+        const data = await res.json();
+        setDividendSyncStatus(data);
+        cacheManager.set('dividend_sync_status_cache', data, undefined, 'investments');
+        return data;
+      }
+    } catch {
+      // offline / mock fallback
+    }
+    return null;
+  }, []);
+
+  useEffect(() => {
+    fetchDividendSyncStatus();
+  }, [fetchDividendSyncStatus]);
 
   // Synchronize when initial props change
   useEffect(() => {
@@ -795,6 +837,122 @@ export function InvestmentsProvider({
     if (onDataChange) await onDataChange();
   }, [dividends, onDataChange]);
 
+  const syncDividends = useCallback(async (customTickers?: string[]): Promise<DividendSyncResult | null> => {
+    setIsSyncingDividends(true);
+    const userId = (await getEffectiveUserId()) || 'default';
+
+    // Collect all tickers in portfolio
+    const targetTickers = customTickers && customTickers.length > 0
+      ? customTickers
+      : Array.from(new Set(investmentTransactions.map(it => it.ticker.toUpperCase()))).filter(Boolean);
+
+    if (targetTickers.length === 0) {
+      toast.info('Nenhum ativo na carteira para sincronizar proventos.');
+      setIsSyncingDividends(false);
+      return null;
+    }
+
+    toast.loading('Descobrindo proventos oficiais (CVM & FNET)...', { id: 'div-sync' });
+
+    try {
+      let syncData: any = null;
+
+      // 1. Try server-side endpoint first
+      try {
+        const res = await fetch('/api/dividends/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            tickers: targetTickers,
+            transactions: investmentTransactions,
+            existingDividends: dividends,
+            userId,
+            userCnpjMap: settings?.asset_cnpjs || {},
+          }),
+          signal: AbortSignal.timeout(15000),
+        });
+        if (res.ok) {
+          syncData = await res.json();
+        }
+      } catch (srvErr) {
+        console.warn('API /api/dividends/sync falhou, executando engine local:', srvErr);
+      }
+
+      // 2. Client-side fallback if server endpoint unavailable
+      if (!syncData) {
+        const { executeDividendSync } = await import('../lib/dividendSync/dividendSyncService');
+        const localOutput = await executeDividendSync({
+          portfolioTickers: targetTickers,
+          transactions: investmentTransactions,
+          existingDividends: dividends,
+          userId,
+          userCnpjMap: settings?.asset_cnpjs || {},
+        });
+        syncData = { success: true, ...localOutput };
+      }
+
+      const { result, newDividends = [], updatedDividends = [] } = syncData;
+
+      // Persist newly discovered dividends
+      if (newDividends.length > 0) {
+        setDividends(prev => {
+          const next = [...newDividends, ...prev];
+          cacheManager.set(`dividends_${userId}`, next, undefined, 'investments');
+          return next;
+        });
+
+        // Enqueue into syncQueueManager for Supabase persistence
+        newDividends.forEach((div: Dividend) => {
+          syncQueueManager.enqueue('dividends', 'insert', div.id, div);
+        });
+      }
+
+      // Apply updates (retificações / cancellations)
+      if (updatedDividends.length > 0) {
+        const updatesMap = new Map<string, Partial<Dividend>>(
+          updatedDividends.map((u: any) => [u.id, u.fields])
+        );
+
+        setDividends(prev => {
+          const next = prev.map(d => updatesMap.has(d.id) ? { ...d, ...updatesMap.get(d.id) } : d);
+          cacheManager.set(`dividends_${userId}`, next, undefined, 'investments');
+          return next;
+        });
+
+        updatedDividends.forEach((u: any) => {
+          syncQueueManager.enqueue('dividends', 'update', u.id, u.fields);
+        });
+      }
+
+      // Update sync status cache
+      await fetchDividendSyncStatus();
+
+      if (result.imported > 0 || result.updated > 0) {
+        toast.success(
+          `Sincronização concluída! ${result.imported} novo(s) provento(s) previstos adicionados.`,
+          { id: 'div-sync', duration: 4000 }
+        );
+      } else {
+        toast.info(
+          `Sincronização concluída: Todos os proventos da carteira já estão atualizados.`,
+          { id: 'div-sync' }
+        );
+      }
+
+      if (onDataChange && (result.imported > 0 || result.updated > 0)) {
+        await onDataChange();
+      }
+
+      return result;
+    } catch (err: any) {
+      console.error('Erro na sincronização de proventos:', err);
+      toast.error(`Falha ao sincronizar proventos: ${err?.message || 'Erro desconhecido'}`, { id: 'div-sync' });
+      return null;
+    } finally {
+      setIsSyncingDividends(false);
+    }
+  }, [investmentTransactions, dividends, settings, onDataChange, fetchDividendSyncStatus]);
+
   const updateAssetCnpj = useCallback(async (ticker: string, cnpj: string) => {
     const tk = ticker.toUpperCase().trim();
     if (!tk) return;
@@ -844,13 +1002,14 @@ export function InvestmentsProvider({
     const loadValuations = async () => {
       // 1. Check cache first
       const local = cacheManager.get<Record<string, ValuationTarget>>('valuation_targets_cache');
-      if (local) {
+      if (local && Object.keys(local).length > 0) {
         setValuationTargets(local);
+        return;
       }
 
       // 2. Fetch from Supabase
       try {
-        const { data: { user } } = await supabase.auth.getUser();
+        const user = await getEffectiveUser();
         if (user) {
           const { data, error } = await supabase
             .from('valuation_targets')
@@ -892,7 +1051,7 @@ export function InvestmentsProvider({
     });
 
     try {
-      const { data: { user } } = await supabase.auth.getUser();
+      const user = await getEffectiveUser();
       if (user) {
         const { error } = await supabase
           .from('valuation_targets')
@@ -929,7 +1088,7 @@ export function InvestmentsProvider({
     });
 
     try {
-      const { data: { user } } = await supabase.auth.getUser();
+      const user = await getEffectiveUser();
       if (user) {
         await supabase
           .from('valuation_targets')
@@ -950,7 +1109,7 @@ export function InvestmentsProvider({
     cacheManager.set('portfolio_target_allocations_cache', newTargets, undefined, 'investments');
 
     try {
-      const { data: { user } } = await supabase.auth.getUser();
+      const user = await getEffectiveUser();
       if (user) {
         const remainingTickers = Object.keys(newTargets);
         if (remainingTickers.length > 0) {
@@ -1009,7 +1168,7 @@ export function InvestmentsProvider({
     cacheManager.set('portfolio_rules_config_cache', newConfig, undefined, 'investments');
 
     try {
-      const { data: { user } } = await supabase.auth.getUser();
+      const user = await getEffectiveUser();
       if (user) {
         const { error } = await supabase
           .from('portfolio_rules_config')
@@ -1062,7 +1221,7 @@ export function InvestmentsProvider({
 
     let userId: string | null = null;
     try {
-      const { data: { user } } = await supabase.auth.getUser();
+      const user = await getEffectiveUser();
       if (user) userId = user.id;
     } catch (e) {
       // ignore
@@ -1170,7 +1329,7 @@ export function InvestmentsProvider({
 
     let userId: string | null = null;
     try {
-      const { data: { user } } = await supabase.auth.getUser();
+      const user = await getEffectiveUser();
       if (user) userId = user.id;
     } catch (e) {
       // ignore
@@ -1389,6 +1548,10 @@ export function InvestmentsProvider({
     updateAssetCnpj,
     dividendAnalysisMode,
     setDividendAnalysisMode,
+    syncDividends,
+    isSyncingDividends,
+    dividendSyncStatus,
+    fetchDividendSyncStatus,
     valuationTargets,
     saveValuationTarget,
     deleteValuationTarget,
@@ -1416,6 +1579,10 @@ export function InvestmentsProvider({
     updateAssetCnpj,
     dividendAnalysisMode,
     setDividendAnalysisMode,
+    syncDividends,
+    isSyncingDividends,
+    dividendSyncStatus,
+    fetchDividendSyncStatus,
     valuationTargets,
     saveValuationTarget,
     deleteValuationTarget,

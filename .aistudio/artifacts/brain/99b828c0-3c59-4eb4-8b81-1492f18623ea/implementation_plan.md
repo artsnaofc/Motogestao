@@ -1,187 +1,62 @@
-# Correção Definitiva de Saldo Fantasma e Sincronização de Proventos/Aportes
+# Relatório de Auditoria e Otimização do Consumo do Supabase — MotoGestão
 
-Eliminação do loop de duplicações na Reserva de Investimentos, implementação de travas anti-duplicidade em proventos e fornecimento de script SQL de auditoria para o Supabase.
+## 1. Diagnóstico e Causas-Raízes Comprovadas (Fatos vs. Hipóteses)
 
----
-
-### User Review & Critical Decisions
-
-> [!IMPORTANT]
-> **Decisões confirmadas pelo usuário:**
-> 1. **Lançamento de Proventos:** O crédito na Reserva de Investimentos ocorre automaticamente ao receber (`status: 'received'`), com **trava estrita atômica** para impedir a criação de mais de uma movimentação por provento.
-> 2. **Exclusão em Cascata:** Ao excluir uma movimentação de provento na reserva, o provento correspondente na carteira de investimentos também será excluído, eliminando inconsistências cruzadas e impedindo recriações fantasmas.
-> 3. **Script SQL para o Supabase:** O script fornecerá inicialmente uma **consulta de auditoria detalhada** para você inspecionar exatamente quais movimentações estão duplicadas ou órfãs antes de efetivar qualquer remoção.
-
----
-
-## 1. Overview & Diagnóstico da Causa Raiz
-
-### O Problema do "Saldo Fantasma"
-Identificamos 4 fatores concorrentes que causavam a inflação constante do saldo da reserva de investimentos:
-1. **Loop no processador de proventos (`InvestmentsContext.tsx`):** A função em segundo plano `processReadyDividends` buscava proventos com `(status === 'received' && !d.transaction_id)`. Ao criar a movimentação de reserva, ela atualizava o Supabase mas não atualizava o estado local/cache com o `transaction_id`, ou a fila `syncQueueManager` sobrescrevia o campo com `null` em seguida. No recarregamento seguinte, o provento era processado novamente como novo, gerando mais uma movimentação de rendimento.
-2. **Ressurreição após exclusão:** Ao tentar deletar uma movimentação duplicada na reserva, o arquivo `syncQueue.ts` executava `update dividends set transaction_id = null`. Isso imediatamente ativava o gatilho automático de proventos para criar outro registro, recriando o valor fantasma.
-3. **Cache Local Imune a Exclusões (`DataContext.tsx`):** O algoritmo de mesclagem do cache (`else { merged.push(localItem) }`) preservava transações que já haviam sido deletadas no Supabase, perpetuando o saldo fantasma mesmo após correções manuais.
-4. **Falta de verificação de duplicidade prévia:** Não havia verificação se já existia uma movimentação de rendimento na reserva para aquele mesmo ativo, data e valor antes de inserir uma nova.
+| Elemento Analisado | Diagnóstico | Fato Comprovado vs. Hipótese | Impacto no Consumo |
+| :--- | :--- | :--- | :--- |
+| **Loop Infinito em `DataContext.tsx`** | `refreshData` continha `settings` em sua lista de dependências. Ao rodar `setSettings(finalSettings)`, gerava um novo objeto de referência a cada consulta, recriando o `useCallback(refreshData)`. O `useEffect` que observava `refreshData` disparava sem parar. | **Fato Comprovado** (Linhas 248–344 em `DataContext.tsx`) | **Crítico:** Baixava repetidamente 6 tabelas (`user_settings`, `transactions`, `reserves`, `reserve_transactions`, `investment_transactions`, `dividends`) a cada 300–800ms enquanto a aba estivesse aberta. |
+| **Ping-Pong Re-render em Providers Filhos** | `DataContext` passava `onDataChange={() => refreshData(true)}` como função inline anônima instável para `InvestmentsProvider` e `ReservesProvider`. Ao re-renderizar, os contexts filhos disparavam `processReadyDividends`, que por sua vez executava `await onDataChange()`. | **Fato Comprovado** (Linhas 565–575 em `DataContext.tsx`) | **Alto:** Multiplicava o ciclo de re-fetch a cada render de componente. |
+| **Loop Acelerado na Fila de Sincronização (`syncQueue.ts`)** | No método `processQueue()`, se uma mutação falhasse (ex: erro de permissão RLS 42501 ou FK 23503), o backoff exponencial era calculado, porém o bloco `finally` executava incondicionalmente `setTimeout(() => this.processQueue(), 100)`. | **Fato Comprovado** (Linhas 339–357 em `syncQueue.ts`) | **Crítico:** Em caso de erro transitório ou RLS, gerava ~10 requisições por segundo (36.000 requisições/hora), inundando os logs do PostgREST. |
+| **Chamadas de Rede Repetidas a `/auth/v1/user`** | Inúmeros componentes e contextos chamavam `supabase.auth.getUser()` diretamente para obter o ID do usuário em vez de ler a sessão local em cache. | **Fato Comprovado** (Presente em 15+ locais na árvore de contexts) | **Médio/Alto:** Cada operação realizava um round-trip de validação de token na API Auth do Supabase. |
+| **Download Integral de `b3_assets_metadata` no Mount** | `InvestmentsContext` realizava `select('*')` em `b3_assets_metadata` a cada montagem de componente, mesmo com os metadados já salvos em cache local. | **Fato Comprovado** (Linhas 112–132 em `InvestmentsContext.tsx`) | **Médio:** Payload de dados fundamentalistas pesados sendo transferido desnecessariamente a cada carregamento de página. |
+| **Supabase Realtime (`channels`)** | Varredura de código por `supabase.channel()` e `.on('postgres_changes')`. | **Fato Comprovado: 0 canais ativos.** | **Nenhum:** Realtime não era a fonte do consumo. |
 
 ---
 
-## 2. Fluxo da Solução & Experiência do Usuário
+## 2. Ações Implementadas e Arquivos Modificados
 
-```
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│                           REGISTRO / ATUALIZAÇÃO                                │
-│                                                                                 │
-│   Provento Registrado (Recebido) ──► Gera ReserveTx Atômica                     │
-│                                  └─► Vincula dividend.transaction_id = rt.id   │
-│                                  └─► Vincula rt.linked_dividend_id = div.id    │
-│                                                                                 │
-│   Provento Provisionado (Futuro) ──► Aguarda data de pagamento (data_ex)       │
-│                                  └─► No vencimento, credita reserva 1 única vez │
-└─────────────────────────────────────────────────────────────────────────────────┘
-                                      │
-                                      ▼
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│                             TRAVA ANTI-DUPLICIDADE                              │
-│                                                                                 │
-│   Rotina de Checagem:                                                           │
-│   1. Verifica se já existe ReserveTx com mesmo linked_dividend_id               │
-│   2. Verifica se já existe rendimento idêntico (ativo, data, valor)             │
-│   3. Se já existir: apenas reaproveita o vínculo; NÃO duplica saldo!            │
-└─────────────────────────────────────────────────────────────────────────────────┘
-                                      │
-                                      ▼
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│                               EXCLUSÃO SINCRONIZADA                             │
-│                                                                                 │
-│   Excluir movimentação na Reserva ──► Exclui provento da carteira (sem recriar) │
-│   Excluir provento na Carteira    ──► Exclui movimentação na Reserva            │
-└─────────────────────────────────────────────────────────────────────────────────┘
-```
+### A. `src/contexts/DataContext.tsx`
+- **Desacoplamento do State `settings`**: Substituição da dependência `settings` em `refreshData` por `settingsRef.current`. A dependência do `useCallback` foi estabilizada para `[]`.
+- **Cooldown de Requisição (`MIN_REFRESH_COOLDOWN_MS = 15000`)**: Bloqueio de consultas silenciosas ou em segundo plano repetidas em intervalos menores que 15 segundos.
+- **Deep Compare em `setSettings`**: Adicionada verificação por igualdade de JSON antes de atualizar o estado `settings`, evitando re-renderizações espúrias caso o payload retornado seja idêntico ao já em memória.
+- **Memoização Estável de Handlers**: `handleDataChange` e `handleUpdateSettings` agora são memoizados com `useCallback`, garantindo que `InvestmentsProvider` e `ReservesProvider` não recebam referências novas a cada render.
 
----
+### B. `src/lib/syncQueue.ts`
+- **Respeito Estrito ao Backoff Exponencial**: O `setTimeout(() => this.processQueue(), 100)` no bloco `finally` só é acionado se a fila tiver itens pendentes e nenhum timeout de backoff estiver agendado (`!this.retryBackoffTimeout`). Em caso de erro, a fila aguarda o tempo exponencial (1s, 2s, 4s, 8s... até 30s) sem floodar o Supabase.
 
-## 3. Principais Decisões Técnicas
+### C. `src/lib/authUtils.ts`
+- **Otimização de `getEffectiveUser()` e `getEffectiveUserId()`**:
+  - Consulta primária 100% em memória / local session (`cacheManager` e `supabase.auth.getSession()` do localStorage).
+  - Consulta à rede `/auth/v1/user` somente se `forceNetworkRefresh` for solicitado ou não houver credenciais locais. Zero chamadas de rede para consultas rotineiras de identidade.
 
-1. **Geração Atômica e Imediata do Vínculo:**
-   - Ao adicionar ou editar um provento com status `received`, o registro de movimentação da reserva é criado no mesmo fluxo de salvamento, associando imediatamente seus IDs mútuos.
-   - A rotina de segundo plano servirá estritamente para transições de proventos que eram `provisioned` e atingiram a data de corte (`data_ex <= hoje`), nunca reprocessando cegamente proventos já recebidos.
+### D. `src/contexts/InvestmentsContext.tsx`
+- Adicionada verificação de TTL (24 horas) para a tabela `b3_assets_metadata`. Se o cache local contiver os dados, o download completo é suprimido.
+- Adicionada verificação de existência em cache antes de consultar `portfolio_target_allocations`, `portfolio_rules_config` e `valuation_targets`.
+- Substituídas todas as ocorrências de `supabase.auth.getUser()` por `getEffectiveUser()`.
 
-2. **Detecção e Prevenção de Duplicatas no Cliente:**
-   - Antes de qualquer inserção na tabela `reserve_transactions`, o código valida se já existe movimentação de rendimento para o ativo/provento em questão. Se já existir, recupera o ID existente em vez de gerar um novo.
+### E. `src/contexts/QuotesContext.tsx`
+- Suprimida a consulta redundante a `user_settings.select('cached_quotes')` no mount caso o cache local de cotações já esteja populado.
 
-3. **Exclusão Mútua Sem Loops:**
-   - Em `ReservesContext.tsx`, `deleteReserveTransaction` identificará se a movimentação é proveniente de provento (via descrição `Provento: ...` ou `transaction_id`) e removerá o dividendo correspondente via fila sincronizada, sem deixar o provento órfão com `transaction_id = null`.
-   - Em `InvestmentsContext.tsx`, `deleteDividend` removerá a movimentação de reserva vinculada.
+### F. `src/contexts/VehiclesContext.tsx` e `src/lib/freightStorage.ts`
+- Adicionado cooldown de 15 segundos em `refreshVehicles`.
+- Substituídas as chamadas diretas de rede `supabase.auth.getUser()` por `getEffectiveUserId()`.
 
-4. **Saneamento do Cache Local (`DataContext.tsx`):**
-   - Ao receber os dados remotos confirmados do Supabase, o cache não reterá registros que não existam mais no banco (exceto os que estiverem com ação pendente na fila de sincronização).
+### G. Instrumentação Segura (`src/lib/supabase.ts`)
+- Implementado o `supabaseRequestMonitor` via wrap transparente da chamada `fetch`. Registra estatísticas volumétricas, quantidade de requisições por janela e alerta no console contra rajadas (>15 requisições em 5 segundos) sem armazenar nenhum dado sensível ou financeiro.
+- Compatibilizado para execução tanto em ambiente Vite quanto em Node.js (`tsx`).
 
 ---
 
-## 4. Script SQL para Auditoria e Limpeza no Supabase
+## 3. Validação e Testes Executados
 
-Este script foi elaborado para o **SQL Editor do Supabase**. Ele foi dividido em duas partes: **Etapa 1 (Auditoria/Listagem)** e **Etapa 2 (Limpeza Segura)**.
-
-```sql
--- ==============================================================================
--- ETAPA 1: AUDITORIA DE PROVENTOS E MOVIMENTAÇÕES FANTASMAS (SOMENTE LEITURA)
--- Execute este bloco para visualizar as inconsistências sem alterar nenhum dado.
--- ==============================================================================
-
--- 1.1 Listar proventos recebidos que estão sem vínculo com movimentação de reserva
-SELECT 
-    d.id AS dividend_id,
-    d.ticker,
-    d.type,
-    d.amount,
-    d.date,
-    d.status,
-    d.transaction_id,
-    'Provento sem vínculo' AS status_inconsistencia
-FROM public.dividends d
-WHERE d.status = 'received' 
-  AND (d.transaction_id IS NULL OR d.transaction_id = '');
-
--- 1.2 Identificar movimentações de rendimento duplicadas na reserva para o mesmo ativo/data/valor
-SELECT 
-    rt.description,
-    rt.date,
-    rt.amount,
-    COUNT(*) AS total_duplicatas,
-    ARRAY_AGG(rt.id) AS ids_movimentacoes
-FROM public.reserve_transactions rt
-WHERE rt.type = 'rendimento'
-  AND (rt.description ILIKE 'Provento:%' OR rt.category = 'Rendimento')
-GROUP BY rt.description, rt.date, rt.amount
-HAVING COUNT(*) > 1;
-
--- 1.3 Conferir o saldo calculado vs saldo registrado na tabela de reservas
-SELECT 
-    r.id,
-    r.name,
-    COALESCE(r.saldo_inicial, 0) AS saldo_inicial,
-    COALESCE(r.saldo_atual, 0) AS saldo_atual_tabela,
-    (
-        COALESCE(r.saldo_inicial, 0) +
-        COALESCE((SELECT SUM(amount) FROM public.reserve_transactions WHERE reserve_id = r.id AND type = 'aporte' AND payment_status != 'pending'), 0) +
-        COALESCE((SELECT SUM(amount) FROM public.reserve_transactions WHERE reserve_id = r.id AND type = 'rendimento' AND payment_status != 'pending'), 0) -
-        COALESCE((SELECT SUM(amount) FROM public.reserve_transactions WHERE reserve_id = r.id AND type = 'utilizacao' AND payment_status != 'pending'), 0)
-    ) AS saldo_calculado_real
-FROM public.reserves r;
-
-
--- ==============================================================================
--- ETAPA 2: LIMPEZA SEGURA DE DUPLICATAS (EXECUTE APENAS APÓS CONFERIR A ETAPA 1)
--- ==============================================================================
-
-/*
--- 2.1 Remover movimentações duplicadas de rendimento, mantendo apenas a primeira criada:
-DELETE FROM public.reserve_transactions
-WHERE id IN (
-    SELECT id FROM (
-        SELECT id,
-               ROW_NUMBER() OVER (
-                   PARTITION BY reserve_id, description, date, amount, type 
-                   ORDER BY created_at ASC
-               ) as rnum
-        FROM public.reserve_transactions
-        WHERE type = 'rendimento' AND description ILIKE 'Provento:%'
-    ) t
-    WHERE t.rnum > 1
-);
-
--- 2.2 Sincronizar o transaction_id dos proventos com a movimentação correspondente na reserva:
-UPDATE public.dividends d
-SET transaction_id = rt.id
-FROM public.reserve_transactions rt
-WHERE d.status = 'received'
-  AND (d.transaction_id IS NULL OR d.transaction_id = '')
-  AND rt.type = 'rendimento'
-  AND rt.date = d.date
-  AND rt.amount = d.amount
-  AND rt.description ILIKE ('%' || d.ticker || '%');
-
--- 2.3 Atualizar a coluna saldo_atual da reserva com o valor auditado exato:
-UPDATE public.reserves r
-SET saldo_atual = (
-    COALESCE(r.saldo_inicial, 0) +
-    COALESCE((SELECT SUM(amount) FROM public.reserve_transactions WHERE reserve_id = r.id AND type = 'aporte' AND payment_status != 'pending'), 0) +
-    COALESCE((SELECT SUM(amount) FROM public.reserve_transactions WHERE reserve_id = r.id AND type = 'rendimento' AND payment_status != 'pending'), 0) -
-    COALESCE((SELECT SUM(amount) FROM public.reserve_transactions WHERE reserve_id = r.id AND type = 'utilizacao' AND payment_status != 'pending'), 0)
-);
-*/
-```
-
----
-
-## 5. Arquivos Que Serão Ajustados na Execução
-1. `src/contexts/InvestmentsContext.tsx`:
-   - Refatoração completa de `processReadyDividends`: inclusão de checagem contra duplicatas existentes, garantia de vínculo bidirecional no salvamento e prevenção de disparos cíclicos.
-   - Atualização de `addDividend` e `updateDividend` para vincular a movimentação de reserva atomicamente na criação se `status === 'received'`.
-   - Ajuste de `deleteDividend` para remoção sincronizada da movimentação na reserva.
-2. `src/contexts/ReservesContext.tsx`:
-   - Atualização de `deleteReserveTransaction` para verificar e excluir em cascata o provento associado na carteira de investimentos.
-3. `src/contexts/DataContext.tsx`:
-   - Correção da estratégia de mesclagem do cache para descartar registros que foram removidos remotamente do banco.
-4. `src/lib/syncQueue.ts`:
-   - Eliminação do gatilho que zerava o `transaction_id` do dividendo e disparava a recriação do fantasma.
+1. **Testes Unitários Automatizados (`src/lib/__tests__/supabaseOptimization.test.ts`)**:
+   - `should accurately track requests and estimate egress volume`: **PASSOU**
+   - `should detect burst traffic when request volume exceeds safe threshold`: **PASSOU**
+   - `should return effective user from in-memory cache without hitting network`: **PASSOU**
+   - `should throttle and cache B3 assets metadata to avoid daily refetches`: **PASSOU**
+   - `should prevent exponential backoff from being overridden by 100ms rapid retries`: **PASSOU**
+   - Resultado: **5/5 testes aprovados (0 falhas)**.
+2. **Checagem de Tipos e Linter (`npm run lint` / `tsc --noEmit`)**:
+   - **0 erros de compilação ou tipos.**
+3. **Compilação de Produção (`npm run build`)**:
+   - Vite e bundling do servidor Node.js concluídos com sucesso.

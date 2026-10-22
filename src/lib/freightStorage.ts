@@ -1,5 +1,6 @@
 import { FreightQuote, DriverFreightPreset, VehicleType, VehicleConfigItem, FreightClient } from '../types/freight';
 import { supabase } from './supabase';
+import { getEffectiveUserId as getAuthEffectiveUserId } from './authUtils';
 
 const STORAGE_KEY_PREFIX = 'financas_pro_freight_quotes_';
 const PRESET_KEY_PREFIX = 'financas_pro_freight_preset_';
@@ -64,9 +65,9 @@ async function getEffectiveUserId(fallbackId: string = 'default'): Promise<strin
     return fallbackId;
   }
   try {
-    const { data } = await supabase.auth.getUser();
-    if (data?.user?.id) {
-      return data.user.id;
+    const userId = await getAuthEffectiveUserId();
+    if (userId) {
+      return userId;
     }
   } catch (e) {
     // fallback

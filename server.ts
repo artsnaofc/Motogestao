@@ -594,6 +594,116 @@ async function startServer() {
     res.status(404).json({ error: `Cotação não encontrada para o ticker ${rawTicker}` });
   });
 
+  // --- Auto Dividend Sync State & Endpoints ---
+  interface DividendSyncHistoryRecord {
+    id: string;
+    timestamp: string;
+    provider: string;
+    discovered: number;
+    imported: number;
+    updated: number;
+    ignored: number;
+    errors: number;
+    durationMs: number;
+    details: any[];
+  }
+
+  const dividendSyncHistory: DividendSyncHistoryRecord[] = [];
+  let isDividendSyncRunning = false;
+  let lastDividendSyncTime: string | null = null;
+  let lastDividendSyncResult: any = null;
+
+  app.get('/api/dividends/sync-status', (req, res) => {
+    res.json({
+      lastSyncAt: lastDividendSyncTime,
+      isRunning: isDividendSyncRunning,
+      activeProvider: 'Multi-Fonte Oficial (CVM / FNET / B3)',
+      lastResult: lastDividendSyncResult,
+      history: dividendSyncHistory.slice(0, 20),
+    });
+  });
+
+  app.post('/api/dividends/sync', async (req, res) => {
+    if (isDividendSyncRunning) {
+      return res.status(429).json({ error: 'Sincronização já em andamento. Aguarde a finalização.' });
+    }
+
+    const {
+      tickers = [],
+      transactions = [],
+      existingDividends = [],
+      userId = 'default',
+      userCnpjMap = {},
+      forceProvider = 'all',
+      brapiToken = process.env.BRAPI_TOKEN
+    } = req.body || {};
+
+    isDividendSyncRunning = true;
+    try {
+      const { executeDividendSync } = await import('./src/lib/dividendSync/dividendSyncService');
+      const syncOutput = await executeDividendSync({
+        portfolioTickers: tickers,
+        transactions,
+        existingDividends,
+        userId,
+        userCnpjMap,
+        brapiToken,
+        forceProvider,
+      });
+
+      lastDividendSyncTime = new Date().toISOString();
+      lastDividendSyncResult = syncOutput.result;
+
+      const record: DividendSyncHistoryRecord = {
+        id: `sync_${Date.now()}`,
+        timestamp: lastDividendSyncTime,
+        provider: syncOutput.result.provider,
+        discovered: syncOutput.result.discovered,
+        imported: syncOutput.result.imported,
+        updated: syncOutput.result.updated,
+        ignored: syncOutput.result.ignored,
+        errors: syncOutput.result.errors,
+        durationMs: syncOutput.result.durationMs,
+        details: syncOutput.result.details.slice(0, 50),
+      };
+
+      dividendSyncHistory.unshift(record);
+      if (dividendSyncHistory.length > 50) dividendSyncHistory.pop();
+
+      res.json({
+        success: true,
+        ...syncOutput
+      });
+    } catch (err: any) {
+      console.error('[Server Dividend Sync] Erro na execução:', err);
+      res.status(500).json({ error: err?.message || 'Falha na sincronização de proventos' });
+    } finally {
+      isDividendSyncRunning = false;
+    }
+  });
+
+  // Background Periodic Corporate Actions Discovery (Runs every 6 hours)
+  const SYNC_INTERVAL_MS = 6 * 60 * 60 * 1000;
+  setInterval(async () => {
+    if (isDividendSyncRunning) return;
+    try {
+      isDividendSyncRunning = true;
+      const { executeDividendSync } = await import('./src/lib/dividendSync/dividendSyncService');
+      const syncOutput = await executeDividendSync({
+        portfolioTickers: ['PETR4', 'VALE3', 'ITUB4', 'BBAS3', 'BTCI11'],
+        transactions: [],
+        existingDividends: [],
+        userId: 'system_cron',
+      });
+      lastDividendSyncTime = new Date().toISOString();
+      lastDividendSyncResult = syncOutput.result;
+    } catch (schedErr) {
+      console.warn('[Server Dividend Scheduler] Erro na rotina agendada:', schedErr);
+    } finally {
+      isDividendSyncRunning = false;
+    }
+  }, SYNC_INTERVAL_MS);
+
   // Vite middleware setup
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({

@@ -56,7 +56,8 @@ import {
   ShieldCheck,
   AlertTriangle,
   BarChart3,
-  Target
+  Target,
+  ExternalLink
 } from 'lucide-react';
 
 interface Position {
@@ -181,6 +182,7 @@ export function Investments() {
   const [divSearch, setDivSearch] = useState('');
   const [divTypeFilter, setDivTypeFilter] = useState<string>('all');
   const [divStatusFilter, setDivStatusFilter] = useState<string>('all');
+  const [divOriginFilter, setDivOriginFilter] = useState<string>('all');
 
   // Modals State
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -881,14 +883,19 @@ export function Investments() {
           d.type === divTypeFilter ||
           (divTypeFilter === 'JCP' && (d.type === 'JCP' || (d.type as string) === 'JSCP'));
         const matchesStatus = divStatusFilter === 'all' || d.status === divStatusFilter;
-        return matchesSearch && matchesType && matchesStatus;
+        const matchesOrigin =
+          divOriginFilter === 'all' ||
+          (divOriginFilter === 'manual' && (!d.source_provider || d.source_provider === 'manual')) ||
+          (divOriginFilter === 'auto' && Boolean(d.source_provider && d.source_provider !== 'manual')) ||
+          d.source_provider === divOriginFilter;
+        return matchesSearch && matchesType && matchesStatus && matchesOrigin;
       })
       .sort((a, b) => {
         const dateA = a.data_ex || a.date;
         const dateB = b.data_ex || b.date;
         return dateB.localeCompare(dateA);
       });
-  }, [dividends, divSearch, divTypeFilter, divStatusFilter]);
+  }, [dividends, divSearch, divTypeFilter, divStatusFilter, divOriginFilter]);
 
   const formatCurrency = (val: number) => {
     if (hideValues) return 'R$ •••••';
@@ -1941,6 +1948,8 @@ export function Investments() {
                 <option value="Dividendo">Dividendo</option>
                 <option value="JCP">JSCP</option>
                 <option value="Rendimento">Rendimento</option>
+                <option value="Amortizacao">Amortização</option>
+                <option value="Outros">Outros</option>
               </select>
 
               <select
@@ -1951,6 +1960,20 @@ export function Investments() {
                 <option value="all">Todos Status</option>
                 <option value="received">Recebido</option>
                 <option value="provisioned">Provisionado</option>
+                <option value="cancelled">Cancelado</option>
+              </select>
+
+              <select
+                value={divOriginFilter}
+                onChange={e => setDivOriginFilter(e.target.value)}
+                className="bg-card border border-border/50 rounded-xl px-3 py-1.5 text-xs font-bold text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all"
+              >
+                <option value="all">Todas Origens</option>
+                <option value="auto">Automáticos (CVM/B3)</option>
+                <option value="cvm_ipe">CVM IPE (Ações)</option>
+                <option value="fnet_b3">FNET B3 (FIIs)</option>
+                <option value="brapi">Brapi</option>
+                <option value="manual">Manual</option>
               </select>
             </div>
           </div>
@@ -1959,8 +1982,8 @@ export function Investments() {
           {filteredDividends.length === 0 ? (
             <div className="p-10 text-center rounded-3xl border border-dashed border-border/60 bg-muted/10 space-y-3">
               <DollarSign className="w-10 h-10 text-muted-foreground/30 mx-auto" />
-              <p className="text-sm font-bold text-muted-foreground">Nenhum provento cadastrado.</p>
-              <p className="text-xs text-muted-foreground/70">Registre seus dividendos e rendimentos recebidos ou futuros.</p>
+              <p className="text-sm font-bold text-muted-foreground">Nenhum provento encontrado com os filtros atuais.</p>
+              <p className="text-xs text-muted-foreground/70">Ajuste os filtros ou sincronize proventos automáticos da CVM/B3.</p>
             </div>
           ) : (
             <div className="rounded-2xl border border-border/50 bg-card overflow-hidden shadow-xs">
@@ -1970,55 +1993,124 @@ export function Investments() {
                     <tr>
                       <th className="px-4 py-3">Ativo</th>
                       <th className="px-4 py-3">Tipo</th>
+                      <th className="px-4 py-3">Origem</th>
                       <th className="px-4 py-3">Status</th>
                       <th className="px-4 py-3">Data Com</th>
-                      <th className="px-4 py-3">Data Ex / Pagamento</th>
+                      <th className="px-4 py-3">Data Pagamento</th>
+                      <th className="px-4 py-3 text-right">Posição na Data</th>
+                      <th className="px-4 py-3 text-right">R$ / Cota</th>
                       <th className="px-4 py-3 text-right">Valor Total</th>
                       <th className="px-4 py-3 text-center">Ações</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border/40 font-medium">
-                    {filteredDividends.map(div => (
-                      <tr key={div.id} className="hover:bg-muted/20 transition-colors">
-                        <td className="px-4 py-3 font-black text-foreground">{div.ticker}</td>
-                        <td className="px-4 py-3">
-                          <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-secondary text-secondary-foreground uppercase">
-                            {div.type === 'JCP' || (div.type as string) === 'JSCP' ? 'JSCP' : div.type}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3">
-                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md uppercase flex items-center gap-1 w-fit ${
-                            div.status === 'received' ? 'bg-emerald-500/10 text-emerald-600' : 'bg-amber-500/10 text-amber-600'
-                          }`}>
-                            {div.status === 'received' ? <CheckCircle2 className="w-3 h-3" /> : <Clock className="w-3 h-3" />}
-                            {div.status === 'received' ? 'Recebido' : 'Provisionado'}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 text-muted-foreground">
-                          {div.data_com ? new Date(div.data_com + 'T12:00:00Z').toLocaleDateString('pt-BR', { timeZone: 'UTC' }) : '-'}
-                        </td>
-                        <td className="px-4 py-3 text-muted-foreground">
-                          {div.data_ex ? new Date(div.data_ex + 'T12:00:00Z').toLocaleDateString('pt-BR', { timeZone: 'UTC' }) : '-'}
-                        </td>
-                        <td className="px-4 py-3 text-right font-black text-foreground">{formatCurrency(div.amount)}</td>
-                        <td className="px-4 py-3 text-center space-x-1">
-                          <button 
-                            onClick={() => openEditDivModal(div)}
-                            className="p-1.5 text-muted-foreground hover:text-primary hover:bg-primary/10 rounded-lg transition-colors inline-flex"
-                            title="Editar"
-                          >
-                            <Edit3 className="w-3.5 h-3.5" />
-                          </button>
-                          <button 
-                            onClick={() => handleOpenDeleteDiv(div)}
-                            className="p-1.5 text-muted-foreground hover:text-rose-500 hover:bg-rose-500/10 rounded-lg transition-colors inline-flex"
-                            title="Excluir"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
+                    {filteredDividends.map(div => {
+                      const isAuto = div.source_provider && div.source_provider !== 'manual';
+                      const formattedPayDate = div.data_ex 
+                        ? new Date(div.data_ex + 'T12:00:00Z').toLocaleDateString('pt-BR', { timeZone: 'UTC' }) 
+                        : (div.date ? new Date(div.date + 'T12:00:00Z').toLocaleDateString('pt-BR', { timeZone: 'UTC' }) : '-');
+                      const formattedComDate = div.data_com 
+                        ? new Date(div.data_com + 'T12:00:00Z').toLocaleDateString('pt-BR', { timeZone: 'UTC' }) 
+                        : '-';
+
+                      return (
+                        <tr key={div.id} className={`hover:bg-muted/20 transition-colors ${div.status === 'cancelled' ? 'opacity-50 bg-muted/10' : ''}`}>
+                          <td className="px-4 py-3">
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-black text-foreground">{div.ticker}</span>
+                              {div.source_document_version && div.source_document_version > 1 && (
+                                <span className="text-[9px] font-extrabold px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-600 dark:text-amber-400" title={`Retificação versão v${div.source_document_version}`}>
+                                  v{div.source_document_version}
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-4 py-3">
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-secondary text-secondary-foreground uppercase">
+                              {div.type === 'JCP' || (div.type as string) === 'JSCP' ? 'JSCP' : div.type}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3">
+                            {(div.source_provider === 'cvm_ipe' || (div.source_provider as string) === 'cvm') ? (
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20 inline-flex items-center gap-1">
+                                CVM IPE
+                              </span>
+                            ) : (div.source_provider === 'fnet_b3' || (div.source_provider as string) === 'fnet') ? (
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20 inline-flex items-center gap-1">
+                                FNET B3
+                              </span>
+                            ) : div.source_provider === 'brapi' ? (
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-sky-500/10 text-sky-600 dark:text-sky-400 border border-sky-500/20 inline-flex items-center gap-1">
+                                Brapi
+                              </span>
+                            ) : (
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-muted text-muted-foreground border border-border/40 inline-flex items-center gap-1">
+                                Manual
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-4 py-3">
+                            {div.status === 'received' ? (
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-md uppercase flex items-center gap-1 w-fit bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                                <CheckCircle2 className="w-3 h-3" /> Recebido
+                              </span>
+                            ) : div.status === 'cancelled' ? (
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-md uppercase flex items-center gap-1 w-fit bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20">
+                                <AlertTriangle className="w-3 h-3" /> Cancelado
+                              </span>
+                            ) : (
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-md uppercase flex items-center gap-1 w-fit bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
+                                <Clock className="w-3 h-3" /> Provisionado
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-4 py-3 text-muted-foreground">{formattedComDate}</td>
+                          <td className="px-4 py-3 text-muted-foreground">{formattedPayDate}</td>
+                          <td className="px-4 py-3 text-right font-medium text-muted-foreground">
+                            {div.eligible_quantity !== undefined && div.eligible_quantity !== null
+                              ? `${div.eligible_quantity} un.`
+                              : '-'}
+                          </td>
+                          <td className="px-4 py-3 text-right font-medium text-muted-foreground">
+                            {div.unit_amount !== undefined && div.unit_amount !== null
+                              ? `R$ ${div.unit_amount.toFixed(4).replace('.', ',')}`
+                              : '-'}
+                          </td>
+                          <td className="px-4 py-3 text-right font-black">
+                            <span className={div.status === 'cancelled' ? 'line-through text-muted-foreground' : 'text-foreground'}>
+                              {formatCurrency(div.amount)}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-center space-x-1">
+                            {div.source_url && (
+                              <a
+                                href={div.source_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="p-1.5 text-muted-foreground hover:text-sky-500 hover:bg-sky-500/10 rounded-lg transition-colors inline-flex"
+                                title="Ver documento oficial na CVM/B3"
+                              >
+                                <ExternalLink className="w-3.5 h-3.5" />
+                              </a>
+                            )}
+                            <button 
+                              onClick={() => openEditDivModal(div)}
+                              className="p-1.5 text-muted-foreground hover:text-primary hover:bg-primary/10 rounded-lg transition-colors inline-flex"
+                              title="Editar"
+                            >
+                              <Edit3 className="w-3.5 h-3.5" />
+                            </button>
+                            <button 
+                              onClick={() => handleOpenDeleteDiv(div)}
+                              className="p-1.5 text-muted-foreground hover:text-rose-500 hover:bg-rose-500/10 rounded-lg transition-colors inline-flex"
+                              title="Excluir"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

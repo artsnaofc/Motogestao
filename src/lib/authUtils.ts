@@ -36,8 +36,16 @@ export function setCachedUser(user: EffectiveUser | null): void {
  * 3. AppCacheManager cached user
  * 4. Raw localStorage fallback
  */
-export async function getEffectiveUser(): Promise<EffectiveUser | null> {
-  // 1. Try local session first (reads from client localStorage, doesn't require active internet)
+export async function getEffectiveUser(forceNetworkRefresh = false): Promise<EffectiveUser | null> {
+  // 1. Instant check from in-memory cache (0ms, 0 network calls, 0 egress)
+  if (!forceNetworkRefresh) {
+    const cached = cacheManager.get<EffectiveUser>(CURRENT_USER_KEY);
+    if (cached?.id) {
+      return cached;
+    }
+  }
+
+  // 2. Try local session (reads from client storage, no network round-trip)
   try {
     const { data: sessionData } = await supabase.auth.getSession();
     if (sessionData?.session?.user?.id) {
@@ -52,8 +60,8 @@ export async function getEffectiveUser(): Promise<EffectiveUser | null> {
     console.warn('[authUtils] Erro ao obter sessão local:', err);
   }
 
-  // 2. If online, try getUser as a secondary refresh
-  if (typeof navigator === 'undefined' || navigator.onLine) {
+  // 3. Fallback to network only if explicitly requested or no local session exists
+  if (forceNetworkRefresh && (typeof navigator === 'undefined' || navigator.onLine)) {
     try {
       const { data: userData } = await supabase.auth.getUser();
       if (userData?.user?.id) {

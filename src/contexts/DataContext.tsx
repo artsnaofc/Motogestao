@@ -1,6 +1,6 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback, useMemo } from 'react';
+import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback, useMemo, useRef } from 'react';
 import { supabase } from '../lib/supabase';
-import { Transaction, UserSettings, Reserve, ReserveTransaction, InvestmentTransaction, Dividend, DividendAnalysisMode, ValuationTarget } from '../types';
+import { Transaction, UserSettings, Reserve, ReserveTransaction, InvestmentTransaction, Dividend, DividendAnalysisMode, ValuationTarget, DividendSyncResult, DividendSyncStatus } from '../types';
 import { QuoteProvider, QuoteFetchResult } from '../lib/quoteService';
 import { cacheManager } from '../lib/cacheManager';
 import { syncQueueManager } from '../lib/syncQueue';
@@ -64,6 +64,10 @@ export interface DataContextType {
   updateAssetCnpj: (ticker: string, cnpj: string) => Promise<void>;
   dividendAnalysisMode: DividendAnalysisMode;
   setDividendAnalysisMode: (mode: DividendAnalysisMode) => void;
+  syncDividends: (tickers?: string[]) => Promise<DividendSyncResult | null>;
+  isSyncingDividends: boolean;
+  dividendSyncStatus: DividendSyncStatus | null;
+  fetchDividendSyncStatus: () => Promise<DividendSyncStatus | null>;
   valuationTargets: Record<string, ValuationTarget>;
   saveValuationTarget: (target: ValuationTarget) => Promise<void>;
   deleteValuationTarget: (ticker: string) => Promise<void>;
@@ -192,6 +196,10 @@ function DataContextBridge({ children }: { children: ReactNode }) {
     updateAssetCnpj: invCtx.updateAssetCnpj,
     dividendAnalysisMode: invCtx.dividendAnalysisMode,
     setDividendAnalysisMode: invCtx.setDividendAnalysisMode,
+    syncDividends: invCtx.syncDividends,
+    isSyncingDividends: invCtx.isSyncingDividends,
+    dividendSyncStatus: invCtx.dividendSyncStatus,
+    fetchDividendSyncStatus: invCtx.fetchDividendSyncStatus,
     valuationTargets: invCtx.valuationTargets,
     saveValuationTarget: invCtx.saveValuationTarget,
     deleteValuationTarget: invCtx.deleteValuationTarget,
@@ -243,20 +251,36 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const [dividends, setDividends] = useState<Dividend[]>(() => getInitialCache('dividends', []));
   const [loading, setLoading] = useState(false);
 
-  const refreshData = useCallback(async (silent = false) => {
+  const settingsRef = useRef<UserSettings | null>(settings);
+  useEffect(() => {
+    settingsRef.current = settings;
+  }, [settings]);
+
+  const lastFetchTimestampRef = useRef<number>(0);
+  const REFRESH_COOLDOWN_MS = 15000; // 15 seconds cooldown for background/silent refreshes
+
+  const refreshData = useCallback(async (silent = false, force = false) => {
+    const now = Date.now();
+    // If not forced and is a silent background refresh within the cooldown window, skip redundant queries!
+    if (!force && silent && (now - lastFetchTimestampRef.current < REFRESH_COOLDOWN_MS)) {
+      return;
+    }
+
     // If a master refresh is already in-flight, reuse it rather than spamming duplicate queries!
     if (activeRefreshPromise) {
       return activeRefreshPromise;
     }
 
     activeRefreshPromise = (async () => {
-      if (!silent && !settings) setLoading(true);
+      if (!silent && !settingsRef.current) setLoading(true);
       try {
         const userId = await getEffectiveUserId();
         if (!userId) {
           if (!silent) setLoading(false);
           return;
         }
+
+        lastFetchTimestampRef.current = Date.now();
 
         // 1. Immediately hydrate all available data from cacheManager (0ms L1/L2)
         const localSettings = cacheManager.get<UserSettings>(`user_settings_${userId}`) || cacheManager.get<UserSettings>('last_known_user_settings');
@@ -336,7 +360,14 @@ export function DataProvider({ children }: { children: ReactNode }) {
             biometrics_auto_lock_minutes: settingsData.biometrics_auto_lock_minutes ?? 0,
             biometrics_device_info: settingsData.biometrics_device_info || {},
           };
-          setSettings(finalSettings);
+          
+          // Check if settings actually changed to prevent re-render cascades
+          const isSettingsEqual = settingsRef.current && 
+            JSON.stringify(settingsRef.current) === JSON.stringify(finalSettings);
+          if (!isSettingsEqual) {
+            setSettings(finalSettings);
+            settingsRef.current = finalSettings;
+          }
           cacheManager.set(`user_settings_${userId}`, finalSettings, undefined, 'settings');
 
           if (settingsData.cached_quotes && Object.keys(settingsData.cached_quotes).length > 0) {
@@ -515,7 +546,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     })();
 
     return activeRefreshPromise;
-  }, [settings]);
+  }, []);
 
   useEffect(() => {
     refreshData();
@@ -527,12 +558,26 @@ export function DataProvider({ children }: { children: ReactNode }) {
       console.log('[Finanças Pro - DataContext] Internet reconectada! Sincronizando fila pendente e atualizando dados...');
       toast.info('Internet reconectada! Sincronizando dados com a nuvem...');
       await syncQueueManager.flushQueue(5000);
-      await refreshData(true);
+      await refreshData(true, true);
     };
 
     window.addEventListener('online', handleOnline);
     return () => window.removeEventListener('online', handleOnline);
   }, [refreshData]);
+
+  // Stable handlers for nested providers to prevent cascading effect triggers
+  const handleDataChange = useCallback(() => {
+    return refreshData(true);
+  }, [refreshData]);
+
+  const handleUpdateSettings = useCallback((newSettings: UserSettings) => {
+    const isSettingsEqual = settingsRef.current && 
+      JSON.stringify(settingsRef.current) === JSON.stringify(newSettings);
+    if (!isSettingsEqual) {
+      setSettings(newSettings);
+      settingsRef.current = newSettings;
+    }
+  }, []);
 
   return (
     <TransactionsProvider
@@ -544,15 +589,15 @@ export function DataProvider({ children }: { children: ReactNode }) {
       <ReservesProvider
         initialReserves={reserves}
         initialReserveTransactions={reserveTransactions}
-        onDataChange={() => refreshData(true)}
+        onDataChange={handleDataChange}
       >
         <InvestmentsProvider
           initialInvestmentTransactions={investmentTransactions}
           initialDividends={dividends}
           settings={settings}
           reserves={reserves}
-          onDataChange={() => refreshData(true)}
-          onUpdateSettings={(newSettings) => setSettings(newSettings)}
+          onDataChange={handleDataChange}
+          onUpdateSettings={handleUpdateSettings}
         >
           <QuotesProvider>
             <VehiclesProvider>
