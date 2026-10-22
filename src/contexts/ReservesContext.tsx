@@ -233,18 +233,26 @@ export function ReservesProvider({
     if (!options?.silent) toast.success('Movimentação de reserva atualizada!', { id: 'reserve-action' });
   }, []);
 
-  // Dynamically calculate computed balances for reserves (only counting settled/paid transactions)
+  // Dynamically calculate computed balances for reserves:
+  // saldo = saldo_inicial + aportes + proventos + rendimentos gerais + venda de ativos - resgates - compras de ativos (utilizacao)
   const computedReserves = useMemo(() => {
     return reserves.map(r => {
       const rts = reserveTransactions.filter(rt => rt.reserve_id === r.id);
       // Filter out pending items for actual liquid balance
       const settledRts = rts.filter(rt => rt.payment_status !== 'pending');
-      const totalAporte = settledRts.filter(rt => rt.type === 'aporte').reduce((sum, rt) => sum + Number(rt.amount), 0);
-      const totalRendimento = settledRts.filter(rt => rt.type === 'rendimento').reduce((sum, rt) => sum + Number(rt.amount), 0);
-      const totalUtilizacao = settledRts.filter(rt => rt.type === 'utilizacao').reduce((sum, rt) => sum + Number(rt.amount), 0);
+      
+      const totalAportes = settledRts.filter(rt => rt.type === 'aporte' && rt.category !== 'Proventos').reduce((sum, rt) => sum + Number(rt.amount), 0);
+      const totalProventos = settledRts.filter(rt => (rt.type === 'aporte' || rt.type === 'rendimento') && rt.category === 'Proventos').reduce((sum, rt) => sum + Number(rt.amount), 0);
+      const totalRendimentosGerais = settledRts.filter(rt => rt.type === 'rendimento' && rt.category !== 'Proventos').reduce((sum, rt) => sum + Number(rt.amount), 0);
+      const totalVendas = settledRts.filter(rt => rt.type === 'aporte' && rt.description?.toUpperCase().includes('VENDA')).reduce((sum, rt) => sum + Number(rt.amount), 0);
+      const totalCompras = settledRts.filter(rt => rt.type === 'utilizacao' && (rt.description?.toUpperCase().includes('COMPRA') || rt.description?.toUpperCase().includes('INVESTIMENTO'))).reduce((sum, rt) => sum + Number(rt.amount), 0);
+      const totalResgates = settledRts.filter(rt => rt.type === 'utilizacao' && !rt.description?.toUpperCase().includes('COMPRA') && !rt.description?.toUpperCase().includes('INVESTIMENTO')).reduce((sum, rt) => sum + Number(rt.amount), 0);
+
+      const saldoCalculado = Number(r.saldo_inicial || 0) + totalAportes + totalProventos + totalRendimentosGerais + totalVendas - totalCompras - totalResgates;
+
       return {
         ...r,
-        saldo_atual: Number(r.saldo_inicial || 0) + totalAporte + totalRendimento - totalUtilizacao
+        saldo_atual: Math.round(saldoCalculado * 100) / 100
       };
     });
   }, [reserves, reserveTransactions]);

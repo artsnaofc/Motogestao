@@ -350,25 +350,6 @@ export function DividendSummaryCards({
 
           <div className="flex items-center gap-2 flex-wrap self-start sm:self-auto">
             <button
-              onClick={() => dataContext?.syncDividends()}
-              disabled={dataContext?.isSyncingDividends}
-              title="Descobrir e importar novos proventos da CVM e FNET/B3"
-              className="px-3 py-1.5 text-xs font-bold rounded-xl bg-purple-500/10 border border-purple-500/30 text-purple-600 dark:text-purple-400 hover:bg-purple-500/20 transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${dataContext?.isSyncingDividends ? 'animate-spin' : ''}`} />
-              <span>{dataContext?.isSyncingDividends ? 'Sincronizando...' : 'Sincronizar CVM/B3'}</span>
-            </button>
-
-            <button
-              onClick={() => setIsSyncModalOpen(true)}
-              title="Histórico e detalhes de sincronização oficial"
-              className="px-2.5 py-1.5 text-xs font-bold rounded-xl bg-card border border-border/60 text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-all flex items-center gap-1.5 cursor-pointer"
-            >
-              <Database className="w-3.5 h-3.5 text-blue-500" />
-              <span className="hidden sm:inline">Status</span>
-            </button>
-
-            <button
               onClick={() => onOpenAddDivModal()}
               className="px-3.5 py-1.5 text-xs font-bold rounded-xl bg-emerald-500 text-white hover:bg-emerald-600 transition-all flex items-center gap-1.5 shadow-sm cursor-pointer"
             >

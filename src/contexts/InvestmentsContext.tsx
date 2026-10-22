@@ -219,30 +219,14 @@ export function InvestmentsProvider({
     cacheManager.set('dividend_analysis_mode', mode, undefined, 'investments');
   }, []);
 
-  // Automatic Corporate Actions Discovery & Sync State
-  const [isSyncingDividends, setIsSyncingDividends] = useState(false);
-  const [dividendSyncStatus, setDividendSyncStatus] = useState<DividendSyncStatus | null>(() => {
-    return cacheManager.get<DividendSyncStatus>('dividend_sync_status_cache') || null;
-  });
+  const isSyncingDividends = false;
+  const dividendSyncStatus = null;
+  const fetchDividendSyncStatus = async () => null;
 
-  const fetchDividendSyncStatus = useCallback(async (): Promise<DividendSyncStatus | null> => {
-    try {
-      const res = await fetch('/api/dividends/sync-status', { signal: AbortSignal.timeout(4000) });
-      if (res.ok) {
-        const data = await res.json();
-        setDividendSyncStatus(data);
-        cacheManager.set('dividend_sync_status_cache', data, undefined, 'investments');
-        return data;
-      }
-    } catch {
-      // offline / mock fallback
-    }
+  const syncDividends = useCallback(async (): Promise<DividendSyncResult | null> => {
+    toast.info('A sincronização automática foi desativada. Insira seus proventos manualmente.');
     return null;
   }, []);
-
-  useEffect(() => {
-    fetchDividendSyncStatus();
-  }, [fetchDividendSyncStatus]);
 
   // Synchronize when initial props change
   useEffect(() => {
@@ -276,19 +260,8 @@ export function InvestmentsProvider({
       // Identify dividends that need action:
       // 1. Provisioned that reached payment date (div.date <= today)
       // 2. Received dividends that have a reserve configured but lack a matching credit in reserve_transactions
-      const currentReadyIds = new Set(
-        dividends
-          .filter(d => {
-            const divPayDate = d.date || d.data_ex;
-            if (d.status === 'provisioned' && divPayDate && divPayDate <= today) return true;
-            if (d.status === 'received' && reserveIdToUse) {
-              const hasMatchingRt = curRts.some(rt => isMatchingReserveTx(d, rt));
-              if (!hasMatchingRt) return true;
-            }
-            return false;
-          })
-          .map(d => d.id)
-      );
+      // Manual only: do not auto-promote provisioned dividends to received
+      const currentReadyIds = new Set<string>();
 
       for (const id of Array.from(processingDividendsRef.current)) {
         if (!currentReadyIds.has(id)) {
@@ -838,121 +811,7 @@ export function InvestmentsProvider({
     if (onDataChange) await onDataChange();
   }, [dividends, onDataChange]);
 
-  const syncDividends = useCallback(async (customTickers?: string[]): Promise<DividendSyncResult | null> => {
-    setIsSyncingDividends(true);
-    const userId = (await getEffectiveUserId()) || 'default';
 
-    // Collect all tickers in portfolio
-    const targetTickers = customTickers && customTickers.length > 0
-      ? customTickers
-      : Array.from(new Set(investmentTransactions.map(it => it.ticker.toUpperCase()))).filter(Boolean);
-
-    if (targetTickers.length === 0) {
-      toast.info('Nenhum ativo na carteira para sincronizar proventos.');
-      setIsSyncingDividends(false);
-      return null;
-    }
-
-    toast.loading('Descobrindo proventos oficiais (CVM & FNET)...', { id: 'div-sync' });
-
-    try {
-      let syncData: any = null;
-
-      // 1. Try server-side endpoint first
-      try {
-        const res = await fetch('/api/dividends/sync', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            tickers: targetTickers,
-            transactions: investmentTransactions,
-            existingDividends: dividends,
-            userId,
-            userCnpjMap: settings?.asset_cnpjs || {},
-          }),
-          signal: AbortSignal.timeout(15000),
-        });
-        if (res.ok) {
-          syncData = await res.json();
-        }
-      } catch (srvErr) {
-        console.warn('API /api/dividends/sync falhou, executando engine local:', srvErr);
-      }
-
-      // 2. Client-side fallback if server endpoint unavailable
-      if (!syncData) {
-        const { executeDividendSync } = await import('../lib/dividendSync/dividendSyncService');
-        const localOutput = await executeDividendSync({
-          portfolioTickers: targetTickers,
-          transactions: investmentTransactions,
-          existingDividends: dividends,
-          userId,
-          userCnpjMap: settings?.asset_cnpjs || {},
-        });
-        syncData = { success: true, ...localOutput };
-      }
-
-      const { result, newDividends = [], updatedDividends = [] } = syncData;
-
-      // Persist newly discovered dividends
-      if (newDividends.length > 0) {
-        setDividends(prev => {
-          const next = [...newDividends, ...prev];
-          cacheManager.set(`dividends_${userId}`, next, undefined, 'investments');
-          return next;
-        });
-
-        // Enqueue into syncQueueManager for Supabase persistence
-        newDividends.forEach((div: Dividend) => {
-          syncQueueManager.enqueue('dividends', 'insert', div.id, div);
-        });
-      }
-
-      // Apply updates (retificações / cancellations)
-      if (updatedDividends.length > 0) {
-        const updatesMap = new Map<string, Partial<Dividend>>(
-          updatedDividends.map((u: any) => [u.id, u.fields])
-        );
-
-        setDividends(prev => {
-          const next = prev.map(d => updatesMap.has(d.id) ? { ...d, ...updatesMap.get(d.id) } : d);
-          cacheManager.set(`dividends_${userId}`, next, undefined, 'investments');
-          return next;
-        });
-
-        updatedDividends.forEach((u: any) => {
-          syncQueueManager.enqueue('dividends', 'update', u.id, u.fields);
-        });
-      }
-
-      // Update sync status cache
-      await fetchDividendSyncStatus();
-
-      if (result.imported > 0 || result.updated > 0) {
-        toast.success(
-          `Sincronização concluída! ${result.imported} novo(s) provento(s) previstos adicionados.`,
-          { id: 'div-sync', duration: 4000 }
-        );
-      } else {
-        toast.info(
-          `Sincronização concluída: Todos os proventos da carteira já estão atualizados.`,
-          { id: 'div-sync' }
-        );
-      }
-
-      if (onDataChange && (result.imported > 0 || result.updated > 0)) {
-        await onDataChange();
-      }
-
-      return result;
-    } catch (err: any) {
-      console.error('Erro na sincronização de proventos:', err);
-      toast.error(`Falha ao sincronizar proventos: ${err?.message || 'Erro desconhecido'}`, { id: 'div-sync' });
-      return null;
-    } finally {
-      setIsSyncingDividends(false);
-    }
-  }, [investmentTransactions, dividends, settings, onDataChange, fetchDividendSyncStatus]);
 
   const updateAssetCnpj = useCallback(async (ticker: string, cnpj: string) => {
     const tk = ticker.toUpperCase().trim();
