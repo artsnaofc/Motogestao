@@ -86,15 +86,8 @@ export async function fetchFnetAnnouncements(
     return { events, errors };
   }
 
-  // Pre-load known/sample notices for matching tickers
+  // Collect notices from public FNET endpoint
   const noticesToEvaluate: FnetRawNotice[] = [];
-
-  if (fiiTickers.includes('BTCI11')) {
-    noticesToEvaluate.push(FNET_BTCI11_NOTICE_JSON);
-  }
-  if (fiiTickers.includes('EXMP11')) {
-    noticesToEvaluate.push(FNET_AMORTIZACAO_NOTICE_JSON);
-  }
 
   // Attempt live query to public FNET endpoint if available
   try {

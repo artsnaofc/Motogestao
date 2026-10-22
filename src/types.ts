@@ -185,7 +185,7 @@ export interface InvestmentTransaction {
 export type DividendType = 'Dividendo' | 'JCP' | 'Rendimento' | 'Amortizacao' | 'Outros';
 export type DividendStatus = 'received' | 'provisioned' | 'cancelled';
 export type DividendAnalysisMode = 'received_only' | 'include_provisioned';
-export type CorporateEventProvider = 'cvm_ipe' | 'fnet_b3' | 'brapi' | 'manual';
+export type CorporateEventProvider = 'cvm_ipe' | 'fnet_b3' | 'b3_market' | 'brapi' | 'manual';
 export type EventValidationStatus = 'valid' | 'pending_review' | 'cancelled';
 
 export interface Dividend {

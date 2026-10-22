@@ -9,6 +9,7 @@ import { calculateEligiblePosition } from './dividendEligibilityEngine';
 import { evaluateEventDeduplication } from './dividendDeduplicator';
 import { fetchCvmIpeAnnouncements } from './cvmIpeCollector';
 import { fetchFnetAnnouncements } from './fnetCollector';
+import { fetchB3MarketDividends } from './b3MarketDividendCollector';
 import { fetchBrapiDividends } from './brapiDividendCollector';
 
 export interface DividendSyncParams {
@@ -18,7 +19,7 @@ export interface DividendSyncParams {
   userId: string;
   userCnpjMap?: Record<string, string>;
   brapiToken?: string;
-  forceProvider?: 'all' | 'cvm_ipe' | 'fnet_b3' | 'brapi';
+  forceProvider?: 'all' | 'cvm_ipe' | 'fnet_b3' | 'b3_market' | 'brapi';
 }
 
 export interface SyncExecutionOutput {
@@ -85,6 +86,12 @@ export async function executeDividendSync(
     const fnetRes = await fetchFnetAnnouncements(cleanTickers);
     discoveredEvents.push(...fnetRes.events);
     errors.push(...fnetRes.errors);
+  }
+
+  if (forceProvider === 'all' || forceProvider === 'b3_market') {
+    const b3Res = await fetchB3MarketDividends(cleanTickers);
+    discoveredEvents.push(...b3Res.events);
+    errors.push(...b3Res.errors);
   }
 
   if (forceProvider === 'all' || forceProvider === 'brapi') {

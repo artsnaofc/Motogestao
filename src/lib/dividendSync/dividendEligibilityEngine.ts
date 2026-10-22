@@ -56,12 +56,12 @@ export function calculateEligiblePosition(
     };
   }
 
-  // Transactions on or before data_com
+  // Transactions on or before data_com (or all transactions if dateCom not specified)
+  const normDateCom = dateCom ? dateCom.slice(0, 10) : '';
   const eligibleTxs = assetTxs.filter(tx => {
-    if (!tx.date) return false;
-    // Compare YYYY-MM-DD
+    if (!tx.date) return true;
     const txDateStr = tx.date.slice(0, 10);
-    return txDateStr <= dateCom;
+    return !normDateCom || txDateStr <= normDateCom;
   });
 
   if (eligibleTxs.length === 0) {
@@ -80,9 +80,10 @@ export function calculateEligiblePosition(
   let netQuantity = 0;
   for (const tx of eligibleTxs) {
     const qty = Number(tx.quantity) || 0;
-    if (tx.operation === 'buy') {
+    const op = String(tx.operation || '').toLowerCase();
+    if (op === 'buy' || op === 'compra') {
       netQuantity += qty;
-    } else if (tx.operation === 'sell') {
+    } else if (op === 'sell' || op === 'venda') {
       netQuantity -= qty;
     }
   }
