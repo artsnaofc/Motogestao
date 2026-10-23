@@ -389,6 +389,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
               merged.push(localItem);
             } else if (supaMap.has(localItem.id)) {
               merged.push(supaMap.get(localItem.id)!);
+            } else {
+              merged.push(localItem);
             }
           }
 
@@ -421,6 +423,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
                 merged.push(localItem);
               } else if (supaMap.has(localItem.id)) {
                 merged.push(supaMap.get(localItem.id)!);
+              } else {
+                merged.push(localItem);
               }
             }
 
@@ -467,6 +471,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
               merged.push(localItem);
             } else if (supaMap.has(localItem.id)) {
               merged.push(supaMap.get(localItem.id)!);
+            } else {
+              merged.push(localItem);
             }
           }
 
@@ -494,6 +500,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
               merged.push(localItem);
             } else if (supaMap.has(localItem.id)) {
               merged.push(supaMap.get(localItem.id)!);
+            } else {
+              merged.push(localItem);
             }
           }
 
@@ -521,6 +529,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
               merged.push(localItem);
             } else if (supaMap.has(localItem.id)) {
               merged.push(supaMap.get(localItem.id)!);
+            } else {
+              merged.push(localItem);
             }
           }
 

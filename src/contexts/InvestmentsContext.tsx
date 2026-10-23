@@ -586,7 +586,7 @@ export function InvestmentsProvider({
     if (divObj.status === 'received' && reserveIdToUse) {
       const curRts = cacheManager.get<ReserveTransaction[]>(`reserve_transactions_${userId}`) || [];
       const today = getTodayLocalDateStr();
-      const divDate = divObj.data_ex || divObj.date || today;
+      const divDate = divObj.date || divObj.data_ex || today;
 
       // Anti-duplication check: check if an identical reserve transaction already exists
       const existingRt = curRts.find(rt =>
@@ -691,7 +691,7 @@ export function InvestmentsProvider({
     // If changing status from provisioned to received, create or link reserve transaction
     if (currentDiv && currentDiv.status === 'provisioned' && updatedFields.status === 'received' && reserveIdToUse) {
       const curRts = cacheManager.get<ReserveTransaction[]>(`reserve_transactions_${userId}`) || [];
-      const divDate = updatedFields.data_ex || updatedFields.date || currentDiv.data_ex || currentDiv.date || getTodayLocalDateStr();
+      const divDate = updatedFields.date || updatedFields.data_ex || currentDiv.date || currentDiv.data_ex || getTodayLocalDateStr();
       const divAmount = updatedFields.amount !== undefined ? updatedFields.amount : currentDiv.amount;
       const divTicker = (updatedFields.ticker || currentDiv.ticker).toUpperCase();
 
