@@ -5,36 +5,36 @@ import {
   Database, 
   Download, 
   Upload, 
-  RotateCcw, 
   ShieldCheck, 
   AlertTriangle, 
   CheckCircle2, 
   FileCode, 
-  FileJson, 
   Layers, 
   HardDrive, 
   Clock, 
   RefreshCw,
   Trash2,
-  Lock,
-  Search,
-  ArrowRight,
-  Eye,
-  Info
+  Server,
+  Copy,
+  Check,
+  ExternalLink,
+  Terminal,
+  Zap
 } from 'lucide-react';
 import { 
   databaseBackupEngine, 
   DatabaseSnapshot, 
   DryRunResult, 
   LocalSnapshotVaultItem,
-  TableBackupMetadata
+  TableBackupMetadata,
+  ConnectionTestResult
 } from '../../lib/databaseBackup';
 import { systemSettings } from '../../lib/systemSettings';
 import { toast } from '@/lib/toast';
 import { motion, AnimatePresence } from 'motion/react';
 
 export function DatabaseBackupSuite() {
-  const [activeView, setActiveView] = useState<'export' | 'restore' | 'vault'>('export');
+  const [activeView, setActiveView] = useState<'export' | 'restore' | 'vault' | 'migration'>('export');
   const [tables, setTables] = useState<TableBackupMetadata[]>(() => databaseBackupEngine.getAvailableTables());
   const [liveCounts, setLiveCounts] = useState<Record<string, number>>({});
   const [selectedTables, setSelectedTables] = useState<string[]>(() => 
@@ -55,6 +55,14 @@ export function DatabaseBackupSuite() {
   // Vault State
   const [vaultItems, setVaultItems] = useState<LocalSnapshotVaultItem[]>(() => databaseBackupEngine.getVaultSnapshots());
   const [isLoadingCounts, setIsLoadingCounts] = useState(false);
+
+  // Migration View State
+  const [copiedDDL, setCopiedDDL] = useState(false);
+  const [isGeneratingFullMigration, setIsGeneratingFullMigration] = useState(false);
+  const [newSupabaseUrl, setNewSupabaseUrl] = useState('');
+  const [newSupabaseAnonKey, setNewSupabaseAnonKey] = useState('');
+  const [isTestingConnection, setIsTestingConnection] = useState(false);
+  const [connectionTestResult, setConnectionTestResult] = useState<ConnectionTestResult | null>(null);
 
   const fetchCounts = async () => {
     setIsLoadingCounts(true);
@@ -142,6 +150,74 @@ export function DatabaseBackupSuite() {
     }
   };
 
+  // Migration View Handlers
+  const handleCopyDDL = async () => {
+    try {
+      const ddl = databaseBackupEngine.generateCompleteSchemaDDL();
+      await navigator.clipboard.writeText(ddl);
+      setCopiedDDL(true);
+      toast.success('Schema DDL completo copiado para a área de transferência!');
+      setTimeout(() => setCopiedDDL(false), 3000);
+    } catch {
+      toast.error('Não foi possível copiar automaticamente para a área de transferência.');
+    }
+  };
+
+  const handleDownloadDDL = () => {
+    try {
+      databaseBackupEngine.downloadSchemaDDL();
+      toast.success('Arquivo setup_supabase_schema.sql baixado com sucesso!');
+    } catch (e: any) {
+      toast.error('Erro ao baixar script DDL', { description: e.message });
+    }
+  };
+
+  const handleDownloadFullMigration = async () => {
+    setIsGeneratingFullMigration(true);
+    try {
+      const snapshot = await databaseBackupEngine.createSnapshot(
+        undefined,
+        'Migrador Supabase',
+        (percent, status) => setExportProgress({ percent, status })
+      );
+      databaseBackupEngine.downloadFullMigrationSQL(snapshot);
+      setVaultItems(databaseBackupEngine.getVaultSnapshots());
+      toast.success('Pacote completo de migração (Schema + Dados) gerado e baixado!');
+    } catch (e: any) {
+      toast.error('Erro ao gerar pacote de migração', { description: e.message });
+    } finally {
+      setIsGeneratingFullMigration(false);
+      setExportProgress({ percent: 0, status: '' });
+    }
+  };
+
+  const handleTestNewConnection = async () => {
+    if (!newSupabaseUrl.trim() || !newSupabaseAnonKey.trim()) {
+      toast.error('Preencha a URL e a Anon Public Key do novo Supabase.');
+      return;
+    }
+
+    setIsTestingConnection(true);
+    setConnectionTestResult(null);
+
+    try {
+      const result = await databaseBackupEngine.testSupabaseConnection(
+        newSupabaseUrl.trim(),
+        newSupabaseAnonKey.trim()
+      );
+      setConnectionTestResult(result);
+      if (result.success) {
+        toast.success('Conexão com novo Supabase verificada com sucesso!');
+      } else {
+        toast.warning(result.message);
+      }
+    } catch (err: any) {
+      toast.error('Erro ao testar conexão', { description: err.message });
+    } finally {
+      setIsTestingConnection(false);
+    }
+  };
+
   // Restore Handlers
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -225,18 +301,18 @@ export function DatabaseBackupSuite() {
         <div>
           <h3 className="text-base font-black text-foreground flex items-center gap-2">
             <Database className="w-5 h-5 text-primary" />
-            Central de Backup & Restauração da Database
+            Central de Backup & Migração da Database
           </h3>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Crie snapshots integrais do banco de dados, exporte scripts SQL e restaure dados com rollback de segurança.
+            Crie snapshots integrais, exporte scripts SQL prontos e realize migrações zero-data-loss para novas contas Supabase.
           </p>
         </div>
 
-        <div className="flex items-center gap-2 p-1 bg-muted/40 rounded-2xl border border-border/50">
+        <div className="flex items-center gap-1.5 p-1 bg-muted/40 rounded-2xl border border-border/50 overflow-x-auto max-w-full">
           <button
             type="button"
             onClick={() => setActiveView('export')}
-            className={`px-3 py-1.5 rounded-xl font-bold text-xs transition-all cursor-pointer ${
+            className={`px-3 py-1.5 rounded-xl font-bold text-xs transition-all cursor-pointer whitespace-nowrap ${
               activeView === 'export'
                 ? 'bg-background text-foreground shadow-xs'
                 : 'text-muted-foreground hover:text-foreground'
@@ -247,7 +323,7 @@ export function DatabaseBackupSuite() {
           <button
             type="button"
             onClick={() => setActiveView('restore')}
-            className={`px-3 py-1.5 rounded-xl font-bold text-xs transition-all cursor-pointer ${
+            className={`px-3 py-1.5 rounded-xl font-bold text-xs transition-all cursor-pointer whitespace-nowrap ${
               activeView === 'restore'
                 ? 'bg-background text-foreground shadow-xs'
                 : 'text-muted-foreground hover:text-foreground'
@@ -257,8 +333,20 @@ export function DatabaseBackupSuite() {
           </button>
           <button
             type="button"
+            onClick={() => setActiveView('migration')}
+            className={`px-3 py-1.5 rounded-xl font-bold text-xs transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
+              activeView === 'migration'
+                ? 'bg-emerald-600 text-white shadow-xs'
+                : 'text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            <Server className="w-3.5 h-3.5" />
+            Migração Novo Supabase
+          </button>
+          <button
+            type="button"
             onClick={() => setActiveView('vault')}
-            className={`px-3 py-1.5 rounded-xl font-bold text-xs transition-all cursor-pointer flex items-center gap-1.5 ${
+            className={`px-3 py-1.5 rounded-xl font-bold text-xs transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
               activeView === 'vault'
                 ? 'bg-background text-foreground shadow-xs'
                 : 'text-muted-foreground hover:text-foreground'
@@ -273,14 +361,13 @@ export function DatabaseBackupSuite() {
       {/* VIEW 1: EXPORT & SNAPSHOT GENERATOR */}
       {activeView === 'export' && (
         <div className="space-y-6">
-          {/* Table Selector Card */}
           <Card className="border-border/50 bg-background/60 shadow-xs">
             <CardContent className="p-6 space-y-5">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-border/40">
                 <div>
                   <h4 className="text-sm font-black text-foreground flex items-center gap-2">
                     <Layers className="w-4 h-4 text-primary" />
-                    Seleção de Tabelas para Extração
+                    Seleção de Tabelas para Extração ({tables.length} tabelas suportadas)
                   </h4>
                   <p className="text-[11px] text-muted-foreground mt-0.5">
                     Selecione todas as tabelas para um backup integral ou marque módulos específicos.
@@ -310,7 +397,7 @@ export function DatabaseBackupSuite() {
               </div>
 
               {/* Table Checkbox Grid */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
                 {tables.map((t) => {
                   const isChecked = selectedTables.includes(t.tableName);
                   return (
@@ -399,7 +486,6 @@ export function DatabaseBackupSuite() {
       {/* VIEW 2: RESTORE & DRY RUN INSPECTOR */}
       {activeView === 'restore' && (
         <div className="space-y-6">
-          {/* Upload Card */}
           <Card className="border-border/50 bg-background/60 shadow-xs">
             <CardContent className="p-6 space-y-5">
               <div>
@@ -451,122 +537,91 @@ export function DatabaseBackupSuite() {
                     </span>
                   </div>
 
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
-                    <div className="p-3 rounded-xl bg-muted/20 border border-border/40">
-                      <span className="text-[10px] text-muted-foreground font-bold block uppercase">Snapshot ID</span>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                    <div className="p-3 rounded-xl bg-muted/20 border border-border/50">
+                      <span className="text-muted-foreground text-[10px] block">Snapshot ID</span>
                       <span className="font-mono font-bold text-foreground truncate block">{dryRunResult.snapshotId}</span>
                     </div>
-                    <div className="p-3 rounded-xl bg-muted/20 border border-border/40">
-                      <span className="text-[10px] text-muted-foreground font-bold block uppercase">Data de Criação</span>
-                      <span className="font-bold text-foreground truncate block">{new Date(dryRunResult.createdAt).toLocaleDateString('pt-BR')}</span>
+                    <div className="p-3 rounded-xl bg-muted/20 border border-border/50">
+                      <span className="text-muted-foreground text-[10px] block">Data do Backup</span>
+                      <span className="font-bold text-foreground block">{new Date(dryRunResult.createdAt).toLocaleDateString('pt-BR')}</span>
                     </div>
-                    <div className="p-3 rounded-xl bg-muted/20 border border-border/40">
-                      <span className="text-[10px] text-muted-foreground font-bold block uppercase">Autor</span>
-                      <span className="font-bold text-foreground truncate block">{dryRunResult.createdBy}</span>
+                    <div className="p-3 rounded-xl bg-muted/20 border border-border/50">
+                      <span className="text-muted-foreground text-[10px] block">Total de Registros</span>
+                      <span className="font-black text-primary text-sm block">{dryRunResult.totalRecords}</span>
                     </div>
-                    <div className="p-3 rounded-xl bg-muted/20 border border-border/40">
-                      <span className="text-[10px] text-muted-foreground font-bold block uppercase">Total de Linhas</span>
-                      <span className="font-black text-primary truncate block">{dryRunResult.totalRecords} registros</span>
+                    <div className="p-3 rounded-xl bg-muted/20 border border-border/50">
+                      <span className="text-muted-foreground text-[10px] block">Assinatura SHA-256</span>
+                      <span className={`font-bold block ${dryRunResult.checksumValid ? 'text-emerald-500' : 'text-amber-500'}`}>
+                        {dryRunResult.checksumValid ? 'Válida' : 'Sem Assinatura / Modificado'}
+                      </span>
                     </div>
                   </div>
 
-                  {/* Tables Breakdown */}
-                  <div className="p-3.5 rounded-2xl bg-muted/10 border border-border/50 space-y-2">
-                    <span className="text-[11px] font-black text-foreground block">
-                      Detalhamento de Linhas por Tabela no Snapshot:
-                    </span>
+                  {/* Table summary breakdown */}
+                  <div>
+                    <h6 className="text-xs font-bold text-muted-foreground mb-2">Tabelas Identificadas no Arquivo:</h6>
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                      {Object.entries(dryRunResult.tables).map(([key, info]) => (
-                        <div key={key} className="flex items-center justify-between p-2 rounded-lg bg-background border border-border/40 text-[11px]">
-                          <span className="font-medium text-muted-foreground">{info.name}</span>
-                          <span className="font-black text-foreground font-mono">{info.count}</span>
+                      {Object.entries(dryRunResult.tables).map(([k, info]) => (
+                        <div key={k} className="p-2.5 rounded-xl border border-border/40 bg-background/40 flex items-center justify-between text-xs">
+                          <span className="truncate text-foreground font-medium pr-1">{info.name}</span>
+                          <span className="font-mono font-black text-primary shrink-0">{info.count}</span>
                         </div>
                       ))}
                     </div>
                   </div>
 
-                  {/* Warnings & Errors */}
-                  {dryRunResult.warnings.length > 0 && (
-                    <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-700 dark:text-amber-300 space-y-1">
-                      {dryRunResult.warnings.map((w, i) => (
-                        <div key={i} className="flex items-center gap-1.5">
-                          <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-                          <span>{w}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Restoration Mode Selector */}
-                  <div className="p-4 rounded-2xl bg-muted/20 border border-border/50 space-y-3">
-                    <span className="text-xs font-black text-foreground block">Estratégia de Restauração:</span>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      <div
-                        onClick={() => setRestoreMode('merge')}
-                        className={`p-3 rounded-xl border transition-all cursor-pointer ${
-                          restoreMode === 'merge'
-                            ? 'border-primary bg-primary/10 shadow-xs'
-                            : 'border-border/60 bg-background opacity-70'
-                        }`}
-                      >
-                        <span className="font-bold text-xs text-foreground block">Mesclagem / Upsert (Recomendado)</span>
-                        <span className="text-[11px] text-muted-foreground block mt-0.5">
-                          Insere novos registros e atualiza os existentes pela chave primária (ID), sem apagar outros registros não presentes no backup.
-                        </span>
-                      </div>
-
-                      <div
-                        onClick={() => setRestoreMode('replace')}
-                        className={`p-3 rounded-xl border transition-all cursor-pointer ${
-                          restoreMode === 'replace'
-                            ? 'border-rose-500 bg-rose-500/10 shadow-xs'
-                            : 'border-border/60 bg-background opacity-70'
-                        }`}
-                      >
-                        <span className="font-bold text-xs text-foreground block text-rose-500">Substituição Completa</span>
-                        <span className="text-[11px] text-muted-foreground block mt-0.5">
-                          Aplica os registros sobrescrevendo as tabelas selecionadas. Um ponto de restauração automático será gerado previamente.
-                        </span>
+                  {/* Mode Selector & Execution Button */}
+                  <div className="pt-4 border-t border-border/40 flex flex-col sm:flex-row items-center justify-between gap-4">
+                    <div className="flex items-center gap-3 w-full sm:w-auto">
+                      <span className="text-xs font-bold text-foreground">Modo de Restauração:</span>
+                      <div className="flex items-center gap-1.5 p-1 bg-muted/30 rounded-xl border border-border/50">
+                        <button
+                          type="button"
+                          onClick={() => setRestoreMode('merge')}
+                          className={`px-2.5 py-1 rounded-lg text-xs font-bold cursor-pointer transition-all ${
+                            restoreMode === 'merge' ? 'bg-primary text-primary-foreground shadow-xs' : 'text-muted-foreground'
+                          }`}
+                        >
+                          Mesclagem (Upsert)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setRestoreMode('replace')}
+                          className={`px-2.5 py-1 rounded-lg text-xs font-bold cursor-pointer transition-all ${
+                            restoreMode === 'replace' ? 'bg-rose-600 text-white shadow-xs' : 'text-muted-foreground'
+                          }`}
+                        >
+                          Substituição
+                        </button>
                       </div>
                     </div>
+
+                    <Button
+                      disabled={!dryRunResult.valid || isRestoring}
+                      onClick={() => setConfirmRestoreOpen(true)}
+                      className="rounded-xl h-10 font-bold text-xs bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer shadow-md gap-1.5 w-full sm:w-auto"
+                    >
+                      <RotateCcwIcon className="w-4 h-4" />
+                      Iniciar Restauração Segura
+                    </Button>
                   </div>
+                </div>
+              )}
 
-                  {/* Execute Button */}
-                  {isRestoring ? (
-                    <div className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 space-y-2">
-                      <div className="flex justify-between text-xs font-bold">
-                        <span className="text-emerald-600">{restoreProgress.status}</span>
-                        <span className="font-mono">{restoreProgress.percent}%</span>
-                      </div>
-                      <div className="w-full h-2 bg-emerald-500/20 rounded-full overflow-hidden">
-                        <div 
-                          className="h-full bg-emerald-500 transition-all duration-300 rounded-full" 
-                          style={{ width: `${restoreProgress.percent}%` }}
-                        />
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="flex justify-end gap-2">
-                      <Button
-                        variant="outline"
-                        onClick={() => {
-                          setUploadedSnapshot(null);
-                          setDryRunResult(null);
-                        }}
-                        className="rounded-xl h-10 font-bold text-xs border-border/60 cursor-pointer"
-                      >
-                        Cancelar
-                      </Button>
-                      <Button
-                        onClick={() => setConfirmRestoreOpen(true)}
-                        disabled={!dryRunResult.valid}
-                        className="rounded-xl h-10 font-bold text-xs shadow-md gap-1.5 cursor-pointer bg-emerald-600 hover:bg-emerald-700 text-white"
-                      >
-                        <Upload className="w-4 h-4" />
-                        Executar Restauração no Banco de Dados
-                      </Button>
-                    </div>
-                  )}
+              {/* Restore Progress Bar */}
+              {isRestoring && (
+                <div className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 space-y-2">
+                  <div className="flex justify-between text-xs font-bold">
+                    <span className="text-emerald-600">{restoreProgress.status}</span>
+                    <span className="font-mono">{restoreProgress.percent}%</span>
+                  </div>
+                  <div className="w-full h-2 bg-emerald-500/20 rounded-full overflow-hidden">
+                    <div 
+                      className="h-full bg-emerald-600 transition-all duration-300 rounded-full" 
+                      style={{ width: `${restoreProgress.percent}%` }}
+                    />
+                  </div>
                 </div>
               )}
             </CardContent>
@@ -574,18 +629,306 @@ export function DatabaseBackupSuite() {
         </div>
       )}
 
-      {/* VIEW 3: LOCAL SNAPSHOT VAULT */}
+      {/* VIEW 3: NEW SUPABASE MIGRATION WIZARD */}
+      {activeView === 'migration' && (
+        <div className="space-y-6">
+          {/* Card 1: Turnkey One-Click Migration Assets */}
+          <Card className="border-border/50 bg-background/60 shadow-xs">
+            <CardContent className="p-6 space-y-6">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-border/40">
+                <div>
+                  <h4 className="text-sm font-black text-foreground flex items-center gap-2">
+                    <Zap className="w-4 h-4 text-emerald-500" />
+                    Scripts de Migração para Novo Supabase (Setup do Zero)
+                  </h4>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Gere o Schema DDL e o pacote completo de migração (18 tabelas, colunas, chaves primárias, índices e regras RLS).
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-600 border border-emerald-500/20 font-bold">
+                    Zero Data Loss Engine v2.5
+                  </span>
+                </div>
+              </div>
+
+              {/* Fast Action Cards */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* DDL Schema Option */}
+                <div className="p-5 rounded-2xl border border-border/50 bg-muted/15 space-y-4 flex flex-col justify-between">
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="font-black text-xs text-foreground uppercase tracking-wider flex items-center gap-1.5">
+                        <Terminal className="w-4 h-4 text-primary" />
+                        1. Schema DDL Limpo (Estrutura)
+                      </span>
+                      <code className="text-[10px] font-mono text-muted-foreground bg-muted/40 px-1.5 py-0.5 rounded">
+                        setup_supabase_schema.sql
+                      </code>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Cria as 18 tabelas do zero, habilita UUIDs, adiciona índices de alta performance, ativa RLS e concede permissões universais. Ideal para rodar no novo projeto antes de importar dados.
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-2 pt-2 border-t border-border/30">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleCopyDDL}
+                      className="rounded-xl font-bold text-xs border-border/60 hover:bg-muted gap-1.5 cursor-pointer flex-1"
+                    >
+                      {copiedDDL ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
+                      {copiedDDL ? 'Copiado!' : 'Copiar DDL'}
+                    </Button>
+                    <Button
+                      size="sm"
+                      onClick={handleDownloadDDL}
+                      className="rounded-xl font-bold text-xs bg-primary text-primary-foreground gap-1.5 cursor-pointer flex-1 shadow-xs"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      Baixar .sql
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Unified All-in-One Migration Bundle */}
+                <div className="p-5 rounded-2xl border border-emerald-500/30 bg-emerald-500/5 space-y-4 flex flex-col justify-between">
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="font-black text-xs text-emerald-700 dark:text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
+                        <Server className="w-4 h-4 text-emerald-600" />
+                        2. Pacote Unificado (Schema + Dados Atuais)
+                      </span>
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-700 dark:text-emerald-300">
+                        Recomendado
+                      </span>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Extrai instantaneamente toda a base atual e combina a criação do Schema DDL com os comandos de inserção idempotentes (<code className="text-[10px] font-mono">ON CONFLICT DO UPDATE</code>).
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-2 pt-2 border-t border-emerald-500/20">
+                    <Button
+                      size="sm"
+                      disabled={isGeneratingFullMigration}
+                      onClick={handleDownloadFullMigration}
+                      className="rounded-xl font-bold text-xs bg-emerald-600 hover:bg-emerald-700 text-white gap-1.5 cursor-pointer w-full shadow-sm"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      {isGeneratingFullMigration ? 'Extraindo e Gerando...' : 'Baixar Migração Completa (.sql)'}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Card 2: Interactive Connection Tester */}
+          <Card className="border-border/50 bg-background/60 shadow-xs">
+            <CardContent className="p-6 space-y-5">
+              <div className="pb-3 border-b border-border/40">
+                <h4 className="text-sm font-black text-foreground flex items-center gap-2">
+                  <ShieldCheck className="w-4 h-4 text-primary" />
+                  Validador de Conexão com o Novo Supabase
+                </h4>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Teste as credenciais da nova conta/servidor antes de aplicar no arquivo de ambiente (<code className="text-[11px] font-mono">.env</code>).
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-foreground">Nova Supabase URL</label>
+                  <input
+                    type="text"
+                    value={newSupabaseUrl}
+                    onChange={(e) => setNewSupabaseUrl(e.target.value)}
+                    placeholder="https://exemplo-novo-projeto.supabase.co"
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-border/60 bg-background text-xs font-mono focus:outline-hidden focus:ring-2 focus:ring-primary/40"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-foreground">Nova Anon Public Key</label>
+                  <input
+                    type="password"
+                    value={newSupabaseAnonKey}
+                    onChange={(e) => setNewSupabaseAnonKey(e.target.value)}
+                    placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-border/60 bg-background text-xs font-mono focus:outline-hidden focus:ring-2 focus:ring-primary/40"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between pt-2">
+                <span className="text-[11px] text-muted-foreground">
+                  As chaves são testadas exclusivamente no navegador do seu dispositivo e nunca são salvas sem sua autorização.
+                </span>
+                <Button
+                  onClick={handleTestNewConnection}
+                  disabled={isTestingConnection}
+                  className="rounded-xl h-9 font-bold text-xs bg-primary text-primary-foreground gap-1.5 cursor-pointer shadow-xs"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isTestingConnection ? 'animate-spin' : ''}`} />
+                  {isTestingConnection ? 'Verificando...' : 'Testar Conexão Agora'}
+                </Button>
+              </div>
+
+              {/* Connection Diagnostics Output */}
+              {connectionTestResult && (
+                <div className={`p-4 rounded-2xl border text-xs space-y-3 ${
+                  connectionTestResult.success 
+                    ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-800 dark:text-emerald-300'
+                    : 'bg-amber-500/10 border-amber-500/30 text-amber-800 dark:text-amber-300'
+                }`}>
+                  <div className="flex items-start gap-2">
+                    {connectionTestResult.success ? (
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                    ) : (
+                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                    )}
+                    <div>
+                      <span className="font-black block">{connectionTestResult.message}</span>
+                      <span className="text-[11px] opacity-80 mt-0.5 block">
+                        Latência: {connectionTestResult.latencyMs}ms | Tabelas detectadas: {connectionTestResult.detectedTables.length} / {connectionTestResult.detectedTables.length + connectionTestResult.missingTables.length}
+                      </span>
+                    </div>
+                  </div>
+
+                  {connectionTestResult.missingTables.length > 0 && (
+                    <div className="pt-2 border-t border-border/30">
+                      <span className="font-bold text-[11px] block mb-1">Tabelas pendentes de criação no novo banco:</span>
+                      <div className="flex flex-wrap gap-1">
+                        {connectionTestResult.missingTables.map(t => (
+                          <span key={t} className="px-1.5 py-0.5 rounded bg-background/50 font-mono text-[10px]">
+                            {t}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Card 3: 6-Phase Step-by-Step Migration Guide */}
+          <Card className="border-border/50 bg-background/60 shadow-xs">
+            <CardContent className="p-6 space-y-5">
+              <div>
+                <h4 className="text-sm font-black text-foreground flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-primary" />
+                  Plano Passo a Passo para Migração Sem Perda de Dados
+                </h4>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Siga esta sequência rigorosa para trocar o servidor do banco de dados com segurança total.
+                </p>
+              </div>
+
+              <div className="space-y-3">
+                <div className="p-4 rounded-2xl border border-border/50 bg-background/40 flex items-start gap-3">
+                  <div className="w-6 h-6 rounded-full bg-primary/10 text-primary font-black text-xs flex items-center justify-center shrink-0 mt-0.5">
+                    1
+                  </div>
+                  <div className="space-y-1">
+                    <span className="font-bold text-xs text-foreground block">
+                      Extração e Salvamento do Backup da Base Atual
+                    </span>
+                    <p className="text-xs text-muted-foreground">
+                      Baixe o <strong>Pacote Unificado (.sql)</strong> e o <strong>Snapshot JSON (.json)</strong> clicando nos botões acima. Salve ambos em uma pasta segura ou no seu Google Drive.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-2xl border border-border/50 bg-background/40 flex items-start gap-3">
+                  <div className="w-6 h-6 rounded-full bg-primary/10 text-primary font-black text-xs flex items-center justify-center shrink-0 mt-0.5">
+                    2
+                  </div>
+                  <div className="space-y-1">
+                    <span className="font-bold text-xs text-foreground block">
+                      Criação do Novo Projeto no Supabase
+                    </span>
+                    <p className="text-xs text-muted-foreground">
+                      Acesse <a href="https://supabase.com/dashboard" target="_blank" rel="noreferrer" className="text-primary hover:underline font-bold inline-flex items-center gap-1">supabase.com/dashboard <ExternalLink className="w-3 h-3" /></a>, crie um novo projeto, defina uma senha forte de banco de dados e selecione a região desejada (ex: São Paulo <code className="text-[10px] font-mono">sa-east-1</code>).
+                    </p>
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-2xl border border-border/50 bg-background/40 flex items-start gap-3">
+                  <div className="w-6 h-6 rounded-full bg-primary/10 text-primary font-black text-xs flex items-center justify-center shrink-0 mt-0.5">
+                    3
+                  </div>
+                  <div className="space-y-1">
+                    <span className="font-bold text-xs text-foreground block">
+                      Executar o Script no SQL Editor do Novo Supabase
+                    </span>
+                    <p className="text-xs text-muted-foreground">
+                      No painel do novo projeto, vá no menu lateral em <strong>SQL Editor</strong> &rarr; <strong>New query</strong>. Cole o conteúdo de <code className="text-[10px] font-mono bg-muted/40 px-1 py-0.5 rounded">setup_supabase_schema.sql</code> (ou do pacote completo de migração) e clique em <strong>RUN</strong>. Isso criará todas as 18 tabelas, índices e políticas de segurança.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-2xl border border-border/50 bg-background/40 flex items-start gap-3">
+                  <div className="w-6 h-6 rounded-full bg-primary/10 text-primary font-black text-xs flex items-center justify-center shrink-0 mt-0.5">
+                    4
+                  </div>
+                  <div className="space-y-1">
+                    <span className="font-bold text-xs text-foreground block">
+                      Importar os Dados (Caso tenha rodado apenas o DDL)
+                    </span>
+                    <p className="text-xs text-muted-foreground">
+                      Se você executou apenas o Schema DDL no passo 3, basta rodar o arquivo de dados <code className="text-[10px] font-mono bg-muted/40 px-1 py-0.5 rounded">dump_dados_postgresql.sql</code> no SQL Editor ou usar a aba <strong>Restaurar Base</strong> carregando o arquivo JSON.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-2xl border border-border/50 bg-background/40 flex items-start gap-3">
+                  <div className="w-6 h-6 rounded-full bg-primary/10 text-primary font-black text-xs flex items-center justify-center shrink-0 mt-0.5">
+                    5
+                  </div>
+                  <div className="space-y-1">
+                    <span className="font-bold text-xs text-foreground block">
+                      Testar a Nova Base no Validador
+                    </span>
+                    <p className="text-xs text-muted-foreground">
+                      Copie a <strong>Project URL</strong> e a <strong>anon public key</strong> em <i>Project Settings &rarr; API</i> do novo Supabase, cole no validador desta tela e confirme se todas as 18 tabelas respondem com sucesso.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-2xl border border-border/50 bg-background/40 flex items-start gap-3">
+                  <div className="w-6 h-6 rounded-full bg-emerald-600 text-white font-black text-xs flex items-center justify-center shrink-0 mt-0.5">
+                    6
+                  </div>
+                  <div className="space-y-1">
+                    <span className="font-bold text-xs text-foreground block">
+                      Apontar a Aplicação para a Nova Database
+                    </span>
+                    <p className="text-xs text-muted-foreground">
+                      Atualize as variáveis <code className="text-[10px] font-mono bg-muted/40 px-1 py-0.5 rounded">VITE_SUPABASE_URL</code> e <code className="text-[10px] font-mono bg-muted/40 px-1 py-0.5 rounded">VITE_SUPABASE_ANON_KEY</code> no seu arquivo <code className="text-[10px] font-mono">.env</code> de produção. Pronto! Sua aplicação estará rodando no novo servidor com 100% dos dados intactos.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* VIEW 4: SNAPSHOT VAULT & HISTORY */}
       {activeView === 'vault' && (
         <Card className="border-border/50 bg-background/60 shadow-xs">
-          <CardContent className="p-6 space-y-5">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-border/40">
+          <CardContent className="p-6 space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-border/40">
               <div>
                 <h4 className="text-sm font-black text-foreground flex items-center gap-2">
                   <Clock className="w-4 h-4 text-primary" />
-                  Cofre Local de Snapshots & Rollback
+                  Cofre Local de Snapshots de Segurança ({vaultItems.length})
                 </h4>
                 <p className="text-[11px] text-muted-foreground mt-0.5">
-                  Pontos de restauração recentes gerados automaticamente antes de alterações críticas ou exportações manuais.
+                  Snapshots retidos no navegador para restauração rápida e rollback instantâneo.
                 </p>
               </div>
 
@@ -594,57 +937,50 @@ export function DatabaseBackupSuite() {
                   variant="outline"
                   size="sm"
                   onClick={() => {
-                    if (confirm('Deseja limpar todo o cofre de snapshots locais?')) {
+                    if (confirm('Deseja limpar todos os snapshots do histórico local?')) {
                       databaseBackupEngine.clearVault();
                       setVaultItems([]);
                       toast.success('Cofre limpo com sucesso.');
                     }
                   }}
-                  className="h-8 rounded-xl font-bold text-xs text-rose-500 border-rose-500/30 hover:bg-rose-500/10 cursor-pointer gap-1"
+                  className="h-8 rounded-xl font-bold text-xs border-border/60 text-rose-500 hover:text-rose-600 hover:bg-rose-500/10 cursor-pointer"
                 >
-                  <Trash2 className="w-3.5 h-3.5" />
                   Limpar Cofre
                 </Button>
               )}
             </div>
 
             {vaultItems.length === 0 ? (
-              <div className="p-8 text-center space-y-2 rounded-2xl bg-muted/10 border border-border/40">
-                <ShieldCheck className="w-8 h-8 text-muted-foreground mx-auto opacity-50" />
-                <p className="text-xs font-bold text-foreground">Nenhum snapshot no cofre local</p>
-                <p className="text-[11px] text-muted-foreground max-w-xs mx-auto">
-                  Gere um novo backup na aba &quot;Exportar / Snapshot&quot; para que uma cópia de segurança seja armazenada aqui.
-                </p>
+              <div className="p-8 text-center text-xs text-muted-foreground">
+                Nenhum snapshot armazenado no cofre local. Exporte um snapshot para começar o histórico.
               </div>
             ) : (
               <div className="space-y-3">
                 {vaultItems.map((item) => (
                   <div
                     key={item.id}
-                    className="p-4 rounded-2xl bg-muted/20 border border-border/50 flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition-all hover:bg-muted/30"
+                    className="p-4 rounded-2xl border border-border/50 bg-background/40 flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-all hover:border-primary/40"
                   >
-                    <div className="space-y-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-bold text-xs text-foreground font-mono">{item.id}</span>
-                        {item.isAutoBackup ? (
-                          <span className="px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30">
-                            Auto-Rollback
-                          </span>
-                        ) : (
-                          <span className="px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider bg-primary/15 text-primary border border-primary/30">
-                            Manual
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-xs text-foreground">
+                          {new Date(item.timestamp).toLocaleString('pt-BR')}
+                        </span>
+                        {item.isAutoBackup && (
+                          <span className="px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 text-[10px] font-bold">
+                            Auto Rollback
                           </span>
                         )}
-                        <span className="text-[11px] text-muted-foreground">
-                          {new Date(item.timestamp).toLocaleString('pt-BR')} • por {item.createdBy}
+                        <span className="px-2 py-0.5 rounded-full bg-primary/10 text-primary text-[10px] font-bold">
+                          {item.totalRecords} registros
                         </span>
                       </div>
-                      <p className="text-[11px] text-muted-foreground font-mono truncate">
-                        {item.totalRecords} registros • {item.tablesSummary}
+                      <p className="text-[11px] text-muted-foreground truncate max-w-lg">
+                        {item.tablesSummary || 'Todas as tabelas'}
                       </p>
                     </div>
 
-                    <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                    <div className="flex items-center gap-2">
                       <Button
                         variant="outline"
                         size="sm"
@@ -738,5 +1074,25 @@ export function DatabaseBackupSuite() {
         )}
       </AnimatePresence>
     </div>
+  );
+}
+
+function RotateCcwIcon(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg
+      {...props}
+      xmlns="http://www.w3.org/2000/svg"
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+      <path d="M3 3v5h5" />
+    </svg>
   );
 }

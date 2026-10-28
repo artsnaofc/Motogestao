@@ -1,6 +1,6 @@
 {
-  "summary":  "Relatório completo e plano de execução da auditoria e otimização de consumo do Supabase no MotoGestão. Detalha as causas raízes comprovadas do estouro de Egress (9,1 GB) e Log Ingestion (1,085 GB), as correções arquiteturais implementadas e a validação por testes unitários e build.",
-  "updatedAt":  "2026-10-22T15:32:56.804096662Z",
+  "summary":  "Plano de migração zero data loss para novo Supabase, auditoria de 18 tabelas, atualização do motor de backup e suite de migração no painel admin.",
+  "updatedAt":  "2026-10-26T01:06:41.793804507Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

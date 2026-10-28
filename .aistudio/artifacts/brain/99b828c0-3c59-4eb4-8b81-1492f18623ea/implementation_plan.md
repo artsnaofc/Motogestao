@@ -1,62 +1,87 @@
-# Relatório de Auditoria e Otimização do Consumo do Supabase — MotoGestão
+# Plano de Migração Zero Data Loss para Novo Supabase — Finanças Pro & MotoGestão
 
-## 1. Diagnóstico e Causas-Raízes Comprovadas (Fatos vs. Hipóteses)
+## 1. Auditoria Completa da Base de Dados (18 Tabelas Mapeadas)
 
-| Elemento Analisado | Diagnóstico | Fato Comprovado vs. Hipótese | Impacto no Consumo |
-| :--- | :--- | :--- | :--- |
-| **Loop Infinito em `DataContext.tsx`** | `refreshData` continha `settings` em sua lista de dependências. Ao rodar `setSettings(finalSettings)`, gerava um novo objeto de referência a cada consulta, recriando o `useCallback(refreshData)`. O `useEffect` que observava `refreshData` disparava sem parar. | **Fato Comprovado** (Linhas 248–344 em `DataContext.tsx`) | **Crítico:** Baixava repetidamente 6 tabelas (`user_settings`, `transactions`, `reserves`, `reserve_transactions`, `investment_transactions`, `dividends`) a cada 300–800ms enquanto a aba estivesse aberta. |
-| **Ping-Pong Re-render em Providers Filhos** | `DataContext` passava `onDataChange={() => refreshData(true)}` como função inline anônima instável para `InvestmentsProvider` e `ReservesProvider`. Ao re-renderizar, os contexts filhos disparavam `processReadyDividends`, que por sua vez executava `await onDataChange()`. | **Fato Comprovado** (Linhas 565–575 em `DataContext.tsx`) | **Alto:** Multiplicava o ciclo de re-fetch a cada render de componente. |
-| **Loop Acelerado na Fila de Sincronização (`syncQueue.ts`)** | No método `processQueue()`, se uma mutação falhasse (ex: erro de permissão RLS 42501 ou FK 23503), o backoff exponencial era calculado, porém o bloco `finally` executava incondicionalmente `setTimeout(() => this.processQueue(), 100)`. | **Fato Comprovado** (Linhas 339–357 em `syncQueue.ts`) | **Crítico:** Em caso de erro transitório ou RLS, gerava ~10 requisições por segundo (36.000 requisições/hora), inundando os logs do PostgREST. |
-| **Chamadas de Rede Repetidas a `/auth/v1/user`** | Inúmeros componentes e contextos chamavam `supabase.auth.getUser()` diretamente para obter o ID do usuário em vez de ler a sessão local em cache. | **Fato Comprovado** (Presente em 15+ locais na árvore de contexts) | **Médio/Alto:** Cada operação realizava um round-trip de validação de token na API Auth do Supabase. |
-| **Download Integral de `b3_assets_metadata` no Mount** | `InvestmentsContext` realizava `select('*')` em `b3_assets_metadata` a cada montagem de componente, mesmo com os metadados já salvos em cache local. | **Fato Comprovado** (Linhas 112–132 em `InvestmentsContext.tsx`) | **Médio:** Payload de dados fundamentalistas pesados sendo transferido desnecessariamente a cada carregamento de página. |
-| **Supabase Realtime (`channels`)** | Varredura de código por `supabase.channel()` e `.on('postgres_changes')`. | **Fato Comprovado: 0 canais ativos.** | **Nenhum:** Realtime não era a fonte do consumo. |
+Todas as 18 tabelas operacionais e de configuração do sistema foram auditadas e agora estão 100% integradas no motor de backup (`src/lib/databaseBackup.ts`), no arquivo DDL do schema (`setup_supabase_schema.sql`) e na suíte administrativa (`DatabaseBackupSuite.tsx`):
 
----
-
-## 2. Ações Implementadas e Arquivos Modificados
-
-### A. `src/contexts/DataContext.tsx`
-- **Desacoplamento do State `settings`**: Substituição da dependência `settings` em `refreshData` por `settingsRef.current`. A dependência do `useCallback` foi estabilizada para `[]`.
-- **Cooldown de Requisição (`MIN_REFRESH_COOLDOWN_MS = 15000`)**: Bloqueio de consultas silenciosas ou em segundo plano repetidas em intervalos menores que 15 segundos.
-- **Deep Compare em `setSettings`**: Adicionada verificação por igualdade de JSON antes de atualizar o estado `settings`, evitando re-renderizações espúrias caso o payload retornado seja idêntico ao já em memória.
-- **Memoização Estável de Handlers**: `handleDataChange` e `handleUpdateSettings` agora são memoizados com `useCallback`, garantindo que `InvestmentsProvider` e `ReservesProvider` não recebam referências novas a cada render.
-
-### B. `src/lib/syncQueue.ts`
-- **Respeito Estrito ao Backoff Exponencial**: O `setTimeout(() => this.processQueue(), 100)` no bloco `finally` só é acionado se a fila tiver itens pendentes e nenhum timeout de backoff estiver agendado (`!this.retryBackoffTimeout`). Em caso de erro, a fila aguarda o tempo exponencial (1s, 2s, 4s, 8s... até 30s) sem floodar o Supabase.
-
-### C. `src/lib/authUtils.ts`
-- **Otimização de `getEffectiveUser()` e `getEffectiveUserId()`**:
-  - Consulta primária 100% em memória / local session (`cacheManager` e `supabase.auth.getSession()` do localStorage).
-  - Consulta à rede `/auth/v1/user` somente se `forceNetworkRefresh` for solicitado ou não houver credenciais locais. Zero chamadas de rede para consultas rotineiras de identidade.
-
-### D. `src/contexts/InvestmentsContext.tsx`
-- Adicionada verificação de TTL (24 horas) para a tabela `b3_assets_metadata`. Se o cache local contiver os dados, o download completo é suprimido.
-- Adicionada verificação de existência em cache antes de consultar `portfolio_target_allocations`, `portfolio_rules_config` e `valuation_targets`.
-- Substituídas todas as ocorrências de `supabase.auth.getUser()` por `getEffectiveUser()`.
-
-### E. `src/contexts/QuotesContext.tsx`
-- Suprimida a consulta redundante a `user_settings.select('cached_quotes')` no mount caso o cache local de cotações já esteja populado.
-
-### F. `src/contexts/VehiclesContext.tsx` e `src/lib/freightStorage.ts`
-- Adicionado cooldown de 15 segundos em `refreshVehicles`.
-- Substituídas as chamadas diretas de rede `supabase.auth.getUser()` por `getEffectiveUserId()`.
-
-### G. Instrumentação Segura (`src/lib/supabase.ts`)
-- Implementado o `supabaseRequestMonitor` via wrap transparente da chamada `fetch`. Registra estatísticas volumétricas, quantidade de requisições por janela e alerta no console contra rajadas (>15 requisições em 5 segundos) sem armazenar nenhum dado sensível ou financeiro.
-- Compatibilizado para execução tanto em ambiente Vite quanto em Node.js (`tsx`).
+| # | Nome da Tabela | Chave de Conflito / PK | Módulo / Descrição | Status no Backup Anterior | Status Atual |
+|---|---|---|---|---|---|
+| 1 | `user_settings` | `user_id` | Perfis, parâmetros de entrega e metas | Presente | ✅ Completo |
+| 2 | `transactions` | `id` | Receitas, despesas, km, parcelamentos | Presente | ✅ Completo |
+| 3 | `reserves` | `id` | Cofrinhos e regras de aporte | Presente | ✅ Completo |
+| 4 | `reserve_transactions` | `id` | Extrato de aportes e retiradas | Presente | ✅ Completo |
+| 5 | `investment_transactions` | `id` | Ações, FIIs, BDRs e Renda Fixa | Presente | ✅ Completo |
+| 6 | `dividends` | `id` | Proventos recebidos e provisionados | Presente | ✅ Completo |
+| 7 | `vehicles` | `id` | Garagem, frota, placas e características | ⚠️ **OMITIDO** | ✅ **Adicionado & Mapeado** |
+| 8 | `vehicle_odometer` | `id` | Histórico cronológico de KM rodado | ⚠️ **OMITIDO** | ✅ **Adicionado & Mapeado** |
+| 9 | `vehicle_maintenance` | `id` | Revisões, trocas de óleo e peças | ⚠️ **OMITIDO** | ✅ **Adicionado & Mapeado** |
+| 10 | `vehicle_fipe_history` | `id` | Evolução histórica do valor de mercado | ⚠️ **OMITIDO** | ✅ **Adicionado & Mapeado** |
+| 11 | `valuation_targets` | `(user_id, ticker)` | Fórmulas de Bazin, Graham e Gordon | ⚠️ **OMITIDO** | ✅ **Adicionado & Mapeado** |
+| 12 | `portfolio_target_allocations` | `(user_id, ticker)` | Metas de alocação de carteira (%) | ⚠️ **OMITIDO** | ✅ **Adicionado & Mapeado** |
+| 13 | `portfolio_rules_config` | `user_id` | Critérios de governança do rebalanceamento | ⚠️ **OMITIDO** | ✅ **Adicionado & Mapeado** |
+| 14 | `b3_assets_metadata` | `ticker` | Fundamentos, setores e CNPJs | Presente | ✅ Completo |
+| 15 | `b3_assets_history` | `id` | Série histórica do Raio-X fundamentalista | ⚠️ **OMITIDO** | ✅ **Adicionado & Mapeado** |
+| 16 | `freight_quotes` | `id` | Orçamentos comerciais e cálculos de frete | Presente | ✅ Completo |
+| 17 | `freight_presets` | `user_id` | Parâmetros de precificação do motorista | Presente | ✅ Completo |
+| 18 | `freight_clients` | `id` | Cadastro de clientes de frete | Presente | ✅ Completo |
+| + | `system_config` | - | Configurações globais e políticas locais | Presente | ✅ Completo |
 
 ---
 
-## 3. Validação e Testes Executados
+## 2. Ferramentas Disponíveis na Aplicação
 
-1. **Testes Unitários Automatizados (`src/lib/__tests__/supabaseOptimization.test.ts`)**:
-   - `should accurately track requests and estimate egress volume`: **PASSOU**
-   - `should detect burst traffic when request volume exceeds safe threshold`: **PASSOU**
-   - `should return effective user from in-memory cache without hitting network`: **PASSOU**
-   - `should throttle and cache B3 assets metadata to avoid daily refetches`: **PASSOU**
-   - `should prevent exponential backoff from being overridden by 100ms rapid retries`: **PASSOU**
-   - Resultado: **5/5 testes aprovados (0 falhas)**.
-2. **Checagem de Tipos e Linter (`npm run lint` / `tsc --noEmit`)**:
-   - **0 erros de compilação ou tipos.**
-3. **Compilação de Produção (`npm run build`)**:
-   - Vite e bundling do servidor Node.js concluídos com sucesso.
+Na aba **Admin & Sistema** &rarr; sub-aba **Backup & Restauração**, agora existe a nova seção **"Migração Novo Supabase"** que entrega:
+
+1. **Schema DDL Completo (`setup_supabase_schema.sql`)**:
+   - Disponível para download ou cópia com 1 clique.
+   - Cria as 18 tabelas, extensões `uuid-ossp` e `pgcrypto`, índices de alta performance, ativação de RLS, políticas públicas permissivas e concessão de privilégios (`GRANT ALL`).
+2. **Pacote de Migração Unificada (`migracao_completa_novo_supabase.sql`)**:
+   - Extrai instantaneamente todos os dados do banco atual e une com o Schema DDL em uma única query idempotente com cláusulas `ON CONFLICT DO UPDATE`.
+3. **Validador de Conexão com o Novo Supabase**:
+   - Permite informar a nova URL e Anon Key e realizar um teste antes de mexer em variáveis de ambiente. O teste verifica latência e a existência de todas as 18 tabelas.
+4. **Snapshot JSON com Hash SHA-256**:
+   - Backup estruturado com verificação de integridade e cofre de rollback automático.
+
+---
+
+## 3. Roteiro de Execução Passo a Passo (Amanhã)
+
+### Fase 1: Backup Preventivo da Base Atual
+1. Acesse o Finanças Pro &rarr; **Admin & Sistema** &rarr; **Backup & Restauração** &rarr; **Migração Novo Supabase**.
+2. Clique em **"Baixar Migração Completa (.sql)"**.
+3. Clique também na aba **"Exportar / Snapshot"** e baixe o arquivo **Snapshot JSON (.json)**.
+4. Guarde ambos os arquivos em uma pasta segura.
+
+### Fase 2: Criar o Novo Projeto no Supabase
+1. Acesse [supabase.com/dashboard](https://supabase.com/dashboard).
+2. Clique em **New Project**, defina um nome (ex: `financas-pro-prod`), crie uma senha forte para o PostgreSQL e selecione a região (ex: `sa-east-1` - São Paulo).
+3. Aguarde o provisionamento do projeto (cerca de 1 a 2 minutos).
+
+### Fase 3: Rodar o Script de Setup / Migração
+1. No menu lateral do novo projeto Supabase, acesse **SQL Editor** &rarr; **New query**.
+2. Abra o arquivo `migracao_completa_novo_supabase.sql` (ou cole o `setup_supabase_schema.sql` gerado pelo sistema).
+3. Cole no editor e clique em **RUN** (ou pressione `Ctrl + Enter` / `Cmd + Enter`).
+4. Todas as 18 tabelas serão criadas com índices, políticas RLS e todos os dados serão inseridos.
+
+### Fase 4: Validar a Nova Conexão no Painel
+1. No novo projeto Supabase, acesse **Project Settings** &rarr; **API**.
+2. Copie a **Project URL** e a **anon public key**.
+3. No Finanças Pro, na aba **Migração Novo Supabase**, cole nos campos do **Validador de Conexão** e clique em **"Testar Conexão Agora"**.
+4. Confirme que todas as 18 tabelas foram detectadas com sucesso (18/18).
+
+### Fase 5: Atualizar as Variáveis de Ambiente da Aplicação
+1. Edite o arquivo `.env` (ou as variáveis de ambiente da sua hospedagem / Vercel / Render / Netlify):
+   ```env
+   VITE_SUPABASE_URL=https://novo-projeto.supabase.co
+   VITE_SUPABASE_ANON_KEY=sua-nova-anon-key
+   ```
+2. Reinicie o servidor / faça o deploy.
+
+### Fase 6: Conferência Pós-Migração
+1. Faça login com suas credenciais.
+2. Acesse:
+   - **Dashboard**: Saldo operacional, lançamentos e metas.
+   - **Reservas / Cofrinhos**: Saldos de emergência e histórico de aportes.
+   - **Investimentos**: Posições de ações/FIIs, notas de corretagem e proventos.
+   - **Garagem & Frota**: Veículos, KM de odômetro, histórico de manutenções e FIPE.
+   - **Orçamentos de Frete**: Orçamentos emitidos e clientes cadastrados.
