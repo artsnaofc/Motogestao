@@ -24,8 +24,7 @@ export interface PageOption {
 const ALL_PAGE_OPTIONS: PageOption[] = [
   { path: '/', label: 'Painel Geral', shortLabel: 'Início', iconName: 'Home', desc: 'Visão holística do caixa e metas' },
   { path: '/history', label: 'Extrato & Histórico', shortLabel: 'Extrato', iconName: 'ReceiptText', desc: 'Corridas, fretes e lançamentos' },
-  { path: '/vehicles', label: 'Garagem', shortLabel: 'Garagem', iconName: 'Bike', desc: 'Gestão da frota, FIPE e custo/km' },
-  { path: '/freight', label: 'Orçamentos de Frete', shortLabel: 'Fretes', iconName: 'Truck', desc: 'Calculadora de rotas e propostas PDF' },
+  { path: '/freight', label: 'Orçamentos & Veículos', shortLabel: 'Fretes', iconName: 'Truck', desc: 'Calculadora de rotas, frota e propostas' },
   { path: '/reserves', label: 'Reservas Financeiras', shortLabel: 'Reservas', iconName: 'PiggyBank', desc: 'Fundo de emergência e manutenção' },
   { path: '/investments', label: 'Carteira de Ativos', shortLabel: 'Carteira', iconName: 'TrendingUp', desc: 'Ações, FIIs e rebalanceamento' },
   { path: '/profile', label: 'Perfil & Ajustes', shortLabel: 'Perfil', iconName: 'User', desc: 'Categorias e configurações da conta' },
@@ -34,7 +33,7 @@ const ALL_PAGE_OPTIONS: PageOption[] = [
 const DEFAULT_SLOT_ASSIGNMENTS: Record<string, PageOption> = {
   slot1: ALL_PAGE_OPTIONS[0], // Início
   slot2: ALL_PAGE_OPTIONS[1], // Extrato
-  slot4: ALL_PAGE_OPTIONS[2], // Garagem
+  slot4: ALL_PAGE_OPTIONS[2], // Fretes & Veículos
 };
 
 export function MainLayout({ children }: { children?: React.ReactNode }) {
@@ -142,15 +141,14 @@ export function MainLayout({ children }: { children?: React.ReactNode }) {
   const navItems = [
     { path: '/', label: 'Painel Geral', icon: Home, desc: 'Visão holística do caixa' },
     { path: '/history', label: 'Extrato & Histórico', icon: ReceiptText, desc: 'Corridas, fretes e despesas' },
-    { path: '/vehicles', label: 'Garagem', icon: Bike, desc: 'Garagem, FIPE e custos/km' },
-    { path: '/freight', label: 'Orçamentos de Frete', icon: Truck, desc: 'Calculadora e propostas PDF' },
+    { path: '/freight', label: 'Orçamentos & Veículos', icon: Truck, desc: 'Calculadora, frota e propostas PDF' },
     { path: '/reserves', label: 'Reservas Financeiras', icon: PiggyBank, desc: 'Fundos de emergência' },
     { path: '/investments', label: 'Carteira de Ativos', icon: TrendingUp, desc: 'Ações e FIIs' },
     ...(settings?.is_admin ? [{ path: '/admin', label: 'Modo Admin', icon: ShieldCheck, desc: 'Gestão e configurações' }] : []),
     { path: '/profile', label: 'Perfil & Ajustes', icon: User, desc: 'Categorias e parâmetros' },
   ];
 
-  const isMoreMenuActive = ['/reserves', '/vehicles', '/investments', '/profile', '/admin'].some(p => location.pathname.startsWith(p));
+  const isMoreMenuActive = ['/reserves', '/investments', '/profile', '/admin'].some(p => location.pathname.startsWith(p));
 
   const handleLogoClick = () => {
     const config = systemSettings.getConfig();
@@ -504,29 +502,7 @@ export function MainLayout({ children }: { children?: React.ReactNode }) {
 
               {/* Menu Options Grid / List using Instant Links */}
               <div className="grid grid-cols-1 gap-2.5">
-                {/* Minhas Motos / Garagem */}
-                <Link
-                  to="/vehicles"
-                  onClick={() => setIsMobileMenuOpen(false)}
-                  className={`w-full p-3.5 rounded-2xl border transition-all flex items-center justify-between text-left ${
-                    location.pathname.startsWith('/vehicles')
-                      ? 'bg-primary/10 border-primary/40 text-primary font-bold shadow-xs'
-                      : 'bg-card hover:bg-muted/50 border-border/60 text-foreground'
-                  }`}
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="p-2.5 rounded-xl bg-primary/10 text-primary shrink-0">
-                      <Bike className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <div className="text-xs font-bold text-foreground">Garagem</div>
-                      <div className="text-[10.5px] text-muted-foreground">Tabela FIPE, hodômetro e custo por KM</div>
-                    </div>
-                  </div>
-                  <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
-                </Link>
-
-                {/* Orçamentos de Frete */}
+                {/* Orçamentos de Frete & Frota */}
                 <Link
                   to="/freight"
                   onClick={() => setIsMobileMenuOpen(false)}
@@ -541,8 +517,8 @@ export function MainLayout({ children }: { children?: React.ReactNode }) {
                       <Truck className="w-5 h-5" />
                     </div>
                     <div>
-                      <div className="text-xs font-bold text-foreground">Orçamentos de Frete</div>
-                      <div className="text-[10.5px] text-muted-foreground">Calculadora de rota e propostas em PDF</div>
+                      <div className="text-xs font-bold text-foreground">Orçamentos & Veículos</div>
+                      <div className="text-[10.5px] text-muted-foreground">Calculadora de rotas, frota de veículos e propostas PDF</div>
                     </div>
                   </div>
                   <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />

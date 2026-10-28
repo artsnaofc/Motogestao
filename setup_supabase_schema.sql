@@ -250,105 +250,7 @@ CREATE INDEX IF NOT EXISTS idx_dividends_date ON public.dividends(user_id, date 
 CREATE INDEX IF NOT EXISTS idx_dividends_status ON public.dividends(user_id, status);
 
 -- ==============================================================================
--- 7. FROTA E VEÍCULOS (vehicles)
--- ==============================================================================
-CREATE TABLE IF NOT EXISTS public.vehicles (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL DEFAULT 'default',
-    nickname TEXT,
-    brand TEXT NOT NULL,
-    model TEXT NOT NULL,
-    version TEXT,
-    year_manufacture INTEGER,
-    year_model INTEGER NOT NULL,
-    color TEXT,
-    plate TEXT,
-    renavam TEXT,
-    chassis TEXT,
-    acquisition_date DATE,
-    acquisition_value NUMERIC,
-    acquisition_type TEXT,
-    notes TEXT,
-    initial_km NUMERIC DEFAULT 0,
-    current_km NUMERIC NOT NULL DEFAULT 0,
-    avg_km_per_liter NUMERIC,
-    fuel_type TEXT,
-    is_active BOOLEAN DEFAULT TRUE,
-    default_load_capacity_kg NUMERIC,
-    base_fee NUMERIC,
-    price_per_km NUMERIC,
-    extra_stop_fee NUMERIC,
-    photo_url TEXT,
-    fipe_code TEXT,
-    fipe_value NUMERIC,
-    fipe_updated_at TIMESTAMPTZ,
-    fipe_ref_month TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_vehicles_user ON public.vehicles(user_id);
-CREATE INDEX IF NOT EXISTS idx_vehicles_active ON public.vehicles(user_id, is_active);
-
--- ==============================================================================
--- 8. HISTÓRICO DE ODÔMETRO (vehicle_odometer)
--- ==============================================================================
-CREATE TABLE IF NOT EXISTS public.vehicle_odometer (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL DEFAULT 'default',
-    vehicle_id TEXT NOT NULL,
-    date DATE NOT NULL,
-    km NUMERIC NOT NULL,
-    notes TEXT,
-    source TEXT DEFAULT 'manual',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_vehicle_odometer_vehicle_date ON public.vehicle_odometer(vehicle_id, date DESC);
-CREATE INDEX IF NOT EXISTS idx_vehicle_odometer_user ON public.vehicle_odometer(user_id);
-
--- ==============================================================================
--- 9. HISTÓRICO E PLANOS DE MANUTENÇÃO (vehicle_maintenance)
--- ==============================================================================
-CREATE TABLE IF NOT EXISTS public.vehicle_maintenance (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL DEFAULT 'default',
-    vehicle_id TEXT NOT NULL,
-    type TEXT NOT NULL,
-    description TEXT,
-    last_service_date DATE,
-    last_service_km NUMERIC,
-    cost NUMERIC DEFAULT 0,
-    workshop TEXT,
-    next_due_date DATE,
-    next_due_km NUMERIC,
-    status TEXT DEFAULT 'ok',
-    notes TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_vehicle_maintenance_vehicle ON public.vehicle_maintenance(vehicle_id);
-CREATE INDEX IF NOT EXISTS idx_vehicle_maintenance_user ON public.vehicle_maintenance(user_id);
-
--- ==============================================================================
--- 10. HISTÓRICO DE AVALIAÇÃO FIPE (vehicle_fipe_history)
--- ==============================================================================
-CREATE TABLE IF NOT EXISTS public.vehicle_fipe_history (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL DEFAULT 'default',
-    vehicle_id TEXT NOT NULL,
-    fipe_code TEXT NOT NULL,
-    fipe_value NUMERIC NOT NULL,
-    ref_month TEXT NOT NULL,
-    fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_vehicle_fipe_history_vehicle ON public.vehicle_fipe_history(vehicle_id, fetched_at DESC);
-CREATE INDEX IF NOT EXISTS idx_vehicle_fipe_history_user ON public.vehicle_fipe_history(user_id);
-
--- ==============================================================================
--- 11. VALUATION E PREÇO TETO (valuation_targets)
+-- 7. VALUATION E PREÇO TETO (valuation_targets)
 -- ==============================================================================
 CREATE TABLE IF NOT EXISTS public.valuation_targets (
     id TEXT PRIMARY KEY DEFAULT uuid_generate_v4()::text,
@@ -630,10 +532,6 @@ ALTER TABLE public.reserves ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.reserve_transactions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.investment_transactions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.dividends ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.vehicles ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.vehicle_odometer ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.vehicle_maintenance ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.vehicle_fipe_history ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.valuation_targets ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.portfolio_target_allocations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.portfolio_rules_config ENABLE ROW LEVEL SECURITY;
@@ -663,18 +561,6 @@ CREATE POLICY "Acesso Total Investments" ON public.investment_transactions FOR A
 
 DROP POLICY IF EXISTS "Acesso Total Dividends" ON public.dividends;
 CREATE POLICY "Acesso Total Dividends" ON public.dividends FOR ALL TO public USING (true) WITH CHECK (true);
-
-DROP POLICY IF EXISTS "Acesso Total Vehicles" ON public.vehicles;
-CREATE POLICY "Acesso Total Vehicles" ON public.vehicles FOR ALL TO public USING (true) WITH CHECK (true);
-
-DROP POLICY IF EXISTS "Acesso Total Vehicle Odometer" ON public.vehicle_odometer;
-CREATE POLICY "Acesso Total Vehicle Odometer" ON public.vehicle_odometer FOR ALL TO public USING (true) WITH CHECK (true);
-
-DROP POLICY IF EXISTS "Acesso Total Vehicle Maintenance" ON public.vehicle_maintenance;
-CREATE POLICY "Acesso Total Vehicle Maintenance" ON public.vehicle_maintenance FOR ALL TO public USING (true) WITH CHECK (true);
-
-DROP POLICY IF EXISTS "Acesso Total Vehicle Fipe History" ON public.vehicle_fipe_history;
-CREATE POLICY "Acesso Total Vehicle Fipe History" ON public.vehicle_fipe_history FOR ALL TO public USING (true) WITH CHECK (true);
 
 DROP POLICY IF EXISTS "Acesso Total Valuation" ON public.valuation_targets;
 CREATE POLICY "Acesso Total Valuation" ON public.valuation_targets FOR ALL TO public USING (true) WITH CHECK (true);
@@ -709,10 +595,6 @@ GRANT ALL ON TABLE public.reserves TO anon, authenticated, service_role, postgre
 GRANT ALL ON TABLE public.reserve_transactions TO anon, authenticated, service_role, postgres;
 GRANT ALL ON TABLE public.investment_transactions TO anon, authenticated, service_role, postgres;
 GRANT ALL ON TABLE public.dividends TO anon, authenticated, service_role, postgres;
-GRANT ALL ON TABLE public.vehicles TO anon, authenticated, service_role, postgres;
-GRANT ALL ON TABLE public.vehicle_odometer TO anon, authenticated, service_role, postgres;
-GRANT ALL ON TABLE public.vehicle_maintenance TO anon, authenticated, service_role, postgres;
-GRANT ALL ON TABLE public.vehicle_fipe_history TO anon, authenticated, service_role, postgres;
 GRANT ALL ON TABLE public.valuation_targets TO anon, authenticated, service_role, postgres;
 GRANT ALL ON TABLE public.portfolio_target_allocations TO anon, authenticated, service_role, postgres;
 GRANT ALL ON TABLE public.portfolio_rules_config TO anon, authenticated, service_role, postgres;

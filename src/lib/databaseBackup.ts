@@ -50,10 +50,6 @@ export interface DatabaseSnapshot {
     reserve_transactions?: ReserveTransaction[];
     investment_transactions?: InvestmentTransaction[];
     dividends?: Dividend[];
-    vehicles?: Vehicle[];
-    vehicle_odometer?: VehicleOdometerLog[];
-    vehicle_maintenance?: VehicleMaintenanceRecord[];
-    vehicle_fipe_history?: VehicleFipeHistory[];
     valuation_targets?: ValuationTarget[];
     portfolio_target_allocations?: any[];
     portfolio_rules_config?: any[];
@@ -152,26 +148,6 @@ export const ALLOWED_TABLE_COLUMNS: Record<string, string[]> = {
     'source_event_id', 'source_document_id', 'source_document_version', 'source_url',
     'source_published_at', 'source_updated_at', 'last_synced_at', 'eligible_quantity',
     'validation_status', 'notes', 'created_at'
-  ],
-  vehicles: [
-    'id', 'user_id', 'nickname', 'brand', 'model', 'version', 'year_manufacture',
-    'year_model', 'color', 'plate', 'renavam', 'chassis', 'acquisition_date',
-    'acquisition_value', 'acquisition_type', 'notes', 'initial_km', 'current_km',
-    'avg_km_per_liter', 'fuel_type', 'is_active', 'default_load_capacity_kg',
-    'base_fee', 'price_per_km', 'extra_stop_fee', 'photo_url', 'fipe_code',
-    'fipe_value', 'fipe_updated_at', 'fipe_ref_month', 'created_at', 'updated_at'
-  ],
-  vehicle_odometer: [
-    'id', 'user_id', 'vehicle_id', 'date', 'km', 'notes', 'source', 'created_at'
-  ],
-  vehicle_maintenance: [
-    'id', 'user_id', 'vehicle_id', 'type', 'description', 'last_service_date',
-    'last_service_km', 'cost', 'workshop', 'next_due_date', 'next_due_km',
-    'status', 'notes', 'created_at'
-  ],
-  vehicle_fipe_history: [
-    'id', 'user_id', 'vehicle_id', 'fipe_code', 'fipe_value', 'ref_month',
-    'fetched_at', 'created_at'
   ],
   valuation_targets: [
     'id', 'user_id', 'ticker', 'asset_type', 'cnpj', 'calc_current_price',
@@ -328,30 +304,6 @@ class DatabaseBackupEngine {
         displayName: 'Proventos & Dividendos',
         recordCount: 0,
         description: 'Dividendos, JCP e rendimentos recebidos e provisionados.',
-      },
-      {
-        tableName: 'vehicles',
-        displayName: 'Frota & Garagem (Veículos)',
-        recordCount: 0,
-        description: 'Cadastro detalhado de veículos, placas, dados FIPE e custos por KM.',
-      },
-      {
-        tableName: 'vehicle_odometer',
-        displayName: 'Histórico de Odômetro (KM)',
-        recordCount: 0,
-        description: 'Registros cronológicos de quilometragem e aferições de odômetro.',
-      },
-      {
-        tableName: 'vehicle_maintenance',
-        displayName: 'Registros de Manutenção & Revisões',
-        recordCount: 0,
-        description: 'Trocas de óleo, pneus, freios, oficinas e alertas preventivos.',
-      },
-      {
-        tableName: 'vehicle_fipe_history',
-        displayName: 'Histórico de Avaliação FIPE',
-        recordCount: 0,
-        description: 'Evolução histórica do valor de mercado dos veículos da frota.',
       },
       {
         tableName: 'valuation_targets',
@@ -644,19 +596,7 @@ SET CONSTRAINTS ALL DEFERRED;
     // 1. User Settings
     sql += this.generateTableInsertSQL('user_settings', snapshot.data.user_settings, '(user_id)');
 
-    // 2. Vehicles
-    sql += this.generateTableInsertSQL('vehicles', snapshot.data.vehicles, '(id)');
-
-    // 3. Vehicle Odometer
-    sql += this.generateTableInsertSQL('vehicle_odometer', snapshot.data.vehicle_odometer, '(id)');
-
-    // 4. Vehicle Maintenance
-    sql += this.generateTableInsertSQL('vehicle_maintenance', snapshot.data.vehicle_maintenance, '(id)');
-
-    // 5. Vehicle Fipe History
-    sql += this.generateTableInsertSQL('vehicle_fipe_history', snapshot.data.vehicle_fipe_history, '(id)');
-
-    // 6. Reserves
+    // 2. Reserves
     sql += this.generateTableInsertSQL('reserves', snapshot.data.reserves, '(id)');
 
     // 7. Transactions
@@ -955,105 +895,7 @@ CREATE INDEX IF NOT EXISTS idx_dividends_date ON public.dividends(user_id, date 
 CREATE INDEX IF NOT EXISTS idx_dividends_status ON public.dividends(user_id, status);
 
 -- ==============================================================================
--- 7. FROTA E VEÍCULOS (vehicles)
--- ==============================================================================
-CREATE TABLE IF NOT EXISTS public.vehicles (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL DEFAULT 'default',
-    nickname TEXT,
-    brand TEXT NOT NULL,
-    model TEXT NOT NULL,
-    version TEXT,
-    year_manufacture INTEGER,
-    year_model INTEGER NOT NULL,
-    color TEXT,
-    plate TEXT,
-    renavam TEXT,
-    chassis TEXT,
-    acquisition_date DATE,
-    acquisition_value NUMERIC,
-    acquisition_type TEXT,
-    notes TEXT,
-    initial_km NUMERIC DEFAULT 0,
-    current_km NUMERIC NOT NULL DEFAULT 0,
-    avg_km_per_liter NUMERIC,
-    fuel_type TEXT,
-    is_active BOOLEAN DEFAULT TRUE,
-    default_load_capacity_kg NUMERIC,
-    base_fee NUMERIC,
-    price_per_km NUMERIC,
-    extra_stop_fee NUMERIC,
-    photo_url TEXT,
-    fipe_code TEXT,
-    fipe_value NUMERIC,
-    fipe_updated_at TIMESTAMPTZ,
-    fipe_ref_month TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_vehicles_user ON public.vehicles(user_id);
-CREATE INDEX IF NOT EXISTS idx_vehicles_active ON public.vehicles(user_id, is_active);
-
--- ==============================================================================
--- 8. HISTÓRICO DE ODÔMETRO (vehicle_odometer)
--- ==============================================================================
-CREATE TABLE IF NOT EXISTS public.vehicle_odometer (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL DEFAULT 'default',
-    vehicle_id TEXT NOT NULL,
-    date DATE NOT NULL,
-    km NUMERIC NOT NULL,
-    notes TEXT,
-    source TEXT DEFAULT 'manual',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_vehicle_odometer_vehicle_date ON public.vehicle_odometer(vehicle_id, date DESC);
-CREATE INDEX IF NOT EXISTS idx_vehicle_odometer_user ON public.vehicle_odometer(user_id);
-
--- ==============================================================================
--- 9. HISTÓRICO E PLANOS DE MANUTENÇÃO (vehicle_maintenance)
--- ==============================================================================
-CREATE TABLE IF NOT EXISTS public.vehicle_maintenance (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL DEFAULT 'default',
-    vehicle_id TEXT NOT NULL,
-    type TEXT NOT NULL,
-    description TEXT,
-    last_service_date DATE,
-    last_service_km NUMERIC,
-    cost NUMERIC DEFAULT 0,
-    workshop TEXT,
-    next_due_date DATE,
-    next_due_km NUMERIC,
-    status TEXT DEFAULT 'ok',
-    notes TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_vehicle_maintenance_vehicle ON public.vehicle_maintenance(vehicle_id);
-CREATE INDEX IF NOT EXISTS idx_vehicle_maintenance_user ON public.vehicle_maintenance(user_id);
-
--- ==============================================================================
--- 10. HISTÓRICO DE AVALIAÇÃO FIPE (vehicle_fipe_history)
--- ==============================================================================
-CREATE TABLE IF NOT EXISTS public.vehicle_fipe_history (
-    id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL DEFAULT 'default',
-    vehicle_id TEXT NOT NULL,
-    fipe_code TEXT NOT NULL,
-    fipe_value NUMERIC NOT NULL,
-    ref_month TEXT NOT NULL,
-    fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_vehicle_fipe_history_vehicle ON public.vehicle_fipe_history(vehicle_id, fetched_at DESC);
-CREATE INDEX IF NOT EXISTS idx_vehicle_fipe_history_user ON public.vehicle_fipe_history(user_id);
-
--- ==============================================================================
--- 11. VALUATION E PREÇO TETO (valuation_targets)
+-- 7. VALUATION E PREÇO TETO (valuation_targets)
 -- ==============================================================================
 CREATE TABLE IF NOT EXISTS public.valuation_targets (
     id TEXT PRIMARY KEY DEFAULT uuid_generate_v4()::text,
@@ -1335,10 +1177,6 @@ ALTER TABLE public.reserves ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.reserve_transactions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.investment_transactions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.dividends ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.vehicles ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.vehicle_odometer ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.vehicle_maintenance ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.vehicle_fipe_history ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.valuation_targets ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.portfolio_target_allocations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.portfolio_rules_config ENABLE ROW LEVEL SECURITY;
@@ -1368,18 +1206,6 @@ CREATE POLICY "Acesso Total Investments" ON public.investment_transactions FOR A
 
 DROP POLICY IF EXISTS "Acesso Total Dividends" ON public.dividends;
 CREATE POLICY "Acesso Total Dividends" ON public.dividends FOR ALL TO public USING (true) WITH CHECK (true);
-
-DROP POLICY IF EXISTS "Acesso Total Vehicles" ON public.vehicles;
-CREATE POLICY "Acesso Total Vehicles" ON public.vehicles FOR ALL TO public USING (true) WITH CHECK (true);
-
-DROP POLICY IF EXISTS "Acesso Total Vehicle Odometer" ON public.vehicle_odometer;
-CREATE POLICY "Acesso Total Vehicle Odometer" ON public.vehicle_odometer FOR ALL TO public USING (true) WITH CHECK (true);
-
-DROP POLICY IF EXISTS "Acesso Total Vehicle Maintenance" ON public.vehicle_maintenance;
-CREATE POLICY "Acesso Total Vehicle Maintenance" ON public.vehicle_maintenance FOR ALL TO public USING (true) WITH CHECK (true);
-
-DROP POLICY IF EXISTS "Acesso Total Vehicle Fipe History" ON public.vehicle_fipe_history;
-CREATE POLICY "Acesso Total Vehicle Fipe History" ON public.vehicle_fipe_history FOR ALL TO public USING (true) WITH CHECK (true);
 
 DROP POLICY IF EXISTS "Acesso Total Valuation" ON public.valuation_targets;
 CREATE POLICY "Acesso Total Valuation" ON public.valuation_targets FOR ALL TO public USING (true) WITH CHECK (true);
@@ -1414,10 +1240,6 @@ GRANT ALL ON TABLE public.reserves TO anon, authenticated, service_role, postgre
 GRANT ALL ON TABLE public.reserve_transactions TO anon, authenticated, service_role, postgres;
 GRANT ALL ON TABLE public.investment_transactions TO anon, authenticated, service_role, postgres;
 GRANT ALL ON TABLE public.dividends TO anon, authenticated, service_role, postgres;
-GRANT ALL ON TABLE public.vehicles TO anon, authenticated, service_role, postgres;
-GRANT ALL ON TABLE public.vehicle_odometer TO anon, authenticated, service_role, postgres;
-GRANT ALL ON TABLE public.vehicle_maintenance TO anon, authenticated, service_role, postgres;
-GRANT ALL ON TABLE public.vehicle_fipe_history TO anon, authenticated, service_role, postgres;
 GRANT ALL ON TABLE public.valuation_targets TO anon, authenticated, service_role, postgres;
 GRANT ALL ON TABLE public.portfolio_target_allocations TO anon, authenticated, service_role, postgres;
 GRANT ALL ON TABLE public.portfolio_rules_config TO anon, authenticated, service_role, postgres;
@@ -1428,6 +1250,38 @@ GRANT ALL ON TABLE public.freight_presets TO anon, authenticated, service_role, 
 GRANT ALL ON TABLE public.freight_clients TO anon, authenticated, service_role, postgres;
 
 COMMIT;
+`;
+  }
+
+  /**
+   * Return the ready-to-run SQL script to drop obsolete garage tables in Supabase
+   */
+  public generateGarageCleanupSQL(): string {
+    return `-- ==============================================================================
+-- SCRIPT DE LIMPEZA E OTIMIZAÇÃO DA BASE DE DADOS (SUPABASE)
+-- Remove as tabelas desnecessárias da antiga Garagem e unifica a gestão de
+-- veículos dentro do sistema de Orçamento de Fretes (freight_presets).
+-- ==============================================================================
+
+-- 1. Remove chaves estrangeiras vinculadas aos veículos se existirem
+ALTER TABLE IF EXISTS public.transactions 
+  DROP CONSTRAINT IF EXISTS transactions_vehicle_id_fkey;
+
+ALTER TABLE IF EXISTS public.reserve_transactions 
+  DROP CONSTRAINT IF EXISTS reserve_transactions_vehicle_id_fkey;
+
+-- 2. Remove triggers ou funções legadas de atualização de odômetro se existirem
+DROP TRIGGER IF EXISTS trigger_update_vehicle_odometer ON public.transactions;
+DROP FUNCTION IF EXISTS public.update_vehicle_odometer();
+
+-- 3. Remove as 4 tabelas legadas da garagem em cascata
+DROP TABLE IF EXISTS public.vehicle_fipe_history CASCADE;
+DROP TABLE IF EXISTS public.vehicle_maintenance CASCADE;
+DROP TABLE IF EXISTS public.vehicle_odometer CASCADE;
+DROP TABLE IF EXISTS public.vehicles CASCADE;
+
+-- 4. Notificação de Sucesso
+SELECT 'Tabelas da Garagem removidas com sucesso! Veículos agora gerenciados via freight_presets.' AS status;
 `;
   }
 

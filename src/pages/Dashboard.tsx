@@ -93,7 +93,7 @@ import { Button } from '@/components/ui/button';
 import { getTodayLocalDateStr } from '../lib/utils';
 import { getEffectiveUserId } from '../lib/authUtils';
 import { syncQueueManager } from '../lib/syncQueue';
-import { useData, useVehicles } from '../contexts/DataContext';
+import { useData } from '../contexts/DataContext';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { ExecutiveReportModal } from '../components/ExecutiveReportModal';
@@ -101,7 +101,6 @@ import { PatrimonyEvolution } from '../components/PatrimonyEvolution';
 import { DailyProductivityHeatmap } from '../components/dashboard/DailyProductivityHeatmap';
 import { PassiveIncomeEvolutionChart } from '../components/dashboard/PassiveIncomeEvolutionChart';
 import { PersonalExpenseBarConfigDialog } from '../components/dashboard/PersonalExpenseBarConfigDialog';
-import { PatrimonyBreakdownCard } from '../components/dashboard/PatrimonyBreakdownCard';
 import { IndicatorHistoryModal, IndicatorType, MonthHistoryItem, formatIndicatorValue } from '../components/IndicatorHistoryModal';
 import {
   BarChart,
@@ -458,7 +457,6 @@ export function Dashboard() {
     dividends,
     quotes
   } = useData();
-  const { vehicles } = useVehicles();
 
   const handleSaveWeeklyGoal = async () => {
     try {
@@ -1679,12 +1677,6 @@ export function Dashboard() {
     });
     return rawNet;
   }, [transactions, reserveTransactions, investmentTransactions]);
-
-  const totalVehiclesFipe = useMemo(() => {
-    return (vehicles || []).reduce((sum, v) => {
-      return sum + (Number(v.fipe_value) || Number(v.acquisition_value) || 0);
-    }, 0);
-  }, [vehicles]);
 
   const caixaMaisReservas = (settings?.initial_balance || 0) + allTimeTotalsRaw;
   const bancaLivre = caixaMaisReservas - totalInReserves;
@@ -3265,9 +3257,9 @@ export function Dashboard() {
         const totalInResv = (reserves || []).reduce((sum, r) => sum + (r.saldo_atual || 0), 0);
         return (
           <div className="space-y-4">
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3.5">
-              {/* 1. Patrimônio Total - No mobile ocupa 2 colunas */}
-              <Card className="border border-border/70 hover:border-amber-500/30 shadow-2xs hover:shadow-sm transition-all duration-200 overflow-hidden relative group rounded-2xl bg-card/95 col-span-2 sm:col-span-1">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+              {/* 1. Patrimônio Total */}
+              <Card className="border border-border/70 hover:border-amber-500/30 shadow-2xs hover:shadow-sm transition-all duration-200 overflow-hidden relative group rounded-2xl bg-card/95">
                 <div className="absolute top-0 right-0 w-24 h-24 bg-amber-500/5 rounded-full blur-2xl group-hover:bg-amber-500/10 transition-all pointer-events-none" />
                 <CardContent className="p-4 sm:p-4.5 flex flex-col justify-between h-full space-y-2">
                   <div className="flex items-center justify-between">
@@ -3360,44 +3352,7 @@ export function Dashboard() {
                   </div>
                 </CardContent>
               </Card>
-
-              {/* 5. Garagem (FIPE) */}
-              <Card 
-                onClick={() => navigate('/vehicles')}
-                className="border border-border/70 hover:border-indigo-500/40 shadow-2xs hover:shadow-sm transition-all duration-200 overflow-hidden relative group cursor-pointer rounded-2xl bg-card/95 active:scale-[0.98]"
-                title="Abrir Garagem"
-              >
-                <div className="absolute top-0 right-0 w-24 h-24 bg-indigo-500/5 rounded-full blur-2xl group-hover:bg-indigo-500/10 transition-all pointer-events-none" />
-                <CardContent className="p-4 sm:p-4.5 flex flex-col justify-between h-full space-y-2">
-                  <div className="flex items-center justify-between">
-                    <p className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">Garagem</p>
-                    <div className="h-8.5 w-8.5 bg-indigo-500/10 border border-indigo-500/20 rounded-xl flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
-                      <Bike className="w-4 h-4 text-indigo-500" />
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-lg sm:text-xl font-black text-indigo-500 font-mono tracking-tight truncate">
-                      {formatCurrency(totalVehiclesFipe)}
-                    </div>
-                    <div className="flex items-center gap-1 text-[10px] text-muted-foreground font-semibold mt-1">
-                      <span className="h-1.5 w-1.5 rounded-full bg-indigo-500 shrink-0" />
-                      <span className="truncate">{vehicles.length} moto(s) • FIPE</span>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
             </div>
-
-            {/* Detailed Consolidated Patrimony Card */}
-            <PatrimonyBreakdownCard
-              bancaLivre={bancaLivre}
-              totalInReserves={totalInReserves}
-              totalInvestmentEquity={totalInvestmentEquity}
-              totalVehiclesFipe={totalVehiclesFipe}
-              vehicles={vehicles}
-              hideValues={hideValues}
-              formatCurrency={formatCurrency}
-            />
           </div>
         );
       })()}

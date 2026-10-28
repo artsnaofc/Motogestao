@@ -63,7 +63,7 @@ import {
 } from '../../types/freight';
 import { freightStorage, DEFAULT_VEHICLES, DEFAULT_PRESET } from '../../lib/freightStorage';
 import { shareFreightQuotePDF } from '../../lib/freightPdfGenerator';
-import { useData, useVehicles } from '../../contexts/DataContext';
+import { useData } from '../../contexts/DataContext';
 import { AddressAutocompleteInput } from './AddressAutocompleteInput';
 import { ClientAutocompleteInput } from './ClientAutocompleteInput';
 import { maskPhone, maskCpfCnpj } from '@/lib/brazilianFormatters';
@@ -77,6 +77,7 @@ interface FreightQuoteFormProps {
   onOpenProposal: (quote: FreightQuote) => void;
   onCancelEdit?: () => void;
   onOpenSettings?: () => void;
+  onOpenVehicles?: () => void;
   userId?: string;
 }
 
@@ -101,43 +102,60 @@ export function FreightQuoteForm({
   onOpenProposal,
   onCancelEdit,
   onOpenSettings,
+  onOpenVehicles,
   userId = 'default',
 }: FreightQuoteFormProps) {
   const { settings, reserves } = useData();
-  const { vehicles, activeVehicle } = useVehicles();
 
   // Load driver preset & sync from database
   const [preset, setPreset] = useState<DriverFreightPreset>(() => freightStorage.getPreset(userId));
 
-  // Selected Garage Vehicle
+  // Available vehicles from driver preset
+  const availableVehicles = useMemo<VehicleConfigItem[]>(() => {
+    return Array.isArray(preset.vehicles) && preset.vehicles.length > 0
+      ? preset.vehicles
+      : DEFAULT_VEHICLES;
+  }, [preset.vehicles]);
+
+  // Selected Fleet Vehicle
   const [selectedVehicleId, setSelectedVehicleId] = useState<string>(() => {
-    return activeVehicle?.id || (vehicles.length > 0 ? vehicles[0].id : '');
+    if (initialQuote?.vehicle_type) {
+      const match = (preset.vehicles || DEFAULT_VEHICLES).find(v => v.id === initialQuote.vehicle_type || v.label === initialQuote.vehicle_label);
+      if (match) return match.id;
+    }
+    const defaultVeh = (preset.vehicles || DEFAULT_VEHICLES).find(v => v.isDefault) || (preset.vehicles || DEFAULT_VEHICLES)[0];
+    return defaultVeh ? defaultVeh.id : 'moto';
   });
 
-  // Keep selectedVehicle synchronized
-  useEffect(() => {
-    if (!selectedVehicleId && (activeVehicle?.id || vehicles.length > 0)) {
-      setSelectedVehicleId(activeVehicle?.id || vehicles[0].id);
+  const selectedVehicle = useMemo<VehicleConfigItem>(() => {
+    return availableVehicles.find(v => v.id === selectedVehicleId) || availableVehicles[0] || DEFAULT_VEHICLES[0];
+  }, [availableVehicles, selectedVehicleId]);
+
+  const handleSelectVehicle = (vehId: string) => {
+    setSelectedVehicleId(vehId);
+    const target = availableVehicles.find(v => v.id === vehId);
+    if (target) {
+      setBaseFee(target.defaultBase);
+      setPricePerKm(target.defaultPriceKm);
+      if (target.kmPerLiter) setKmPerLiter(target.kmPerLiter);
+      if (target.maintenancePerKm !== undefined) setMaintenanceCostPerKm(target.maintenancePerKm);
+      if (target.stopFee !== undefined && additionalStops.length > 0) {
+        setExtraStopsFee(additionalStops.length * target.stopFee);
+      }
+      toast.info(`Veículo "${target.label}" selecionado.`);
     }
-  }, [activeVehicle, vehicles, selectedVehicleId]);
+  };
 
-  const selectedGarageVehicle = useMemo(() => {
-    return vehicles.find(v => v.id === selectedVehicleId) || activeVehicle || vehicles[0];
-  }, [vehicles, selectedVehicleId, activeVehicle]);
-
-  // Vehicle is strictly Motorcycle
-  const [vehicleType] = useState<string>('moto');
-
-  // Compute kmPerLiter from profile config or selected garage vehicle
+  // Compute kmPerLiter from profile config or selected vehicle
   const profileKmPerLiter = useMemo(() => {
-    if (selectedGarageVehicle?.avg_km_per_liter && selectedGarageVehicle.avg_km_per_liter > 0) {
-      return selectedGarageVehicle.avg_km_per_liter;
+    if (selectedVehicle?.kmPerLiter && selectedVehicle.kmPerLiter > 0) {
+      return selectedVehicle.kmPerLiter;
     }
     if (settings?.vehicle_km_per_liter && settings.vehicle_km_per_liter > 0) {
       return settings.vehicle_km_per_liter;
     }
     return preset.default_km_per_liter ?? 35;
-  }, [selectedGarageVehicle?.avg_km_per_liter, settings?.vehicle_km_per_liter, preset.default_km_per_liter]);
+  }, [selectedVehicle?.kmPerLiter, settings?.vehicle_km_per_liter, preset.default_km_per_liter]);
 
   // Compute maintenanceCostPerKm from Maintenance Reserve rule
   const maintenanceReserveKmCost = useMemo(() => {
@@ -254,29 +272,16 @@ export function FreightQuoteForm({
 
   // Pricing & Fees
   const [baseFee, setBaseFee] = useState<number>(
-    initialQuote?.base_fee ?? selectedGarageVehicle?.base_fee ?? preset.default_base_fee ?? 15.00
+    initialQuote?.base_fee ?? selectedVehicle?.defaultBase ?? preset.default_base_fee ?? 15.00
   );
   const [pricePerKm, setPricePerKm] = useState<number>(
-    initialQuote?.price_per_km ?? selectedGarageVehicle?.price_per_km ?? preset.default_price_per_km ?? 0.80
+    initialQuote?.price_per_km ?? selectedVehicle?.defaultPriceKm ?? preset.default_price_per_km ?? 0.80
   );
   const [extraStopsFee, setExtraStopsFee] = useState<number>(
     initialQuote?.extra_stops_fee ?? (
-      (selectedGarageVehicle?.extra_stop_fee ?? preset.default_stop_fee ?? 6.00) * (initialQuote?.additional_stops?.length || 0)
+      (selectedVehicle?.stopFee ?? preset.default_stop_fee ?? 6.00) * (initialQuote?.additional_stops?.length || 0)
     )
   );
-
-  const handleSelectGarageVehicle = useCallback((vId: string) => {
-    setSelectedVehicleId(vId);
-    const target = vehicles.find(v => v.id === vId);
-    if (target) {
-      if (target.base_fee !== undefined) setBaseFee(target.base_fee);
-      if (target.price_per_km !== undefined) setPricePerKm(target.price_per_km);
-      if (target.avg_km_per_liter !== undefined) setKmPerLiter(target.avg_km_per_liter);
-      const stopFeeUnit = target.extra_stop_fee ?? preset.default_stop_fee ?? 6.00;
-      setExtraStopsFee(stopFeeUnit * additionalStops.length);
-      toast.info(`Tarifas e consumo da moto ${target.brand} ${target.model} aplicadas!`);
-    }
-  }, [vehicles, preset.default_stop_fee, additionalStops.length]);
 
   // Extra Surcharges (Quick add-ons)
   const [heavyCargoFee, setHeavyCargoFee] = useState<number>(initialQuote?.heavy_cargo_fee || 0);
@@ -606,13 +611,9 @@ export function FreightQuoteForm({
       pix_key: pixKey.trim(),
       pix_key_type: pixKeyType as any,
 
-      vehicle_type: 'moto',
-      vehicle_label: selectedGarageVehicle
-        ? `${selectedGarageVehicle.brand} ${selectedGarageVehicle.model}${selectedGarageVehicle.plate ? ` (${selectedGarageVehicle.plate})` : ''}`
-        : 'Motocicleta (Frete Express)',
-      vehicle_capacity: selectedGarageVehicle?.default_load_capacity_kg
-        ? `Até ${selectedGarageVehicle.default_load_capacity_kg}Kg`
-        : 'Até 50Kg (Bauleto / amarração)',
+      vehicle_type: selectedVehicle.id || 'moto',
+      vehicle_label: selectedVehicle.label || 'Motocicleta (Frete Express)',
+      vehicle_capacity: selectedVehicle.maxWeight || 'Até 50Kg (Bauleto / amarração)',
       service_type: serviceType,
       origin_address: originAddress.trim() || 'Ponto de Coleta',
       origin_neighborhood: originNeighborhood.trim(),
@@ -811,55 +812,76 @@ export function FreightQuoteForm({
       <div className="bg-card border border-border/80 rounded-3xl p-4 sm:p-5 shadow-xs space-y-4">
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between border-b border-border/40 pb-3 gap-3">
           <div className="flex items-center gap-2.5 flex-1 min-w-0">
-            <div className="p-2.5 rounded-2xl bg-primary text-primary-foreground shrink-0 shadow-xs">
-              <Bike className="w-5 h-5" />
+            <div className="p-2.5 rounded-2xl bg-cyan-600 text-white shrink-0 shadow-xs">
+              {selectedVehicle?.iconName === 'Car' ? (
+                <Car className="w-5 h-5" />
+              ) : selectedVehicle?.iconName === 'Truck' ? (
+                <Truck className="w-5 h-5" />
+              ) : (
+                <Bike className="w-5 h-5" />
+              )}
             </div>
             <div className="min-w-0 flex-1">
-              {vehicles && vehicles.length > 0 ? (
-                <div className="flex items-center gap-2 flex-wrap">
-                  <select
-                    value={selectedVehicleId}
-                    onChange={(e) => handleSelectGarageVehicle(e.target.value)}
-                    className="h-8.5 px-2.5 bg-muted/50 border border-border/80 rounded-xl text-xs font-black text-foreground focus:ring-2 focus:ring-primary/30"
-                  >
-                    {vehicles.map((v) => (
-                      <option key={v.id} value={v.id}>
-                        {v.brand} {v.model} {v.plate ? `(${v.plate})` : ''} {v.is_active ? '★ Ativa' : ''}
-                      </option>
-                    ))}
-                  </select>
-                  {selectedGarageVehicle?.is_active && (
-                    <span className="px-2 py-0.5 rounded-full bg-primary/10 text-primary text-[10px] font-extrabold shrink-0">
-                      Moto Principal da Garagem
-                    </span>
-                  )}
-                </div>
-              ) : (
-                <h2 className="text-sm sm:text-base font-black tracking-tight text-foreground flex items-center gap-2 flex-wrap">
-                  Motocicleta (Frete Express)
-                </h2>
-              )}
+              <div className="flex items-center gap-2 flex-wrap">
+                <select
+                  value={selectedVehicleId}
+                  onChange={(e) => handleSelectVehicle(e.target.value)}
+                  className="h-8.5 px-2.5 bg-muted/60 border border-border/80 rounded-xl text-xs font-black text-foreground focus:ring-2 focus:ring-cyan-500/30 cursor-pointer"
+                >
+                  {availableVehicles.map((v) => (
+                    <option key={v.id} value={v.id}>
+                      {v.label} {v.plate ? `(${v.plate})` : ''} {v.isDefault ? '★ Padrão' : ''}
+                    </option>
+                  ))}
+                </select>
+                {selectedVehicle?.isDefault && (
+                  <span className="px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 text-[10px] font-extrabold shrink-0">
+                    Veículo Padrão
+                  </span>
+                )}
+                {selectedVehicle?.plate && (
+                  <span className="px-2 py-0.5 rounded-md bg-muted text-foreground font-mono text-[10px] font-bold border border-border/60 shrink-0">
+                    {selectedVehicle.plate}
+                  </span>
+                )}
+              </div>
               <p className="text-[11px] text-muted-foreground mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                <span>Capacidade: <strong className="text-foreground">{selectedGarageVehicle?.default_load_capacity_kg ? `Até ${selectedGarageVehicle.default_load_capacity_kg}Kg` : 'Até 50Kg'}</strong></span>
+                <span>Capacidade: <strong className="text-foreground">{selectedVehicle?.maxWeight || 'Até 50Kg'}</strong></span>
                 <span>• Consumo: <strong className="text-foreground">{kmPerLiter} km/L</strong></span>
                 <span>• Saída: <strong className="text-foreground">{formatBRL(baseFee)}</strong></span>
-                <span>• KM: <strong className="text-primary">{formatBRL(pricePerKm)}/km</strong></span>
-                <span>• Parada: <strong className="text-foreground">{formatBRL(selectedGarageVehicle?.extra_stop_fee ?? preset.default_stop_fee ?? 6.00)}</strong></span>
+                <span>• KM: <strong className="text-primary font-bold">{formatBRL(pricePerKm)}/km</strong></span>
+                <span>• Parada: <strong className="text-foreground">{formatBRL(selectedVehicle?.stopFee ?? preset.default_stop_fee ?? 6.00)}</strong></span>
               </p>
             </div>
           </div>
-          {onOpenSettings && (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={onOpenSettings}
-              className="rounded-xl text-xs font-bold gap-1.5 h-8.5 shrink-0 border-border/70 hover:bg-muted cursor-pointer"
-            >
-              <Settings className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Configurar Tarifas</span>
-            </Button>
-          )}
+
+          <div className="flex items-center gap-2 shrink-0">
+            {onOpenVehicles && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={onOpenVehicles}
+                className="rounded-xl text-xs font-bold gap-1.5 h-8.5 border-border/70 hover:bg-muted cursor-pointer"
+                title="Cadastrar e gerenciar veículos da frota"
+              >
+                <Truck className="w-3.5 h-3.5 text-cyan-600" />
+                <span className="hidden sm:inline">Gerenciar Frota</span>
+              </Button>
+            )}
+            {onOpenSettings && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={onOpenSettings}
+                className="rounded-xl text-xs font-bold gap-1.5 h-8.5 border-border/70 hover:bg-muted cursor-pointer"
+              >
+                <Settings className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Configurar Tarifas</span>
+              </Button>
+            )}
+          </div>
         </div>
 
         {/* Service Type Pills */}

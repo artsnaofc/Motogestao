@@ -7,8 +7,6 @@ import { AddTransaction } from './pages/AddTransaction';
 import { Profile } from './pages/Profile';
 import { Reserves } from './pages/Reserves';
 import { Investments } from './pages/Investments';
-import { Vehicles } from './pages/Vehicles';
-import { VehicleDetails } from './pages/VehicleDetails';
 import Admin from './pages/Admin';
 import FreightQuotePage from './pages/FreightQuote';
 import { DataProvider } from './contexts/DataContext';
@@ -169,8 +167,8 @@ export default function App() {
               <Route path="/add-transaction" element={<AddTransaction />} />
               <Route path="/freight" element={<FreightQuotePage />} />
               <Route path="/reserves" element={<Reserves />} />
-              <Route path="/vehicles" element={<Vehicles />} />
-              <Route path="/vehicles/:id" element={<VehicleDetails />} />
+              <Route path="/vehicles" element={<Navigate to="/freight?tab=vehicles" replace />} />
+              <Route path="/vehicles/*" element={<Navigate to="/freight?tab=vehicles" replace />} />
               <Route path="/investments" element={<Investments />} />
               <Route path="/admin" element={<Admin />} />
               <Route path="/profile" element={<Profile />} />

@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -27,12 +28,13 @@ import {
   UserCheck
 } from 'lucide-react';
 import { toast } from '@/lib/toast';
-import { FreightQuote, DriverFreightPreset, FreightClient } from '../types/freight';
+import { FreightQuote, DriverFreightPreset, FreightClient, VehicleConfigItem } from '../types/freight';
 import { getTodayLocalDateStr } from '../lib/utils';
-import { freightStorage } from '../lib/freightStorage';
+import { freightStorage, DEFAULT_VEHICLES } from '../lib/freightStorage';
 import { FreightQuoteForm } from '../components/freight/FreightQuoteForm';
 import { FreightQuotesList } from '../components/freight/FreightQuotesList';
 import { FreightClientsManager } from '../components/freight/FreightClientsManager';
+import { FreightVehiclesManager } from '../components/freight/FreightVehiclesManager';
 import { FreightSettingsModal } from '../components/freight/FreightSettingsModal';
 import { FreightProposalModal } from '../components/freight/FreightProposalModal';
 import { useData } from '../contexts/DataContext';
@@ -40,11 +42,17 @@ import { useData } from '../contexts/DataContext';
 export default function FreightQuotePage() {
   const { settings } = useData();
   const userId = settings?.user_id || 'default';
+  const [searchParams, setSearchParams] = useSearchParams();
 
-  const [activeTab, setActiveTab] = useState<'create' | 'list' | 'clients'>('list');
+  const initialTab = searchParams.get('tab') === 'vehicles' ? 'vehicles' : 'list';
+  const [activeTab, setActiveTab] = useState<'create' | 'list' | 'clients' | 'vehicles'>(initialTab);
   const [highlightedQuoteId, setHighlightedQuoteId] = useState<string | null>(null);
   const [quotes, setQuotes] = useState<FreightQuote[]>([]);
   const [clientsCount, setClientsCount] = useState<number>(() => freightStorage.getClients(userId).length);
+  const [vehiclesCount, setVehiclesCount] = useState<number>(() => {
+    const p = freightStorage.getPreset(userId);
+    return Array.isArray(p.vehicles) && p.vehicles.length > 0 ? p.vehicles.length : DEFAULT_VEHICLES.length;
+  });
   const [editingQuote, setEditingQuote] = useState<Partial<FreightQuote> | null>(null);
   const [isBaseMode, setIsBaseMode] = useState(false);
 
@@ -80,11 +88,20 @@ export default function FreightQuotePage() {
       setClientsCount(freightStorage.getClients(userId).length);
     };
 
+    const handlePresetUpdated = (e: Event) => {
+      const customEvent = e as CustomEvent<DriverFreightPreset>;
+      if (customEvent.detail?.vehicles) {
+        setVehiclesCount(customEvent.detail.vehicles.length);
+      }
+    };
+
     window.addEventListener('freight_quotes_updated', handleQuotesUpdated);
     window.addEventListener('freight_clients_updated', handleClientsUpdated);
+    window.addEventListener('freight_preset_updated', handlePresetUpdated);
     return () => {
       window.removeEventListener('freight_quotes_updated', handleQuotesUpdated);
       window.removeEventListener('freight_clients_updated', handleClientsUpdated);
+      window.removeEventListener('freight_preset_updated', handlePresetUpdated);
     };
   }, [userId]);
 
@@ -102,6 +119,23 @@ export default function FreightQuotePage() {
     setEditingQuote(quote);
     setIsBaseMode(false);
     setActiveTab('create');
+  };
+
+  const handleSelectVehicleForQuote = (vehicle: VehicleConfigItem) => {
+    const draft: Partial<FreightQuote> = {
+      vehicle_type: vehicle.id || 'moto',
+      vehicle_label: vehicle.label,
+      vehicle_capacity: vehicle.maxWeight,
+      base_fee: vehicle.defaultBase,
+      price_per_km: vehicle.defaultPriceKm,
+      km_per_liter: vehicle.kmPerLiter ?? 35,
+      maintenance_cost_per_km: vehicle.maintenancePerKm ?? 0.15,
+      extra_stops_fee: vehicle.stopFee ?? 6.00,
+    };
+    setEditingQuote(draft);
+    setIsBaseMode(false);
+    setActiveTab('create');
+    toast.info(`Veículo "${vehicle.label}" aplicado ao novo orçamento!`);
   };
 
   const handleUseAsBaseQuote = (baseQuote: FreightQuote) => {
@@ -350,52 +384,22 @@ export default function FreightQuotePage() {
             </Button>
           )}
         </div>
-      ) : activeTab === 'clients' ? (
-        /* CONTEXTUAL SLIM HEADER WHEN MANAGING CLIENTS */
-        <div className="flex items-center justify-between gap-3 bg-card border border-border/80 px-3.5 py-2.5 rounded-2xl shadow-2xs">
-          <div className="flex items-center gap-2.5">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setActiveTab('list')}
-              className="rounded-xl h-8 px-2.5 text-xs font-bold gap-1.5 cursor-pointer hover:bg-muted text-muted-foreground hover:text-foreground shrink-0 border border-border/50"
-            >
-              <ArrowLeft className="w-3.5 h-3.5 text-emerald-500" />
-              <span>Voltar</span>
-            </Button>
-
-            <div className="h-4 w-px bg-border/60 shrink-0" />
-
-            <span className="text-xs font-black text-foreground flex items-center gap-1.5">
-              👥 Gestão de Clientes
-            </span>
-          </div>
-
-          <Button
-            size="sm"
-            onClick={() => {
-              setEditingQuote(null);
-              setIsBaseMode(false);
-              setActiveTab('create');
-            }}
-            className="bg-gradient-to-r from-indigo-600 to-violet-600 text-white font-extrabold rounded-xl h-8 px-3 text-xs gap-1.5 cursor-pointer shadow-xs shrink-0"
-          >
-            <PlusCircle className="w-3.5 h-3.5" />
-            <span>Novo Orçamento</span>
-          </Button>
-        </div>
       ) : (
-        /* SEGMENTED TOGGLE WHEN IN MAIN LIST VIEW */
+        /* SEGMENTED TOGGLE ACROSS TABS */
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-card/60 border border-border/70 p-2 rounded-3xl shadow-2xs">
           {/* SEGMENTED SWITCHER */}
-          <div className="flex items-center gap-1.5 p-1 bg-muted/50 rounded-2xl w-full sm:w-auto">
+          <div className="flex items-center gap-1.5 p-1 bg-muted/50 rounded-2xl w-full sm:w-auto overflow-x-auto">
             <Button
               variant="ghost"
               onClick={() => setActiveTab('list')}
-              className="rounded-xl h-9 px-4 font-black text-xs cursor-pointer gap-2 transition-all flex-1 sm:flex-initial bg-background text-foreground shadow-xs ring-1 ring-border/50"
+              className={`rounded-xl h-9 px-3.5 font-black text-xs cursor-pointer gap-2 transition-all flex-1 sm:flex-initial ${
+                activeTab === 'list'
+                  ? 'bg-background text-foreground shadow-xs ring-1 ring-border/50'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
             >
               <List className="w-4 h-4 text-indigo-500" />
-              Orçamentos Salvos
+              Orçamentos
               <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-indigo-500/10 text-indigo-600 dark:text-indigo-400">
                 {quotes.length}
               </span>
@@ -403,8 +407,28 @@ export default function FreightQuotePage() {
 
             <Button
               variant="ghost"
+              onClick={() => setActiveTab('vehicles')}
+              className={`rounded-xl h-9 px-3.5 font-black text-xs cursor-pointer gap-2 transition-all flex-1 sm:flex-initial ${
+                activeTab === 'vehicles'
+                  ? 'bg-background text-foreground shadow-xs ring-1 ring-border/50'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              <Truck className="w-4 h-4 text-cyan-500" />
+              Meus Veículos
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-cyan-500/10 text-cyan-600 dark:text-cyan-400">
+                {vehiclesCount}
+              </span>
+            </Button>
+
+            <Button
+              variant="ghost"
               onClick={() => setActiveTab('clients')}
-              className="rounded-xl h-9 px-4 font-black text-xs cursor-pointer gap-2 transition-all flex-1 sm:flex-initial text-muted-foreground hover:text-foreground"
+              className={`rounded-xl h-9 px-3.5 font-black text-xs cursor-pointer gap-2 transition-all flex-1 sm:flex-initial ${
+                activeTab === 'clients'
+                  ? 'bg-background text-foreground shadow-xs ring-1 ring-border/50'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
             >
               <Users className="w-4 h-4 text-emerald-500" />
               Clientes
@@ -414,8 +438,19 @@ export default function FreightQuotePage() {
             </Button>
           </div>
 
-          <div className="text-xs text-muted-foreground font-medium px-3 hidden md:block">
-            Selecione ou edite orçamentos existentes ou emita uma nova proposta
+          <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+            <Button
+              size="sm"
+              onClick={() => {
+                setEditingQuote(null);
+                setIsBaseMode(false);
+                setActiveTab('create');
+              }}
+              className="bg-gradient-to-r from-indigo-600 to-violet-600 text-white font-extrabold rounded-xl h-9 px-3.5 text-xs gap-1.5 cursor-pointer shadow-xs shrink-0"
+            >
+              <PlusCircle className="w-4 h-4" />
+              <span>Novo Orçamento</span>
+            </Button>
           </div>
         </div>
       )}
@@ -438,6 +473,7 @@ export default function FreightQuotePage() {
               onOpenProposal={(quote) => setProposalModalQuote(quote)}
               onCancelEdit={editingQuote ? () => { setEditingQuote(null); setIsBaseMode(false); setActiveTab('list'); } : undefined}
               onOpenSettings={() => setIsSettingsOpen(true)}
+              onOpenVehicles={() => setActiveTab('vehicles')}
             />
           </motion.div>
         )}
@@ -463,6 +499,21 @@ export default function FreightQuotePage() {
                 setIsBaseMode(false);
                 setActiveTab('create');
               }}
+            />
+          </motion.div>
+        )}
+
+        {activeTab === 'vehicles' && (
+          <motion.div
+            key="vehicles-tab"
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.15 }}
+          >
+            <FreightVehiclesManager
+              userId={userId}
+              onSelectVehicleForQuote={handleSelectVehicleForQuote}
             />
           </motion.div>
         )}

@@ -23,6 +23,8 @@ export interface RouteStop {
 export interface VehicleConfigItem {
   id: string;
   label: string;
+  plate?: string;
+  type?: 'moto' | 'car' | 'van' | 'truck' | string;
   iconName?: 'Bike' | 'Car' | 'Truck' | string;
   maxWeight: string;
   desc?: string;
