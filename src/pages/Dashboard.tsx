@@ -81,6 +81,7 @@ import {
   CheckSquare,
   CalendarRange,
   Activity,
+  ShieldCheck,
   LogOut,
   RotateCw,
   RotateCcw,
@@ -292,6 +293,7 @@ export function Dashboard() {
       setSelectedFundamentalIndices([]);
     }
   };
+  const [fundamentalHistoryTimeframe, setFundamentalHistoryTimeframe] = useState<'daily' | 'monthly'>('monthly');
   const [tempOutstanding, setTempOutstanding] = useState<string>(String(marginThresholds.outstanding).replace('.', ','));
   const [tempExcellent, setTempExcellent] = useState<string>(String(marginThresholds.excellent).replace('.', ','));
   const [tempHealthy, setTempHealthy] = useState<string>(String(marginThresholds.healthy).replace('.', ','));
@@ -537,6 +539,14 @@ export function Dashboard() {
   });
 
   const [selectedIndicator, setSelectedIndicator] = useState<IndicatorType | null>(null);
+  const [monthlyTrendPeriod, setMonthlyTrendPeriod] = useState<'6m' | '12m' | 'all'>(() => {
+    return cacheManager.get<'6m' | '12m' | 'all'>('dashboard_monthly_trend_period') || 'all';
+  });
+
+  const handleSetMonthlyTrendPeriod = useCallback((period: '6m' | '12m' | 'all') => {
+    setMonthlyTrendPeriod(period);
+    cacheManager.set('dashboard_monthly_trend_period', period, undefined, 'settings');
+  }, []);
 
   const handleIndicatorModalOpenChange = useCallback((isOpen: boolean) => {
     if (!isOpen) setSelectedIndicator(null);
@@ -1173,6 +1183,7 @@ export function Dashboard() {
     let totalVendaInvestimento = 0;
     let fuelExpense = 0;
     let fuelReserve = 0;
+    let tollExpense = 0;
     let maintenanceExpense = 0;
 
     const opCats = settings?.operational_expense_categories || ['Combustível', 'Pedágio', 'Manutenção'];
@@ -1223,6 +1234,8 @@ export function Dashboard() {
           if (isReserveUse) {
             fuelReserve += rawAmt;
           }
+        } else if (isTollCategory(t.category)) {
+          tollExpense += rawAmt;
         } else if (isMaintCategory(t.category)) {
           maintenanceExpense += rawAmt;
         }
@@ -1301,6 +1314,8 @@ export function Dashboard() {
       totalVendaInvestimento,
       fuelExpense,
       fuelReserve,
+      tollExpense,
+      fuelAndTollExpense: fuelExpense + tollExpense,
       maintenanceExpense,
     };
   };
@@ -1778,6 +1793,8 @@ export function Dashboard() {
       rendimentosReserva: current.rendimentosReserva || 0,
       fuelExpense: current.fuelExpense || 0,
       fuelReserve: current.fuelReserve || 0,
+      tollExpense: current.tollExpense || 0,
+      fuelAndTollExpense: current.fuelAndTollExpense || 0,
       maintenanceExpense: current.maintenanceExpense || 0,
       km: current.km,
       incomeTrend: getTrend(current.income, past.income),
@@ -1833,272 +1850,6 @@ export function Dashboard() {
       perPercent: (per / total) * 100
     };
   }, [summary]);
-
-  // Índices Fundamentalistas e de Desempenho Operacional
-  const fundamentalIndexes = useMemo(() => {
-    const kmTotal = summary.km || 0;
-    const fatTotal = (summary.totalIncome || 0) + (summary.rendimentosReserva || 0);
-    const opPuro = summary.opExpensePuro || 0;
-    const fuelExpense = summary.fuelExpense || 0;
-    const despesaPessoal = Math.max(0, summary.perExpense || 0);
-    const despesaTotal = opPuro + despesaPessoal;
-    
-    // Lucro Líquido Real Patrimonial (sem a distorção da variação de fluxo de caixa por aportes em reserva)
-    const lucroLiquido = summary.netProfitPatrimony !== undefined ? summary.netProfitPatrimony : (summary.netProfit || 0);
-    const lucroOperacional = fatTotal - opPuro; // EBITDA Operacional do Veículo
-    const reservasGuarda = totalInReserves || 0;
-
-    // 1. Margem Líquida Consolidada (%)
-    const margemLiquida = fatTotal > 0 ? (lucroLiquido / fatTotal) * 100 : 0;
-
-    // 2. Margem Operacional Veicular / EBITDA (%)
-    const margemOperacional = fatTotal > 0 ? (lucroOperacional / fatTotal) * 100 : 0;
-
-    const maintenanceExpense = summary.maintenanceExpense || 0;
-    const otherOpExpense = Math.max(0, opPuro - fuelExpense - maintenanceExpense);
-
-    // 3. CPK - Custo Operacional por Quilômetro (R$/km)
-    const cpk = kmTotal > 0 ? opPuro / kmTotal : 0;
-    const cpkCombustivel = kmTotal > 0 ? fuelExpense / kmTotal : 0;
-    const cpkManutencao = kmTotal > 0 ? maintenanceExpense / kmTotal : 0;
-    const cpkOutrosOp = kmTotal > 0 ? otherOpExpense / kmTotal : 0;
-
-    // 4. RPK - Receita Bruta por Quilômetro (R$/km)
-    const rpk = kmTotal > 0 ? fatTotal / kmTotal : 0;
-
-    // 5. LPK - Lucro Líquido por Quilômetro (R$/km)
-    const lpk = kmTotal > 0 ? lucroLiquido / kmTotal : 0;
-
-    // 6. LOPK - Lucro Operacional por Quilômetro (R$/km)
-    const lopk = kmTotal > 0 ? lucroOperacional / kmTotal : 0;
-
-    // 7. Multiplicador de Eficiência Operacional (MOE / ROIC Veicular)
-    const moe = opPuro > 0 ? fatTotal / opPuro : 0;
-
-    // 8. Cobertura da Reserva Operacional (ICRO - Ciclos de Custo Veicular)
-    const coberturaReservaOp = opPuro > 0 ? reservasGuarda / opPuro : (reservasGuarda > 0 ? 99 : 0);
-
-    // 9. Taxa de Comprometimento com Combustível + Outros Op / Pedágio (Fuel Ratio %)
-    const rawFuelRatio = fatTotal > 0 ? (fuelExpense / fatTotal) * 100 : 0;
-    const fuelRatio = fatTotal > 0 ? ((fuelExpense + otherOpExpense) / fatTotal) * 100 : 0;
-    const opRatio = fatTotal > 0 ? (opPuro / fatTotal) * 100 : 0;
-    const personalRatio = fatTotal > 0 ? (despesaPessoal / fatTotal) * 100 : 0;
-    const personalMargin = fatTotal > 0 ? ((fatTotal - despesaPessoal) / fatTotal) * 100 : 100;
-    const maintenanceRatio = fatTotal > 0 ? (maintenanceExpense / fatTotal) * 100 : 0;
-    const otherOpRatio = fatTotal > 0 ? (otherOpExpense / fatTotal) * 100 : 0;
-    const personalPerKm = kmTotal > 0 ? despesaPessoal / kmTotal : 0;
-    const maintenancePerKm = kmTotal > 0 ? maintenanceExpense / kmTotal : 0;
-
-    // 10. Ponto de Equilíbrio Financeiro (Breakeven):
-    // Margem de Contribuição Operacional % (MCO) = (fatTotal - opPuro) / fatTotal
-    const margemContribucaoPct = fatTotal > 0 ? (fatTotal - opPuro) / fatTotal : 0;
-    
-    // Faturamento Mínimo para cobrir Despesas Totais (Operacionais + Pessoais)
-    const fatBreakeven = margemContribucaoPct > 0 ? despesaTotal / margemContribucaoPct : despesaTotal;
-
-    // Quilometragem de Equilíbrio
-    const mcoKm = rpk - cpk;
-    const kmBreakevenTotal = mcoKm > 0 ? despesaTotal / mcoKm : 0;
-
-    const breakevenProgress = fatBreakeven > 0 ? Math.min(200, (fatTotal / fatBreakeven) * 100) : (fatTotal > 0 ? 200 : 0);
-
-    return {
-      kmTotal,
-      fatTotal,
-      opPuro,
-      fuelExpense,
-      maintenanceExpense,
-      otherOpExpense,
-      opRatio,
-      otherOpRatio,
-      rawFuelRatio,
-      despesaPessoal,
-      despesaTotal,
-      lucroLiquido,
-      lucroOperacional,
-      reservasGuarda,
-      margemLiquida,
-      margemOperacional,
-      cpk,
-      cpkCombustivel,
-      cpkManutencao,
-      cpkOutrosOp,
-      rpk,
-      lpk,
-      lopk,
-      moe,
-      coberturaReservaOp,
-      fuelRatio,
-      personalRatio,
-      personalMargin,
-      maintenanceRatio,
-      personalPerKm,
-      maintenancePerKm,
-      kmBreakevenTotal,
-      fatBreakeven,
-      breakevenProgress,
-    };
-  }, [summary, totalInReserves]);
-
-  const fundamentalHistory = useMemo(() => {
-    const monthMap: Record<string, Transaction[]> = {};
-    allTransactionsAdjusted.forEach(t => {
-      const dateStr = t.date.split('T')[0];
-      const monthStr = dateStr.substring(0, 7);
-      if (monthStr < '2026-03') return; // Exibir apenas a partir de março de 2026
-      if (!monthMap[monthStr]) monthMap[monthStr] = [];
-      monthMap[monthStr].push(t);
-    });
-
-    const sortedMonths = Object.keys(monthMap).sort();
-
-    const history = sortedMonths.map(monthStr => {
-      const monthTxs = monthMap[monthStr];
-      const totals = calcTotals(monthTxs);
-      const kmTotal = totals.km || 0;
-      const fatTotal = totals.income + (totals.rendimentosReserva || 0);
-      const opPuro = totals.opExpPuro || 0;
-      const fuelExpense = totals.fuelExpense || 0;
-      const perExp = Math.max(0, totals.perExp || 0);
-      const maintExp = totals.maintenanceExpense || 0;
-
-      const lucroLiquido = totals.net + totals.reserveAporte + (totals.rendimentosReserva || 0) - (totals.totalVendaInvestimento || 0);
-      const lucroOperacional = fatTotal - opPuro;
-
-      const margemLiquida = fatTotal > 0 ? (lucroLiquido / fatTotal) * 100 : 0;
-      const margemOperacional = fatTotal > 0 ? (lucroOperacional / fatTotal) * 100 : 0;
-      const cpk = kmTotal > 0 ? opPuro / kmTotal : 0;
-      const rpk = kmTotal > 0 ? fatTotal / kmTotal : 0;
-      const lpk = kmTotal > 0 ? lucroLiquido / kmTotal : 0;
-      const moe = opPuro > 0 ? fatTotal / opPuro : 0;
-      const otherOpExp = Math.max(0, opPuro - fuelExpense - maintExp);
-      const fuelRatio = fatTotal > 0 ? ((fuelExpense + otherOpExp) / fatTotal) * 100 : 0;
-      const personalRatio = fatTotal > 0 ? (perExp / fatTotal) * 100 : 0;
-      const personalMargin = fatTotal > 0 ? ((fatTotal - perExp) / fatTotal) * 100 : 100;
-      const maintenanceRatio = fatTotal > 0 ? (maintExp / fatTotal) * 100 : 0;
-      const personalPerKm = kmTotal > 0 ? perExp / kmTotal : 0;
-      const maintenancePerKm = kmTotal > 0 ? maintExp / kmTotal : 0;
-      const fuelAndOtherPerKm = kmTotal > 0 ? (fuelExpense + otherOpExp) / kmTotal : 0;
-
-      const [year, month] = monthStr.split('-');
-      const dateObj = new Date(Number(year), Number(month) - 1, 1);
-      const label = format(dateObj, 'MMM/yyyy', { locale: ptBR });
-
-      return {
-        monthStr,
-        label,
-        margemLiquida: Number(margemLiquida.toFixed(2)),
-        margemOperacional: Number(margemOperacional.toFixed(2)),
-        cpk: Number(cpk.toFixed(2)),
-        rpk: Number(rpk.toFixed(2)),
-        lpk: Number(lpk.toFixed(2)),
-        moe: Number(moe.toFixed(2)),
-        fuelRatio: Number(fuelRatio.toFixed(2)),
-        personalRatio: Number(personalRatio.toFixed(2)),
-        personalMargin: Number(personalMargin.toFixed(2)),
-        maintenanceRatio: Number(maintenanceRatio.toFixed(2)),
-        personalPerKm: Number(personalPerKm.toFixed(2)),
-        maintenancePerKm: Number(maintenancePerKm.toFixed(2)),
-        fuelAndOtherPerKm: Number(fuelAndOtherPerKm.toFixed(2)),
-      };
-    });
-
-    return history;
-  }, [allTransactionsAdjusted]);
-
-  const indexMetadata: Record<string, { title: string; unit: string; color: string; description: string; formatter: (val: number) => string }> = {
-    margemLiquida: {
-      title: 'Margem Líquida Consolidada',
-      unit: '%',
-      color: '#10b981',
-      description: 'Evolução mensal da margem líquida (lucro retido por receita bruta).',
-      formatter: (val) => `${val.toFixed(1)}%`
-    },
-    margemOperacional: {
-      title: 'Margem Operacional / EBITDA',
-      unit: '%',
-      color: '#6366f1',
-      description: 'Evolução mensal da margem operacional do veículo.',
-      formatter: (val) => `${val.toFixed(1)}%`
-    },
-    personalMargin: {
-      title: 'Margem Pessoal',
-      unit: '%',
-      color: '#0ea5e9',
-      description: 'Evolução mensal da margem restante após retiradas e despesas pessoais.',
-      formatter: (val) => `${val.toFixed(1)}%`
-    },
-    personalRatio: {
-      title: 'Taxa de Custos Pessoais',
-      unit: '%',
-      color: '#3b82f6',
-      description: 'Evolução mensal da proporção da receita destinada a despesas pessoais.',
-      formatter: (val) => `${val.toFixed(1)}%`
-    },
-    fuelRatio: {
-      title: 'Taxa Combustível + Outros Op.',
-      unit: '%',
-      color: '#f97316',
-      description: 'Evolução mensal da proporção da receita destinada a combustível e outras despesas operacionais/pedágios.',
-      formatter: (val) => `${val.toFixed(1)}%`
-    },
-    maintenanceRatio: {
-      title: 'Taxa de Custos de Manutenção',
-      unit: '%',
-      color: '#eab308',
-      description: 'Evolução mensal da proporção da receita destinada à manutenção do veículo.',
-      formatter: (val) => `${val.toFixed(1)}%`
-    },
-    rpk: {
-      title: 'RPK - Receita Bruta por KM',
-      unit: 'R$/km',
-      color: '#06b6d4',
-      description: 'Evolução mensal da receita bruta gerada por quilômetro.',
-      formatter: (val) => `R$ ${val.toFixed(2)}/km`
-    },
-    lpk: {
-      title: 'LPK - Lucro Líquido por KM',
-      unit: 'R$/km',
-      color: '#10b981',
-      description: 'Evolução mensal do resultado líquido final por quilômetro rodado.',
-      formatter: (val) => `R$ ${val.toFixed(2)}/km`
-    },
-    personalPerKm: {
-      title: 'PPK - Custo Pessoal por KM',
-      unit: 'R$/km',
-      color: '#60a5fa',
-      description: 'Evolução mensal de despesas pessoais por quilômetro rodado.',
-      formatter: (val) => `R$ ${val.toFixed(2)}/km`
-    },
-    cpk: {
-      title: 'CPK - Custo Operacional por KM',
-      unit: 'R$/km',
-      color: '#f59e0b',
-      description: 'Evolução mensal do custo operacional por quilômetro rodado.',
-      formatter: (val) => `R$ ${val.toFixed(2)}/km`
-    },
-    fuelAndOtherPerKm: {
-      title: 'Custo Combustível + Outros por KM',
-      unit: 'R$/km',
-      color: '#f97316',
-      description: 'Evolução mensal dos custos de combustível e outros operacionais/pedágios por quilômetro.',
-      formatter: (val) => `R$ ${val.toFixed(2)}/km`
-    },
-    maintenancePerKm: {
-      title: 'MPK - Custo de Manutenção por KM',
-      unit: 'R$/km',
-      color: '#facc15',
-      description: 'Evolução mensal de despesas de manutenção por quilômetro rodado.',
-      formatter: (val) => `R$ ${val.toFixed(2)}/km`
-    },
-    moe: {
-      title: 'Multiplicador de Eficiência Operacional (MOE)',
-      unit: 'x',
-      color: '#8b5cf6',
-      description: 'Evolução mensal do multiplicador de receita por custo operacional.',
-      formatter: (val) => `${val.toFixed(2)}x`
-    }
-  };
 
   const queryRecords = useMemo(() => {
     if (!allTransactionsAdjusted || allTransactionsAdjusted.length === 0) {
@@ -2284,6 +2035,511 @@ export function Dashboard() {
     }
     return list;
   }, [chartStart, chartEnd]);
+
+  // Estatísticas inteligentes dos meses anteriores para Ponto de Equilíbrio
+  const pastMonthsStats = useMemo(() => {
+    const currentMonthStr = format(new Date(), 'yyyy-MM');
+    const pastMonthMap: Record<string, Transaction[]> = {};
+
+    (allTransactionsAdjusted || []).forEach(t => {
+      const dateStr = (t as any)._dateStr || t.date.split('T')[0];
+      const monthStr = dateStr.substring(0, 7);
+      if (monthStr < currentMonthStr) {
+        if (!pastMonthMap[monthStr]) pastMonthMap[monthStr] = [];
+        pastMonthMap[monthStr].push(t);
+      }
+    });
+
+    const pastMonths = Object.keys(pastMonthMap);
+    if (pastMonths.length === 0) {
+      return {
+        hasPastData: false,
+        avgMonthlyPersonal: 0,
+        avgMonthlyOpExp: 0,
+        avgContributionMarginPct: 0.65,
+        monthsCount: 0
+      };
+    }
+
+    let totalPersonal = 0;
+    let totalIncome = 0;
+    let totalOpExp = 0;
+    let validMonthsCount = 0;
+
+    pastMonths.forEach(mStr => {
+      const txs = pastMonthMap[mStr];
+      const totals = calcTotals(txs);
+      const inc = totals.income + (totals.rendimentosReserva || 0);
+      const per = totals.perExp || 0;
+      const op = totals.opExpPuro || 0;
+      
+      if (inc > 0 || per > 0 || op > 0) {
+        totalPersonal += per;
+        totalIncome += inc;
+        totalOpExp += op;
+        validMonthsCount++;
+      }
+    });
+
+    const count = validMonthsCount > 0 ? validMonthsCount : 1;
+    const avgMonthlyPersonal = totalPersonal / count;
+    const avgMonthlyOpExp = totalOpExp / count;
+    const pastMargin = totalIncome > 0 ? (totalIncome - totalOpExp) / totalIncome : 0.65;
+    const avgContributionMarginPct = pastMargin > 0.15 && pastMargin < 0.95 ? pastMargin : 0.65;
+
+    return {
+      hasPastData: validMonthsCount > 0,
+      avgMonthlyPersonal,
+      avgMonthlyOpExp,
+      avgContributionMarginPct,
+      monthsCount: validMonthsCount
+    };
+  }, [allTransactionsAdjusted, calcTotals]);
+
+  // Índices Fundamentalistas e de Desempenho Operacional
+  const fundamentalIndexes = useMemo(() => {
+    const kmTotal = summary.km || 0;
+    const fatTotal = (summary.totalIncome || 0) + (summary.rendimentosReserva || 0);
+    const opPuro = summary.opExpensePuro || 0;
+    const fuelExpense = summary.fuelExpense || 0;
+    const tollExpense = summary.tollExpense || 0;
+    const fuelAndToll = fuelExpense + tollExpense;
+    // Manutenção & Peças: Todas as despesas operacionais do veículo MENOS combustível e pedágio
+    const outrasOpExpense = Math.max(0, opPuro - fuelAndToll);
+    const despesaPessoal = Math.max(0, summary.perExpense || 0);
+    const despesaTotal = opPuro + despesaPessoal;
+    
+    // Lucro Líquido Real Patrimonial (sem a distorção da variação de fluxo de caixa por aportes em reserva)
+    const lucroLiquido = summary.netProfitPatrimony !== undefined ? summary.netProfitPatrimony : (summary.netProfit || 0);
+    const lucroOperacional = fatTotal - opPuro; // EBITDA Operacional do Veículo
+    const reservasGuarda = totalInReserves || 0;
+
+    // 1. Margem Líquida Consolidada (%)
+    const margemLiquida = fatTotal > 0 ? (lucroLiquido / fatTotal) * 100 : 0;
+
+    // 2. Margem Operacional / EBITDA Veicular (%)
+    const margemOperacional = fatTotal > 0 ? (lucroOperacional / fatTotal) * 100 : 0;
+
+    // 3. Indicadores Unitários por Quilômetro (R$/km)
+    const rpk = kmTotal > 0 ? fatTotal / kmTotal : 0;
+    const cpk = kmTotal > 0 ? opPuro / kmTotal : 0;
+    const lpk = kmTotal > 0 ? lucroLiquido / kmTotal : 0;
+    const lopk = kmTotal > 0 ? lucroOperacional / kmTotal : 0;
+    const cpkCombustivel = kmTotal > 0 ? fuelAndToll / kmTotal : 0;
+    const cpkManutencao = kmTotal > 0 ? outrasOpExpense / kmTotal : 0;
+    const maintenancePerKm = cpkManutencao;
+
+    const cpkOutrosOp = cpkManutencao;
+    const personalPerKm = kmTotal > 0 ? despesaPessoal / kmTotal : 0;
+
+    // 4. Multiplicador de Eficiência Operacional (MOE)
+    const moe = opPuro > 0 ? fatTotal / opPuro : 0;
+
+    // 5. Cobertura da Reserva Operacional
+    const coberturaReservaOp = opPuro > 0 ? reservasGuarda / opPuro : (reservasGuarda > 0 ? 99 : 0);
+
+    // 6. Taxas de Comprometimento (% Receita)
+    const fuelRatio = fatTotal > 0 ? (fuelAndToll / fatTotal) * 100 : 0;
+    const maintenanceRatio = fatTotal > 0 ? (outrasOpExpense / fatTotal) * 100 : 0;
+    const personalRatio = fatTotal > 0 ? (despesaPessoal / fatTotal) * 100 : 0;
+    const personalMargin = fatTotal > 0 ? ((fatTotal - despesaPessoal) / fatTotal) * 100 : 100;
+    const otherOpRatio = maintenanceRatio;
+    const opRatio = fatTotal > 0 ? (opPuro / fatTotal) * 100 : 0;
+
+    // 7. Produtividade por Dia Ativo Trabalhado
+    let activeDaysCount = 0;
+    (dayList || []).forEach(d => {
+      const dStr = format(d, 'yyyy-MM-dd');
+      const dTxs = txsByDate[dStr] || [];
+      const hasAct = dTxs.some(t => t.type === 'income' || (t.category && settings?.categories_with_km?.includes(t.category)) || Number(t.amount) > 0);
+      if (hasAct) activeDaysCount++;
+    });
+    const fatPerActiveDay = activeDaysCount > 0 ? fatTotal / activeDaysCount : 0;
+    const lucroPerActiveDay = activeDaysCount > 0 ? lucroLiquido / activeDaysCount : 0;
+    const kmPerActiveDay = activeDaysCount > 0 ? kmTotal / activeDaysCount : 0;
+
+    // 8. Cobertura de KM pela Reserva de Manutenção
+    const maintReserve = (reserves || []).find(r => r.name.toLowerCase().includes('manut') || r.regra_tipo === 'km');
+    const maintReserveBalance = maintReserve?.saldo_atual || 0;
+    const maintRuleCostKm = maintReserve?.regra_valor || 0.15;
+    const kmCobertosManutencao = maintRuleCostKm > 0 ? Math.floor(maintReserveBalance / maintRuleCostKm) : 0;
+
+    // 9. Ponto de Equilíbrio Financeiro Inteligente (Breakeven):
+    // Considera os custos fixos pessoais projetados com base no histórico real dos meses anteriores
+    const periodDays = Math.max(1, (dayList || []).length);
+    const periodRatio = periodDays / 30; // Proporção em relação a 1 mês típico
+
+    const basePastPersonalTarget = pastMonthsStats.hasPastData && pastMonthsStats.avgMonthlyPersonal > 0
+      ? pastMonthsStats.avgMonthlyPersonal * periodRatio
+      : 0;
+
+    // Despesa pessoal requerida (o maior entre o já gasto no período ou o custo de vida histórico proporcional)
+    const basePersonalRequired = Math.max(despesaPessoal, basePastPersonalTarget);
+
+    // Margem de contribuição operacional efetiva (o que sobra após combustível, pedágio e manutenção)
+    const currentMargemContribucaoPct = fatTotal > 0 ? (fatTotal - opPuro) / fatTotal : 0;
+    const effectiveContribMarginPct = (currentMargemContribucaoPct > 0.15 && currentMargemContribucaoPct < 0.95)
+      ? currentMargemContribucaoPct
+      : pastMonthsStats.avgContributionMarginPct;
+
+    // Faturamento de equilíbrio necessário para cobrir os custos operacionais e pessoais
+    const fatBreakeven = effectiveContribMarginPct > 0 
+      ? (basePersonalRequired / effectiveContribMarginPct)
+      : (basePersonalRequired + opPuro);
+
+    const mcoKm = rpk - cpk;
+    const kmBreakevenTotal = mcoKm > 0 ? (fatBreakeven / (rpk > 0 ? rpk : 1.5)) : 0;
+    const breakevenProgress = fatBreakeven > 0 ? Math.min(200, (fatTotal / fatBreakeven) * 100) : (fatTotal > 0 ? 100 : 0);
+
+    return {
+      kmTotal,
+      fatTotal,
+      opPuro,
+      fuelExpense,
+      tollExpense,
+      fuelAndToll,
+      maintenanceExpense: outrasOpExpense,
+      otherOpExpense: outrasOpExpense,
+      opRatio,
+      otherOpRatio,
+      despesaPessoal,
+      despesaTotal,
+      lucroLiquido,
+      lucroOperacional,
+      reservasGuarda,
+      margemLiquida,
+      margemOperacional,
+      cpk,
+      cpkCombustivel,
+      cpkManutencao,
+      cpkOutrosOp,
+      rpk,
+      lpk,
+      lopk,
+      moe,
+      coberturaReservaOp,
+      fuelRatio,
+      personalRatio,
+      personalMargin,
+      maintenanceRatio,
+      personalPerKm,
+      maintenancePerKm,
+      activeDaysCount,
+      fatPerActiveDay,
+      lucroPerActiveDay,
+      kmPerActiveDay,
+      maintReserveBalance,
+      kmCobertosManutencao,
+      kmBreakevenTotal,
+      fatBreakeven,
+      breakevenProgress,
+      basePastPersonalTarget,
+      hasPastMonthsRef: pastMonthsStats.hasPastData,
+      pastMonthsCount: pastMonthsStats.monthsCount,
+      avgMonthlyPersonal: pastMonthsStats.avgMonthlyPersonal,
+      effectiveContribMarginPct
+    };
+  }, [summary, totalInReserves, dayList, txsByDate, settings, reserves, pastMonthsStats]);
+
+  // Histórico Mensal Consolidado com datas precisas (estritamente até o mês atual)
+  const fundamentalMonthlyHistory = useMemo(() => {
+    const currentMonthStr = format(new Date(), 'yyyy-MM');
+    const monthMap: Record<string, Transaction[]> = {};
+    (allTransactionsAdjusted || []).forEach(t => {
+      const dateStr = (t as any)._dateStr || t.date.split('T')[0];
+      const monthStr = dateStr.substring(0, 7);
+      if (monthStr < '2026-03') return; // Exibir a partir de março de 2026
+      if (monthStr > currentMonthStr) return; // Não incluir meses futuros (como dezembro/2026 ou 2027)
+      if (!monthMap[monthStr]) monthMap[monthStr] = [];
+      monthMap[monthStr].push(t);
+    });
+
+    const sortedMonths = Object.keys(monthMap)
+      .filter(m => m <= currentMonthStr)
+      .sort();
+
+    return sortedMonths.map(monthStr => {
+      const monthTxs = monthMap[monthStr];
+      const totals = calcTotals(monthTxs);
+      const kmTotal = totals.km || 0;
+      const fatTotal = totals.income + (totals.rendimentosReserva || 0);
+      const opPuro = totals.opExpPuro || 0;
+      const fuelAndToll = (totals.fuelExpense || 0) + (totals.tollExpense || 0);
+      const outrasOp = Math.max(0, opPuro - fuelAndToll);
+      const perExp = Math.max(0, totals.perExp || 0);
+
+      const lucroLiquido = totals.net + totals.reserveAporte + (totals.rendimentosReserva || 0) - (totals.totalVendaInvestimento || 0);
+      const lucroOperacional = fatTotal - opPuro;
+
+      // Unique days with activity in that month
+      const activeDaysInMonth = new Set(
+        monthTxs
+          .filter(t => t.type === 'income' || Number(t.amount) > 0 || (t.category && settings?.categories_with_km?.includes(t.category)))
+          .map(t => (t as any)._dateStr || t.date.split('T')[0])
+      ).size;
+
+      const rpk = kmTotal > 0 ? fatTotal / kmTotal : 0;
+      const cpk = kmTotal > 0 ? opPuro / kmTotal : 0;
+      const lpk = kmTotal > 0 ? lucroLiquido / kmTotal : 0;
+      const cpkCombustivel = kmTotal > 0 ? fuelAndToll / kmTotal : 0;
+      const cpkManutencao = kmTotal > 0 ? outrasOp / kmTotal : 0;
+      const margemLiquida = fatTotal > 0 ? (lucroLiquido / fatTotal) * 100 : 0;
+      const margemOperacional = fatTotal > 0 ? (lucroOperacional / fatTotal) * 100 : 0;
+      const fuelRatio = fatTotal > 0 ? (fuelAndToll / fatTotal) * 100 : 0;
+      const maintenanceRatio = fatTotal > 0 ? (outrasOp / fatTotal) * 100 : 0;
+      const personalRatio = fatTotal > 0 ? (perExp / fatTotal) * 100 : 0;
+      const moe = opPuro > 0 ? fatTotal / opPuro : 0;
+      const fatPerActiveDay = activeDaysInMonth > 0 ? fatTotal / activeDaysInMonth : 0;
+      const lucroPerActiveDay = activeDaysInMonth > 0 ? lucroLiquido / activeDaysInMonth : 0;
+
+      const [year, month] = monthStr.split('-');
+      const dateObj = new Date(Number(year), Number(month) - 1, 1, 12, 0, 0);
+      const rawShort = format(dateObj, 'MMM', { locale: ptBR }).replace('.', '');
+      const label = `${rawShort.charAt(0).toUpperCase() + rawShort.slice(1)}/${year.slice(2)}`;
+      const fullLabel = format(dateObj, "MMMM 'de' yyyy", { locale: ptBR });
+
+      return {
+        key: monthStr,
+        label,
+        fullLabel: fullLabel.charAt(0).toUpperCase() + fullLabel.slice(1),
+        rpk: Number(rpk.toFixed(2)),
+        cpk: Number(cpk.toFixed(2)),
+        lpk: Number(lpk.toFixed(2)),
+        cpkCombustivel: Number(cpkCombustivel.toFixed(2)),
+        cpkManutencao: Number(cpkManutencao.toFixed(2)),
+        margemLiquida: Number(margemLiquida.toFixed(1)),
+        margemOperacional: Number(margemOperacional.toFixed(1)),
+        fuelRatio: Number(fuelRatio.toFixed(1)),
+        maintenanceRatio: Number(maintenanceRatio.toFixed(1)),
+        personalRatio: Number(personalRatio.toFixed(1)),
+        fatPerActiveDay: Number(fatPerActiveDay.toFixed(2)),
+        lucroPerActiveDay: Number(lucroPerActiveDay.toFixed(2)),
+        moe: Number(moe.toFixed(2)),
+        kmTotal,
+        fatTotal,
+        lucroLiquido,
+        activeDays: activeDaysInMonth,
+        txCount: monthTxs.length,
+        hasActivity: monthTxs.length > 0
+      };
+    });
+  }, [allTransactionsAdjusted, settings]);
+
+  // Histórico Diário do Período Selecionado com datas precisas (estritamente até a data atual)
+  const fundamentalDailyHistory = useMemo(() => {
+    if (!dayList || dayList.length === 0) return [];
+    const todayStr = format(new Date(), 'yyyy-MM-dd');
+
+    // Remove pontos e datas posteriores à data atual
+    const filteredDays = dayList.filter(d => {
+      const dayStr = format(d, 'yyyy-MM-dd');
+      return dayStr <= todayStr;
+    });
+
+    return filteredDays.map(d => {
+      const dayStr = format(d, 'yyyy-MM-dd');
+      const dayTxs = txsByDate[dayStr] || [];
+      const totals = calcTotals(dayTxs);
+      const kmTotal = totals.km || 0;
+      const fatTotal = totals.income + (totals.rendimentosReserva || 0);
+      const opPuro = totals.opExpPuro || 0;
+      const fuelAndToll = (totals.fuelExpense || 0) + (totals.tollExpense || 0);
+      const outrasOp = Math.max(0, opPuro - fuelAndToll);
+      const perExp = Math.max(0, totals.perExp || 0);
+
+      const lucroLiquido = totals.net + totals.reserveAporte + (totals.rendimentosReserva || 0) - (totals.totalVendaInvestimento || 0);
+      const lucroOperacional = fatTotal - opPuro;
+
+      const rpk = kmTotal > 0 ? fatTotal / kmTotal : 0;
+      const cpk = kmTotal > 0 ? opPuro / kmTotal : 0;
+      const lpk = kmTotal > 0 ? lucroLiquido / kmTotal : 0;
+      const cpkCombustivel = kmTotal > 0 ? fuelAndToll / kmTotal : 0;
+      const cpkManutencao = kmTotal > 0 ? outrasOp / kmTotal : 0;
+      const margemLiquida = fatTotal > 0 ? (lucroLiquido / fatTotal) * 100 : 0;
+      const margemOperacional = fatTotal > 0 ? (lucroOperacional / fatTotal) * 100 : 0;
+      const fuelRatio = fatTotal > 0 ? (fuelAndToll / fatTotal) * 100 : 0;
+      const maintenanceRatio = fatTotal > 0 ? (outrasOp / fatTotal) * 100 : 0;
+      const personalRatio = fatTotal > 0 ? (perExp / fatTotal) * 100 : 0;
+      const moe = opPuro > 0 ? fatTotal / opPuro : 0;
+
+      const dateLabel = format(d, 'dd/MM');
+      const rawFullDate = format(d, "EEEE, dd 'de' MMMM", { locale: ptBR });
+
+      return {
+        key: dayStr,
+        label: dateLabel,
+        fullLabel: rawFullDate.charAt(0).toUpperCase() + rawFullDate.slice(1),
+        rpk: Number(rpk.toFixed(2)),
+        cpk: Number(cpk.toFixed(2)),
+        lpk: Number(lpk.toFixed(2)),
+        cpkCombustivel: Number(cpkCombustivel.toFixed(2)),
+        cpkManutencao: Number(cpkManutencao.toFixed(2)),
+        margemLiquida: Number(margemLiquida.toFixed(1)),
+        margemOperacional: Number(margemOperacional.toFixed(1)),
+        fuelRatio: Number(fuelRatio.toFixed(1)),
+        maintenanceRatio: Number(maintenanceRatio.toFixed(1)),
+        personalRatio: Number(personalRatio.toFixed(1)),
+        fatPerActiveDay: Number(fatTotal.toFixed(2)),
+        lucroPerActiveDay: Number(lucroLiquido.toFixed(2)),
+        moe: Number(moe.toFixed(2)),
+        kmTotal,
+        fatTotal,
+        lucroLiquido,
+        activeDays: dayTxs.length > 0 ? 1 : 0,
+        txCount: dayTxs.length,
+        hasActivity: fatTotal > 0 || kmTotal > 0 || opPuro > 0
+      };
+    });
+  }, [dayList, txsByDate]);
+
+  // Histórico ativo selecionado (Diário ou Mensal)
+  const fundamentalHistory = useMemo(() => {
+    return fundamentalHistoryTimeframe === 'daily'
+      ? fundamentalDailyHistory
+      : fundamentalMonthlyHistory;
+  }, [fundamentalHistoryTimeframe, fundamentalDailyHistory, fundamentalMonthlyHistory]);
+
+  const indexMetadata: Record<string, { 
+    title: string; 
+    shortTitle: string; 
+    unit: string; 
+    category: 'km' | 'percent' | 'currency' | 'ratio'; 
+    color: string; 
+    description: string; 
+    benchmarkGood: string;
+    formatter: (val: number) => string 
+  }> = {
+    rpk: {
+      title: 'RPK - Receita por Quilômetro',
+      shortTitle: 'RPK',
+      unit: 'R$/km',
+      category: 'km',
+      color: '#06b6d4',
+      description: 'Faturamento bruto médio gerado por cada quilômetro rodado.',
+      benchmarkGood: '>= R$ 2,00/km',
+      formatter: (val) => `R$ ${val.toFixed(2)}/km`
+    },
+    cpk: {
+      title: 'CPK - Custo Operacional por KM',
+      shortTitle: 'CPK',
+      unit: 'R$/km',
+      category: 'km',
+      color: '#f59e0b',
+      description: 'Custo total veicular (combustível, pedágios, manutenção e peças) por km rodado.',
+      benchmarkGood: '<= R$ 0,40/km',
+      formatter: (val) => `R$ ${val.toFixed(2)}/km`
+    },
+    lpk: {
+      title: 'LPK - Lucro Líquido por KM',
+      shortTitle: 'LPK',
+      unit: 'R$/km',
+      category: 'km',
+      color: '#10b981',
+      description: 'Lucro líquido que sobra limpo no bolso para cada quilômetro rodado.',
+      benchmarkGood: '>= R$ 1,50/km',
+      formatter: (val) => `R$ ${val.toFixed(2)}/km`
+    },
+    cpkCombustivel: {
+      title: 'Custo Combustível & Pedágio por KM',
+      shortTitle: 'Comb. & Pedágio/KM',
+      unit: 'R$/km',
+      category: 'km',
+      color: '#f97316',
+      description: 'Despesas diretas de rodagem (postos de combustível e tarifas de pedágio) por km rodado.',
+      benchmarkGood: '<= R$ 0,28/km',
+      formatter: (val) => `R$ ${val.toFixed(2)}/km`
+    },
+    cpkManutencao: {
+      title: 'Custo Manutenção & Peças por KM',
+      shortTitle: 'Manut. & Peças/KM',
+      unit: 'R$/km',
+      category: 'km',
+      color: '#eab308',
+      description: 'Todos os custos operacionais do veículo (oficina, mecânica, peças, revisões, pneus e reparos), exceto combustível e pedágio.',
+      benchmarkGood: '<= R$ 0,15/km',
+      formatter: (val) => `R$ ${val.toFixed(2)}/km`
+    },
+    margemLiquida: {
+      title: 'Margem Líquida Consolidada',
+      shortTitle: 'Margem Líquida',
+      unit: '%',
+      category: 'percent',
+      color: '#10b981',
+      description: 'Porcentagem do faturamento bruto que vira resultado líquido retido.',
+      benchmarkGood: '>= 35%',
+      formatter: (val) => `${val.toFixed(1)}%`
+    },
+    margemOperacional: {
+      title: 'Margem Operacional Veicular (EBITDA)',
+      shortTitle: 'Margem Operacional',
+      unit: '%',
+      category: 'percent',
+      color: '#6366f1',
+      description: 'Lucro bruto da operação do veículo antes de despesas pessoais e retiradas.',
+      benchmarkGood: '>= 70%',
+      formatter: (val) => `${val.toFixed(1)}%`
+    },
+    fuelRatio: {
+      title: 'Taxa de Combustível & Pedágio (% Receita)',
+      shortTitle: 'Taxa Comb. & Pedágio',
+      unit: '%',
+      category: 'percent',
+      color: '#f97316',
+      description: 'Proporção do faturamento gasta com postos de combustível e tarifas de pedágio.',
+      benchmarkGood: '<= 22%',
+      formatter: (val) => `${val.toFixed(1)}%`
+    },
+    maintenanceRatio: {
+      title: 'Taxa de Manutenção & Peças (% Receita)',
+      shortTitle: 'Taxa Manut. & Peças',
+      unit: '%',
+      category: 'percent',
+      color: '#eab308',
+      description: 'Proporção do faturamento gasta com oficina e demais despesas operacionais da moto/veículo (sem combustível e pedágio).',
+      benchmarkGood: '<= 15%',
+      formatter: (val) => `${val.toFixed(1)}%`
+    },
+    personalRatio: {
+      title: 'Taxa de Custos Pessoais (% Receita)',
+      shortTitle: 'Taxa Pessoal',
+      unit: '%',
+      category: 'percent',
+      color: '#3b82f6',
+      description: 'Proporção da receita destinada a despesas pessoais e retiradas de casa.',
+      benchmarkGood: '<= 40%',
+      formatter: (val) => `${val.toFixed(1)}%`
+    },
+    fatPerActiveDay: {
+      title: 'Média por Dia Ativo',
+      shortTitle: 'Fat./Dia Ativo',
+      unit: 'R$/dia',
+      category: 'currency',
+      color: '#06b6d4',
+      description: 'Faturamento bruto médio nos dias em que você efetivamente trabalhou.',
+      benchmarkGood: '>= R$ 180/dia',
+      formatter: (val) => formatCurrency(val)
+    },
+    lucroPerActiveDay: {
+      title: 'Lucro por Dia Ativo',
+      shortTitle: 'Lucro/Dia Ativo',
+      unit: 'R$/dia',
+      category: 'currency',
+      color: '#10b981',
+      description: 'Lucro líquido médio nos dias trabalhados no período.',
+      benchmarkGood: '>= R$ 120/dia',
+      formatter: (val) => formatCurrency(val)
+    },
+    moe: {
+      title: 'Multiplicador de Eficiência Operacional (MOE)',
+      shortTitle: 'MOE',
+      unit: 'x',
+      category: 'ratio',
+      color: '#8b5cf6',
+      description: 'Quantos reais de receita bruta são gerados para cada R$ 1,00 gasto no veículo.',
+      benchmarkGood: '>= 2,5x',
+      formatter: (val) => `${val.toFixed(2)}x`
+    }
+  };
 
   // Determine whether to use a weekly scale.
   // We use weekly scale if the period selected represents 90 days (approx 3 months) or more.
@@ -2790,21 +3046,68 @@ export function Dashboard() {
 
   const monthlyTrend = useMemo(() => {
     const nowDate = new Date();
-    const last6Months = Array.from({ length: 6 }).map((_, i) => subMonths(nowDate, 5 - i)).filter(month => format(month, 'yyyy-MM') >= '2026-03');
-    return last6Months.map(month => {
+    const currentMonthStr = format(nowDate, 'yyyy-MM');
+
+    // Gather all distinct recorded months from transactions
+    const recordedMonthStrings = new Set<string>();
+    (allTransactionsAdjusted || []).forEach(t => {
+      const mStr = (t as any)._monthStr;
+      if (mStr && mStr.length === 7) recordedMonthStrings.add(mStr);
+    });
+
+    let monthsList: Date[] = [];
+
+    if (monthlyTrendPeriod === '6m') {
+      monthsList = Array.from({ length: 6 }).map((_, i) => subMonths(nowDate, 5 - i));
+    } else if (monthlyTrendPeriod === '12m') {
+      monthsList = Array.from({ length: 12 }).map((_, i) => subMonths(nowDate, 11 - i));
+    } else {
+      // 'all': Display from earliest recorded month (or minimum '2026-03') up to current month!
+      const sortedMonths = Array.from(recordedMonthStrings).sort();
+      const earliestStr = (sortedMonths.length > 0 && sortedMonths[0] < '2026-03')
+        ? sortedMonths[0]
+        : (sortedMonths[0] || '2026-03');
+
+      const [startYear, startMonth] = earliestStr.split('-').map(Number);
+      if (!isNaN(startYear) && !isNaN(startMonth)) {
+        let cursor = new Date(startYear, startMonth - 1, 1);
+        while (format(cursor, 'yyyy-MM') <= currentMonthStr) {
+          monthsList.push(new Date(cursor));
+          cursor = addMonths(cursor, 1);
+        }
+      }
+
+      // Guarantee at least 6 months if dataset is very short
+      if (monthsList.length < 6) {
+        monthsList = Array.from({ length: 6 }).map((_, i) => subMonths(nowDate, 5 - i));
+      }
+    }
+
+    return monthsList.map(month => {
       const monthStr = format(month, 'yyyy-MM');
       const monthTxs = (allTransactionsAdjusted || []).filter(t => (t as any)._monthStr === monthStr);
       const { income, expense, net, reserveAporte, rendimentosReserva, totalVendaInvestimento } = calcTotals(monthTxs);
+      
+      const rawMonthName = format(month, 'MMM', { locale: ptBR });
+      const monthLabel = rawMonthName.charAt(0).toUpperCase() + rawMonthName.slice(1).replace('.', '');
+      const fullLabel = format(month, 'MMMM yyyy', { locale: ptBR });
+
       return {
-        month: format(month, 'MMM', { locale: ptBR }),
+        monthKey: monthStr,
+        month: monthLabel,
+        fullMonth: fullLabel.charAt(0).toUpperCase() + fullLabel.slice(1),
         faturamento: Number((income + (rendimentosReserva || 0) + (totalVendaInvestimento || 0)).toFixed(2)),
         despesas: Number(expense.toFixed(2)),
         lucro: Number(net.toFixed(2)),
         lucroPatrimonio: Number((net + reserveAporte + (rendimentosReserva || 0) - (totalVendaInvestimento || 0)).toFixed(2)),
+        txCount: monthTxs.length,
         hasTxs: monthTxs.length > 0
       };
-    }).filter(m => m.hasTxs);
-  }, [allTransactionsAdjusted, settings]);
+    }).filter(m => {
+      if (monthlyTrendPeriod === '6m') return true;
+      return m.hasTxs || m.monthKey >= '2026-03';
+    });
+  }, [allTransactionsAdjusted, settings, monthlyTrendPeriod]);
 
   const weekdayData = useMemo(() => {
     const weekdayNames = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
@@ -3549,13 +3852,59 @@ export function Dashboard() {
       {/* Monthly Trend (Evolução Mensal) */}
       <Card className="border border-border/80 shadow-xs rounded-2xl overflow-hidden">
         <CardHeader className="pb-2">
-          <div className="flex items-center gap-2">
-            <div className="w-2.5 h-2.5 rounded-full bg-blue-500 shrink-0" />
-            <CardTitle className="text-xs sm:text-sm font-extrabold uppercase tracking-wider text-muted-foreground">
-              Evolução Mensal
-            </CardTitle>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <div className="flex items-center gap-2">
+                <div className="w-2.5 h-2.5 rounded-full bg-blue-500 shrink-0" />
+                <CardTitle className="text-xs sm:text-sm font-extrabold uppercase tracking-wider text-muted-foreground">
+                  Evolução Mensal
+                </CardTitle>
+              </div>
+              <CardDescription className="text-xs mt-0.5">
+                {monthlyTrendPeriod === '6m' 
+                  ? 'Faturamento bruto, gasto total e lucro líquido nos últimos 6 meses.' 
+                  : monthlyTrendPeriod === '12m'
+                  ? 'Faturamento bruto, gasto total e lucro líquido nos últimos 12 meses.'
+                  : 'Histórico completo de faturamento bruto, gasto total e lucro líquido (incluindo Março e Abril).'}
+              </CardDescription>
+            </div>
+
+            <div className="flex items-center gap-1 bg-muted/60 p-1 rounded-xl border border-border/60 shrink-0 self-start sm:self-auto">
+              <button
+                type="button"
+                onClick={() => handleSetMonthlyTrendPeriod('6m')}
+                className={`px-2.5 py-1 text-[11px] font-black rounded-lg transition-all cursor-pointer ${
+                  monthlyTrendPeriod === '6m'
+                    ? 'bg-background text-foreground shadow-xs ring-1 ring-border/50'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                6 Meses
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSetMonthlyTrendPeriod('12m')}
+                className={`px-2.5 py-1 text-[11px] font-black rounded-lg transition-all cursor-pointer ${
+                  monthlyTrendPeriod === '12m'
+                    ? 'bg-background text-foreground shadow-xs ring-1 ring-border/50'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                12 Meses
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSetMonthlyTrendPeriod('all')}
+                className={`px-2.5 py-1 text-[11px] font-black rounded-lg transition-all cursor-pointer ${
+                  monthlyTrendPeriod === 'all'
+                    ? 'bg-background text-foreground shadow-xs ring-1 ring-border/50'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                Desde o Início
+              </button>
+            </div>
           </div>
-          <CardDescription className="text-xs">Faturamento bruto, gasto total e lucro líquido nos últimos 6 meses.</CardDescription>
         </CardHeader>
         <CardContent className="h-[360px] w-full pt-4">
           <ResponsiveContainer width="100%" height={340}>
@@ -3566,6 +3915,7 @@ export function Dashboard() {
               <RechartsTooltip
                 contentStyle={{ backgroundColor: '#18181b', borderColor: '#27272a', borderRadius: '12px' }}
                 labelStyle={{ fontWeight: 'bold', fontSize: 12, color: '#f4f4f5' }}
+                labelFormatter={(_label, payload) => payload?.[0]?.payload?.fullMonth || _label}
                 itemStyle={{ fontSize: 12, fontWeight: 'medium' }}
                 formatter={(value: any, name: any) => [formatCurrency(Number(value)), name]}
               />
@@ -5041,18 +5391,229 @@ export function Dashboard() {
           </div>
         </CardHeader>
 
-        <CardContent className="p-3 sm:p-5 space-y-6">
-          {/* Seção 1: Lucratividade e Eficiência Global */}
+        <CardContent className="p-3.5 sm:p-5 space-y-6">
+          {/* Seção 1: Eficiência e Rentabilidade por KM (Métricas de Pista) */}
           <div className="space-y-2.5">
-            <div className="flex items-center gap-2 border-b border-border/50 pb-2">
-              <div className="w-6 h-6 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-500 font-bold">
-                <Percent className="w-3.5 h-3.5" />
+            <div className="flex items-center justify-between border-b border-border/50 pb-2">
+              <div className="flex items-center gap-2">
+                <div className="w-6 h-6 rounded-lg bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-500 font-bold">
+                  <Compass className="w-3.5 h-3.5" />
+                </div>
+                <div>
+                  <h3 className="text-xs sm:text-sm font-black uppercase tracking-wider text-foreground">
+                    Eficiência e Lucro por KM (Métricas de Pista)
+                  </h3>
+                  <p className="text-[10px] text-muted-foreground font-medium">
+                    Preço de frete, despesas de rodagem e lucro limpo no bolso por quilômetro rodado.
+                  </p>
+                </div>
               </div>
-              <h3 className="text-xs sm:text-sm font-black uppercase tracking-wider text-foreground">
-                Lucratividade e Margens Operacionais
-              </h3>
+              <span className="text-[10px] font-mono font-bold text-muted-foreground bg-muted/40 px-2 py-0.5 rounded-md border border-border/40">
+                {fundamentalIndexes.kmTotal > 0 ? `${fundamentalIndexes.kmTotal.toLocaleString('pt-BR')} km rodados` : 'Sem KM no período'}
+              </span>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-2.5">
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2 sm:gap-2.5">
+              {/* 1. RPK - Receita por KM */}
+              {(() => {
+                const rpk = fundamentalIndexes.rpk;
+                const isHigh = rpk >= 2.0;
+                const isOk = rpk >= 1.4 && rpk < 2.0;
+
+                return (
+                  <div 
+                    onClick={() => setSelectedFundamentalIndex('rpk')}
+                    className="bg-muted/20 border border-border/50 hover:border-cyan-500/60 rounded-xl p-3 space-y-1.5 transition-all cursor-pointer group/card shadow-2xs hover:scale-[1.02] active:scale-[0.98]"
+                    title="Clique para ver o gráfico e histórico deste índice"
+                  >
+                    <div className="flex items-center justify-between gap-1">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <Coins className="w-3.5 h-3.5 text-cyan-500 shrink-0" />
+                        <span className="text-[9.5px] font-extrabold uppercase tracking-wider text-muted-foreground truncate">RPK (Receita/KM)</span>
+                      </div>
+                      <span className={`text-[8.5px] font-black px-1.5 py-0.2 rounded-full border shrink-0 ${isHigh ? 'bg-emerald-500/15 text-emerald-500 border-emerald-500/30' : isOk ? 'bg-cyan-500/15 text-cyan-500 border-cyan-500/30' : 'bg-rose-500/15 text-rose-500 border-rose-500/30'}`}>
+                        {isHigh ? 'Excelente' : isOk ? 'Adequado' : 'Abaixo'}
+                      </span>
+                    </div>
+
+                    <div>
+                      <div className="text-lg sm:text-xl font-black text-cyan-500 font-mono tracking-tight flex items-center justify-between">
+                        {hideValues ? 'R$ •••••' : `${formatCurrency(rpk)}/km`}
+                        <TrendingUp className="w-3 h-3 text-cyan-500 opacity-0 group-hover/card:opacity-100 transition-opacity" />
+                      </div>
+                      <p className="text-[9.5px] text-muted-foreground font-medium leading-tight mt-0.5">
+                        Faturamento bruto por cada km percorrido.
+                      </p>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* 2. CPK - Custo Operacional por KM */}
+              {(() => {
+                const cpk = fundamentalIndexes.cpk;
+                const isLow = cpk <= 0.35;
+                const isMedium = cpk > 0.35 && cpk <= 0.50;
+
+                const badgeColor = isLow 
+                  ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30' 
+                  : isMedium 
+                    ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30'
+                    : 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30';
+
+                return (
+                  <div 
+                    onClick={() => setSelectedFundamentalIndex('cpk')}
+                    className="bg-muted/20 border border-border/50 hover:border-amber-500/60 rounded-xl p-3 space-y-1.5 transition-all cursor-pointer group/card shadow-2xs hover:scale-[1.02] active:scale-[0.98]"
+                    title="Clique para ver o gráfico e histórico deste índice"
+                  >
+                    <div className="flex items-center justify-between gap-1">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <Fuel className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                        <span className="text-[9.5px] font-extrabold uppercase tracking-wider text-muted-foreground truncate">CPK (Custo/KM)</span>
+                      </div>
+                      <span className={`text-[8.5px] font-black px-1.5 py-0.2 rounded-full border shrink-0 ${badgeColor}`}>
+                        {isLow ? 'Econômico' : isMedium ? 'Médio' : 'Elevado'}
+                      </span>
+                    </div>
+
+                    <div>
+                      <div className="text-lg sm:text-xl font-black text-amber-500 font-mono tracking-tight flex items-center justify-between">
+                        {hideValues ? 'R$ •••••' : `${formatCurrency(cpk)}/km`}
+                        <TrendingUp className="w-3 h-3 text-amber-500 opacity-0 group-hover/card:opacity-100 transition-opacity" />
+                      </div>
+                      <p className="text-[9.5px] text-muted-foreground font-medium leading-tight mt-0.5">
+                        Custo veicular direto total por km rodado.
+                      </p>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* 3. LPK - Lucro Líquido por KM */}
+              {(() => {
+                const lpk = fundamentalIndexes.lpk;
+                const isSuper = lpk >= 1.4;
+                const isPositive = lpk > 0;
+
+                return (
+                  <div 
+                    onClick={() => setSelectedFundamentalIndex('lpk')}
+                    className="bg-muted/20 border border-border/50 hover:border-emerald-500/60 rounded-xl p-3 space-y-1.5 transition-all cursor-pointer group/card shadow-2xs hover:scale-[1.02] active:scale-[0.98]"
+                    title="Clique para ver o gráfico e histórico deste índice"
+                  >
+                    <div className="flex items-center justify-between gap-1">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <Target className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                        <span className="text-[9.5px] font-extrabold uppercase tracking-wider text-muted-foreground truncate">LPK (Lucro/KM)</span>
+                      </div>
+                      <span className={`text-[8.5px] font-black px-1.5 py-0.2 rounded-full border shrink-0 ${isSuper ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' : isPositive ? 'bg-cyan-500/15 text-cyan-400 border-cyan-500/30' : 'bg-rose-500/15 text-rose-400 border-rose-500/30'}`}>
+                        {isSuper ? 'Alta Margem' : isPositive ? 'Superávit' : 'Déficit'}
+                      </span>
+                    </div>
+
+                    <div>
+                      <div className={`text-lg sm:text-xl font-black font-mono tracking-tight flex items-center justify-between ${isPositive ? 'text-emerald-500' : 'text-rose-500'}`}>
+                        {hideValues ? 'R$ •••••' : `${formatCurrency(lpk)}/km`}
+                        <TrendingUp className="w-3 h-3 text-emerald-500 opacity-0 group-hover/card:opacity-100 transition-opacity" />
+                      </div>
+                      <p className="text-[9.5px] text-muted-foreground font-medium leading-tight mt-0.5">
+                        Dinheiro líquido final no bolso por quilômetro.
+                      </p>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* 4. Combustível & Pedágio por KM */}
+              {(() => {
+                const combKm = fundamentalIndexes.cpkCombustivel;
+                const isGood = combKm <= 0.28;
+
+                return (
+                  <div 
+                    onClick={() => setSelectedFundamentalIndex('cpkCombustivel')}
+                    className="bg-muted/20 border border-border/50 hover:border-orange-500/60 rounded-xl p-3 space-y-1.5 transition-all cursor-pointer group/card shadow-2xs hover:scale-[1.02] active:scale-[0.98]"
+                    title="Clique para ver o gráfico e histórico deste índice"
+                  >
+                    <div className="flex items-center justify-between gap-1">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <Fuel className="w-3.5 h-3.5 text-orange-500 shrink-0" />
+                        <span className="text-[9.5px] font-extrabold uppercase tracking-wider text-muted-foreground truncate">Comb. & Pedágio/KM</span>
+                      </div>
+                      <span className={`text-[8.5px] font-black px-1.5 py-0.2 rounded-full border shrink-0 ${isGood ? 'bg-emerald-500/15 text-emerald-500 border-emerald-500/30' : 'bg-orange-500/15 text-orange-400 border-orange-500/30'}`}>
+                        {isGood ? 'Ótimo' : 'Regular'}
+                      </span>
+                    </div>
+
+                    <div>
+                      <div className="text-lg sm:text-xl font-black text-orange-500 font-mono tracking-tight flex items-center justify-between">
+                        {hideValues ? 'R$ •••••' : `${formatCurrency(combKm)}/km`}
+                        <TrendingUp className="w-3 h-3 text-orange-500 opacity-0 group-hover/card:opacity-100 transition-opacity" />
+                      </div>
+                      <p className="text-[9.5px] text-muted-foreground font-medium leading-tight mt-0.5">
+                        Combustível e pedágios por quilômetro rodado.
+                      </p>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* 5. Manutenção & Peças por KM */}
+              {(() => {
+                const manKm = fundamentalIndexes.cpkManutencao;
+                const isOptimal = manKm <= 0.15;
+
+                return (
+                  <div 
+                    onClick={() => setSelectedFundamentalIndex('cpkManutencao')}
+                    className="bg-muted/20 border border-border/50 hover:border-yellow-500/60 rounded-xl p-3 space-y-1.5 transition-all cursor-pointer group/card shadow-2xs hover:scale-[1.02] active:scale-[0.98]"
+                    title="Clique para ver o gráfico e histórico deste índice"
+                  >
+                    <div className="flex items-center justify-between gap-1">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <Wrench className="w-3.5 h-3.5 text-yellow-500 shrink-0" />
+                        <span className="text-[9.5px] font-extrabold uppercase tracking-wider text-muted-foreground truncate">Manut. & Peças/KM</span>
+                      </div>
+                      <span className={`text-[8.5px] font-black px-1.5 py-0.2 rounded-full border shrink-0 ${isOptimal ? 'bg-emerald-500/15 text-emerald-500 border-emerald-500/30' : 'bg-yellow-500/15 text-yellow-400 border-yellow-500/30'}`}>
+                        {isOptimal ? 'Sob Controle' : 'Atenção'}
+                      </span>
+                    </div>
+
+                    <div>
+                      <div className="text-lg sm:text-xl font-black text-yellow-500 font-mono tracking-tight flex items-center justify-between">
+                        {hideValues ? 'R$ •••••' : `${formatCurrency(manKm)}/km`}
+                        <TrendingUp className="w-3 h-3 text-yellow-500 opacity-0 group-hover/card:opacity-100 transition-opacity" />
+                      </div>
+                      <p className="text-[9.5px] text-muted-foreground font-medium leading-tight mt-0.5">
+                        Oficina, peças e revisões (sem comb./pedágio).
+                      </p>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+
+          {/* Seção 2: Margens Reais & Saúde Operacional (% Receita Bruta) */}
+          <div className="space-y-2.5">
+            <div className="flex items-center justify-between border-b border-border/50 pb-2">
+              <div className="flex items-center gap-2">
+                <div className="w-6 h-6 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-500 font-bold">
+                  <Percent className="w-3.5 h-3.5" />
+                </div>
+                <div>
+                  <h3 className="text-xs sm:text-sm font-black uppercase tracking-wider text-foreground">
+                    Margens Reais & Saúde Operacional (% Receita)
+                  </h3>
+                  <p className="text-[10px] text-muted-foreground font-medium">
+                    Proporção do faturamento retido após cada tipo de despesa do seu negócio.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2 sm:gap-2.5">
               {/* 1. Margem Líquida Consolidada */}
               {(() => {
                 const ml = fundamentalIndexes.margemLiquida;
@@ -5074,7 +5635,7 @@ export function Dashboard() {
                   <div 
                     onClick={() => setSelectedFundamentalIndex('margemLiquida')}
                     className="bg-muted/20 border border-border/50 hover:border-emerald-500/60 rounded-xl p-3 space-y-1.5 transition-all cursor-pointer group/card shadow-2xs hover:scale-[1.02] active:scale-[0.98]"
-                    title="Clique para ver o gráfico histórico mensal"
+                    title="Clique para ver o gráfico e histórico deste índice"
                   >
                     <div className="flex items-center justify-between gap-1">
                       <div className="flex items-center gap-1.5 min-w-0">
@@ -5087,7 +5648,7 @@ export function Dashboard() {
                     </div>
 
                     <div>
-                      <div className="text-lg sm:text-xl font-black text-foreground font-mono tracking-tight flex items-center justify-between">
+                      <div className="text-lg sm:text-xl font-black text-emerald-500 font-mono tracking-tight flex items-center justify-between">
                         {hideValues ? '•••%' : `${ml.toFixed(1)}%`}
                         <TrendingUp className="w-3 h-3 text-emerald-500 opacity-0 group-hover/card:opacity-100 transition-opacity" />
                       </div>
@@ -5108,19 +5669,19 @@ export function Dashboard() {
                 const badgeColor = isHigh 
                   ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30' 
                   : isOk 
-                    ? 'bg-cyan-500/15 text-cyan-600 dark:text-cyan-400 border-cyan-500/30'
-                    : 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30';
+                    ? 'bg-indigo-500/15 text-indigo-400 border-indigo-500/30'
+                    : 'bg-amber-500/15 text-amber-500 border-amber-500/30';
 
                 return (
                   <div 
                     onClick={() => setSelectedFundamentalIndex('margemOperacional')}
                     className="bg-muted/20 border border-border/50 hover:border-indigo-500/60 rounded-xl p-3 space-y-1.5 transition-all cursor-pointer group/card shadow-2xs hover:scale-[1.02] active:scale-[0.98]"
-                    title="Clique para ver o histórico mensal"
+                    title="Clique para ver o gráfico e histórico deste índice"
                   >
                     <div className="flex items-center justify-between gap-1">
                       <div className="flex items-center gap-1.5 min-w-0">
                         <TrendingUp className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
-                        <span className="text-[9.5px] font-extrabold uppercase tracking-wider text-muted-foreground truncate">Margem Operacional</span>
+                        <span className="text-[9.5px] font-extrabold uppercase tracking-wider text-muted-foreground truncate">M. Operacional</span>
                       </div>
                       <span className={`text-[8.5px] font-black px-1.5 py-0.2 rounded-full border shrink-0 ${badgeColor}`}>
                         {isHigh ? 'Eficiente' : isOk ? 'Adequada' : 'Baixa'}
@@ -5133,305 +5694,29 @@ export function Dashboard() {
                         <TrendingUp className="w-3 h-3 text-indigo-500 opacity-0 group-hover/card:opacity-100 transition-opacity" />
                       </div>
                       <p className="text-[9.5px] text-muted-foreground font-medium leading-tight mt-0.5">
-                        Resultado operacional pré-retiradas.
+                        Resultado veicular pré-retiradas de casa.
                       </p>
                     </div>
                   </div>
                 );
               })()}
 
-              {/* 3. Margem Pessoal */}
-              {(() => {
-                const mp = fundamentalIndexes.personalMargin;
-                const isControlled = mp >= 70;
-                const isModerate = mp >= 50 && mp < 70;
-
-                return (
-                  <div 
-                    onClick={() => setSelectedFundamentalIndex('personalMargin')}
-                    className="bg-muted/20 border border-border/50 hover:border-sky-500/60 rounded-xl p-3 space-y-1.5 transition-all cursor-pointer group/card shadow-2xs hover:scale-[1.02] active:scale-[0.98]"
-                    title="Clique para ver o histórico mensal"
-                  >
-                    <div className="flex items-center justify-between gap-1">
-                      <div className="flex items-center gap-1.5 min-w-0">
-                        <User className="w-3.5 h-3.5 text-sky-400 shrink-0" />
-                        <span className="text-[9.5px] font-extrabold uppercase tracking-wider text-muted-foreground truncate">Margem Pessoal</span>
-                      </div>
-                      <span className={`text-[8.5px] font-black px-1.5 py-0.2 rounded-full border shrink-0 ${isControlled ? 'bg-emerald-500/15 text-emerald-500 border-emerald-500/30' : isModerate ? 'bg-sky-500/15 text-sky-400 border-sky-500/30' : 'bg-rose-500/15 text-rose-500 border-rose-500/30'}`}>
-                        {isControlled ? 'Preservada' : isModerate ? 'Moderada' : 'Apertada'}
-                      </span>
-                    </div>
-
-                    <div>
-                      <div className="text-lg sm:text-xl font-black text-sky-400 font-mono tracking-tight flex items-center justify-between">
-                        {hideValues ? '•••%' : `${mp.toFixed(1)}%`}
-                        <TrendingUp className="w-3 h-3 text-sky-400 opacity-0 group-hover/card:opacity-100 transition-opacity" />
-                      </div>
-                      <p className="text-[9.5px] text-muted-foreground font-medium leading-tight mt-0.5">
-                        Proporção da receita bruta que resta após despesas pessoais.
-                      </p>
-                    </div>
-                  </div>
-                );
-              })()}
-
-              {/* 4. Eficiência Operacional (MOE / Multiplicador) */}
-              {(() => {
-                const moe = fundamentalIndexes.moe;
-                const isStrong = moe >= 3.0;
-                const isOk = moe >= 2.0 && moe < 3.0;
-
-                return (
-                  <div 
-                    onClick={() => setSelectedFundamentalIndex('moe')}
-                    className="bg-muted/20 border border-border/50 hover:border-indigo-500/60 rounded-xl p-3 space-y-1.5 transition-all cursor-pointer group/card shadow-2xs hover:scale-[1.02] active:scale-[0.98]"
-                    title="Clique para ver o histórico mensal"
-                  >
-                    <div className="flex items-center justify-between gap-1">
-                      <div className="flex items-center gap-1.5 min-w-0">
-                        <Zap className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
-                        <span className="text-[9.5px] font-extrabold uppercase tracking-wider text-muted-foreground truncate">MOE (Multiplicador)</span>
-                      </div>
-                      <span className={`text-[8.5px] font-black px-1.5 py-0.2 rounded-full border shrink-0 ${isStrong ? 'bg-indigo-500/15 text-indigo-500 border-indigo-500/30' : isOk ? 'bg-cyan-500/15 text-cyan-500 border-cyan-500/30' : 'bg-amber-500/15 text-amber-500 border-amber-500/30'}`}>
-                        {isStrong ? 'Alta Eficiência' : isOk ? 'Adequado' : 'Abaixo'}
-                      </span>
-                    </div>
-
-                    <div>
-                      <div className="text-lg sm:text-xl font-black text-indigo-500 font-mono tracking-tight flex items-center justify-between">
-                        {hideValues ? '•••x' : `${moe.toFixed(2)}x`}
-                        <TrendingUp className="w-3 h-3 text-indigo-500 opacity-0 group-hover/card:opacity-100 transition-opacity" />
-                      </div>
-                      <p className="text-[9.5px] text-muted-foreground font-medium leading-tight mt-0.5">
-                        Receita gerada por R$ 1,00 de custo operacional.
-                      </p>
-                    </div>
-                  </div>
-                );
-              })()}
-            </div>
-          </div>
-
-          {/* Seção 2: Desempenho e Custos por Quilômetro (por KM) */}
-          <div className="space-y-2.5">
-            <div className="flex items-center gap-2 border-b border-border/50 pb-2">
-              <div className="w-6 h-6 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-500 font-bold">
-                <Fuel className="w-3.5 h-3.5" />
-              </div>
-              <h3 className="text-xs sm:text-sm font-black uppercase tracking-wider text-foreground">
-                Indicadores Unitários por Quilômetro (por KM)
-              </h3>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2 sm:gap-2.5">
-              {/* 1. RPK - Receita por KM */}
-              {(() => {
-                const rpk = fundamentalIndexes.rpk;
-                const isHigh = rpk >= 2.0;
-                const isOk = rpk >= 1.2 && rpk < 2.0;
-
-                return (
-                  <div 
-                    onClick={() => setSelectedFundamentalIndex('rpk')}
-                    className="bg-muted/20 border border-border/50 hover:border-cyan-500/60 rounded-xl p-3 space-y-1.5 transition-all cursor-pointer group/card shadow-2xs hover:scale-[1.02] active:scale-[0.98]"
-                    title="Clique para ver o histórico mensal"
-                  >
-                    <div className="flex items-center justify-between gap-1">
-                      <div className="flex items-center gap-1.5 min-w-0">
-                        <Coins className="w-3.5 h-3.5 text-cyan-500 shrink-0" />
-                        <span className="text-[9.5px] font-extrabold uppercase tracking-wider text-muted-foreground truncate">RPK (Receita/KM)</span>
-                      </div>
-                      <span className={`text-[8.5px] font-black px-1.5 py-0.2 rounded-full border shrink-0 ${isHigh ? 'bg-emerald-500/15 text-emerald-500 border-emerald-500/30' : isOk ? 'bg-cyan-500/15 text-cyan-500 border-cyan-500/30' : 'bg-rose-500/15 text-rose-500 border-rose-500/30'}`}>
-                        {isHigh ? 'Alto' : isOk ? 'Regular' : 'Baixo'}
-                      </span>
-                    </div>
-
-                    <div>
-                      <div className="text-lg sm:text-xl font-black text-cyan-500 font-mono tracking-tight flex items-center justify-between">
-                        {hideValues ? 'R$ •••••' : `${formatCurrency(rpk)}/km`}
-                        <TrendingUp className="w-3 h-3 text-cyan-500 opacity-0 group-hover/card:opacity-100 transition-opacity" />
-                      </div>
-                      <p className="text-[9.5px] text-muted-foreground font-medium leading-tight mt-0.5">
-                        Faturamento bruto por quilômetro rodado.
-                      </p>
-                    </div>
-                  </div>
-                );
-              })()}
-
-              {/* 2. LPK - Lucro Líquido por KM */}
-              {(() => {
-                const lpk = fundamentalIndexes.lpk;
-                const isPositive = lpk > 0;
-
-                return (
-                  <div 
-                    onClick={() => setSelectedFundamentalIndex('lpk')}
-                    className="bg-muted/20 border border-border/50 hover:border-emerald-500/60 rounded-xl p-3 space-y-1.5 transition-all cursor-pointer group/card shadow-2xs hover:scale-[1.02] active:scale-[0.98]"
-                    title="Clique para ver o histórico mensal"
-                  >
-                    <div className="flex items-center justify-between gap-1">
-                      <div className="flex items-center gap-1.5 min-w-0">
-                        <Target className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-                        <span className="text-[9.5px] font-extrabold uppercase tracking-wider text-muted-foreground truncate">LPK (Lucro/KM)</span>
-                      </div>
-                      <span className={`text-[8.5px] font-black px-1.5 py-0.2 rounded-full border shrink-0 ${isPositive ? 'bg-emerald-500/15 text-emerald-500 border-emerald-500/30' : 'bg-rose-500/15 text-rose-500 border-rose-500/30'}`}>
-                        {isPositive ? 'Superávit' : 'Déficit'}
-                      </span>
-                    </div>
-
-                    <div>
-                      <div className={`text-lg sm:text-xl font-black font-mono tracking-tight flex items-center justify-between ${isPositive ? 'text-emerald-500' : 'text-rose-500'}`}>
-                        {hideValues ? 'R$ •••••' : `${formatCurrency(lpk)}/km`}
-                        <TrendingUp className="w-3 h-3 text-emerald-500 opacity-0 group-hover/card:opacity-100 transition-opacity" />
-                      </div>
-                      <p className="text-[9.5px] text-muted-foreground font-medium leading-tight mt-0.5">
-                        Resultado líquido final por quilômetro rodado.
-                      </p>
-                    </div>
-                  </div>
-                );
-              })()}
-
-              {/* 3. PPK - Custo Pessoal por KM */}
-              {(() => {
-                const ppk = fundamentalIndexes.personalPerKm;
-
-                return (
-                  <div 
-                    onClick={() => setSelectedFundamentalIndex('personalPerKm')}
-                    className="bg-muted/20 border border-border/50 hover:border-sky-500/60 rounded-xl p-3 space-y-1.5 transition-all cursor-pointer group/card shadow-2xs hover:scale-[1.02] active:scale-[0.98]"
-                    title="Clique para ver o histórico mensal"
-                  >
-                    <div className="flex items-center justify-between gap-1">
-                      <div className="flex items-center gap-1.5 min-w-0">
-                        <User className="w-3.5 h-3.5 text-sky-400 shrink-0" />
-                        <span className="text-[9.5px] font-extrabold uppercase tracking-wider text-muted-foreground truncate">PPK (Pessoal/KM)</span>
-                      </div>
-                      <span className="text-[8.5px] font-black px-1.5 py-0.2 rounded-full border border-sky-500/30 bg-sky-500/15 text-sky-400 shrink-0">
-                        Unitário
-                      </span>
-                    </div>
-
-                    <div>
-                      <div className="text-lg sm:text-xl font-black text-sky-400 font-mono tracking-tight flex items-center justify-between">
-                        {hideValues ? 'R$ •••••' : `${formatCurrency(ppk)}/km`}
-                        <TrendingUp className="w-3 h-3 text-sky-400 opacity-0 group-hover/card:opacity-100 transition-opacity" />
-                      </div>
-                      <p className="text-[9.5px] text-muted-foreground font-medium leading-tight mt-0.5">
-                        Despesa pessoal gerada por quilômetro.
-                      </p>
-                    </div>
-                  </div>
-                );
-              })()}
-
-              {/* 4. CPK - Custo Operacional por KM */}
-              {(() => {
-                const cpk = fundamentalIndexes.cpk;
-                const isLow = cpk <= 0.30;
-                const isMedium = cpk > 0.30 && cpk <= 0.50;
-
-                const badgeColor = isLow 
-                  ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30' 
-                  : isMedium 
-                    ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30'
-                    : 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30';
-
-                const cpkCombAndOther = fundamentalIndexes.cpkCombustivel + fundamentalIndexes.cpkOutrosOp;
-
-                return (
-                  <div 
-                    onClick={() => setSelectedFundamentalIndex('cpk')}
-                    className="bg-muted/20 border border-border/50 hover:border-amber-500/60 rounded-xl p-3 space-y-1.5 transition-all cursor-pointer group/card shadow-2xs hover:scale-[1.02] active:scale-[0.98]"
-                    title="Clique para ver o histórico mensal"
-                  >
-                    <div className="flex items-center justify-between gap-1">
-                      <div className="flex items-center gap-1.5 min-w-0">
-                        <Fuel className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-                        <span className="text-[9.5px] font-extrabold uppercase tracking-wider text-muted-foreground truncate">CPK (Custo/KM)</span>
-                      </div>
-                      <span className={`text-[8.5px] font-black px-1.5 py-0.2 rounded-full border shrink-0 ${badgeColor}`}>
-                        {isLow ? 'Otimizado' : isMedium ? 'Médio' : 'Elevado'}
-                      </span>
-                    </div>
-
-                    <div>
-                      <div className="text-lg sm:text-xl font-black text-amber-500 font-mono tracking-tight flex items-center justify-between">
-                        {hideValues ? 'R$ •••••' : `${formatCurrency(cpk)}/km`}
-                        <TrendingUp className="w-3 h-3 text-amber-500 opacity-0 group-hover/card:opacity-100 transition-opacity" />
-                      </div>
-                      <p className="text-[9.5px] text-muted-foreground font-medium leading-tight mt-0.5">
-                        {fundamentalIndexes.kmTotal > 0 ? (
-                          <>c+o: <span className="font-mono text-foreground">{hideValues ? '••' : formatCurrency(cpkCombAndOther)}</span> | m: <span className="font-mono text-foreground">{hideValues ? '••' : formatCurrency(fundamentalIndexes.cpkManutencao)}</span></>
-                        ) : 'Sem registro de KM'}
-                      </p>
-                    </div>
-                  </div>
-                );
-              })()}
-
-              {/* 5. MPK - Custo de Manutenção por KM */}
-              {(() => {
-                const mpk = fundamentalIndexes.maintenancePerKm;
-
-                return (
-                  <div 
-                    onClick={() => setSelectedFundamentalIndex('maintenancePerKm')}
-                    className="bg-muted/20 border border-border/50 hover:border-amber-400/60 rounded-xl p-3 space-y-1.5 transition-all cursor-pointer group/card shadow-2xs hover:scale-[1.02] active:scale-[0.98]"
-                    title="Clique para ver o histórico mensal"
-                  >
-                    <div className="flex items-center justify-between gap-1">
-                      <div className="flex items-center gap-1.5 min-w-0">
-                        <Wrench className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                        <span className="text-[9.5px] font-extrabold uppercase tracking-wider text-muted-foreground truncate">MPK (Manutenção/KM)</span>
-                      </div>
-                      <span className="text-[8.5px] font-black px-1.5 py-0.2 rounded-full border border-amber-400/30 bg-amber-400/15 text-amber-400 shrink-0">
-                        Unitário
-                      </span>
-                    </div>
-
-                    <div>
-                      <div className="text-lg sm:text-xl font-black text-amber-400 font-mono tracking-tight flex items-center justify-between">
-                        {hideValues ? 'R$ •••••' : `${formatCurrency(mpk)}/km`}
-                        <TrendingUp className="w-3 h-3 text-amber-400 opacity-0 group-hover/card:opacity-100 transition-opacity" />
-                      </div>
-                      <p className="text-[9.5px] text-muted-foreground font-medium leading-tight mt-0.5">
-                        Custo de manutenção por quilômetro.
-                      </p>
-                    </div>
-                  </div>
-                );
-              })()}
-            </div>
-          </div>
-
-          {/* Seção 3: Proporções e Comprometimento da Receita (% Receita) */}
-          <div className="space-y-2.5">
-            <div className="flex items-center gap-2 border-b border-border/50 pb-2">
-              <div className="w-6 h-6 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-500 font-bold">
-                <Coins className="w-3.5 h-3.5" />
-              </div>
-              <h3 className="text-xs sm:text-sm font-black uppercase tracking-wider text-foreground">
-                Comprometimento e Taxas (% da Receita Bruta)
-              </h3>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-2.5">
-              {/* 1. Comprometimento de Combustível + Outros */}
+              {/* 3. Taxa de Combustível & Pedágio */}
               {(() => {
                 const fr = fundamentalIndexes.fuelRatio;
-                const isOptimal = fr <= 20;
-                const isModerate = fr > 20 && fr <= 35;
+                const isOptimal = fr <= 22;
+                const isModerate = fr > 22 && fr <= 30;
 
                 return (
                   <div 
                     onClick={() => setSelectedFundamentalIndex('fuelRatio')}
-                    className="bg-muted/20 border border-border/50 hover:border-amber-500/60 rounded-xl p-3 space-y-1.5 transition-all cursor-pointer group/card shadow-2xs hover:scale-[1.02] active:scale-[0.98]"
-                    title="Clique para ver o histórico mensal"
+                    className="bg-muted/20 border border-border/50 hover:border-orange-500/60 rounded-xl p-3 space-y-1.5 transition-all cursor-pointer group/card shadow-2xs hover:scale-[1.02] active:scale-[0.98]"
+                    title="Clique para ver o gráfico e histórico deste índice"
                   >
                     <div className="flex items-center justify-between gap-1">
                       <div className="flex items-center gap-1.5 min-w-0">
-                        <Fuel className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-                        <span className="text-[9.5px] font-extrabold uppercase tracking-wider text-muted-foreground truncate">Taxa Comb. + Outros/Pedágio</span>
+                        <Fuel className="w-3.5 h-3.5 text-orange-500 shrink-0" />
+                        <span className="text-[9.5px] font-extrabold uppercase tracking-wider text-muted-foreground truncate">Taxa Comb. & Pedágio</span>
                       </div>
                       <span className={`text-[8.5px] font-black px-1.5 py-0.2 rounded-full border shrink-0 ${isOptimal ? 'bg-emerald-500/15 text-emerald-500 border-emerald-500/30' : isModerate ? 'bg-amber-500/15 text-amber-500 border-amber-500/30' : 'bg-rose-500/15 text-rose-500 border-rose-500/30'}`}>
                         {isOptimal ? 'Sob Controle' : isModerate ? 'Moderado' : 'Aumento'}
@@ -5439,69 +5724,34 @@ export function Dashboard() {
                     </div>
 
                     <div>
-                      <div className="text-lg sm:text-xl font-black text-amber-500 font-mono tracking-tight flex items-center justify-between">
+                      <div className="text-lg sm:text-xl font-black text-orange-500 font-mono tracking-tight flex items-center justify-between">
                         {hideValues ? '•••%' : `${fr.toFixed(1)}%`}
-                        <TrendingUp className="w-3 h-3 text-amber-500 opacity-0 group-hover/card:opacity-100 transition-opacity" />
+                        <TrendingUp className="w-3 h-3 text-orange-500 opacity-0 group-hover/card:opacity-100 transition-opacity" />
                       </div>
                       <p className="text-[9.5px] text-muted-foreground font-medium leading-tight mt-0.5">
-                        Combustível + outras despesas operacionais/pedágio (% da receita).
+                        % da receita gasta com abastecimento e pedágios.
                       </p>
                     </div>
                   </div>
                 );
               })()}
 
-              {/* 2. Taxa de Custos Pessoais */}
-              {(() => {
-                const pr = fundamentalIndexes.personalRatio;
-                const isGood = pr <= 30;
-                const isMed = pr > 30 && pr <= 50;
-
-                return (
-                  <div 
-                    onClick={() => setSelectedFundamentalIndex('personalRatio')}
-                    className="bg-muted/20 border border-border/50 hover:border-blue-500/60 rounded-xl p-3 space-y-1.5 transition-all cursor-pointer group/card shadow-2xs hover:scale-[1.02] active:scale-[0.98]"
-                    title="Clique para ver o histórico mensal"
-                  >
-                    <div className="flex items-center justify-between gap-1">
-                      <div className="flex items-center gap-1.5 min-w-0">
-                        <User className="w-3.5 h-3.5 text-blue-500 shrink-0" />
-                        <span className="text-[9.5px] font-extrabold uppercase tracking-wider text-muted-foreground truncate">Taxa Custos Pessoais</span>
-                      </div>
-                      <span className={`text-[8.5px] font-black px-1.5 py-0.2 rounded-full border shrink-0 ${isGood ? 'bg-emerald-500/15 text-emerald-500 border-emerald-500/30' : isMed ? 'bg-blue-500/15 text-blue-500 border-blue-500/30' : 'bg-rose-500/15 text-rose-500 border-rose-500/30'}`}>
-                        {isGood ? 'Controlado' : isMed ? 'Moderado' : 'Elevado'}
-                      </span>
-                    </div>
-
-                    <div>
-                      <div className="text-lg sm:text-xl font-black text-blue-500 font-mono tracking-tight flex items-center justify-between">
-                        {hideValues ? '•••%' : `${pr.toFixed(1)}%`}
-                        <TrendingUp className="w-3 h-3 text-blue-500 opacity-0 group-hover/card:opacity-100 transition-opacity" />
-                      </div>
-                      <p className="text-[9.5px] text-muted-foreground font-medium leading-tight mt-0.5">
-                        Proporção da receita para despesas pessoais.
-                      </p>
-                    </div>
-                  </div>
-                );
-              })()}
-
-              {/* 3. Taxa de Custos de Manutenção */}
+              {/* 4. Taxa de Manutenção & Peças */}
               {(() => {
                 const mr = fundamentalIndexes.maintenanceRatio;
-                const isLow = mr <= 15;
-                const isMid = mr > 15 && mr <= 25;
+                const isLow = mr <= 12;
+                const isMid = mr > 12 && mr <= 20;
 
                 return (
                   <div 
                     onClick={() => setSelectedFundamentalIndex('maintenanceRatio')}
                     className="bg-muted/20 border border-border/50 hover:border-yellow-500/60 rounded-xl p-3 space-y-1.5 transition-all cursor-pointer group/card shadow-2xs hover:scale-[1.02] active:scale-[0.98]"
-                    title="Clique para ver o histórico mensal"
+                    title="Clique para ver o gráfico e histórico deste índice"
                   >
                     <div className="flex items-center justify-between gap-1">
                       <div className="flex items-center gap-1.5 min-w-0">
                         <Wrench className="w-3.5 h-3.5 text-yellow-500 shrink-0" />
-                        <span className="text-[9.5px] font-extrabold uppercase tracking-wider text-muted-foreground truncate">Taxa Manutenção</span>
+                        <span className="text-[9.5px] font-extrabold uppercase tracking-wider text-muted-foreground truncate">Taxa Manut. & Peças</span>
                       </div>
                       <span className={`text-[8.5px] font-black px-1.5 py-0.2 rounded-full border shrink-0 ${isLow ? 'bg-emerald-500/15 text-emerald-500 border-emerald-500/30' : isMid ? 'bg-yellow-500/15 text-yellow-500 border-yellow-500/30' : 'bg-rose-500/15 text-rose-500 border-rose-500/30'}`}>
                         {isLow ? 'Baixa' : isMid ? 'Normal' : 'Alta'}
@@ -5514,7 +5764,42 @@ export function Dashboard() {
                         <TrendingUp className="w-3 h-3 text-yellow-500 opacity-0 group-hover/card:opacity-100 transition-opacity" />
                       </div>
                       <p className="text-[9.5px] text-muted-foreground font-medium leading-tight mt-0.5">
-                        Proporção da receita destinada à manutenção.
+                        % da receita gasta com oficina e peças.
+                      </p>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* 5. Taxa de Custos Pessoais */}
+              {(() => {
+                const pr = fundamentalIndexes.personalRatio;
+                const isGood = pr <= 35;
+                const isMed = pr > 35 && pr <= 50;
+
+                return (
+                  <div 
+                    onClick={() => setSelectedFundamentalIndex('personalRatio')}
+                    className="bg-muted/20 border border-border/50 hover:border-blue-500/60 rounded-xl p-3 space-y-1.5 transition-all cursor-pointer group/card shadow-2xs hover:scale-[1.02] active:scale-[0.98]"
+                    title="Clique para ver o gráfico e histórico deste índice"
+                  >
+                    <div className="flex items-center justify-between gap-1">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <User className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                        <span className="text-[9.5px] font-extrabold uppercase tracking-wider text-muted-foreground truncate">Taxa Pessoal</span>
+                      </div>
+                      <span className={`text-[8.5px] font-black px-1.5 py-0.2 rounded-full border shrink-0 ${isGood ? 'bg-emerald-500/15 text-emerald-500 border-emerald-500/30' : isMed ? 'bg-blue-500/15 text-blue-500 border-blue-500/30' : 'bg-rose-500/15 text-rose-500 border-rose-500/30'}`}>
+                        {isGood ? 'Controlado' : isMed ? 'Moderado' : 'Elevado'}
+                      </span>
+                    </div>
+
+                    <div>
+                      <div className="text-lg sm:text-xl font-black text-blue-500 font-mono tracking-tight flex items-center justify-between">
+                        {hideValues ? '•••%' : `${pr.toFixed(1)}%`}
+                        <TrendingUp className="w-3 h-3 text-blue-500 opacity-0 group-hover/card:opacity-100 transition-opacity" />
+                      </div>
+                      <p className="text-[9.5px] text-muted-foreground font-medium leading-tight mt-0.5">
+                        Proporção para despesas pessoais e casa.
                       </p>
                     </div>
                   </div>
@@ -5523,7 +5808,175 @@ export function Dashboard() {
             </div>
           </div>
 
+          {/* Seção 3: Produtividade, Metas e Cobertura Operacional */}
+          <div className="space-y-2.5">
+            <div className="flex items-center justify-between border-b border-border/50 pb-2">
+              <div className="flex items-center gap-2">
+                <div className="w-6 h-6 rounded-lg bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-500 font-bold">
+                  <Target className="w-3.5 h-3.5" />
+                </div>
+                <div>
+                  <h3 className="text-xs sm:text-sm font-black uppercase tracking-wider text-foreground">
+                    Produtividade, Metas e Cobertura Operacional
+                  </h3>
+                  <p className="text-[10px] text-muted-foreground font-medium">
+                    Média de rendimento nos dias trabalhados, segurança da reserva e ponto de equilíbrio.
+                  </p>
+                </div>
+              </div>
+            </div>
 
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-2.5">
+              {/* 1. Média por Dia Ativo */}
+              {(() => {
+                const fatDay = fundamentalIndexes.fatPerActiveDay;
+                const activeDays = fundamentalIndexes.activeDaysCount;
+
+                return (
+                  <div 
+                    onClick={() => setSelectedFundamentalIndex('fatPerActiveDay')}
+                    className="bg-muted/20 border border-border/50 hover:border-cyan-500/60 rounded-xl p-3 space-y-1.5 transition-all cursor-pointer group/card shadow-2xs hover:scale-[1.02] active:scale-[0.98]"
+                    title="Clique para ver o histórico deste indicador"
+                  >
+                    <div className="flex items-center justify-between gap-1">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <Activity className="w-3.5 h-3.5 text-cyan-500 shrink-0" />
+                        <span className="text-[9.5px] font-extrabold uppercase tracking-wider text-muted-foreground truncate">Fat. / Dia Ativo</span>
+                      </div>
+                      <span className="text-[8.5px] font-black px-1.5 py-0.2 rounded-full border border-cyan-500/30 bg-cyan-500/15 text-cyan-400 shrink-0">
+                        {activeDays} {activeDays === 1 ? 'dia ativo' : 'dias ativos'}
+                      </span>
+                    </div>
+
+                    <div>
+                      <div className="text-lg sm:text-xl font-black text-cyan-500 font-mono tracking-tight flex items-center justify-between">
+                        {hideValues ? 'R$ •••••' : `${formatCurrency(fatDay)}/dia`}
+                        <TrendingUp className="w-3 h-3 text-cyan-500 opacity-0 group-hover/card:opacity-100 transition-opacity" />
+                      </div>
+                      <p className="text-[9.5px] text-muted-foreground font-medium leading-tight mt-0.5">
+                        Faturamento bruto médio nos dias trabalhados.
+                      </p>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* 2. Lucro por Dia Ativo */}
+              {(() => {
+                const lucroDay = fundamentalIndexes.lucroPerActiveDay;
+                const isGood = lucroDay >= 100;
+
+                return (
+                  <div 
+                    onClick={() => setSelectedFundamentalIndex('lucroPerActiveDay')}
+                    className="bg-muted/20 border border-border/50 hover:border-emerald-500/60 rounded-xl p-3 space-y-1.5 transition-all cursor-pointer group/card shadow-2xs hover:scale-[1.02] active:scale-[0.98]"
+                    title="Clique para ver o histórico deste indicador"
+                  >
+                    <div className="flex items-center justify-between gap-1">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <Zap className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                        <span className="text-[9.5px] font-extrabold uppercase tracking-wider text-muted-foreground truncate">Lucro / Dia Ativo</span>
+                      </div>
+                      <span className={`text-[8.5px] font-black px-1.5 py-0.2 rounded-full border shrink-0 ${isGood ? 'bg-emerald-500/15 text-emerald-500 border-emerald-500/30' : 'bg-amber-500/15 text-amber-500 border-amber-500/30'}`}>
+                        {isGood ? 'Meta Atingida' : 'Em Evolução'}
+                      </span>
+                    </div>
+
+                    <div>
+                      <div className="text-lg sm:text-xl font-black text-emerald-500 font-mono tracking-tight flex items-center justify-between">
+                        {hideValues ? 'R$ •••••' : `${formatCurrency(lucroDay)}/dia`}
+                        <TrendingUp className="w-3 h-3 text-emerald-500 opacity-0 group-hover/card:opacity-100 transition-opacity" />
+                      </div>
+                      <p className="text-[9.5px] text-muted-foreground font-medium leading-tight mt-0.5">
+                        Lucro líquido médio retido por dia na pista.
+                      </p>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* 3. Cobertura da Manutenção em KM */}
+              {(() => {
+                const kmCobertos = fundamentalIndexes.kmCobertosManutencao;
+                const saldoReserva = fundamentalIndexes.maintReserveBalance;
+                const isSafe = kmCobertos >= 2000;
+                const isModerate = kmCobertos >= 800 && kmCobertos < 2000;
+
+                return (
+                  <div 
+                    className="bg-muted/20 border border-border/50 hover:border-yellow-500/60 rounded-xl p-3 space-y-1.5 transition-all group/card shadow-2xs"
+                  >
+                    <div className="flex items-center justify-between gap-1">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <ShieldCheck className="w-3.5 h-3.5 text-yellow-500 shrink-0" />
+                        <span className="text-[9.5px] font-extrabold uppercase tracking-wider text-muted-foreground truncate">Cobertura Manutenção</span>
+                      </div>
+                      <span className={`text-[8.5px] font-black px-1.5 py-0.2 rounded-full border shrink-0 ${isSafe ? 'bg-emerald-500/15 text-emerald-500 border-emerald-500/30' : isModerate ? 'bg-yellow-500/15 text-yellow-500 border-yellow-500/30' : 'bg-rose-500/15 text-rose-500 border-rose-500/30'}`}>
+                        {isSafe ? 'Protegido' : isModerate ? 'Regular' : 'Aporte Urgente'}
+                      </span>
+                    </div>
+
+                    <div>
+                      <div className="text-lg sm:text-xl font-black text-yellow-500 font-mono tracking-tight flex items-center justify-between">
+                        {hideValues ? '•••• km' : `${kmCobertos.toLocaleString('pt-BR')} km`}
+                      </div>
+                      <p className="text-[9.5px] text-muted-foreground font-medium leading-tight mt-0.5">
+                        Garantidos pelo saldo de {formatCurrency(saldoReserva)} em reserva.
+                      </p>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* 4. Ponto de Equilíbrio Inteligente (Breakeven) */}
+              {(() => {
+                const breakeven = fundamentalIndexes.fatBreakeven;
+                const progress = fundamentalIndexes.breakevenProgress;
+                const isCovered = progress >= 100;
+                const basePastPer = fundamentalIndexes.basePastPersonalTarget;
+                const hasPastRef = fundamentalIndexes.hasPastMonthsRef;
+
+                return (
+                  <div 
+                    className="bg-muted/20 border border-border/50 hover:border-violet-500/60 rounded-xl p-3 space-y-1.5 transition-all group/card shadow-2xs"
+                  >
+                    <div className="flex items-center justify-between gap-1">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <Target className="w-3.5 h-3.5 text-violet-500 shrink-0" />
+                        <span className="text-[9.5px] font-extrabold uppercase tracking-wider text-muted-foreground truncate">Ponto de Equilíbrio</span>
+                      </div>
+                      <span className={`text-[8.5px] font-black px-1.5 py-0.2 rounded-full border shrink-0 ${isCovered ? 'bg-emerald-500/15 text-emerald-500 border-emerald-500/30' : 'bg-violet-500/15 text-violet-400 border-violet-500/30'}`}>
+                        {isCovered ? 'Superado 🎉' : `${progress.toFixed(0)}% Pago`}
+                      </span>
+                    </div>
+
+                    <div>
+                      <div className="text-lg sm:text-xl font-black text-violet-500 font-mono tracking-tight flex items-center justify-between">
+                        {hideValues ? 'R$ •••••' : formatCurrency(breakeven)}
+                      </div>
+                      
+                      {/* Barra de Progresso do Breakeven */}
+                      <div className="mt-1.5 space-y-1">
+                        <div className="h-1.5 w-full bg-muted/60 rounded-full overflow-hidden">
+                          <div 
+                            className={`h-full transition-all duration-500 rounded-full ${isCovered ? 'bg-emerald-500' : 'bg-violet-500'}`} 
+                            style={{ width: `${Math.min(100, progress)}%` }} 
+                          />
+                        </div>
+                        <p className="text-[9px] text-muted-foreground font-medium leading-tight">
+                          {isCovered 
+                            ? 'Custos 100% cobertos! Agora é lucro puro.' 
+                            : hasPastRef && basePastPer > 0
+                              ? `Cálculo inteligente: ref. de ${formatCurrency(basePastPer)} em despesas fixas históricas.`
+                              : 'Faturamento mínimo para zerar custos operacionais e pessoais.'}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
         </CardContent>
       </Card>
 
@@ -6621,10 +7074,10 @@ export function Dashboard() {
 
               <div className="bg-muted/20 border border-border/50 rounded-xl p-3 space-y-1">
                 <h4 className="font-bold text-foreground text-xs flex items-center gap-1.5 text-amber-500">
-                  <Fuel className="w-3.5 h-3.5" /> 3. Custo Operacional por KM (CPK)
+                  <Fuel className="w-3.5 h-3.5" /> 3. Custo Operacional por KM (CPK) & Decomposição
                 </h4>
                 <p className="text-muted-foreground text-[11px] leading-relaxed">
-                  Custo unitário direto por quilômetro rodado (<span className="font-mono">OpEx / KM</span>), subdividido entre parcela de combustível e parcela de manutenção/peças. Serve como piso tarifário para precificação.
+                  Custo unitário direto por km rodado (<span className="font-mono">OpEx / KM</span>), decomposto de forma exata entre: <strong>Combustível & Pedágio</strong> (rodagem direta) e <strong>Manutenção & Peças</strong> (todos os demais custos operacionais do veículo). A soma dos dois equivale a 100% do custo veicular por km.
                 </p>
               </div>
 
@@ -6648,10 +7101,10 @@ export function Dashboard() {
 
               <div className="bg-muted/20 border border-border/50 rounded-xl p-3 space-y-1">
                 <h4 className="font-bold text-foreground text-xs flex items-center gap-1.5 text-violet-500">
-                  <Target className="w-3.5 h-3.5" /> 6. Ponto de Equilíbrio Financeiro (Breakeven)
+                  <Target className="w-3.5 h-3.5" /> 6. Ponto de Equilíbrio Financeiro Inteligente (Breakeven)
                 </h4>
                 <p className="text-muted-foreground text-[11px] leading-relaxed">
-                  Volume mínimo de receita e quilometragem necessários para anular completamente os custos operacionais do veículo e as despesas fixas pessoais no período selecionado.
+                  Faturamento mínimo necessário para cobrir os custos operacionais (combustível, pedágio e oficina) e suas despesas pessoais de vida. O cálculo é inteligente: ele analisa os meses anteriores encerrados para projetar com precisão o custo real necessário, mesmo no início do mês atual.
                 </p>
               </div>
             </div>
@@ -6675,29 +7128,59 @@ export function Dashboard() {
           if (!open) setSelectedFundamentalIndices([]); 
         }}
       >
-        <DialogContent className="max-w-[95vw] md:max-w-[90vw] lg:max-w-6xl xl:max-w-7xl h-[92vh] max-h-[850px] p-0 bg-card border border-border/70 rounded-3xl shadow-2xl overflow-hidden flex flex-col">
-          <DialogHeader className="p-5 sm:p-6 pb-4 border-b border-border/40 shrink-0 bg-muted/20">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pr-6">
+        <DialogContent className="max-w-[95vw] md:max-w-[90vw] lg:max-w-6xl xl:max-w-7xl h-[92vh] max-h-[880px] p-0 bg-card border border-border/70 rounded-3xl shadow-2xl overflow-hidden flex flex-col">
+          <DialogHeader className="p-4 sm:p-6 pb-4 border-b border-border/40 shrink-0 bg-muted/20">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pr-6">
               <div>
-                <DialogTitle className="text-lg sm:text-xl font-black text-foreground flex items-center gap-2">
+                <DialogTitle className="text-base sm:text-xl font-black text-foreground flex items-center gap-2">
                   <TrendingUp className="w-5 h-5 text-indigo-500" />
-                  Comparativo de Índices Fundamentalistas
+                  Evolução e Comparativo dos Índices Operacionais
                 </DialogTitle>
-                <DialogDescription className="text-xs sm:text-sm font-medium text-muted-foreground mt-1">
-                  Correlacione a performance de múltiplos indicadores operacionais e financeiros ao longo do tempo.
+                <DialogDescription className="text-xs sm:text-sm font-medium text-muted-foreground mt-0.5">
+                  Análise temporal detalhada com datas precisas. Alterne entre visão consolidada por mês ou dias do período.
                 </DialogDescription>
               </div>
-              <div className="text-xs font-bold text-muted-foreground bg-muted border border-border/60 px-3 py-1.5 rounded-full shrink-0 flex items-center gap-1.5 self-start sm:self-auto">
-                <span className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse" />
-                {selectedFundamentalIndices.length} {selectedFundamentalIndices.length === 1 ? 'índice ativo' : 'índices ativos'}
+
+              {/* Seletor de Escala Temporal (Mensal vs Diário) */}
+              <div className="flex items-center gap-2 self-start md:self-auto flex-wrap">
+                <div className="flex items-center p-1 bg-muted/70 rounded-xl border border-border/60">
+                  <button
+                    type="button"
+                    onClick={() => setFundamentalHistoryTimeframe('monthly')}
+                    className={`px-3 py-1.5 text-xs font-black rounded-lg transition-all cursor-pointer ${
+                      fundamentalHistoryTimeframe === 'monthly'
+                        ? 'bg-indigo-500 text-white shadow-xs'
+                        : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    Histórico por Mês
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFundamentalHistoryTimeframe('daily')}
+                    className={`px-3 py-1.5 text-xs font-black rounded-lg transition-all cursor-pointer ${
+                      fundamentalHistoryTimeframe === 'daily'
+                        ? 'bg-indigo-500 text-white shadow-xs'
+                        : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    Dias do Período ({getPeriodLabel()})
+                  </button>
+                </div>
+
+                <div className="text-xs font-bold text-muted-foreground bg-muted border border-border/60 px-2.5 py-1.5 rounded-xl shrink-0 flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse" />
+                  {selectedFundamentalIndices.length} {selectedFundamentalIndices.length === 1 ? 'índice ativo' : 'índices'}
+                </div>
               </div>
             </div>
           </DialogHeader>
 
           <div className="overflow-y-auto p-4 sm:p-6 bg-muted/5 flex-1 custom-scrollbar">
             {(() => {
-              const MARGENS_KEYS = ['margemLiquida', 'margemOperacional', 'personalMargin', 'personalRatio', 'fuelRatio', 'maintenanceRatio'];
-              const KM_KEYS = ['rpk', 'lpk', 'personalPerKm', 'cpk', 'fuelAndOtherPerKm', 'maintenancePerKm'];
+              const MARGENS_KEYS = ['margemLiquida', 'margemOperacional', 'fuelRatio', 'maintenanceRatio', 'personalRatio'];
+              const KM_KEYS = ['rpk', 'cpk', 'lpk', 'cpkCombustivel', 'cpkManutencao'];
+              const PROD_KEYS = ['fatPerActiveDay', 'lucroPerActiveDay'];
               const MOE_KEYS = ['moe'];
 
               const handleToggleIndex = (key: string) => {
@@ -6708,12 +7191,18 @@ export function Dashboard() {
 
                 const isTargetMargens = MARGENS_KEYS.includes(key);
                 const isTargetKm = KM_KEYS.includes(key);
+                const isTargetProd = PROD_KEYS.includes(key);
 
                 const currentFirst = selectedFundamentalIndices[0];
                 const isCurrentMargens = currentFirst && MARGENS_KEYS.includes(currentFirst);
                 const isCurrentKm = currentFirst && KM_KEYS.includes(currentFirst);
+                const isCurrentProd = currentFirst && PROD_KEYS.includes(currentFirst);
 
-                if ((isTargetMargens && isCurrentMargens) || (isTargetKm && isCurrentKm)) {
+                if (
+                  (isTargetMargens && isCurrentMargens) ||
+                  (isTargetKm && isCurrentKm) ||
+                  (isTargetProd && isCurrentProd)
+                ) {
                   if (selectedFundamentalIndices.includes(key)) {
                     if (selectedFundamentalIndices.length > 1) {
                       setSelectedFundamentalIndices(selectedFundamentalIndices.filter(k => k !== key));
@@ -6756,6 +7245,29 @@ export function Dashboard() {
                 );
               };
 
+              // Estatísticas de Resumo dos dados ativos (Último, Média, Maior e Menor)
+              const primaryKey = selectedFundamentalIndices[0] || 'rpk';
+              const primaryMeta = indexMetadata[primaryKey];
+              const validPoints = fundamentalHistory
+                .map(item => ({
+                  val: Number(item[primaryKey as keyof typeof item] || 0),
+                  label: item.label,
+                  fullLabel: item.fullLabel,
+                  hasData: Boolean((item as any).hasTxs || (item as any).hasActivity || (item as any).fatTotal > 0 || (item as any).kmTotal > 0)
+                }))
+                .filter(p => p.hasData || p.val !== 0);
+
+              const lastPoint = validPoints.length > 0 ? validPoints[validPoints.length - 1] : null;
+              const valuesList = validPoints.map(p => p.val);
+              const avgValue = valuesList.length > 0 ? valuesList.reduce((a, b) => a + b, 0) / valuesList.length : 0;
+              
+              let maxPoint = validPoints.length > 0 ? validPoints[0] : null;
+              let minPoint = validPoints.length > 0 ? validPoints[0] : null;
+              validPoints.forEach(p => {
+                if (maxPoint && p.val > maxPoint.val) maxPoint = p;
+                if (minPoint && p.val < minPoint.val) minPoint = p;
+              });
+
               return (
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
                   
@@ -6773,28 +7285,40 @@ export function Dashboard() {
                       <div className="grid grid-cols-1 gap-2">
                         <button
                           type="button"
-                          onClick={() => setSelectedFundamentalIndices(['margemLiquida', 'margemOperacional', 'personalMargin', 'personalRatio', 'fuelRatio', 'maintenanceRatio'])}
-                          className="flex items-center justify-between w-full px-3 py-2 rounded-xl text-left border text-xs font-bold transition-all hover:bg-muted/40 cursor-pointer bg-indigo-500/5 border-indigo-500/20 text-indigo-500 hover:border-indigo-500/40"
-                        >
-                          <div className="flex items-center gap-2">
-                            <Percent className="w-3.5 h-3.5" />
-                            <span>Todas as Margens e Taxas</span>
-                          </div>
-                          <span className="text-[9px] font-black px-1.5 py-0.5 rounded-md bg-indigo-500/15 font-mono">6 ind.</span>
-                        </button>
-                        
-                        <button
-                          type="button"
-                          onClick={() => setSelectedFundamentalIndices(['rpk', 'lpk', 'personalPerKm', 'cpk', 'fuelAndOtherPerKm', 'maintenancePerKm'])}
-                          className="flex items-center justify-between w-full px-3 py-2 rounded-xl text-left border text-xs font-bold transition-all hover:bg-muted/40 cursor-pointer bg-emerald-500/5 border-emerald-500/20 text-emerald-500 hover:border-emerald-500/40"
+                          onClick={() => setSelectedFundamentalIndices(['rpk', 'cpk', 'lpk', 'cpkCombustivel', 'cpkManutencao'])}
+                          className="flex items-center justify-between w-full px-3 py-2 rounded-xl text-left border text-xs font-bold transition-all hover:bg-muted/40 cursor-pointer bg-cyan-500/5 border-cyan-500/20 text-cyan-400 hover:border-cyan-500/40"
                         >
                           <div className="flex items-center gap-2">
                             <Compass className="w-3.5 h-3.5" />
-                            <span>Todos os Custos por KM</span>
+                            <span>Custos e Lucro por KM</span>
                           </div>
-                          <span className="text-[9px] font-black px-1.5 py-0.5 rounded-md bg-emerald-500/15 font-mono">6 ind.</span>
+                          <span className="text-[9px] font-black px-1.5 py-0.5 rounded-md bg-cyan-500/15 font-mono">5 ind.</span>
                         </button>
 
+                        <button
+                          type="button"
+                          onClick={() => setSelectedFundamentalIndices(['margemLiquida', 'margemOperacional', 'fuelRatio', 'maintenanceRatio', 'personalRatio'])}
+                          className="flex items-center justify-between w-full px-3 py-2 rounded-xl text-left border text-xs font-bold transition-all hover:bg-muted/40 cursor-pointer bg-emerald-500/5 border-emerald-500/20 text-emerald-400 hover:border-emerald-500/40"
+                        >
+                          <div className="flex items-center gap-2">
+                            <Percent className="w-3.5 h-3.5" />
+                            <span>Margens Reais & Taxas</span>
+                          </div>
+                          <span className="text-[9px] font-black px-1.5 py-0.5 rounded-md bg-emerald-500/15 font-mono">5 ind.</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setSelectedFundamentalIndices(['fatPerActiveDay', 'lucroPerActiveDay'])}
+                          className="flex items-center justify-between w-full px-3 py-2 rounded-xl text-left border text-xs font-bold transition-all hover:bg-muted/40 cursor-pointer bg-indigo-500/5 border-indigo-500/20 text-indigo-400 hover:border-indigo-500/40"
+                        >
+                          <div className="flex items-center gap-2">
+                            <Target className="w-3.5 h-3.5" />
+                            <span>Produtividade / Dia Ativo</span>
+                          </div>
+                          <span className="text-[9px] font-black px-1.5 py-0.5 rounded-md bg-indigo-500/15 font-mono">2 ind.</span>
+                        </button>
+                        
                         <button
                           type="button"
                           onClick={() => setSelectedFundamentalIndices(['moe'])}
@@ -6819,32 +7343,42 @@ export function Dashboard() {
                       </div>
 
                       <div className="space-y-4">
-                        {/* Grupo 1: Margens e Taxas */}
+                        {/* Grupo 1: Indicadores por KM */}
                         <div className="space-y-2">
                           <span className="text-[10px] font-extrabold uppercase tracking-widest text-muted-foreground block">
-                            Margens & Taxas (% da Receita)
+                            Custos e Lucro por KM (R$/km)
                           </span>
-                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-1.5">
-                            {MARGENS_KEYS.map(key => renderIndividualChip(key))}
-                          </div>
-                        </div>
-
-                        {/* Grupo 2: Indicadores por KM */}
-                        <div className="space-y-2">
-                          <span className="text-[10px] font-extrabold uppercase tracking-widest text-muted-foreground block">
-                            Custos e Receitas por KM (R$/km)
-                          </span>
-                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-1.5">
+                          <div className="grid grid-cols-1 gap-1.5">
                             {KM_KEYS.map(key => renderIndividualChip(key))}
                           </div>
                         </div>
 
-                        {/* Grupo 3: MOE */}
+                        {/* Grupo 2: Margens e Taxas */}
+                        <div className="space-y-2">
+                          <span className="text-[10px] font-extrabold uppercase tracking-widest text-muted-foreground block">
+                            Margens & Taxas (% da Receita)
+                          </span>
+                          <div className="grid grid-cols-1 gap-1.5">
+                            {MARGENS_KEYS.map(key => renderIndividualChip(key))}
+                          </div>
+                        </div>
+
+                        {/* Grupo 3: Produtividade */}
+                        <div className="space-y-2">
+                          <span className="text-[10px] font-extrabold uppercase tracking-widest text-muted-foreground block">
+                            Produtividade Diária (R$/dia)
+                          </span>
+                          <div className="grid grid-cols-1 gap-1.5">
+                            {PROD_KEYS.map(key => renderIndividualChip(key))}
+                          </div>
+                        </div>
+
+                        {/* Grupo 4: MOE */}
                         <div className="space-y-2">
                           <span className="text-[10px] font-extrabold uppercase tracking-widest text-muted-foreground block">
                             Eficiência e Alavancagem (x)
                           </span>
-                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-1.5">
+                          <div className="grid grid-cols-1 gap-1.5">
                             {MOE_KEYS.map(key => renderIndividualChip(key))}
                           </div>
                         </div>
@@ -6855,12 +7389,9 @@ export function Dashboard() {
                     <div className="bg-card border border-border/70 rounded-2xl p-4 shadow-2xs space-y-3">
                       <div className="flex items-center gap-2 border-b border-border/40 pb-2.5 text-foreground">
                         <BookOpen className="w-4 h-4 text-indigo-500" />
-                        <h4 className="text-xs font-black uppercase tracking-wider">Glossário Ativo</h4>
+                        <h4 className="text-xs font-black uppercase tracking-wider">Metodologia dos Índices</h4>
                       </div>
-                      <p className="text-[10.5px] text-muted-foreground leading-relaxed">
-                        Para melhor interpretação, você só pode comparar múltiplos índices se eles compartilharem a mesma escala/unidade (% ou R$/km).
-                      </p>
-                      <div className="space-y-3 pt-1.5">
+                      <div className="space-y-3 pt-1">
                         {selectedFundamentalIndices.map(key => {
                           const meta = indexMetadata[key];
                           if (!meta) return null;
@@ -6869,11 +7400,16 @@ export function Dashboard() {
                               <div className="flex items-center gap-1.5">
                                 <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: meta.color }} />
                                 <span className="text-[11px] font-black text-foreground leading-none">{meta.title}</span>
-                                <span className="text-[9px] font-black px-1 py-0.2 rounded bg-muted text-muted-foreground font-mono ml-auto">{meta.unit}</span>
+                                <span className="text-[9px] font-black px-1.5 py-0.2 rounded bg-muted text-muted-foreground font-mono ml-auto">{meta.unit}</span>
                               </div>
                               <p className="text-[10px] text-muted-foreground leading-normal pl-3.5">
                                 {meta.description}
                               </p>
+                              {meta.benchmarkGood && (
+                                <div className="text-[9.5px] font-bold text-emerald-500 pl-3.5 pt-0.5">
+                                  Referência saudável: <span className="font-mono">{meta.benchmarkGood}</span>
+                                </div>
+                              )}
                             </div>
                           );
                         })}
@@ -6882,20 +7418,61 @@ export function Dashboard() {
 
                   </div>
 
-                  {/* Right Column: Chart & Table */}
+                  {/* Right Column: Summary KPIs, Chart & Table */}
                   <div className="lg:col-span-8 space-y-5">
                     
                     {fundamentalHistory.length === 0 ? (
                       <div className="bg-card border border-border/70 rounded-2xl py-20 text-center text-xs text-muted-foreground font-medium">
-                        Nenhum dado histórico registrado para exibir o gráfico.
+                        Nenhum dado registrado para o período ou escala temporal selecionada.
                       </div>
                     ) : (
                       <>
+                        {/* KPI Summary Cards para o Índice Principal */}
+                        {primaryMeta && (
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                            <div className="bg-card border border-border/70 rounded-2xl p-3.5 shadow-2xs space-y-1">
+                              <span className="text-[10px] font-extrabold uppercase text-muted-foreground tracking-wider block truncate">
+                                Mais Recente ({lastPoint?.label || '—'})
+                              </span>
+                              <div className="text-lg sm:text-xl font-black font-mono tracking-tight" style={{ color: primaryMeta.color }}>
+                                {lastPoint ? primaryMeta.formatter(lastPoint.val) : '—'}
+                              </div>
+                            </div>
+
+                            <div className="bg-card border border-border/70 rounded-2xl p-3.5 shadow-2xs space-y-1">
+                              <span className="text-[10px] font-extrabold uppercase text-muted-foreground tracking-wider block truncate">
+                                Média do Período
+                              </span>
+                              <div className="text-lg sm:text-xl font-black font-mono tracking-tight text-foreground">
+                                {valuesList.length > 0 ? primaryMeta.formatter(avgValue) : '—'}
+                              </div>
+                            </div>
+
+                            <div className="bg-card border border-border/70 rounded-2xl p-3.5 shadow-2xs space-y-1">
+                              <span className="text-[10px] font-extrabold uppercase text-emerald-400 tracking-wider block truncate">
+                                Melhor Marca ({maxPoint?.label || '—'})
+                              </span>
+                              <div className="text-lg sm:text-xl font-black font-mono tracking-tight text-emerald-400">
+                                {maxPoint ? primaryMeta.formatter(maxPoint.val) : '—'}
+                              </div>
+                            </div>
+
+                            <div className="bg-card border border-border/70 rounded-2xl p-3.5 shadow-2xs space-y-1">
+                              <span className="text-[10px] font-extrabold uppercase text-amber-400 tracking-wider block truncate">
+                                Menor Marca ({minPoint?.label || '—'})
+                              </span>
+                              <div className="text-lg sm:text-xl font-black font-mono tracking-tight text-amber-400">
+                                {minPoint ? primaryMeta.formatter(minPoint.val) : '—'}
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
                         {/* Gráfico Principal com Múltiplas Linhas */}
                         <div className="bg-card border border-border/70 rounded-2xl p-5 shadow-2xs space-y-4">
                           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border/40 pb-4">
                             <span className="text-xs font-black uppercase tracking-wider text-foreground flex items-center gap-1.5">
-                              <Activity className="w-4 h-4 text-indigo-500" /> Curva Histórica Comparativa
+                              <Activity className="w-4 h-4 text-indigo-500" /> Curva Histórica Comparativa ({fundamentalHistoryTimeframe === 'monthly' ? 'Por Mês' : 'Por Dia'})
                             </span>
                             <div className="flex flex-wrap items-center gap-1.5">
                               {selectedFundamentalIndices.map(key => {
@@ -6911,7 +7488,7 @@ export function Dashboard() {
                                     style={{ borderColor: `${meta.color}60` }}
                                   >
                                     <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: meta.color }} />
-                                    <span className="text-foreground truncate max-w-[110px] sm:max-w-none">{meta.title}:</span>
+                                    <span className="text-foreground truncate max-w-[110px] sm:max-w-none">{meta.shortTitle || meta.title}:</span>
                                     <span className="font-mono font-black" style={{ color: meta.color }}>{meta.formatter(lastVal)}</span>
                                     {selectedFundamentalIndices.length > 1 && (
                                       <button
@@ -6932,15 +7509,33 @@ export function Dashboard() {
                             <ResponsiveContainer width="100%" height="100%">
                               <LineChart data={fundamentalHistory} margin={{ top: 15, right: 20, left: -10, bottom: 10 }}>
                                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#27272a" opacity={0.4} />
-                                <XAxis dataKey="label" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#71717a', fontWeight: 'bold' }} />
-                                <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#71717a', fontWeight: 'bold' }} />
+                                <XAxis 
+                                  dataKey="label" 
+                                  axisLine={false} 
+                                  tickLine={false} 
+                                  tick={{ fontSize: 11, fill: '#71717a', fontWeight: 'bold' }} 
+                                />
+                                <YAxis 
+                                  axisLine={false} 
+                                  tickLine={false} 
+                                  tick={{ fontSize: 11, fill: '#71717a', fontWeight: 'bold' }} 
+                                />
                                 <RechartsTooltip
-                                  contentStyle={{ backgroundColor: '#18181b', borderColor: '#27272a', borderRadius: '16px', boxShadow: '0 8px 24px rgba(0,0,0,0.5)' }}
+                                  contentStyle={{ 
+                                    backgroundColor: '#18181b', 
+                                    borderColor: '#27272a', 
+                                    borderRadius: '16px', 
+                                    boxShadow: '0 8px 24px rgba(0,0,0,0.5)' 
+                                  }}
                                   labelStyle={{ fontWeight: 'black', fontSize: 13, color: '#f4f4f5', marginBottom: '6px' }}
                                   itemStyle={{ fontSize: 11, fontWeight: 'semibold', padding: '2px 0' }}
+                                  labelFormatter={(_label, payload) => {
+                                    const full = payload?.[0]?.payload?.fullLabel;
+                                    return full ? full : _label;
+                                  }}
                                   formatter={(val: any, name: any, item: any) => {
                                     const meta = indexMetadata[item.dataKey];
-                                    return [meta ? meta.formatter(Number(val)) : val, meta ? meta.title : name];
+                                    return [meta ? meta.formatter(Number(val)) : val, meta ? (meta.shortTitle || meta.title) : name];
                                   }}
                                 />
                                 {selectedFundamentalIndices.map(key => {
@@ -6951,7 +7546,7 @@ export function Dashboard() {
                                       key={key}
                                       type="monotone"
                                       dataKey={key}
-                                      name={meta.title}
+                                      name={meta.shortTitle || meta.title}
                                       stroke={meta.color}
                                       strokeWidth={3}
                                       dot={{ r: 4, stroke: meta.color, strokeWidth: 2, fill: '#18181b' }}
@@ -6970,22 +7565,24 @@ export function Dashboard() {
                             <div className="flex items-center gap-2">
                               <CalendarRange className="w-4 h-4 text-indigo-500" />
                               <h4 className="text-xs font-black uppercase text-foreground tracking-wider">
-                                Demonstrativo de Histórico por Mês
+                                {fundamentalHistoryTimeframe === 'monthly' ? 'Demonstrativo Consolidado por Mês' : 'Demonstrativo por Dia do Período'}
                               </h4>
                             </div>
                             <span className="text-[10px] text-muted-foreground font-extrabold bg-muted px-2.5 py-0.5 rounded-md">
-                              Exibindo {selectedFundamentalIndices.length} {selectedFundamentalIndices.length === 1 ? 'métrica' : 'métricas'}
+                              {fundamentalHistory.length} registros • {selectedFundamentalIndices.length} {selectedFundamentalIndices.length === 1 ? 'métrica' : 'métricas'}
                             </span>
                           </div>
                           
-                          <div className="overflow-x-auto max-h-[280px] overflow-y-auto custom-scrollbar">
+                          <div className="overflow-x-auto max-h-[300px] overflow-y-auto custom-scrollbar">
                             <table className="w-full text-left text-xs border-collapse">
                               <thead>
                                 <tr className="border-b border-border/50 text-[10px] font-black uppercase text-muted-foreground">
-                                  <th className="pb-3 font-black text-foreground">Mês</th>
+                                  <th className="pb-3 font-black text-foreground">
+                                    {fundamentalHistoryTimeframe === 'monthly' ? 'Mês / Ano' : 'Dia / Data'}
+                                  </th>
                                   {selectedFundamentalIndices.map(key => (
                                     <th key={key} className="pb-3 font-black text-right px-3 whitespace-nowrap">
-                                      <span style={{ color: indexMetadata[key]?.color }}>{indexMetadata[key]?.title}</span>
+                                      <span style={{ color: indexMetadata[key]?.color }}>{indexMetadata[key]?.shortTitle || indexMetadata[key]?.title}</span>
                                     </th>
                                   ))}
                                 </tr>
@@ -6993,7 +7590,12 @@ export function Dashboard() {
                               <tbody className="divide-y divide-border/30">
                                 {fundamentalHistory.slice().reverse().map((item, idx) => (
                                   <tr key={idx} className="hover:bg-muted/30 transition-all group">
-                                    <td className="py-3 font-black text-foreground whitespace-nowrap group-hover:text-indigo-500 transition-colors">{item.label}</td>
+                                    <td className="py-3 font-black text-foreground whitespace-nowrap group-hover:text-indigo-500 transition-colors">
+                                      <div className="flex flex-col">
+                                        <span className="font-bold">{item.label}</span>
+                                        <span className="text-[10px] font-medium text-muted-foreground">{item.fullLabel}</span>
+                                      </div>
+                                    </td>
                                     {selectedFundamentalIndices.map(key => {
                                       const val = Number(item[key as keyof typeof item] || 0);
                                       const meta = indexMetadata[key];

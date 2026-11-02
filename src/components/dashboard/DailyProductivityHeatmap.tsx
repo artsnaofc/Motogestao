@@ -443,8 +443,8 @@ export const DailyProductivityHeatmap: React.FC<DailyProductivityHeatmapProps> =
       const [y, m] = firstActiveDateStr.split('-').map(Number);
       const firstDate = new Date(y, m - 1, 1);
 
-      // Limitar a no máximo 6 meses se a data for muito antiga para manter o grid legível e compacto
-      const maxBack = startOfMonth(subMonths(now, 5));
+      // Limitar a no máximo 12 meses se a data for muito antiga para manter o grid legível e cobrir todo o histórico do ano
+      const maxBack = startOfMonth(subMonths(now, 11));
       const start = isAfter(firstDate, maxBack) ? startOfMonth(firstDate) : maxBack;
       return { start, end };
     }

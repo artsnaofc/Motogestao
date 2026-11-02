@@ -459,19 +459,37 @@ class DatabaseBackupEngine {
           tableCounts.system_config = 1;
           totalRecords += 1;
         } else {
-          // Supabase tables
-          const { data: rows, error } = await supabase
-            .from(table)
-            .select('*');
+          // Supabase tables - paginated in chunks of 1000 to ensure 100% full export
+          const PAGE_SIZE = 1000;
+          let allTableRows: any[] = [];
+          let from = 0;
+          let tableError: any = null;
 
-          if (error) {
-            console.error(`[DatabaseBackup] Erro ao exportar ${table}:`, error);
+          while (true) {
+            const { data: pageRows, error: pageErr } = await supabase
+              .from(table)
+              .select('*')
+              .range(from, from + PAGE_SIZE - 1);
+
+            if (pageErr) {
+              tableError = pageErr;
+              break;
+            }
+
+            if (!pageRows || pageRows.length === 0) break;
+            allTableRows.push(...pageRows);
+            if (pageRows.length < PAGE_SIZE) break;
+            from += PAGE_SIZE;
+          }
+
+          if (tableError && allTableRows.length === 0) {
+            console.error(`[DatabaseBackup] Erro ao exportar ${table}:`, tableError);
             data[table as keyof DatabaseSnapshot['data']] = [] as any;
             tableCounts[table] = 0;
           } else {
-            data[table as keyof DatabaseSnapshot['data']] = (rows || []) as any;
-            tableCounts[table] = rows?.length || 0;
-            totalRecords += rows?.length || 0;
+            data[table as keyof DatabaseSnapshot['data']] = allTableRows as any;
+            tableCounts[table] = allTableRows.length;
+            totalRecords += allTableRows.length;
           }
         }
       } catch (err: any) {

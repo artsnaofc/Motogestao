@@ -228,6 +228,52 @@ function DataContextBridge({ children }: { children: ReactNode }) {
   );
 }
 
+/**
+ * Helper to fetch all rows for a user across multiple 1000-row pages from PostgREST/Supabase.
+ * PostgREST defaults to max 1000 rows per query; this loop guarantees 100% complete data loading.
+ */
+async function fetchAllUserTableRows<T = any>(
+  table: string,
+  userId: string,
+  orders: { column: string; ascending?: boolean }[] = [{ column: 'date', ascending: false }]
+): Promise<{ data: T[] | null; error: any }> {
+  const PAGE_SIZE = 1000;
+  const allRows: T[] = [];
+  let from = 0;
+
+  try {
+    while (true) {
+      let query = supabase.from(table).select('*').eq('user_id', userId);
+      for (const ord of orders) {
+        query = query.order(ord.column, { ascending: ord.ascending ?? false });
+      }
+      const { data, error } = await query.range(from, from + PAGE_SIZE - 1);
+
+      if (error) {
+        console.error(`[DataContext] Erro ao buscar registros paginados de ${table} (offset ${from}):`, error);
+        return { data: allRows.length > 0 ? allRows : null, error };
+      }
+
+      if (!data || data.length === 0) {
+        break;
+      }
+
+      allRows.push(...(data as T[]));
+
+      if (data.length < PAGE_SIZE) {
+        break;
+      }
+
+      from += PAGE_SIZE;
+    }
+
+    return { data: allRows, error: null };
+  } catch (err) {
+    console.error(`[DataContext] Exceção na busca paginada de ${table}:`, err);
+    return { data: allRows.length > 0 ? allRows : null, error: err };
+  }
+}
+
 // Master DataProvider that fetches data from backend and mounts segregated providers
 export function DataProvider({ children }: { children: ReactNode }) {
   const getInitialCache = <T,>(keySuffix: string, fallback: T): T => {
@@ -317,14 +363,25 @@ export function DataProvider({ children }: { children: ReactNode }) {
           console.warn('[DataContext] Aviso na sincronização prévia da fila:', qErr);
         }
 
-        // 2. Fetch all collections in parallel for maximum network speed!
+        // 2. Fetch all collections in parallel with full multi-page support!
         const [settingsResult, txResult, reservesResult, rtResult, itResult, divResult] = await Promise.allSettled([
           supabase.from('user_settings').select('*').eq('user_id', userId).maybeSingle(),
-          supabase.from('transactions').select('*').eq('user_id', userId).order('date', { ascending: false }).order('created_at', { ascending: false }),
+          fetchAllUserTableRows<Transaction>('transactions', userId, [
+            { column: 'date', ascending: false },
+            { column: 'created_at', ascending: false }
+          ]),
           supabase.from('reserves').select('*').eq('user_id', userId).order('name', { ascending: true }),
-          supabase.from('reserve_transactions').select('*').eq('user_id', userId).order('date', { ascending: false }).order('created_at', { ascending: false }),
-          supabase.from('investment_transactions').select('*').eq('user_id', userId).order('date', { ascending: false }).order('created_at', { ascending: false }),
-          supabase.from('dividends').select('*').eq('user_id', userId).order('date', { ascending: false })
+          fetchAllUserTableRows<ReserveTransaction>('reserve_transactions', userId, [
+            { column: 'date', ascending: false },
+            { column: 'created_at', ascending: false }
+          ]),
+          fetchAllUserTableRows<InvestmentTransaction>('investment_transactions', userId, [
+            { column: 'date', ascending: false },
+            { column: 'created_at', ascending: false }
+          ]),
+          fetchAllUserTableRows<Dividend>('dividends', userId, [
+            { column: 'date', ascending: false }
+          ])
         ]);
 
         // Process Settings
@@ -389,7 +446,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
               merged.push(localItem);
             } else if (supaMap.has(localItem.id)) {
               merged.push(supaMap.get(localItem.id)!);
-            } else {
+            } else if (txData.length === 0 && txResult.value.error) {
               merged.push(localItem);
             }
           }
@@ -399,6 +456,14 @@ export function DataProvider({ children }: { children: ReactNode }) {
               merged.push(remoteItem);
             }
           }
+
+          // Sort chronologically (newest first)
+          merged.sort((a, b) => {
+            const dateA = a.date || '';
+            const dateB = b.date || '';
+            if (dateA !== dateB) return dateB.localeCompare(dateA);
+            return (b.created_at || '').localeCompare(a.created_at || '');
+          });
 
           setTransactions(merged);
           cacheManager.set(`transactions_${userId}`, merged, undefined, 'transactions');
