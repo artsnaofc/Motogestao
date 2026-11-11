@@ -16,7 +16,10 @@ import {
   RefreshCw,
   Clock,
   ArrowRight,
-  Info
+  Info,
+  Landmark,
+  ArrowDownLeft,
+  Wallet
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -295,6 +298,7 @@ interface WithdrawModalProps {
   isOpen: boolean;
   onClose: () => void;
   settings?: UserSettings | null;
+  initialMode?: 'expense' | 'transfer_to_cash';
   onSubmit: (data: {
     amount: number;
     date: string;
@@ -315,8 +319,10 @@ export function WithdrawModal({
   isOpen,
   onClose,
   settings,
+  initialMode = 'expense',
   onSubmit
 }: WithdrawModalProps) {
+  const [destinationMode, setDestinationMode] = useState<'expense' | 'transfer_to_cash'>(initialMode);
   const [amount, setAmount] = useState('');
   const [date, setDate] = useState(getTodayLocalDateStr());
   const [category, setCategory] = useState('');
@@ -349,7 +355,8 @@ export function WithdrawModal({
 
   useEffect(() => {
     if (reserve) {
-      setDescription(`Resgate / Uso - ${reserve.name}`);
+      const mode = initialMode || 'expense';
+      setDestinationMode(mode);
       setAmount('');
       const today = getTodayLocalDateStr();
       setDate(today);
@@ -361,43 +368,52 @@ export function WithdrawModal({
       setRecurrenceInstallments('12');
       setGenerateFuture(true);
 
-      if (hasFixedCategory && reserve.default_use_category) {
-        setCategory(reserve.default_use_category);
+      if (mode === 'transfer_to_cash') {
+        setDescription(`Transferência para o Caixa: ${reserve.name}`);
+        setCategory('Resgate de Reserva');
       } else {
-        // Find best default or first available
-        const defaultCat = profileExpenseCategories.find(c => 
-          reserve.name.toLowerCase().includes(c.toLowerCase()) || 
-          c.toLowerCase().includes('manutenção') || 
-          c.toLowerCase().includes('outros')
-        ) || profileExpenseCategories[0] || 'Outros';
-        setCategory(defaultCat);
+        setDescription(`Resgate / Uso - ${reserve.name}`);
+        if (hasFixedCategory && reserve.default_use_category) {
+          setCategory(reserve.default_use_category);
+        } else {
+          const defaultCat = profileExpenseCategories.find(c => 
+            reserve.name.toLowerCase().includes(c.toLowerCase()) || 
+            c.toLowerCase().includes('manutenção') || 
+            c.toLowerCase().includes('outros')
+          ) || profileExpenseCategories[0] || 'Outros';
+          setCategory(defaultCat);
+        }
       }
     }
-  }, [reserve, isOpen, hasFixedCategory, profileExpenseCategories]);
+  }, [reserve, isOpen, initialMode, hasFixedCategory, profileExpenseCategories]);
 
   if (!isOpen || !reserve) return null;
 
   const currentBalance = Math.round((reserve.saldo_atual || 0) * 100) / 100;
+  const isTransfer = destinationMode === 'transfer_to_cash';
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     const val = Math.round((parseFloat(amount) || 0) * 100) / 100;
     if (isNaN(val) || val <= 0) {
-      toast.error('Informe um valor de resgate válido.');
+      toast.error('Informe um valor válido.');
       return;
     }
-    if (val > currentBalance && paymentStatus === 'paid') {
+    if (val > currentBalance && (isTransfer || paymentStatus === 'paid')) {
       toast.error(`Valor superior ao saldo disponível de ${formatCurrency(currentBalance)}.`);
       return;
     }
 
-    const finalCategory = hasFixedCategory ? (reserve.default_use_category || 'Outros') : (category || 'Outros');
+    const finalCategory = isTransfer 
+      ? 'Resgate de Reserva'
+      : (hasFixedCategory ? (reserve.default_use_category || 'Outros') : (category || 'Outros'));
+    
     if (!finalCategory) {
       toast.error('Selecione a categoria de despesa correspondente do seu perfil.');
       return;
     }
 
-    const numInstallments = isRecurring ? Math.max(2, Math.min(60, Number(recurrenceInstallments) || 12)) : undefined;
+    const numInstallments = !isTransfer && isRecurring ? Math.max(2, Math.min(60, Number(recurrenceInstallments) || 12)) : undefined;
 
     try {
       setIsSubmitting(true);
@@ -405,14 +421,14 @@ export function WithdrawModal({
         amount: val,
         date,
         category: finalCategory,
-        description: description || `Utilização de reserva: ${reserve.name}`,
-        payment_status: paymentStatus,
-        payment_date: paymentStatus === 'paid' ? (paymentDate || date) : null,
-        due_date: paymentStatus === 'pending' ? (dueDate || date) : null,
-        is_recurring: isRecurring,
-        recurrence_frequency: isRecurring ? recurrenceFrequency : undefined,
+        description: description || (isTransfer ? `Transferência para o Caixa: ${reserve.name}` : `Utilização de reserva: ${reserve.name}`),
+        payment_status: isTransfer ? 'paid' : paymentStatus,
+        payment_date: isTransfer || paymentStatus === 'paid' ? (paymentDate || date) : null,
+        due_date: !isTransfer && paymentStatus === 'pending' ? (dueDate || date) : null,
+        is_recurring: isTransfer ? false : isRecurring,
+        recurrence_frequency: !isTransfer && isRecurring ? recurrenceFrequency : undefined,
         recurrence_installments: numInstallments,
-        generate_future: isRecurring ? generateFuture : false,
+        generate_future: !isTransfer && isRecurring ? generateFuture : false,
       });
       onClose();
     } catch (err) {
@@ -425,13 +441,22 @@ export function WithdrawModal({
   return (
     <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
       <div className="bg-card w-full max-w-md my-auto max-h-[90vh] overflow-y-auto rounded-3xl border border-border/80 shadow-2xl animate-in fade-in zoom-in-95 duration-200 text-left">
-        <div className="p-5 bg-gradient-to-r from-rose-500/10 via-rose-500/5 to-transparent border-b border-border/80 flex items-center justify-between sticky top-0 bg-card/95 backdrop-blur-xs z-10">
+        {/* Header */}
+        <div className={`p-5 border-b border-border/80 flex items-center justify-between sticky top-0 bg-card/95 backdrop-blur-xs z-10 ${
+          isTransfer 
+            ? 'bg-gradient-to-r from-emerald-500/10 via-emerald-500/5 to-transparent'
+            : 'bg-gradient-to-r from-rose-500/10 via-rose-500/5 to-transparent'
+        }`}>
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-rose-500 text-white flex items-center justify-center shadow-sm shrink-0">
-              <Minus className="w-5 h-5" />
+            <div className={`w-10 h-10 rounded-2xl text-white flex items-center justify-center shadow-sm shrink-0 ${
+              isTransfer ? 'bg-emerald-600' : 'bg-rose-500'
+            }`}>
+              {isTransfer ? <Landmark className="w-5 h-5" /> : <Minus className="w-5 h-5" />}
             </div>
             <div>
-              <h3 className="text-base font-black text-foreground">Resgatar / Utilizar Reserva</h3>
+              <h3 className="text-base font-black text-foreground">
+                {isTransfer ? 'Transferir para o Caixa' : 'Resgatar / Utilizar Reserva'}
+              </h3>
               <p className="text-xs text-muted-foreground font-medium">
                 {reserve.name} • Disponível: <strong className="text-foreground">{formatCurrency(currentBalance)}</strong>
               </p>
@@ -443,15 +468,65 @@ export function WithdrawModal({
         </div>
 
         <form onSubmit={handleSave} className="p-5 space-y-4">
+          {/* Destination Selector Tabs */}
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-black uppercase tracking-wider text-muted-foreground">
+              Finalidade da Operação
+            </label>
+            <div className="grid grid-cols-2 gap-1.5 p-1 bg-muted/60 rounded-2xl border border-border/80">
+              <button
+                type="button"
+                onClick={() => {
+                  setDestinationMode('expense');
+                  setDescription(`Resgate / Uso - ${reserve.name}`);
+                  if (hasFixedCategory && reserve.default_use_category) {
+                    setCategory(reserve.default_use_category);
+                  } else {
+                    setCategory(profileExpenseCategories[0] || 'Outros');
+                  }
+                }}
+                className={`flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                  !isTransfer
+                    ? 'bg-card text-foreground shadow-xs border border-border/80'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                <Minus className="w-3.5 h-3.5 text-rose-500" />
+                <span>Despesa / Gasto</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setDestinationMode('transfer_to_cash');
+                  setDescription(`Transferência para o Caixa: ${reserve.name}`);
+                  setCategory('Resgate de Reserva');
+                  setPaymentStatus('paid');
+                  setIsRecurring(false);
+                }}
+                className={`flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                  isTransfer
+                    ? 'bg-card text-emerald-600 dark:text-emerald-400 shadow-xs border border-emerald-500/30'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                <Landmark className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                <span>Transferir p/ Caixa</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Valor Input */}
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
               <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
-                Valor do Resgate
+                {isTransfer ? 'Valor a Transferir' : 'Valor do Resgate'}
               </label>
               <button
                 type="button"
                 onClick={() => setAmount(String(currentBalance))}
-                className="text-[11px] font-bold text-rose-600 dark:text-rose-400 hover:underline cursor-pointer"
+                className={`text-[11px] font-bold hover:underline cursor-pointer ${
+                  isTransfer ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'
+                }`}
               >
                 Usar Total ({formatCurrency(currentBalance)})
               </button>
@@ -471,249 +546,290 @@ export function WithdrawModal({
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {/* Destination Notice or Category Select */}
+          {isTransfer ? (
+            <div className="p-3.5 bg-emerald-500/10 border border-emerald-500/25 rounded-2xl space-y-1 text-left">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-black text-emerald-700 dark:text-emerald-300 flex items-center gap-1.5">
+                  <Landmark className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                  Destino: Caixa Geral (Banca Livre)
+                </span>
+                <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30">
+                  Crédito em Caixa
+                </span>
+              </div>
+              <p className="text-[11px] text-muted-foreground leading-relaxed pt-0.5">
+                O valor sairá desta reserva e retornará diretamente ao seu saldo disponível do <strong>Caixa</strong>, sem ser contabilizado como despesa no faturamento e relatórios.
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-muted-foreground">Data</label>
+                <Input
+                  type="date"
+                  required
+                  value={date}
+                  onChange={e => setDate(e.target.value)}
+                  className="h-10 text-xs rounded-xl"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-muted-foreground flex items-center justify-between">
+                  <span>Categoria de Despesa</span>
+                  {hasFixedCategory && (
+                    <span className="text-[10px] text-indigo-600 dark:text-indigo-400 font-bold">Fixa na Reserva</span>
+                  )}
+                </label>
+
+                {hasFixedCategory ? (
+                  <div className="h-10 px-3 rounded-xl bg-indigo-500/10 border border-indigo-500/30 flex items-center gap-1.5 text-xs font-bold text-indigo-600 dark:text-indigo-400">
+                    <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
+                    <span className="truncate">{reserve.default_use_category}</span>
+                  </div>
+                ) : (
+                  <Select value={category} onValueChange={setCategory}>
+                    <SelectTrigger className="h-10 text-xs font-bold rounded-xl bg-card">
+                      <SelectValue placeholder="Selecione a categoria..." />
+                    </SelectTrigger>
+                    <SelectContent className="text-xs">
+                      {profileExpenseCategories.map(cat => (
+                        <SelectItem key={cat} value={cat} className="cursor-pointer">
+                          {cat}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Date when in transfer mode */}
+          {isTransfer && (
             <div className="space-y-1.5">
-              <label className="text-xs font-bold text-muted-foreground">Data</label>
+              <label className="text-xs font-bold text-muted-foreground">Data da Transferência</label>
               <Input
                 type="date"
                 required
                 value={date}
-                onChange={e => setDate(e.target.value)}
+                onChange={e => {
+                  setDate(e.target.value);
+                  setPaymentDate(e.target.value);
+                }}
                 className="h-10 text-xs rounded-xl"
               />
             </div>
+          )}
 
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-muted-foreground flex items-center justify-between">
-                <span>Categoria de Despesa</span>
-                {hasFixedCategory && (
-                  <span className="text-[10px] text-indigo-600 dark:text-indigo-400 font-bold">Fixa na Reserva</span>
-                )}
-              </label>
-
-              {hasFixedCategory ? (
-                <div className="h-10 px-3 rounded-xl bg-indigo-500/10 border border-indigo-500/30 flex items-center gap-1.5 text-xs font-bold text-indigo-600 dark:text-indigo-400">
-                  <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
-                  <span className="truncate">{reserve.default_use_category}</span>
-                </div>
-              ) : (
-                <Select value={category} onValueChange={setCategory}>
-                  <SelectTrigger className="h-10 text-xs font-bold rounded-xl bg-card">
-                    <SelectValue placeholder="Selecione a categoria..." />
-                  </SelectTrigger>
-                  <SelectContent className="text-xs">
-                    {profileExpenseCategories.map(cat => (
-                      <SelectItem key={cat} value={cat} className="cursor-pointer">
-                        {cat}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
-            </div>
-          </div>
-
+          {/* Motivo / Descrição */}
           <div className="space-y-1.5">
             <label className="text-xs font-bold text-muted-foreground">Motivo / Descrição</label>
             <Input
-              placeholder="Ex: Conserto mecânico urgente"
+              placeholder={isTransfer ? "Ex: Transferência para capital de giro" : "Ex: Conserto mecânico urgente"}
               value={description}
               onChange={e => setDescription(e.target.value)}
               className="h-10 text-xs rounded-xl"
             />
           </div>
 
-          {/* Payment Status Switch */}
-          <div className="p-3.5 bg-muted/20 border border-border/70 rounded-2xl space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-1.5">
-                <Clock className="w-3.5 h-3.5 text-primary" />
-                <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">
-                  Status de Pagamento
-                </label>
-              </div>
-              <div className="flex items-center gap-1 bg-muted/60 p-0.5 rounded-lg border border-border/60">
-                <button
-                  type="button"
-                  onClick={() => setPaymentStatus('paid')}
-                  className={`px-2.5 py-1 text-[10px] font-extrabold rounded-md transition-all cursor-pointer ${
-                    paymentStatus === 'paid'
-                      ? 'bg-emerald-500 text-white shadow-xs'
-                      : 'text-muted-foreground hover:text-foreground'
-                  }`}
-                >
-                  Pago ✅
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPaymentStatus('pending')}
-                  className={`px-2.5 py-1 text-[10px] font-extrabold rounded-md transition-all cursor-pointer ${
-                    paymentStatus === 'pending'
-                      ? 'bg-amber-500 text-white shadow-xs'
-                      : 'text-muted-foreground hover:text-foreground'
-                  }`}
-                >
-                  Pendente ⏳
-                </button>
-              </div>
-            </div>
-
-            {paymentStatus === 'pending' ? (
-              <div className="space-y-1.5 animate-in fade-in duration-150">
-                <label className="text-[10px] font-extrabold uppercase tracking-wider text-amber-600 dark:text-amber-400">
-                  Data de Vencimento
-                </label>
-                <Input
-                  type="date"
-                  value={dueDate}
-                  onChange={e => setDueDate(e.target.value)}
-                  className="h-9 rounded-lg border-amber-500/30 bg-card text-xs font-semibold focus:ring-amber-500"
-                  required
-                />
-                <p className="text-[9.5px] text-amber-600/90 dark:text-amber-400/90 leading-tight">
-                  Lançamentos de reserva pendentes não debitam o saldo da reserva até serem liquidados.
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-1.5 animate-in fade-in duration-150">
-                <label className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
-                  Data Efetiva de Pagamento
-                </label>
-                <Input
-                  type="date"
-                  value={paymentDate}
-                  onChange={e => setPaymentDate(e.target.value)}
-                  className="h-9 rounded-lg border-emerald-500/30 bg-card text-xs font-semibold focus:ring-emerald-500"
-                  required
-                />
-              </div>
-            )}
-          </div>
-
-          {/* Recurrence & Installments Section */}
-          <div className="p-3.5 bg-primary/[0.03] border border-primary/20 rounded-2xl space-y-3">
-            <div 
-              className="flex items-center justify-between cursor-pointer select-none"
-              onClick={() => setIsRecurring(!isRecurring)}
-            >
-              <div className="flex items-center gap-2">
-                <div className={`p-1.5 rounded-lg transition-colors ${isRecurring ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}`}>
-                  <RefreshCw className={`w-3.5 h-3.5 ${isRecurring ? 'animate-spin-slow' : ''}`} />
-                </div>
-                <div>
-                  <h4 className="text-xs font-extrabold text-foreground leading-tight">
-                    Tornar Resgate Recorrente
-                  </h4>
-                  <p className="text-[9.5px] text-muted-foreground leading-tight">
-                    Gera parcelas de utilização periódicas da reserva
-                  </p>
-                </div>
-              </div>
-              <input
-                type="checkbox"
-                checked={isRecurring}
-                onChange={e => setIsRecurring(e.target.checked)}
-                className="h-4 w-4 rounded border-border text-primary focus:ring-primary cursor-pointer"
-              />
-            </div>
-
-            {isRecurring && (
-              <div className="space-y-3 pt-2 border-t border-primary/10 animate-in fade-in duration-200">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground/90">
-                      Frequência
+          {/* Payment Status & Recurrence (Only in Expense mode) */}
+          {!isTransfer && (
+            <>
+              {/* Payment Status Switch */}
+              <div className="p-3.5 bg-muted/20 border border-border/70 rounded-2xl space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <Clock className="w-3.5 h-3.5 text-primary" />
+                    <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">
+                      Status de Pagamento
                     </label>
-                    <Select
-                      value={recurrenceFrequency}
-                      onValueChange={(val: any) => setRecurrenceFrequency(val)}
-                    >
-                      <SelectTrigger className="h-9 rounded-xl border-border bg-card text-xs font-semibold">
-                        <SelectValue placeholder="Frequência" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="daily">Diário</SelectItem>
-                        <SelectItem value="weekly">Semanal</SelectItem>
-                        <SelectItem value="biweekly">Quinzenal (14 dias)</SelectItem>
-                        <SelectItem value="monthly">Mensal</SelectItem>
-                        <SelectItem value="bimonthly">Bimestral (2 meses)</SelectItem>
-                        <SelectItem value="quarterly">Trimestral (3 meses)</SelectItem>
-                        <SelectItem value="semiannual">Semestral (6 meses)</SelectItem>
-                        <SelectItem value="yearly">Anual</SelectItem>
-                      </SelectContent>
-                    </Select>
                   </div>
-
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground/90">
-                      Qtd. Parcelas / Repetições
-                    </label>
-                    <div className="flex items-center gap-1.5">
-                      <button
-                        type="button"
-                        onClick={() => setRecurrenceInstallments(String(Math.max(2, (Number(recurrenceInstallments) || 12) - 1)))}
-                        className="h-9 w-9 shrink-0 rounded-lg bg-card border border-border flex items-center justify-center font-black text-sm hover:bg-muted cursor-pointer"
-                      >
-                        -
-                      </button>
-                      <Input
-                        type="number"
-                        min="2"
-                        max="60"
-                        value={recurrenceInstallments}
-                        onChange={e => setRecurrenceInstallments(e.target.value)}
-                        className="h-9 rounded-lg font-black text-center border-border bg-card text-xs"
-                        placeholder="12"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setRecurrenceInstallments(String(Math.min(60, (Number(recurrenceInstallments) || 12) + 1)))}
-                        className="h-9 w-9 shrink-0 rounded-lg bg-primary text-primary-foreground flex items-center justify-center font-black text-sm hover:bg-primary/90 cursor-pointer"
-                      >
-                        +
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Quick Presets */}
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <span className="text-[9px] font-bold text-muted-foreground mr-1">Atalhos:</span>
-                  {['2', '3', '6', '12', '24', '36'].map(preset => (
+                  <div className="flex items-center gap-1 bg-muted/60 p-0.5 rounded-lg border border-border/60">
                     <button
-                      key={preset}
                       type="button"
-                      onClick={() => setRecurrenceInstallments(preset)}
-                      className={`px-2 py-0.5 rounded-lg text-[10px] font-bold transition-colors cursor-pointer border ${
-                        recurrenceInstallments === preset
-                          ? 'bg-primary text-primary-foreground border-primary'
-                          : 'bg-card text-muted-foreground border-border hover:bg-muted'
+                      onClick={() => setPaymentStatus('paid')}
+                      className={`px-2.5 py-1 text-[10px] font-extrabold rounded-md transition-all cursor-pointer ${
+                        paymentStatus === 'paid'
+                          ? 'bg-emerald-500 text-white shadow-xs'
+                          : 'text-muted-foreground hover:text-foreground'
                       }`}
                     >
-                      {preset}x
+                      Pago ✅
                     </button>
-                  ))}
+                    <button
+                      type="button"
+                      onClick={() => setPaymentStatus('pending')}
+                      className={`px-2.5 py-1 text-[10px] font-extrabold rounded-md transition-all cursor-pointer ${
+                        paymentStatus === 'pending'
+                          ? 'bg-amber-500 text-white shadow-xs'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      Pendente ⏳
+                    </button>
+                  </div>
                 </div>
 
-                <label className="flex items-start gap-2 p-2.5 bg-primary/5 rounded-lg border border-primary/15 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={generateFuture}
-                    onChange={e => setGenerateFuture(e.target.checked)}
-                    className="h-4 w-4 mt-0.5 rounded border-border text-primary focus:ring-primary cursor-pointer"
-                  />
-                  <div className="space-y-0.5">
-                    <span className="text-xs font-bold text-foreground">
-                      Gerar as próximas parcelas automaticamente no extrato
-                    </span>
-                    <p className="text-[9.5px] text-muted-foreground leading-snug">
-                      Cria as {(Number(recurrenceInstallments) || 12) - 1} parcelas futuras com status "Pendente" e vencimentos programados.
+                {paymentStatus === 'pending' ? (
+                  <div className="space-y-1.5 animate-in fade-in duration-150">
+                    <label className="text-[10px] font-extrabold uppercase tracking-wider text-amber-600 dark:text-amber-400">
+                      Data de Vencimento
+                    </label>
+                    <Input
+                      type="date"
+                      value={dueDate}
+                      onChange={e => setDueDate(e.target.value)}
+                      className="h-9 rounded-lg border-amber-500/30 bg-card text-xs font-semibold focus:ring-amber-500"
+                      required
+                    />
+                    <p className="text-[9.5px] text-amber-600/90 dark:text-amber-400/90 leading-tight">
+                      Lançamentos de reserva pendentes não debitam o saldo da reserva até serem liquidados.
                     </p>
                   </div>
-                </label>
+                ) : (
+                  <div className="space-y-1.5 animate-in fade-in duration-150">
+                    <label className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
+                      Data Efetiva de Pagamento
+                    </label>
+                    <Input
+                      type="date"
+                      value={paymentDate}
+                      onChange={e => setPaymentDate(e.target.value)}
+                      className="h-9 rounded-lg border-emerald-500/30 bg-card text-xs font-semibold focus:ring-emerald-500"
+                      required
+                    />
+                  </div>
+                )}
               </div>
-            )}
-          </div>
+
+              {/* Recurrence & Installments Section */}
+              <div className="p-3.5 bg-primary/[0.03] border border-primary/20 rounded-2xl space-y-3">
+                <div 
+                  className="flex items-center justify-between cursor-pointer select-none"
+                  onClick={() => setIsRecurring(!isRecurring)}
+                >
+                  <div className="flex items-center gap-2">
+                    <div className={`p-1.5 rounded-lg transition-colors ${isRecurring ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}`}>
+                      <RefreshCw className={`w-3.5 h-3.5 ${isRecurring ? 'animate-spin-slow' : ''}`} />
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-extrabold text-foreground leading-tight">
+                        Tornar Resgate Recorrente
+                      </h4>
+                      <p className="text-[9.5px] text-muted-foreground leading-tight">
+                        Gera parcelas de utilização periódicas da reserva
+                      </p>
+                    </div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={isRecurring}
+                    onChange={e => setIsRecurring(e.target.checked)}
+                    className="h-4 w-4 rounded border-border text-primary focus:ring-primary cursor-pointer"
+                  />
+                </div>
+
+                {isRecurring && (
+                  <div className="space-y-3 pt-2 border-t border-primary/10 animate-in fade-in duration-200">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground/90">
+                          Frequência
+                        </label>
+                        <Select
+                          value={recurrenceFrequency}
+                          onValueChange={(val: any) => setRecurrenceFrequency(val)}
+                        >
+                          <SelectTrigger className="h-9 rounded-xl border-border bg-card text-xs font-semibold">
+                            <SelectValue placeholder="Frequência" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="daily">Diário</SelectItem>
+                            <SelectItem value="weekly">Semanal</SelectItem>
+                            <SelectItem value="biweekly">Quinzenal (14 dias)</SelectItem>
+                            <SelectItem value="monthly">Mensal</SelectItem>
+                            <SelectItem value="bimonthly">Bimestral (2 meses)</SelectItem>
+                            <SelectItem value="quarterly">Trimestral (3 meses)</SelectItem>
+                            <SelectItem value="semiannual">Semestral (6 meses)</SelectItem>
+                            <SelectItem value="yearly">Anual</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground/90">
+                          Qtd. Parcelas / Repetições
+                        </label>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => setRecurrenceInstallments(String(Math.max(2, (Number(recurrenceInstallments) || 12) - 1)))}
+                            className="h-9 w-9 shrink-0 rounded-lg bg-card border border-border flex items-center justify-center font-black text-sm hover:bg-muted cursor-pointer"
+                          >
+                            -
+                          </button>
+                          <Input
+                            type="number"
+                            min="2"
+                            max="60"
+                            value={recurrenceInstallments}
+                            onChange={e => setRecurrenceInstallments(e.target.value)}
+                            className="h-9 rounded-lg font-black text-center border-border bg-card text-xs"
+                            placeholder="12"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setRecurrenceInstallments(String(Math.min(60, (Number(recurrenceInstallments) || 12) + 1)))}
+                            className="h-9 w-9 shrink-0 rounded-lg bg-primary text-primary-foreground flex items-center justify-center font-black text-sm hover:bg-primary/90 cursor-pointer"
+                          >
+                            +
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Quick Presets */}
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-[9px] font-bold text-muted-foreground mr-1">Atalhos:</span>
+                      {['2', '3', '6', '12', '24', '36'].map(preset => (
+                        <button
+                          key={preset}
+                          type="button"
+                          onClick={() => setRecurrenceInstallments(preset)}
+                          className={`px-2 py-0.5 rounded-lg text-[10px] font-bold transition-colors cursor-pointer border ${
+                            recurrenceInstallments === preset
+                              ? 'bg-primary text-primary-foreground border-primary'
+                              : 'bg-card text-muted-foreground border-border hover:bg-muted'
+                          }`}
+                        >
+                          {preset}x
+                        </button>
+                      ))}
+                    </div>
+
+                    <label className="flex items-start gap-2 p-2.5 bg-primary/5 rounded-lg border border-primary/15 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={generateFuture}
+                        onChange={e => setGenerateFuture(e.target.checked)}
+                        className="h-4 w-4 mt-0.5 rounded border-border text-primary focus:ring-primary cursor-pointer"
+                      />
+                      <div className="space-y-0.5">
+                        <span className="text-xs font-bold text-foreground">
+                          Gerar as próximas parcelas automaticamente no extrato
+                        </span>
+                        <p className="text-[9.5px] text-muted-foreground leading-snug">
+                          Cria as {(Number(recurrenceInstallments) || 12) - 1} parcelas futuras com status "Pendente" e vencimentos programados.
+                        </p>
+                      </div>
+                    </label>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
 
           <div className="flex items-center justify-end gap-2 pt-2">
             <Button type="button" variant="ghost" onClick={onClose} className="h-10 text-xs font-bold cursor-pointer">
@@ -722,9 +838,23 @@ export function WithdrawModal({
             <Button
               type="submit"
               disabled={isSubmitting}
-              className="h-10 px-5 text-xs font-bold bg-rose-600 hover:bg-rose-700 text-white rounded-xl shadow-md shadow-rose-500/20 cursor-pointer"
+              className={`h-10 px-5 text-xs font-bold text-white rounded-xl shadow-md cursor-pointer flex items-center gap-1.5 ${
+                isTransfer
+                  ? 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-500/20'
+                  : 'bg-rose-600 hover:bg-rose-700 shadow-rose-500/20'
+              }`}
             >
-              {isSubmitting ? 'Resgatando...' : 'Confirmar Resgate'}
+              {isTransfer ? (
+                <>
+                  <Landmark className="w-3.5 h-3.5" />
+                  <span>{isSubmitting ? 'Transferindo...' : 'Confirmar Transferência p/ Caixa'}</span>
+                </>
+              ) : (
+                <>
+                  <Minus className="w-3.5 h-3.5" />
+                  <span>{isSubmitting ? 'Resgatando...' : 'Confirmar Resgate'}</span>
+                </>
+              )}
             </Button>
           </div>
         </form>

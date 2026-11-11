@@ -14,6 +14,7 @@ import {
   PlayCircle, 
   Trash2, 
   Archive, 
+  ArchiveRestore,
   History as HistIcon,
   Shield,
   Clock,
@@ -21,7 +22,8 @@ import {
   ArrowDownLeft,
   ChevronRight,
   Calculator,
-  Info
+  Info,
+  Landmark
 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -51,6 +53,7 @@ interface ReserveCardProps {
   onViewRuleHistory?: (reserve: Reserve) => void;
   onApplyDirectSuggestion: (reserve: Reserve, amount: number) => void;
   onAuditSuggestion?: (reserve: Reserve) => void;
+  onTransferToCash?: (reserve: Reserve) => void;
   hideValues?: boolean;
 }
 
@@ -71,6 +74,7 @@ export function ReserveCard({
   onViewRuleHistory,
   onApplyDirectSuggestion,
   onAuditSuggestion,
+  onTransferToCash,
   hideValues
 }: ReserveCardProps) {
   const [showMenu, setShowMenu] = useState(false);
@@ -97,7 +101,8 @@ export function ReserveCard({
   const hasGoal = goal > 0;
   const goalProgress = hasGoal ? Math.min(100, Math.round((currentBalance / goal) * 100)) : 0;
   const isGoalReached = hasGoal && currentBalance >= goal;
-  const isPaused = reserve.status === 'inactive' || reserve.is_paused;
+  const isInactive = reserve.status === 'inactive';
+  const isPaused = isInactive || reserve.is_paused;
 
   // Calculate suggestions
   const suggested = calculateSuggestion(reserve, transactions, reserveTransactions, globalPeriod, customDateRange);
@@ -162,7 +167,11 @@ export function ReserveCard({
                 <h3 className="text-xs sm:text-sm font-black text-foreground tracking-tight truncate">
                   {reserve.name}
                 </h3>
-                {isPaused ? (
+                {isInactive ? (
+                  <span className="px-1.5 py-0.2 text-[9px] font-bold rounded-md bg-zinc-500/10 text-zinc-600 dark:text-zinc-400 border border-zinc-500/20 flex items-center gap-1">
+                    <Archive className="w-2.5 h-2.5" /> Inativa
+                  </span>
+                ) : isPaused ? (
                   <span className="px-1.5 py-0.2 text-[9px] font-bold rounded-md bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
                     Pausada
                   </span>
@@ -193,8 +202,24 @@ export function ReserveCard({
             </Button>
 
             {showMenu && (
-              <div className="absolute right-0 top-8 z-30 w-48 bg-card border border-border/80 rounded-xl shadow-xl p-1 text-xs font-semibold animate-in fade-in zoom-in-95 duration-150">
-                {onUpdateRule && (
+              <div className="absolute right-0 top-8 z-30 w-52 bg-card border border-border/80 rounded-xl shadow-xl p-1 text-xs font-semibold animate-in fade-in zoom-in-95 duration-150">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowMenu(false);
+                    if (onTransferToCash) {
+                      onTransferToCash(reserve);
+                    } else {
+                      onWithdraw(reserve);
+                    }
+                  }}
+                  disabled={currentBalance <= 0}
+                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left text-emerald-600 dark:text-emerald-400 font-bold hover:bg-emerald-500/10 transition-colors disabled:opacity-40 cursor-pointer"
+                >
+                  <Landmark className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" /> Transferir p/ Caixa
+                </button>
+
+                {onUpdateRule && !isInactive && (
                   <button
                     type="button"
                     onClick={() => {
@@ -207,7 +232,7 @@ export function ReserveCard({
                   </button>
                 )}
 
-                {onAuditSuggestion && (
+                {onAuditSuggestion && !isInactive && (
                   <button
                     type="button"
                     onClick={() => {
@@ -231,24 +256,26 @@ export function ReserveCard({
                   <Edit3 className="w-3.5 h-3.5 text-muted-foreground" /> Editar Reserva
                 </button>
 
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowMenu(false);
-                    onTogglePause(reserve);
-                  }}
-                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left text-foreground hover:bg-muted transition-colors cursor-pointer"
-                >
-                  {reserve.is_paused ? (
-                    <>
-                      <PlayCircle className="w-3.5 h-3.5 text-emerald-600" /> Reativar Automação
-                    </>
-                  ) : (
-                    <>
-                      <PauseCircle className="w-3.5 h-3.5 text-amber-600" /> Pausar Automação
-                    </>
-                  )}
-                </button>
+                {!isInactive && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowMenu(false);
+                      onTogglePause(reserve);
+                    }}
+                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left text-foreground hover:bg-muted transition-colors cursor-pointer"
+                  >
+                    {reserve.is_paused ? (
+                      <>
+                        <PlayCircle className="w-3.5 h-3.5 text-emerald-600" /> Reativar Automação
+                      </>
+                    ) : (
+                      <>
+                        <PauseCircle className="w-3.5 h-3.5 text-amber-600" /> Pausar Automação
+                      </>
+                    )}
+                  </button>
+                )}
 
                 <div className="h-px bg-border/60 my-1" />
 
@@ -258,9 +285,21 @@ export function ReserveCard({
                     setShowMenu(false);
                     onFinalize(reserve);
                   }}
-                  className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left text-amber-600 hover:bg-amber-500/10 transition-colors cursor-pointer"
+                  className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left transition-colors cursor-pointer ${
+                    isInactive
+                      ? 'text-emerald-600 hover:bg-emerald-500/10 font-bold'
+                      : 'text-amber-600 hover:bg-amber-500/10'
+                  }`}
                 >
-                  <Archive className="w-3.5 h-3.5" /> Inativar Reserva
+                  {isInactive ? (
+                    <>
+                      <ArchiveRestore className="w-3.5 h-3.5 text-emerald-600" /> Reativar Reserva
+                    </>
+                  ) : (
+                    <>
+                      <Archive className="w-3.5 h-3.5" /> Inativar Reserva
+                    </>
+                  )}
                 </button>
 
                 <button
@@ -397,38 +436,63 @@ export function ReserveCard({
           </div>
         )}
 
-        {/* Action Buttons Grid: + Aportar, - Resgatar, Rendimento */}
-        <div className="grid grid-cols-3 gap-1.5 pt-0.5">
-          <Button
-            size="sm"
-            onClick={() => onAporteManual(reserve)}
-            className="h-7.5 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-2xs gap-1 cursor-pointer px-1.5"
-          >
-            <Plus className="w-3 h-3" />
-            <span>Aportar</span>
-          </Button>
+        {/* Action Buttons Grid: Inactive options vs Active options */}
+        {isInactive ? (
+          <div className="grid grid-cols-2 gap-1.5 pt-0.5">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => onFinalize(reserve)}
+              className="h-7.5 text-xs font-bold border-emerald-500/30 text-emerald-600 hover:bg-emerald-500/10 rounded-xl gap-1 cursor-pointer px-1.5"
+            >
+              <ArchiveRestore className="w-3 h-3" />
+              <span>Reativar</span>
+            </Button>
 
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => onWithdraw(reserve)}
-            disabled={currentBalance <= 0}
-            className="h-7.5 text-xs font-bold border-rose-500/30 text-rose-600 hover:bg-rose-500/10 hover:text-rose-700 dark:text-rose-400 rounded-xl gap-1 disabled:opacity-40 cursor-pointer px-1.5"
-          >
-            <Minus className="w-3 h-3" />
-            <span>Resgatar</span>
-          </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => onTransferToCash ? onTransferToCash(reserve) : onWithdraw(reserve)}
+              disabled={currentBalance <= 0}
+              className="h-7.5 text-xs font-bold border-emerald-500/30 text-emerald-600 hover:bg-emerald-500/10 rounded-xl gap-1 disabled:opacity-40 cursor-pointer px-1.5"
+            >
+              <Landmark className="w-3 h-3" />
+              <span>P/ Caixa</span>
+            </Button>
+          </div>
+        ) : (
+          <div className="grid grid-cols-3 gap-1.5 pt-0.5">
+            <Button
+              size="sm"
+              onClick={() => onAporteManual(reserve)}
+              className="h-7.5 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-2xs gap-1 cursor-pointer px-1.5"
+            >
+              <Plus className="w-3 h-3" />
+              <span>Aportar</span>
+            </Button>
 
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => onUpdateBalance(reserve)}
-            className="h-7.5 text-xs font-bold border-border/80 hover:bg-muted text-foreground rounded-xl gap-1 cursor-pointer px-1.5"
-          >
-            <TrendingUp className="w-3 h-3 text-blue-600" />
-            <span>Rend.</span>
-          </Button>
-        </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => onWithdraw(reserve)}
+              disabled={currentBalance <= 0}
+              className="h-7.5 text-xs font-bold border-rose-500/30 text-rose-600 hover:bg-rose-500/10 hover:text-rose-700 dark:text-rose-400 rounded-xl gap-1 disabled:opacity-40 cursor-pointer px-1.5"
+            >
+              <Minus className="w-3 h-3" />
+              <span>Resgatar</span>
+            </Button>
+
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => onUpdateBalance(reserve)}
+              className="h-7.5 text-xs font-bold border-border/80 hover:bg-muted text-foreground rounded-xl gap-1 cursor-pointer px-1.5"
+            >
+              <TrendingUp className="w-3 h-3 text-blue-600" />
+              <span>Rend.</span>
+            </Button>
+          </div>
+        )}
       </div>
     </Card>
   );

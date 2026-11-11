@@ -2056,13 +2056,12 @@ export function Dashboard() {
         hasPastData: false,
         avgMonthlyPersonal: 0,
         avgMonthlyOpExp: 0,
-        avgContributionMarginPct: 0.65,
+        avgMonthlyTotal: 0,
         monthsCount: 0
       };
     }
 
     let totalPersonal = 0;
-    let totalIncome = 0;
     let totalOpExp = 0;
     let validMonthsCount = 0;
 
@@ -2075,7 +2074,6 @@ export function Dashboard() {
       
       if (inc > 0 || per > 0 || op > 0) {
         totalPersonal += per;
-        totalIncome += inc;
         totalOpExp += op;
         validMonthsCount++;
       }
@@ -2084,14 +2082,13 @@ export function Dashboard() {
     const count = validMonthsCount > 0 ? validMonthsCount : 1;
     const avgMonthlyPersonal = totalPersonal / count;
     const avgMonthlyOpExp = totalOpExp / count;
-    const pastMargin = totalIncome > 0 ? (totalIncome - totalOpExp) / totalIncome : 0.65;
-    const avgContributionMarginPct = pastMargin > 0.15 && pastMargin < 0.95 ? pastMargin : 0.65;
+    const avgMonthlyTotal = avgMonthlyPersonal + avgMonthlyOpExp;
 
     return {
       hasPastData: validMonthsCount > 0,
       avgMonthlyPersonal,
       avgMonthlyOpExp,
-      avgContributionMarginPct,
+      avgMonthlyTotal,
       monthsCount: validMonthsCount
     };
   }, [allTransactionsAdjusted, calcTotals]);
@@ -2164,32 +2161,35 @@ export function Dashboard() {
     const maintRuleCostKm = maintReserve?.regra_valor || 0.15;
     const kmCobertosManutencao = maintRuleCostKm > 0 ? Math.floor(maintReserveBalance / maintRuleCostKm) : 0;
 
-    // 9. Ponto de Equilíbrio Financeiro Inteligente (Breakeven):
-    // Considera os custos fixos pessoais projetados com base no histórico real dos meses anteriores
+    // 9. Ponto de Equilíbrio Financeiro (Breakeven):
+    // Calcula a média das despesas pessoais e operacionais dos meses anteriores, escalada para a quantidade de dias do período selecionado
     const periodDays = Math.max(1, (dayList || []).length);
-    const periodRatio = periodDays / 30; // Proporção em relação a 1 mês típico
+    const periodRatio = periodDays / 30; // Fator proporcional para o período selecionado
 
-    const basePastPersonalTarget = pastMonthsStats.hasPastData && pastMonthsStats.avgMonthlyPersonal > 0
+    const historicalPersonalTarget = pastMonthsStats.hasPastData
       ? pastMonthsStats.avgMonthlyPersonal * periodRatio
-      : 0;
+      : despesaPessoal;
 
-    // Despesa pessoal requerida (o maior entre o já gasto no período ou o custo de vida histórico proporcional)
-    const basePersonalRequired = Math.max(despesaPessoal, basePastPersonalTarget);
+    const historicalOpExpTarget = pastMonthsStats.hasPastData
+      ? pastMonthsStats.avgMonthlyOpExp * periodRatio
+      : opPuro;
 
-    // Margem de contribuição operacional efetiva (o que sobra após combustível, pedágio e manutenção)
-    const currentMargemContribucaoPct = fatTotal > 0 ? (fatTotal - opPuro) / fatTotal : 0;
-    const effectiveContribMarginPct = (currentMargemContribucaoPct > 0.15 && currentMargemContribucaoPct < 0.95)
-      ? currentMargemContribucaoPct
-      : pastMonthsStats.avgContributionMarginPct;
+    const historicalTotalTarget = pastMonthsStats.hasPastData && pastMonthsStats.avgMonthlyTotal > 0
+      ? pastMonthsStats.avgMonthlyTotal * periodRatio
+      : (despesaPessoal + opPuro);
 
-    // Faturamento de equilíbrio necessário para cobrir os custos operacionais e pessoais
-    const fatBreakeven = effectiveContribMarginPct > 0 
-      ? (basePersonalRequired / effectiveContribMarginPct)
-      : (basePersonalRequired + opPuro);
+    // Faturamento mínimo de equilíbrio necessário para o período (pega o maior valor entre os custos reais já acumulados ou a meta histórica do período)
+    const fatBreakeven = Math.max(despesaTotal, historicalTotalTarget);
 
     const mcoKm = rpk - cpk;
     const kmBreakevenTotal = mcoKm > 0 ? (fatBreakeven / (rpk > 0 ? rpk : 1.5)) : 0;
-    const breakevenProgress = fatBreakeven > 0 ? Math.min(200, (fatTotal / fatBreakeven) * 100) : (fatTotal > 0 ? 100 : 0);
+
+    // Medição do valor atingido (faturamento bruto) em relação ao ponto de equilíbrio do período
+    const breakevenProgress = fatBreakeven > 0 
+      ? Math.min(200, (fatTotal / fatBreakeven) * 100)
+      : (fatTotal > 0 ? 100 : 0);
+
+    const breakevenShortfall = Math.max(0, fatBreakeven - fatTotal);
 
     return {
       kmTotal,
@@ -2233,11 +2233,15 @@ export function Dashboard() {
       kmBreakevenTotal,
       fatBreakeven,
       breakevenProgress,
-      basePastPersonalTarget,
+      breakevenShortfall,
+      historicalPersonalTarget,
+      historicalOpExpTarget,
+      historicalTotalTarget,
       hasPastMonthsRef: pastMonthsStats.hasPastData,
       pastMonthsCount: pastMonthsStats.monthsCount,
       avgMonthlyPersonal: pastMonthsStats.avgMonthlyPersonal,
-      effectiveContribMarginPct
+      avgMonthlyOpExp: pastMonthsStats.avgMonthlyOpExp,
+      avgMonthlyTotal: pastMonthsStats.avgMonthlyTotal
     };
   }, [summary, totalInReserves, dayList, txsByDate, settings, reserves, pastMonthsStats]);
 
@@ -5928,13 +5932,15 @@ export function Dashboard() {
                 );
               })()}
 
-              {/* 4. Ponto de Equilíbrio Inteligente (Breakeven) */}
+              {/* 4. Ponto de Equilíbrio Financeiro (Breakeven) */}
               {(() => {
                 const breakeven = fundamentalIndexes.fatBreakeven;
                 const progress = fundamentalIndexes.breakevenProgress;
                 const isCovered = progress >= 100;
-                const basePastPer = fundamentalIndexes.basePastPersonalTarget;
+                const achieved = fundamentalIndexes.fatTotal;
+                const shortfall = fundamentalIndexes.breakevenShortfall;
                 const hasPastRef = fundamentalIndexes.hasPastMonthsRef;
+                const avgPastMonthly = fundamentalIndexes.avgMonthlyTotal;
 
                 return (
                   <div 
@@ -5946,7 +5952,7 @@ export function Dashboard() {
                         <span className="text-[9.5px] font-extrabold uppercase tracking-wider text-muted-foreground truncate">Ponto de Equilíbrio</span>
                       </div>
                       <span className={`text-[8.5px] font-black px-1.5 py-0.2 rounded-full border shrink-0 ${isCovered ? 'bg-emerald-500/15 text-emerald-500 border-emerald-500/30' : 'bg-violet-500/15 text-violet-400 border-violet-500/30'}`}>
-                        {isCovered ? 'Superado 🎉' : `${progress.toFixed(0)}% Pago`}
+                        {isCovered ? 'Superado 🎉' : `${progress.toFixed(0)}% Atingido`}
                       </span>
                     </div>
 
@@ -5965,11 +5971,14 @@ export function Dashboard() {
                         </div>
                         <p className="text-[9px] text-muted-foreground font-medium leading-tight">
                           {isCovered 
-                            ? 'Custos 100% cobertos! Agora é lucro puro.' 
-                            : hasPastRef && basePastPer > 0
-                              ? `Cálculo inteligente: ref. de ${formatCurrency(basePastPer)} em despesas fixas históricas.`
-                              : 'Faturamento mínimo para zerar custos operacionais e pessoais.'}
+                            ? `Atingido ${formatCurrency(achieved)} (Meta de ${formatCurrency(breakeven)} paga!)` 
+                            : `Faturado ${formatCurrency(achieved)} • Falta ${formatCurrency(shortfall)} para zerar os custos.`}
                         </p>
+                        {hasPastRef && avgPastMonthly > 0 && (
+                          <p className="text-[8.5px] text-muted-foreground/80 font-medium leading-tight mt-0.5">
+                            Média anterior: {formatCurrency(fundamentalIndexes.avgMonthlyPersonal)} (pessoal) + {formatCurrency(fundamentalIndexes.avgMonthlyOpExp)} (op.) = {formatCurrency(avgPastMonthly)}/mês
+                          </p>
+                        )}
                       </div>
                     </div>
                   </div>

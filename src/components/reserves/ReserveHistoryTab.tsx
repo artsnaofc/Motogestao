@@ -31,7 +31,8 @@ import {
   History,
   Check,
   Sliders,
-  RefreshCw
+  RefreshCw,
+  Landmark
 } from 'lucide-react';
 import { subDays } from 'date-fns';
 import { Input } from '@/components/ui/input';
@@ -399,13 +400,16 @@ export function ReserveHistoryTab({
     }
 
     if (tx.type === 'utilizacao') {
+      const isTransferToCash = tx.category === 'Resgate de Reserva' || tx.category === 'Resgate Reserva' || (tx.description || '').toLowerCase().includes('transferência para o caixa') || (tx.description || '').toLowerCase().includes('p/ o caixa');
       return {
-        label: 'Resgate / Utilização',
-        shortLabel: 'Resgate',
+        label: isTransferToCash ? 'Transferência para o Caixa' : 'Resgate / Utilização',
+        shortLabel: isTransferToCash ? 'P/ Caixa' : 'Resgate',
         categoryKey: 'utilizacao',
-        badgeClass: 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20',
-        icon: ArrowUpRight,
-        color: 'text-rose-600 dark:text-rose-400',
+        badgeClass: isTransferToCash 
+          ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20' 
+          : 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20',
+        icon: isTransferToCash ? Landmark : ArrowUpRight,
+        color: isTransferToCash ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400',
         isMass: false
       };
     }

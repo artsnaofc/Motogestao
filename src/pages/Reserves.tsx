@@ -9,7 +9,8 @@ import {
   Search, 
   RefreshCw,
   Zap,
-  Tag
+  Tag,
+  Archive
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -108,7 +109,7 @@ export function Reserves() {
 
   // Search & Filter in Cards
   const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'with_pending' | 'reached'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'with_pending' | 'reached' | 'inactive'>('all');
 
   // Modals state
   const [showMassAporteModal, setShowMassAporteModal] = useState(false);
@@ -122,6 +123,7 @@ export function Reserves() {
 
   const [selectedReserveForAction, setSelectedReserveForAction] = useState<Reserve | null>(null);
   const [actionModalType, setActionModalType] = useState<'aporte_manual' | 'withdraw' | 'update_balance' | 'rule_history' | null>(null);
+  const [withdrawInitialMode, setWithdrawInitialMode] = useState<'expense' | 'transfer_to_cash'>('expense');
   const [aporteInitialAmount, setAporteInitialAmount] = useState<number | undefined>(undefined);
   const [aporteInitialDesc, setAporteInitialDesc] = useState<string | undefined>(undefined);
   const [isSuggestionAporte, setIsSuggestionAporte] = useState<boolean>(false);
@@ -131,6 +133,11 @@ export function Reserves() {
   // Active non-archived reserves
   const activeReserves = useMemo(() => {
     return (reserves || []).filter(r => r.status !== 'inactive');
+  }, [reserves]);
+
+  // Inactive reserves
+  const inactiveReserves = useMemo(() => {
+    return (reserves || []).filter(r => r.status === 'inactive');
   }, [reserves]);
 
   // Suggestion calculation uses a fixed standard period ('month') to prevent value divergence
@@ -181,7 +188,8 @@ export function Reserves() {
 
   // Filtered reserves list for cards with suggested amounts first
   const filteredCards = useMemo(() => {
-    const list = activeReserves.filter(r => {
+    const baseList = statusFilter === 'inactive' ? inactiveReserves : activeReserves;
+    const list = baseList.filter(r => {
       // Search
       const matchesSearch = r.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                             (r.description || '').toLowerCase().includes(searchTerm.toLowerCase());
@@ -189,7 +197,7 @@ export function Reserves() {
 
       // Status
       if (statusFilter === 'active') {
-        return !r.is_paused;
+        return !r.is_paused && r.status !== 'inactive';
       }
       if (statusFilter === 'with_pending') {
         const sugg = calculateSuggestion(
@@ -211,6 +219,9 @@ export function Reserves() {
         const goal = r.meta_objetivo || 0;
         const bal = r.saldo_atual || 0;
         return goal > 0 && bal >= goal;
+      }
+      if (statusFilter === 'inactive') {
+        return true;
       }
 
       return true;
@@ -483,7 +494,11 @@ export function Reserves() {
         await updateReserve(res.id, { saldo_atual: newBal });
       }
 
-      toast.success(`Resgate de ${formatCurrency(cleanAmount)} registrado com sucesso!`);
+      if (data.category === 'Resgate de Reserva' || data.category === 'Resgate Reserva') {
+        toast.success(`Transferência de ${formatCurrency(cleanAmount)} para o Caixa realizada com sucesso!`);
+      } else {
+        toast.success(`Resgate de ${formatCurrency(cleanAmount)} registrado com sucesso!`);
+      }
     }
 
     if (refreshData) await refreshData(true);
@@ -603,11 +618,20 @@ export function Reserves() {
     toast.success(isNowPaused ? `Automação de "${res.name}" pausada.` : `Automação de "${res.name}" reativada!`);
   };
 
-  // 8. Finalize / Deactivate Reserve
+  // 8. Finalize / Deactivate / Reactivate Reserve
   const handleFinalize = async (res: Reserve) => {
-    if (confirm(`Deseja pausar/inativar a reserva "${res.name}"?`)) {
-      await updateReserve(res.id, { status: 'inactive', is_paused: true });
-      toast.success(`Reserva "${res.name}" inativada.`);
+    if (res.status === 'inactive') {
+      if (confirm(`Deseja reativar a reserva "${res.name}"?`)) {
+        await updateReserve(res.id, { status: 'active', is_paused: false });
+        toast.success(`Reserva "${res.name}" reativada com sucesso!`);
+        if (refreshData) await refreshData(true);
+      }
+    } else {
+      if (confirm(`Deseja pausar/inativar a reserva "${res.name}"?`)) {
+        await updateReserve(res.id, { status: 'inactive', is_paused: true });
+        toast.success(`Reserva "${res.name}" inativada.`);
+        if (refreshData) await refreshData(true);
+      }
     }
   };
 
@@ -654,11 +678,11 @@ export function Reserves() {
               />
             </div>
 
-            <div className="flex items-center gap-1 shrink-0 bg-muted/40 p-1 rounded-xl border border-border/80 text-[11px] font-bold">
+            <div className="flex items-center gap-1 shrink-0 bg-muted/40 p-1 rounded-xl border border-border/80 text-[11px] font-bold overflow-x-auto">
               <button
                 type="button"
                 onClick={() => setStatusFilter('all')}
-                className={`px-3 py-1 rounded-lg transition-all cursor-pointer ${
+                className={`px-3 py-1 rounded-lg transition-all cursor-pointer shrink-0 ${
                   statusFilter === 'all' ? 'bg-card text-foreground shadow-xs' : 'text-muted-foreground'
                 }`}
               >
@@ -667,7 +691,7 @@ export function Reserves() {
               <button
                 type="button"
                 onClick={() => setStatusFilter('with_pending')}
-                className={`px-3 py-1 rounded-lg transition-all cursor-pointer ${
+                className={`px-3 py-1 rounded-lg transition-all cursor-pointer shrink-0 ${
                   statusFilter === 'with_pending' ? 'bg-card text-amber-600 dark:text-amber-400 shadow-xs' : 'text-muted-foreground'
                 }`}
               >
@@ -676,11 +700,21 @@ export function Reserves() {
               <button
                 type="button"
                 onClick={() => setStatusFilter('reached')}
-                className={`px-3 py-1 rounded-lg transition-all cursor-pointer ${
+                className={`px-3 py-1 rounded-lg transition-all cursor-pointer shrink-0 ${
                   statusFilter === 'reached' ? 'bg-card text-emerald-600 dark:text-emerald-400 shadow-xs' : 'text-muted-foreground'
                 }`}
               >
                 Meta Batida
+              </button>
+              <button
+                type="button"
+                onClick={() => setStatusFilter('inactive')}
+                className={`px-3 py-1 rounded-lg transition-all cursor-pointer shrink-0 flex items-center gap-1 ${
+                  statusFilter === 'inactive' ? 'bg-card text-foreground shadow-xs font-black' : 'text-muted-foreground'
+                }`}
+              >
+                <Archive className="w-3 h-3" />
+                <span>Inativas ({inactiveReserves.length})</span>
               </button>
             </div>
           </div>
@@ -689,21 +723,35 @@ export function Reserves() {
           {filteredCards.length === 0 ? (
             <div className="p-12 text-center bg-card border border-dashed border-border rounded-3xl space-y-3">
               <div className="w-12 h-12 rounded-2xl bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 flex items-center justify-center mx-auto">
-                <PiggyBank className="w-6 h-6" />
+                {statusFilter === 'inactive' ? <Archive className="w-6 h-6 text-muted-foreground" /> : <PiggyBank className="w-6 h-6" />}
               </div>
-              <h3 className="text-base font-bold text-foreground">Nenhuma reserva encontrada</h3>
+              <h3 className="text-base font-bold text-foreground">
+                {statusFilter === 'inactive' ? 'Nenhuma reserva inativa' : 'Nenhuma reserva encontrada'}
+              </h3>
               <p className="text-xs text-muted-foreground max-w-sm mx-auto">
-                Crie reservas financeiras para blindar suas metas, manutenção veicular, impostos e emergências.
+                {statusFilter === 'inactive'
+                  ? 'Todas as suas reservas financeiras estão ativas no momento.'
+                  : 'Crie reservas financeiras para blindar suas metas, manutenção veicular, impostos e emergências.'}
               </p>
-              <Button
-                onClick={() => {
-                  setReserveToEdit(null);
-                  setShowCreateEditModal(true);
-                }}
-                className="h-9 px-4 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl gap-1.5"
-              >
-                <Plus className="w-4 h-4" /> Criar Primeira Reserva
-              </Button>
+              {statusFilter === 'inactive' ? (
+                <Button
+                  variant="outline"
+                  onClick={() => setStatusFilter('all')}
+                  className="h-9 px-4 text-xs font-bold rounded-xl cursor-pointer"
+                >
+                  Ver Reservas Ativas
+                </Button>
+              ) : (
+                <Button
+                  onClick={() => {
+                    setReserveToEdit(null);
+                    setShowCreateEditModal(true);
+                  }}
+                  className="h-9 px-4 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl gap-1.5 cursor-pointer"
+                >
+                  <Plus className="w-4 h-4" /> Criar Primeira Reserva
+                </Button>
+              )}
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -724,6 +772,12 @@ export function Reserves() {
                   }}
                   onWithdraw={r => {
                     setSelectedReserveForAction(r);
+                    setWithdrawInitialMode('expense');
+                    setActionModalType('withdraw');
+                  }}
+                  onTransferToCash={r => {
+                    setSelectedReserveForAction(r);
+                    setWithdrawInitialMode('transfer_to_cash');
                     setActionModalType('withdraw');
                   }}
                   onUpdateBalance={r => {
@@ -846,11 +900,12 @@ export function Reserves() {
         onSubmit={handleAporteManualSubmit}
       />
 
-      {/* 4. Modal Resgate / Utilização */}
+      {/* 4. Modal Resgate / Utilização / Transferência para Caixa */}
       <WithdrawModal
         isOpen={actionModalType === 'withdraw'}
         reserve={selectedReserveForAction}
         settings={settings}
+        initialMode={withdrawInitialMode}
         onClose={() => {
           setActionModalType(null);
           setSelectedReserveForAction(null);
