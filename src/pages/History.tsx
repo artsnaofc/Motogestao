@@ -66,7 +66,8 @@ import {
   Check,
   RefreshCw,
   RotateCcw,
-  Globe
+  Globe,
+  Landmark
 } from 'lucide-react';
 import { ExecutiveReportModal } from '../components/ExecutiveReportModal';
 import { TransactionDetailView } from '../components/history/TransactionDetailView';
@@ -1391,6 +1392,19 @@ export function History() {
     return txs;
   };
 
+  const isTransferToCashTx = (t: any) => {
+    if (!t) return false;
+    if (t.isTransferToCash) return true;
+    const cat = (t.category || t.originalCategory || '').toLowerCase().trim();
+    const desc = (t.description || '').toLowerCase().trim();
+    const isUtilizacao = (t.isReserveTx && t.reserveTxType === 'utilizacao') || t.is_reserve_use;
+    const isPureResgateCategory = cat === 'resgate de reserva' || cat === 'resgate reserva' || cat === 'resgate' || cat === 'transferência p/ caixa' || cat === 'transferencia p/ caixa';
+    const isTransferDesc = desc.includes('transferência para o caixa') || desc.includes('transferencia para o caixa') || desc.includes('p/ o caixa') || desc.includes('para o caixa');
+    if (isUtilizacao && (isPureResgateCategory || isTransferDesc)) return true;
+    if (isPureResgateCategory || (t.isReserveTx && isTransferDesc)) return true;
+    return false;
+  };
+
   const allTransactions = useMemo(() => {
     // Create virtual transaction objects for reserve transactions
     const reserveTxsAsVirtual = (reserveTransactions || [])
@@ -1419,11 +1433,26 @@ export function History() {
         const reserveName = matchedRes ? matchedRes.name : 'Reserva';
         const isRendimento = rt.type === 'rendimento';
         const isUtilizacao = rt.type === 'utilizacao';
+        const rawCat = (rt.category || '').toLowerCase().trim();
+        const rawDesc = (rt.description || '').toLowerCase().trim();
+        const isTransferToCash = isUtilizacao && (
+          rawCat === 'resgate de reserva' ||
+          rawCat === 'resgate reserva' ||
+          rawCat === 'resgate' ||
+          rawCat === 'transferência p/ caixa' ||
+          rawCat === 'transferencia p/ caixa' ||
+          rawDesc.includes('transferência para o caixa') ||
+          rawDesc.includes('transferencia para o caixa') ||
+          rawDesc.includes('p/ o caixa') ||
+          rawDesc.includes('para o caixa')
+        );
         const effectiveCategory = isRendimento
           ? 'Rendimentos'
-          : (isUtilizacao
-              ? (rt.category || matchedRes?.default_use_category || 'Manutenção')
-              : 'Aporte Reserva');
+          : (isTransferToCash
+              ? 'Transferência p/ Caixa'
+              : (isUtilizacao
+                  ? (rt.category || matchedRes?.default_use_category || 'Manutenção')
+                  : 'Aporte Reserva'));
         return {
           id: rt.id,
           user_id: rt.user_id,
@@ -1431,13 +1460,14 @@ export function History() {
           amount: Number(rt.amount),
           date: rt.date,
           category: effectiveCategory,
-          description: rt.description || (isRendimento ? `Rendimento da ${reserveName}` : (isUtilizacao ? `Utilização da ${reserveName}` : `Aporte para ${reserveName}`)),
+          description: rt.description || (isTransferToCash ? `Transferência para o Caixa: ${reserveName}` : (isRendimento ? `Rendimento da ${reserveName}` : (isUtilizacao ? `Utilização da ${reserveName}` : `Aporte para ${reserveName}`))),
           isReserveTx: true,
           reserveTxType: rt.type,
+          isTransferToCash,
           reserveId: rt.reserve_id,
           reserveName: reserveName,
-          reserveColor: matchedRes?.color || '#ec4899',
-          reserveIcon: matchedRes?.icon || 'PiggyBank',
+          reserveColor: isTransferToCash ? '#10b981' : (matchedRes?.color || '#ec4899'),
+          reserveIcon: isTransferToCash ? 'Landmark' : (matchedRes?.icon || 'PiggyBank'),
           created_at: rt.created_at,
           originalCategory: rt.category,
           linkedInvestmentId: rt.linked_investment_id,
@@ -1970,6 +2000,11 @@ export function History() {
 
       if (isDividend) {
         totalDividendosRecebidos += amount;
+        return;
+      }
+
+      // Internal transfer between reserve and general cash: not an expense, not income
+      if (isTransferToCashTx(t)) {
         return;
       }
 
@@ -2563,22 +2598,25 @@ export function History() {
 
       // 2. Type/Subtype Filter
       const isReserveUse = t.is_reserve_use || t.description?.startsWith('[Reserva]') || ((t as any).isReserveTx === true && (t as any).reserveTxType === 'utilizacao');
+      const isTransfer = isTransferToCashTx(t);
       
       let matchesType = true;
       if (filterType === 'all') {
         matchesType = true;
+      } else if (filterType === 'transfers') {
+        matchesType = isTransfer;
       } else if (filterType === 'income') {
-        matchesType = t.type === 'income';
+        matchesType = t.type === 'income' && !isTransfer;
       } else if (filterType === 'expense') {
-        matchesType = t.type === 'expense';
+        matchesType = t.type === 'expense' && !isTransfer;
       } else if (filterType === 'opExpense') {
         const effectiveCat = (t as any).originalCategory || t.category;
-        matchesType = t.type === 'expense' && !isReserveUse && (isOperationalCategory(effectiveCat, opCats) || t.category === 'Aporte Reserva' || (t as any).reserveTxType === 'aporte');
+        matchesType = t.type === 'expense' && !isTransfer && !isReserveUse && (isOperationalCategory(effectiveCat, opCats) || t.category === 'Aporte Reserva' || (t as any).reserveTxType === 'aporte');
       } else if (filterType === 'perExpense') {
         const effectiveCat = (t as any).originalCategory || t.category;
-        matchesType = t.type === 'expense' && !isReserveUse && !(isOperationalCategory(effectiveCat, opCats) || t.category === 'Aporte Reserva' || (t as any).reserveTxType === 'aporte');
+        matchesType = t.type === 'expense' && !isTransfer && !isReserveUse && !(isOperationalCategory(effectiveCat, opCats) || t.category === 'Aporte Reserva' || (t as any).reserveTxType === 'aporte');
       } else if (filterType === 'reserveExpense') {
-        matchesType = t.type === 'expense' && isReserveUse;
+        matchesType = t.type === 'expense' && !isTransfer && isReserveUse;
       }
       if (!matchesType) return false;
 
@@ -2735,7 +2773,9 @@ export function History() {
       const isPending = t.payment_status === 'pending';
 
       if (!isPending) {
-        if (t.type === 'income') {
+        if (isTransferToCashTx(t)) {
+          // Internal balance transfer from reserve to cash: do not sum into daily income or expenses
+        } else if (t.type === 'income') {
           if (!isInvestmentTx && t.category !== 'Resgate Reserva' && (!(t as any).isReserveTx || (t as any).reserveTxType === 'rendimento')) {
             groups[dateKey].income += Number(t.amount);
           }
@@ -3124,14 +3164,21 @@ export function History() {
       return null;
     })() : null;
 
-    let catMeta = isReserveTx
-      ? { 
-          icon: PiggyBank, 
-          color: isAporte 
-            ? 'text-pink-500 bg-pink-500/10 border-pink-500/20' 
-            : 'text-blue-500 bg-blue-500/10 border-blue-500/20' 
+    const isTransfer = isTransferToCashTx(t);
+
+    let catMeta = isTransfer
+      ? {
+          icon: Landmark,
+          color: 'text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border-emerald-500/20'
         }
-      : getCategoryMeta(t.category, t.type);
+      : isReserveTx
+        ? { 
+            icon: PiggyBank, 
+            color: isAporte 
+              ? 'text-pink-500 bg-pink-500/10 border-pink-500/20' 
+              : 'text-blue-500 bg-blue-500/10 border-blue-500/20' 
+          }
+        : getCategoryMeta(t.category, t.type);
 
     if (isProventoTx) {
       const isProvisioned = (t as any).dividendStatus === 'provisioned';
@@ -3143,11 +3190,13 @@ export function History() {
       };
     }
 
-    const SelectedIcon = isReserveTx
-      ? (iconOptions[(t as any).reserveIcon as keyof typeof iconOptions] || PiggyBank)
-      : isReserveUseEx
-        ? (iconOptions[matchedReserveInfo?.reserve?.icon as keyof typeof iconOptions] || PiggyBank)
-        : catMeta.icon;
+    const SelectedIcon = isTransfer
+      ? Landmark
+      : isReserveTx
+        ? (iconOptions[(t as any).reserveIcon as keyof typeof iconOptions] || PiggyBank)
+        : isReserveUseEx
+          ? (iconOptions[matchedReserveInfo?.reserve?.icon as keyof typeof iconOptions] || PiggyBank)
+          : catMeta.icon;
 
     const isExpanded = expandedId === t.id;
     const fuelCost = isReserveTx ? 0 : calculateFuel(t.start_km, t.end_km);
@@ -3209,15 +3258,17 @@ export function History() {
             : 'border-b border-border/10 last:border-b-0'
         }`}
         style={
-          isReserveTx 
-            ? { borderLeft: `4px ${isRendimento || isUtilizacao ? 'dashed' : 'solid'} ${(t as any).reserveColor}` } 
-            : isReserveUseEx 
-              ? { borderLeft: `3px dashed ${matchedReserveInfo?.reserve?.color || '#ef4444'}` } 
-              : isProventoTx
-                ? { borderLeft: (t as any).dividendStatus === 'provisioned' ? '3px dashed #f59e0b' : '3px solid #10b981' }
-                : isRendimentoTx
-                  ? { borderLeft: '3px dashed #10b981' }
-                  : {}
+          isTransfer
+            ? { borderLeft: '4px solid #10b981' }
+            : isReserveTx 
+              ? { borderLeft: `4px ${isRendimento || isUtilizacao ? 'dashed' : 'solid'} ${(t as any).reserveColor}` } 
+              : isReserveUseEx 
+                ? { borderLeft: `3px dashed ${matchedReserveInfo?.reserve?.color || '#ef4444'}` } 
+                : isProventoTx
+                  ? { borderLeft: (t as any).dividendStatus === 'provisioned' ? '3px dashed #f59e0b' : '3px solid #10b981' }
+                  : isRendimentoTx
+                    ? { borderLeft: '3px dashed #10b981' }
+                    : {}
         }
       >
         {/* Transaction Bar Row */}
@@ -3256,17 +3307,24 @@ export function History() {
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-1.5 flex-wrap">
                 <span className="font-extrabold text-xs sm:text-sm text-foreground truncate tracking-tight">
-                  {isReserveTx 
-                    ? (t as any).reserveName 
-                    : isReserveUseEx 
-                      ? (matchedReserveInfo?.reserve?.name || 'Reserva') 
-                      : isProventoTx 
-                        ? `${(t as any).ticker || ''} (${(t as any).dividendType || 'Provento'})`
-                        : t.category}
+                  {isTransfer
+                    ? `Transferência: ${(t as any).reserveName || 'Reserva'} ➔ Caixa`
+                    : isReserveTx 
+                      ? (t as any).reserveName 
+                      : isReserveUseEx 
+                        ? (matchedReserveInfo?.reserve?.name || 'Reserva') 
+                        : isProventoTx 
+                          ? `${(t as any).ticker || ''} (${(t as any).dividendType || 'Provento'})`
+                          : t.category}
                 </span>
 
                 {/* Badges / Pill Tags */}
-                {isReserveTx && (
+                {isTransfer ? (
+                  <span className="text-[9px] font-black px-1.5 py-0.5 rounded-md uppercase tracking-wider bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20 flex items-center gap-1">
+                    <Landmark className="w-2.5 h-2.5" />
+                    <span>Transferência Caixa</span>
+                  </span>
+                ) : isReserveTx ? (
                   <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-md uppercase tracking-wider ${
                     isAporte 
                       ? 'bg-pink-500/15 text-pink-700 dark:text-pink-300 border border-pink-500/20' 
@@ -3280,7 +3338,7 @@ export function History() {
                         ? (isVendaAtivo ? 'Venda de Ativo' : 'Rendimento') 
                         : (isInvestmentReserveUse ? 'Compra de Ativo' : 'Gasto Reserva')}
                   </span>
-                )}
+                ) : null}
 
                 {isReserveUseEx && (
                   <span className="text-[9px] font-black px-1.5 py-0.5 rounded-md uppercase tracking-wider bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/20">
@@ -3376,15 +3434,27 @@ export function History() {
             )}
 
             <div className="text-right">
-              <span className={`text-xs sm:text-sm font-mono font-black block tracking-tight ${
-                isReserveTx 
-                  ? (isAporte ? 'text-pink-600 dark:text-pink-400' : isRendimento ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400')
-                  : (isIncome ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400')
-              }`}>
-                {isReserveTx 
-                  ? (isRendimento ? `+${formatCurrency(displayAmount)}` : `-${formatCurrency(displayAmount)}`)
-                  : (isIncome ? `+${formatCurrency(displayAmount)}` : `-${formatCurrency(displayAmount)}`)}
-              </span>
+              {isTransfer ? (
+                <>
+                  <span className="text-xs sm:text-sm font-mono font-black block tracking-tight text-emerald-600 dark:text-emerald-400 flex items-center justify-end gap-1">
+                    <Landmark className="w-3.5 h-3.5" />
+                    <span>+{formatCurrency(displayAmount)}</span>
+                  </span>
+                  <span className="text-[9px] font-mono text-emerald-600/80 dark:text-emerald-400/80 block">
+                    Crédito em Caixa
+                  </span>
+                </>
+              ) : (
+                <span className={`text-xs sm:text-sm font-mono font-black block tracking-tight ${
+                  isReserveTx 
+                    ? (isAporte ? 'text-pink-600 dark:text-pink-400' : isRendimento ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400')
+                    : (isIncome ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400')
+                }`}>
+                  {isReserveTx 
+                    ? (isRendimento ? `+${formatCurrency(displayAmount)}` : `-${formatCurrency(displayAmount)}`)
+                    : (isIncome ? `+${formatCurrency(displayAmount)}` : `-${formatCurrency(displayAmount)}`)}
+                </span>
+              )}
 
               {isIncome && fuelCost > 0 && (
                 <span className="text-[9.5px] font-mono text-muted-foreground/80 block">
@@ -4107,6 +4177,7 @@ export function History() {
                             {filterType === 'opExpense' && 'Despesas Operacionais'}
                             {filterType === 'perExpense' && 'Despesas Pessoais'}
                             {filterType === 'reserveExpense' && 'Despesas de Reserva'}
+                            {filterType === 'transfers' && 'Transferências (Caixa ⇄ Reservas)'}
                           </span>
                         </div>
                       </SelectTrigger>
@@ -4117,6 +4188,7 @@ export function History() {
                         <SelectItem value="opExpense">Despesas Operacionais</SelectItem>
                         <SelectItem value="perExpense">Despesas Pessoais</SelectItem>
                         <SelectItem value="reserveExpense">Despesas de Reserva</SelectItem>
+                        <SelectItem value="transfers">Transferências (Caixa ⇄ Reservas)</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -4433,7 +4505,7 @@ export function History() {
               .reduce((acc, t) => acc + Number(t.amount), 0);
 
             const incStandard = group.transactions
-              .filter(t => t.type === 'income' && t.category !== 'Resgate Reserva' && (!(t as any).isReserveTx || (t as any).reserveTxType === 'rendimento') && !(t as any).isInvestmentTx)
+              .filter(t => t.type === 'income' && !isTransferToCashTx(t) && t.category !== 'Resgate Reserva' && (!(t as any).isReserveTx || (t as any).reserveTxType === 'rendimento') && !(t as any).isInvestmentTx)
               .reduce((acc, t) => acc + Number(t.amount), 0);
 
             const dailyReserveRendimento = group.transactions
@@ -4449,6 +4521,10 @@ export function History() {
             const opCats = settings?.operational_expense_categories || ['Combustível', 'Pedágio', 'Manutenção'];
 
             group.transactions.filter(t => t.type === 'expense').forEach(t => {
+              if (isTransferToCashTx(t)) {
+                // Internal balance transfer from reserve to cash: not an expense
+                return;
+              }
               if ((t as any).isInvestmentTx) {
                 // Asset purchases convert cash into investment assets, so they do not reduce net worth or net profit
                 return;
@@ -4724,7 +4800,9 @@ export function History() {
 
                     let groupKey = 'income';
 
-                    if (isDividendTx || isReserveRendimento) {
+                    if (isTransferToCashTx(t)) {
+                      groupKey = 'reserves';
+                    } else if (isDividendTx || isReserveRendimento) {
                       groupKey = 'income';
                     } else if (isInvestmentTx) {
                       groupKey = 'investments';
@@ -4754,7 +4832,9 @@ export function History() {
                     } else if (groupKey === 'op_expense' || groupKey === 'personal_expense') {
                       subGroupBuckets[groupKey].sum += amt;
                     } else if (groupKey === 'reserves') {
-                      if (t.type === 'income' || (t as any).reserveTxType === 'rendimento') {
+                      if (isTransferToCashTx(t)) {
+                        subGroupBuckets[groupKey].sum += amt;
+                      } else if (t.type === 'income' || (t as any).reserveTxType === 'rendimento') {
                         subGroupBuckets[groupKey].sum += amt;
                       } else {
                         subGroupBuckets[groupKey].sum -= amt;

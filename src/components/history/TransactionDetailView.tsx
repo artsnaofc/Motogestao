@@ -48,12 +48,14 @@ import {
   Info,
   CalendarClock,
   RefreshCw,
-  AlertCircle
+  AlertCircle,
+  Landmark
 } from 'lucide-react';
 import { getPaymentStatusMeta, formatRecurrenceFrequency } from '../../lib/recurrenceUtils';
 
 const iconOptions = {
   PiggyBank,
+  Landmark,
   Wrench,
   Shield,
   Car,
@@ -116,6 +118,18 @@ export function TransactionDetailView({
   const isAporte = isReserveTx ? ((t as any).reserveTxType === 'aporte') : false;
   const isRendimento = isReserveTx ? ((t as any).reserveTxType === 'rendimento') : false;
   const isUtilizacao = isReserveTx ? ((t as any).reserveTxType === 'utilizacao') : false;
+
+  const isTransferToCash = (t as any).isTransferToCash || (
+    isReserveTx && isUtilizacao && (
+      t.category === 'Resgate de Reserva' || 
+      t.category === 'Resgate Reserva' || 
+      t.category === 'Transferência p/ Caixa' ||
+      (t as any).originalCategory === 'Resgate de Reserva' ||
+      (t as any).originalCategory === 'Resgate Reserva' ||
+      (t.description || '').toLowerCase().includes('para o caixa') ||
+      (t.description || '').toLowerCase().includes('p/ o caixa')
+    )
+  );
 
   const isReserveUseEx = false;
 
@@ -379,7 +393,68 @@ export function TransactionDetailView({
       );
     }
 
-    // 4. RESERVE UTILIZAÇÃO / USE
+    // 4. RESERVE UTILIZAÇÃO / USE OU TRANSFERÊNCIA PARA O CAIXA
+    if (isTransferToCash) {
+      return (
+        <div className="space-y-2.5">
+          <div className="p-3 sm:p-3.5 rounded-xl bg-gradient-to-br from-emerald-500/10 via-teal-500/5 to-card border border-emerald-500/20 space-y-2.5">
+            <div className="flex items-center justify-between border-b border-emerald-500/20 pb-2">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-emerald-600 text-white flex items-center justify-center shadow-xs font-bold shrink-0">
+                  <Landmark className="w-4 h-4" />
+                </div>
+                <div>
+                  <span className="text-[9px] font-black uppercase tracking-wider text-emerald-600 dark:text-emerald-400 block">
+                    Movimentação Interna • Não é Despesa
+                  </span>
+                  <h4 className="font-extrabold text-xs sm:text-sm text-foreground">
+                    Transferência: {matchedReserve?.name || (t as any).reserveName || 'Reserva'} ➔ Caixa
+                  </h4>
+                </div>
+              </div>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 flex items-center gap-1">
+                <Landmark className="w-3 h-3" /> Transferência
+              </span>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <div className="p-2 rounded-lg bg-card border border-border/60">
+                <span className="text-[9px] text-muted-foreground uppercase font-extrabold block">Origem dos Fundos</span>
+                <span className="font-bold text-xs text-foreground truncate block">
+                  {matchedReserve?.name || (t as any).reserveName || 'Reserva'}
+                </span>
+              </div>
+              <div className="p-2 rounded-lg bg-card border border-border/60">
+                <span className="text-[9px] text-muted-foreground uppercase font-extrabold block">Destino</span>
+                <span className="font-bold text-xs text-emerald-600 dark:text-emerald-400 truncate block">
+                  Caixa Geral (Banca Livre)
+                </span>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <div className="p-2 rounded-lg bg-card border border-border/60">
+                <span className="text-[9px] text-muted-foreground uppercase font-extrabold block">Crédito no Caixa</span>
+                <span className="font-mono font-black text-xs sm:text-sm text-emerald-600 dark:text-emerald-400">
+                  +{formatCurrency(displayAmount)}
+                </span>
+              </div>
+              <div className="p-2 rounded-lg bg-card border border-border/60">
+                <span className="text-[9px] text-muted-foreground uppercase font-extrabold block">Classificação</span>
+                <span className="font-bold text-xs text-foreground">
+                  Transferência de Saldo
+                </span>
+              </div>
+            </div>
+
+            <div className="p-2.5 rounded-lg bg-emerald-500/5 border border-emerald-500/15 text-[11px] text-muted-foreground leading-snug">
+              🏦 <strong>Movimentação de capital:</strong> Este valor saiu da reserva e retornou diretamente para o seu Caixa Geral (Banca Livre). Esta operação <strong>não conta como despesa</strong> no período nem afeta o seu lucro operacional.
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     if (isReserveTx && isUtilizacao || isReserveUseEx) {
       const ReserveIconComponent = matchedReserve?.icon ? (iconOptions[matchedReserve.icon as keyof typeof iconOptions] || PiggyBank) : Wrench;
 
@@ -661,8 +736,8 @@ export function TransactionDetailView({
       {/* Custom layout for specific transaction type */}
       {renderCustomTypeContent()}
 
-      {/* Payment Status & Recurrence Card (For Expenses & Reserves) */}
-      {(t.type === 'expense' || isReserveTx) && (
+      {/* Payment Status & Recurrence Card (For Expenses & Reserves, except internal cash transfers) */}
+      {(t.type === 'expense' || isReserveTx) && !isTransferToCash && (
         <div className="p-2.5 rounded-xl bg-card border border-border/60 space-y-2">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-1.5">

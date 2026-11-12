@@ -1,6 +1,0 @@
-{
-  "summary":  "Plano de migração zero data loss para novo Supabase, auditoria de 18 tabelas, atualização do motor de backup e suite de migração no painel admin.",
-  "updatedAt":  "2026-10-26T01:06:41.793804507Z",
-  "requestFeedback":  true,
-  "userFacing":  true
-}

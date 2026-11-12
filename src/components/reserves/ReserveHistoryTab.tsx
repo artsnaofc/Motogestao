@@ -400,7 +400,16 @@ export function ReserveHistoryTab({
     }
 
     if (tx.type === 'utilizacao') {
-      const isTransferToCash = tx.category === 'Resgate de Reserva' || tx.category === 'Resgate Reserva' || (tx.description || '').toLowerCase().includes('transferência para o caixa') || (tx.description || '').toLowerCase().includes('p/ o caixa');
+      const isTransferToCash = Boolean((tx as any).isTransferToCash) || 
+        tx.category === 'Resgate de Reserva' || 
+        tx.category === 'Resgate Reserva' || 
+        tx.category === 'Resgate' ||
+        tx.category === 'Transferência p/ Caixa' ||
+        tx.category === 'Transferencia p/ Caixa' ||
+        (tx.description || '').toLowerCase().includes('transferência para o caixa') || 
+        (tx.description || '').toLowerCase().includes('transferencia para o caixa') || 
+        (tx.description || '').toLowerCase().includes('p/ o caixa') ||
+        (tx.description || '').toLowerCase().includes('para o caixa');
       return {
         label: isTransferToCash ? 'Transferência para o Caixa' : 'Resgate / Utilização',
         shortLabel: isTransferToCash ? 'P/ Caixa' : 'Resgate',
@@ -410,7 +419,8 @@ export function ReserveHistoryTab({
           : 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20',
         icon: isTransferToCash ? Landmark : ArrowUpRight,
         color: isTransferToCash ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400',
-        isMass: false
+        isMass: false,
+        isTransferToCash
       };
     }
 
@@ -2421,9 +2431,12 @@ export function ReserveHistoryTab({
             {/* Main Value Banner */}
             {(() => {
               const info = getTxCategoryInfo(txToViewDetails);
+              const isTransfer = Boolean((info as any).isTransferToCash);
               return (
                 <div className={`p-4 rounded-2xl border text-center space-y-1 ${
-                  txToViewDetails.type === 'utilizacao'
+                  isTransfer
+                    ? 'bg-emerald-500/10 border-emerald-500/20'
+                    : txToViewDetails.type === 'utilizacao'
                     ? 'bg-rose-500/10 border-rose-500/20'
                     : txToViewDetails.type === 'rendimento'
                     ? 'bg-blue-500/10 border-blue-500/20'
@@ -2433,15 +2446,22 @@ export function ReserveHistoryTab({
                     {info.label}
                   </span>
                   <div className={`text-2xl sm:text-3xl font-black font-mono ${
-                    txToViewDetails.type === 'utilizacao'
+                    isTransfer
+                      ? 'text-emerald-600 dark:text-emerald-400'
+                      : txToViewDetails.type === 'utilizacao'
                       ? 'text-rose-600 dark:text-rose-400'
                       : txToViewDetails.type === 'rendimento'
                       ? 'text-blue-600 dark:text-blue-400'
                       : 'text-emerald-600 dark:text-emerald-400'
                   }`}>
-                    {txToViewDetails.type === 'utilizacao' ? '-' : '+'}
+                    {isTransfer ? '⇄ ' : (txToViewDetails.type === 'utilizacao' ? '-' : '+')}
                     {hideValues ? 'R$ •••••' : formatCurrency(txToViewDetails.amount)}
                   </div>
+                  {isTransfer && (
+                    <span className="text-[10px] font-mono text-emerald-600/80 dark:text-emerald-400/80 block">
+                      Transferência de saldo para o Caixa Geral
+                    </span>
+                  )}
                 </div>
               );
             })()}
@@ -2802,16 +2822,31 @@ export function ReserveHistoryTab({
         {/* Right: Amount & Quick Actions */}
         <div className="flex items-center justify-between sm:justify-end gap-3 shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-border/60">
           <div className="text-left sm:text-right">
-            <div className={`text-sm sm:text-base font-black font-mono tracking-tight ${
-              tx.type === 'utilizacao' 
-                ? 'text-rose-600 dark:text-rose-400' 
-                : tx.type === 'rendimento'
-                ? 'text-blue-600 dark:text-blue-400'
-                : 'text-emerald-600 dark:text-emerald-400'
-            }`}>
-              {tx.type === 'utilizacao' ? '-' : '+'}
-              {hideValues ? 'R$ •••••' : formatCurrency(tx.amount)}
-            </div>
+            {(() => {
+              const info = getTxCategoryInfo(tx);
+              const isTransfer = Boolean((info as any).isTransferToCash);
+              return (
+                <>
+                  <div className={`text-sm sm:text-base font-black font-mono tracking-tight ${
+                    isTransfer
+                      ? 'text-emerald-600 dark:text-emerald-400'
+                      : tx.type === 'utilizacao' 
+                      ? 'text-rose-600 dark:text-rose-400' 
+                      : tx.type === 'rendimento'
+                      ? 'text-blue-600 dark:text-blue-400'
+                      : 'text-emerald-600 dark:text-emerald-400'
+                  }`}>
+                    {isTransfer ? '⇄ ' : (tx.type === 'utilizacao' ? '-' : '+')}
+                    {hideValues ? 'R$ •••••' : formatCurrency(tx.amount)}
+                  </div>
+                  {isTransfer && (
+                    <span className="text-[9px] font-mono text-emerald-600/80 dark:text-emerald-400/80 block">
+                      Crédito em Caixa
+                    </span>
+                  )}
+                </>
+              );
+            })()}
           </div>
 
           {/* Action Buttons */}
