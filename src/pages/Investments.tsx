@@ -596,6 +596,20 @@ export function Investments() {
     }
   };
 
+  const handleSettleDividend = async (div: Dividend) => {
+    try {
+      const todayStr = getTodayLocalDateStr();
+      await updateDividend(div.id, {
+        status: 'received',
+        date: div.date || div.data_ex || todayStr
+      });
+      toast.success(`Provento de ${div.ticker} confirmado e creditado na reserva com sucesso!`);
+    } catch (error) {
+      console.error('Error settling dividend:', error);
+      toast.error('Erro ao creditar provento.');
+    }
+  };
+
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isSaving) return;
@@ -2092,6 +2106,15 @@ export function Investments() {
                               >
                                 <ExternalLink className="w-3.5 h-3.5" />
                               </a>
+                            )}
+                            {div.status === 'provisioned' && (
+                              <button 
+                                onClick={() => handleSettleDividend(div)}
+                                className="p-1.5 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-500/10 rounded-lg transition-colors inline-flex"
+                                title="Confirmar Recebimento e Creditar na Reserva"
+                              >
+                                <Check className="w-3.5 h-3.5 stroke-[3]" />
+                              </button>
                             )}
                             <button 
                               onClick={() => openEditDivModal(div)}

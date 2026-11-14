@@ -61,6 +61,7 @@ export function InvestmentsProvider({
   initialDividends = [],
   settings = null,
   reserves = [],
+  reserveTransactions = [],
   onDataChange,
   onUpdateSettings
 }: {
@@ -69,6 +70,7 @@ export function InvestmentsProvider({
   initialDividends?: Dividend[];
   settings?: UserSettings | null;
   reserves?: Reserve[];
+  reserveTransactions?: ReserveTransaction[];
   onDataChange?: () => Promise<void>;
   onUpdateSettings?: (newSettings: UserSettings) => void;
 }) {
@@ -80,7 +82,11 @@ export function InvestmentsProvider({
       const found = reserves.find(r => r.id === settings.default_investment_reserve_id);
       if (found) return found.id;
     }
-    const keywords = ['reserva de investimento', 'investimento', 'investimentos', 'apport', 'corretora', 'bolsa', 'oportunidade'];
+    const keywords = [
+      'reserva de investimento', 'investimento', 'investimentos', 
+      'ação', 'ações', 'fii', 'fiis', 'bolsa', 'b3', 'corretora', 
+      'renda variável', 'renda fixa', 'carteira', 'oportunidade', 'apport'
+    ];
     for (const kw of keywords) {
       const found = reserves.find(r => r.name.toLowerCase().includes(kw));
       if (found) return found.id;
@@ -242,26 +248,52 @@ export function InvestmentsProvider({
     const processReadyDividends = async () => {
       if (dividends.length === 0) return;
       const reserveIdToUse = settings?.default_investment_reserve_id || targetReserveId;
+      if (!reserveIdToUse) return;
 
       const today = getTodayLocalDateStr();
       const userId = (await getEffectiveUserId()) || 'default';
-      const curRts = cacheManager.get<ReserveTransaction[]>(`reserve_transactions_${userId}`) || [];
+      const curRts = (reserveTransactions && reserveTransactions.length > 0)
+        ? [...reserveTransactions]
+        : (cacheManager.get<ReserveTransaction[]>(`reserve_transactions_${userId}`) || []);
+
+      const normalizeDate = (d?: string | null) => (d ? d.split('T')[0] : '');
 
       const isMatchingReserveTx = (div: Dividend, rt: ReserveTransaction) => {
         if (rt.transaction_id === div.id || rt.id === div.transaction_id) return true;
-        const divPayDate = div.date || div.data_ex || today;
-        const matchesReserve = reserveIdToUse ? rt.reserve_id === reserveIdToUse : true;
-        const matchesDate = rt.date === divPayDate;
-        const matchesAmount = Math.abs(Number(rt.amount) - Number(div.amount)) < 0.001;
+        const divPayDate = normalizeDate(div.date || div.data_ex || today);
+        const rtDate = normalizeDate(rt.date);
+        const matchesDate = rtDate === divPayDate;
+        const matchesAmount = Math.abs(Number(rt.amount) - Number(div.amount)) < 0.005;
         const matchesTicker = Boolean(div.ticker && rt.description?.toUpperCase().includes(div.ticker.toUpperCase()));
-        return matchesReserve && matchesDate && matchesAmount && matchesTicker;
+        return matchesDate && matchesAmount && matchesTicker;
       };
 
       // Identify dividends that need action:
-      // 1. Provisioned that reached payment date (div.date <= today)
+      // 1. Provisioned that reached payment date (div.date <= today or div.data_ex <= today)
       // 2. Received dividends that have a reserve configured but lack a matching credit in reserve_transactions
-      // Manual only: do not auto-promote provisioned dividends to received
       const currentReadyIds = new Set<string>();
+
+      dividends.forEach(div => {
+        if (div.status === 'cancelled') return;
+        if (!div.amount || Number(div.amount) <= 0) return;
+
+        const payDate = normalizeDate(div.date || div.data_ex);
+        const reachedPaymentDate = Boolean(payDate && payDate <= today);
+
+        // Case 1: Provisioned dividend whose payment date has arrived (or is today/past)
+        if (div.status === 'provisioned' && reachedPaymentDate) {
+          currentReadyIds.add(div.id);
+          return;
+        }
+
+        // Case 2: Received dividend that has a reserve available but lacks a matching credit in reserve transactions
+        if (div.status === 'received' && reserveIdToUse) {
+          const hasMatchingRt = curRts.some(rt => isMatchingReserveTx(div, rt));
+          if (!hasMatchingRt) {
+            currentReadyIds.add(div.id);
+          }
+        }
+      });
 
       for (const id of Array.from(processingDividendsRef.current)) {
         if (!currentReadyIds.has(id)) {
@@ -277,61 +309,67 @@ export function InvestmentsProvider({
 
       readyToProcess.forEach(d => processingDividendsRef.current.add(d.id));
       let processedAny = false;
+      const creditedTickers: string[] = [];
 
       for (const div of readyToProcess) {
         try {
-          const divPayDate = div.date || div.data_ex || today;
+          const divPayDate = normalizeDate(div.date || div.data_ex || today);
           const displayDivType = div.type === 'JCP' || (div.type as string) === 'JSCP' ? 'JSCP' : div.type;
 
           let reserveTxId: string | undefined = div.transaction_id;
 
-          if (reserveIdToUse) {
-            // Strict Anti-Duplication: check if a matching reserve transaction already exists
-            const existingRt = curRts.find(rt => isMatchingReserveTx(div, rt));
-            reserveTxId = existingRt ? existingRt.id : generateUUID();
+          // Strict Anti-Duplication: check if a matching reserve transaction already exists
+          const existingRt = curRts.find(rt => isMatchingReserveTx(div, rt));
+          reserveTxId = existingRt ? existingRt.id : generateUUID();
 
-            if (!existingRt) {
-              const newReserveTx: ReserveTransaction = {
-                id: reserveTxId,
-                user_id: div.user_id || userId,
-                reserve_id: reserveIdToUse,
+          if (!existingRt) {
+            const newReserveTx: ReserveTransaction = {
+              id: reserveTxId,
+              user_id: div.user_id || userId,
+              reserve_id: reserveIdToUse,
+              type: 'aporte',
+              category: 'Proventos',
+              amount: Number(div.amount) || 0,
+              date: divPayDate,
+              description: `Provento: ${div.ticker} (${displayDivType})`,
+              transaction_id: div.id,
+              payment_status: 'paid',
+              payment_date: divPayDate,
+              source: 'dividends',
+              created_at: new Date().toISOString()
+            };
+
+            const { error: rtxError } = await supabase.from('reserve_transactions').insert(newReserveTx);
+            if (rtxError) console.warn('Aviso inserção reserva provento:', rtxError);
+            syncQueueManager.enqueue('reserve_transactions', 'insert', newReserveTx.id, newReserveTx);
+
+            curRts.unshift(newReserveTx);
+            cacheManager.set(`reserve_transactions_${userId}`, curRts, undefined, 'reserves');
+            creditedTickers.push(div.ticker);
+          } else {
+            let updatedRt = false;
+            if (existingRt.type !== 'aporte') {
+              existingRt.type = 'aporte';
+              existingRt.category = 'Proventos';
+              updatedRt = true;
+            }
+            if (existingRt.transaction_id !== div.id) {
+              existingRt.transaction_id = div.id;
+              updatedRt = true;
+            }
+            if (updatedRt) {
+              await supabase.from('reserve_transactions').update({ 
+                type: 'aporte', 
+                category: 'Proventos',
+                transaction_id: div.id 
+              }).eq('id', existingRt.id);
+              syncQueueManager.enqueue('reserve_transactions', 'update', existingRt.id, {
                 type: 'aporte',
                 category: 'Proventos',
-                amount: Number(div.amount) || 0,
-                date: divPayDate,
-                description: `Provento: ${div.ticker} (${displayDivType})`,
-                transaction_id: div.id,
-                payment_status: 'paid',
-                payment_date: divPayDate,
-                source: 'dividends',
-                created_at: new Date().toISOString()
-              };
-
-              const { error: rtxError } = await supabase.from('reserve_transactions').insert(newReserveTx);
-              if (rtxError) console.warn('Aviso inserção reserva provento:', rtxError);
-
-              curRts.unshift(newReserveTx);
-              cacheManager.set(`reserve_transactions_${userId}`, curRts, undefined, 'reserves');
-            } else {
-              let updatedRt = false;
-              if (existingRt.type !== 'aporte') {
-                existingRt.type = 'aporte';
-                existingRt.category = 'Proventos';
-                updatedRt = true;
-              }
-              if (existingRt.transaction_id !== div.id) {
-                existingRt.transaction_id = div.id;
-                updatedRt = true;
-              }
-              if (updatedRt) {
-                await supabase.from('reserve_transactions').update({ 
-                  type: 'aporte', 
-                  category: 'Proventos',
-                  transaction_id: div.id 
-                }).eq('id', existingRt.id);
-              }
-              cacheManager.set(`reserve_transactions_${userId}`, curRts, undefined, 'reserves');
+                transaction_id: div.id
+              });
             }
+            cacheManager.set(`reserve_transactions_${userId}`, curRts, undefined, 'reserves');
           }
 
           const { error: divError } = await supabase
@@ -344,6 +382,11 @@ export function InvestmentsProvider({
             .eq('id', div.id);
 
           if (divError) console.warn('Aviso atualização dividendo recebido:', divError);
+          syncQueueManager.enqueue('dividends', 'update', div.id, {
+            status: 'received',
+            transaction_id: reserveTxId || null,
+            date: divPayDate
+          });
 
           // Immediately update local React state and cache with transaction_id and status received
           setDividends(prev => prev.map(d => d.id === div.id ? { ...d, status: 'received', transaction_id: reserveTxId, date: divPayDate } : d));
@@ -356,14 +399,18 @@ export function InvestmentsProvider({
         }
       }
 
+      if (creditedTickers.length > 0) {
+        toast.success(`Provento de ${creditedTickers.join(', ')} creditado automaticamente na reserva!`, { id: 'div-auto-credit' });
+      }
+
       if (processedAny && onDataChange) {
         await onDataChange();
       }
     };
 
-    const timeout = setTimeout(processReadyDividends, 1000);
+    const timeout = setTimeout(processReadyDividends, 800);
     return () => clearTimeout(timeout);
-  }, [dividends, settings?.default_investment_reserve_id, targetReserveId, onDataChange]);
+  }, [dividends, settings?.default_investment_reserve_id, targetReserveId, reserveTransactions, onDataChange]);
 
   const addInvestmentTransaction = useCallback(async (
     newIt: Omit<InvestmentTransaction, 'id' | 'user_id' | 'created_at'>,
@@ -686,14 +733,23 @@ export function InvestmentsProvider({
     const currentDiv = dividends.find(d => d.id === id);
     const finalFields: Partial<Dividend> = { ...updatedFields };
     let newReserveTx: ReserveTransaction | null = null;
+    let updatedExistingRt = false;
     const reserveIdToUse = settings?.default_investment_reserve_id || targetReserveId;
 
-    // If changing status from provisioned to received, create or link reserve transaction
-    if (currentDiv && currentDiv.status === 'provisioned' && updatedFields.status === 'received' && reserveIdToUse) {
-      const curRts = cacheManager.get<ReserveTransaction[]>(`reserve_transactions_${userId}`) || [];
-      const divDate = updatedFields.date || updatedFields.data_ex || currentDiv.date || currentDiv.data_ex || getTodayLocalDateStr();
-      const divAmount = updatedFields.amount !== undefined ? updatedFields.amount : currentDiv.amount;
+    const isTargetReceived = (updatedFields.status === 'received') || 
+      (currentDiv?.status === 'received' && updatedFields.status !== 'provisioned' && updatedFields.status !== 'cancelled');
+
+    // If dividend is or becomes received, ensure reserve transaction exists and is synchronized
+    if (currentDiv && isTargetReceived && reserveIdToUse) {
+      const curRts = (reserveTransactions && reserveTransactions.length > 0)
+        ? [...reserveTransactions]
+        : (cacheManager.get<ReserveTransaction[]>(`reserve_transactions_${userId}`) || []);
+
+      const normalizeDate = (d?: string | null) => (d ? d.split('T')[0] : '');
+      const divDate = normalizeDate(updatedFields.date || updatedFields.data_ex || currentDiv.date || currentDiv.data_ex || getTodayLocalDateStr());
+      const divAmount = updatedFields.amount !== undefined ? Number(updatedFields.amount) : Number(currentDiv.amount);
       const divTicker = (updatedFields.ticker || currentDiv.ticker).toUpperCase();
+      const displayType = (updatedFields.type || currentDiv.type) === 'JCP' ? 'JSCP' : (updatedFields.type || currentDiv.type);
 
       const existingRt = curRts.find(rt =>
         rt.transaction_id === id ||
@@ -701,30 +757,50 @@ export function InvestmentsProvider({
         (
           rt.reserve_id === reserveIdToUse &&
           (rt.type === 'aporte' || rt.type === 'rendimento') &&
-          rt.date === divDate &&
-          Math.abs(Number(rt.amount) - Number(divAmount)) < 0.001 &&
+          normalizeDate(rt.date) === divDate &&
+          Math.abs(Number(rt.amount) - divAmount) < 0.005 &&
           rt.description?.toUpperCase().includes(divTicker)
         )
       );
 
       if (existingRt) {
         finalFields.transaction_id = existingRt.id;
-        if (existingRt.type !== 'aporte') {
-          existingRt.type = 'aporte';
-          existingRt.category = 'Proventos';
-          syncQueueManager.enqueue('reserve_transactions', 'update', existingRt.id, { type: 'aporte', category: 'Proventos' });
-        }
+        existingRt.type = 'aporte';
+        existingRt.category = 'Proventos';
+        existingRt.amount = divAmount;
+        existingRt.date = divDate;
+        existingRt.description = `Provento: ${divTicker} (${displayType})`;
+        existingRt.transaction_id = id;
+        existingRt.payment_status = 'paid';
+        existingRt.payment_date = divDate;
+        existingRt.source = 'dividends';
+
+        const rtUpdatePayload = {
+          type: 'aporte' as const,
+          category: 'Proventos',
+          amount: divAmount,
+          date: divDate,
+          description: `Provento: ${divTicker} (${displayType})`,
+          transaction_id: id,
+          payment_status: 'paid' as const,
+          payment_date: divDate,
+          source: 'dividends'
+        };
+
+        syncQueueManager.enqueue('reserve_transactions', 'update', existingRt.id, rtUpdatePayload);
+        supabase.from('reserve_transactions').update(rtUpdatePayload).eq('id', existingRt.id);
+        cacheManager.set(`reserve_transactions_${userId}`, curRts, undefined, 'reserves');
+        updatedExistingRt = true;
       } else {
         const reserveTxId = generateUUID();
         finalFields.transaction_id = reserveTxId;
-        const displayType = (updatedFields.type || currentDiv.type) === 'JCP' ? 'JSCP' : (updatedFields.type || currentDiv.type);
         newReserveTx = {
           id: reserveTxId,
           user_id: userId,
           reserve_id: reserveIdToUse,
           type: 'aporte',
           category: 'Proventos',
-          amount: Number(divAmount) || 0,
+          amount: divAmount || 0,
           date: divDate,
           description: `Provento: ${divTicker} (${displayType})`,
           transaction_id: id,
@@ -735,21 +811,23 @@ export function InvestmentsProvider({
         };
         cacheManager.set(`reserve_transactions_${userId}`, [newReserveTx, ...curRts.filter(r => r.id !== reserveTxId)], undefined, 'reserves');
         syncQueueManager.enqueue('reserve_transactions', 'insert', reserveTxId, newReserveTx);
+        supabase.from('reserve_transactions').insert(newReserveTx);
       }
     }
 
-    // If changing status from received to provisioned, remove linked reserve transaction if existing
-    if (currentDiv && currentDiv.status === 'received' && updatedFields.status === 'provisioned') {
+    // If changing status from received to provisioned or cancelled, remove linked reserve transaction if existing
+    if (currentDiv && currentDiv.status === 'received' && (updatedFields.status === 'provisioned' || updatedFields.status === 'cancelled')) {
       const curRts = cacheManager.get<ReserveTransaction[]>(`reserve_transactions_${userId}`) || [];
       const rtToDelete = curRts.find(rt => 
         rt.id === currentDiv.transaction_id || 
         rt.transaction_id === id ||
         ((rt.type === 'aporte' || rt.type === 'rendimento') && 
          rt.description?.toUpperCase().includes(currentDiv.ticker.toUpperCase()) &&
-         Math.abs(Number(rt.amount) - Number(currentDiv.amount)) < 0.001)
+         Math.abs(Number(rt.amount) - Number(currentDiv.amount)) < 0.005)
       );
       if (rtToDelete) {
         syncQueueManager.enqueue('reserve_transactions', 'delete', rtToDelete.id);
+        supabase.from('reserve_transactions').delete().eq('id', rtToDelete.id);
         cacheManager.set(`reserve_transactions_${userId}`, curRts.filter(r => r.id !== rtToDelete.id), undefined, 'reserves');
       }
       finalFields.transaction_id = undefined;
@@ -773,11 +851,12 @@ export function InvestmentsProvider({
     }
 
     syncQueueManager.enqueue('dividends', 'update', id, cleanPayload);
+    supabase.from('dividends').update(cleanPayload).eq('id', id);
     if (!options?.silent) toast.success('Provento atualizado!', { id: 'div-action' });
-    if ((newReserveTx || (currentDiv?.status === 'received' && updatedFields.status === 'provisioned')) && onDataChange) {
+    if ((newReserveTx || updatedExistingRt || (currentDiv?.status === 'received' && (updatedFields.status === 'provisioned' || updatedFields.status === 'cancelled'))) && onDataChange) {
       await onDataChange();
     }
-  }, [dividends, settings?.default_investment_reserve_id, targetReserveId, onDataChange]);
+  }, [dividends, settings?.default_investment_reserve_id, targetReserveId, reserveTransactions, onDataChange]);
 
   const deleteDividend = useCallback(async (id: string, options?: { silent?: boolean }) => {
     const userId = (await getEffectiveUserId()) || 'default';

@@ -671,6 +671,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
           initialDividends={dividends}
           settings={settings}
           reserves={reserves}
+          reserveTransactions={reserveTransactions}
           onDataChange={handleDataChange}
           onUpdateSettings={handleUpdateSettings}
         >
