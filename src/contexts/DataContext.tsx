@@ -6,6 +6,7 @@ import { cacheManager } from '../lib/cacheManager';
 import { syncQueueManager } from '../lib/syncQueue';
 import { toast } from '../lib/toast';
 import { getEffectiveUserId } from '../lib/authUtils';
+import { planningStorage } from '../lib/planningStorage';
 
 // Segregated Contexts & Hooks
 import { QuotesProvider, useQuotes } from './QuotesContext';
@@ -468,6 +469,21 @@ export function DataProvider({ children }: { children: ReactNode }) {
           setTransactions(merged);
           cacheManager.set(`transactions_${userId}`, merged, undefined, 'transactions');
           cacheManager.set('last_known_transactions', merged, undefined, 'transactions');
+
+          // Map any transactions with card_id to local txCardMap
+          const cardTxs = merged.filter(t => t.card_id);
+          if (cardTxs.length > 0) {
+            const cardMapUpdates: Record<string, string> = {};
+            cardTxs.forEach(t => {
+              if (t.card_id) cardMapUpdates[t.id] = t.card_id;
+            });
+            const existingMap = planningStorage.getTxCardMap(userId);
+            const combinedMap = { ...cardMapUpdates, ...existingMap };
+            cacheManager.set(`tx_card_map_${userId}`, combinedMap, undefined, 'settings');
+            try {
+              localStorage.setItem(`tx_card_map_${userId}`, JSON.stringify(combinedMap));
+            } catch {}
+          }
         }
 
         // Process Reserves
@@ -611,6 +627,13 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
         // Record last sync timestamp
         cacheManager.set(`last_sync_timestamp_${userId}`, Date.now(), undefined, 'system');
+
+        // Load cloud planning data (credit cards, templates, budgets, reconciliations)
+        try {
+          await planningStorage.loadAllFromCloud(userId);
+        } catch (planningErr) {
+          console.warn('[DataContext] Erro ao sincronizar planejamento/cartões da nuvem:', planningErr);
+        }
 
       } catch (err) {
         console.error('Master data loading error:', err);

@@ -428,6 +428,7 @@ export function History() {
   const [maxAmount, setMaxAmount] = useState(savedFilters?.maxAmount || '');
   const [sortBy, setSortBy] = useState(savedFilters?.sortBy || 'date-desc');
   const [showAdvanced, setShowAdvanced] = useState(savedFilters?.showAdvanced || false);
+  const [showFuture, setShowFuture] = useState<boolean>(false);
 
   // Source filters
   const [includeCash, setIncludeCash] = useState(savedFilters?.includeCash ?? true);
@@ -574,8 +575,9 @@ export function History() {
     if (!includeInvestments) count++;
     if (filterReserveId !== 'all') count++;
     if (filterTicker !== 'all') count++;
+    if (showFuture) count++;
     return count;
-  }, [filterType, filterCategory, filterStatus, filterPaymentStatus, minAmount, maxAmount, sortBy, includeCash, includeReserves, includeInvestments, filterReserveId, filterTicker]);
+  }, [filterType, filterCategory, filterStatus, filterPaymentStatus, minAmount, maxAmount, sortBy, includeCash, includeReserves, includeInvestments, filterReserveId, filterTicker, showFuture]);
 
   // Edit Modal
   const [editItem, setEditItem] = useState<Transaction | null>(null);
@@ -1873,6 +1875,11 @@ export function History() {
 
   const handleSelectMonthFromTimeline = (year: number, month: number) => {
     const now = new Date();
+    const isFutureMonth =
+      year > now.getFullYear() || (year === now.getFullYear() && month - 1 > now.getMonth());
+    if (isFutureMonth) {
+      setShowFuture(true);
+    }
     if (filterStatus !== 'all') {
       setFilterStatus('all');
     }
@@ -2609,7 +2616,12 @@ export function History() {
     const isFutureFilterActive =
       filterStatus === 'scheduled' ||
       filterStatus === 'scheduled_30' ||
-      filterStatus === 'scheduled_90';
+      filterStatus === 'scheduled_90' ||
+      globalPeriod === 'future' ||
+      globalPeriod === 'nextMonth' ||
+      globalPeriod === 'next30Days' ||
+      (globalPeriod === 'custom' &&
+        Boolean(customDateRange?.start && parseLocalDate(customDateRange.start) > endOfDay(new Date())));
     const isPendingFilterActive = filterPaymentStatus === 'pending' || filterPaymentStatus === 'overdue';
     const isGlobalSearchActive = searchTerm.trim().length > 0 && searchAllPeriods;
 
@@ -2626,6 +2638,12 @@ export function History() {
     const in90DaysEnd = endOfDay(addDays(now, 90));
 
     let result = baseList.filter(t => {
+      // Hide future-dated transactions by default unless showFuture is enabled or an explicit future view is selected
+      if (!showFuture && !isFutureFilterActive) {
+        const dTx = parseLocalDate(t.date);
+        if (dTx > todayEnd) return false;
+      }
+
       // Data Source Filters
       const isInvestment = (t as any).isInvestmentTx || (t as any).isDividendTx;
       const isReserve = (t as any).isReserveTx;
@@ -2727,7 +2745,7 @@ export function History() {
     }
 
     return result;
-  }, [periodFiltered, allTransactionsAdjusted, searchTerm, searchAllPeriods, matchesSmartTransactionSearch, filterType, filterCategory, filterStatus, filterPaymentStatus, minAmount, maxAmount, sortBy, settings, includeCash, includeReserves, includeInvestments, filterReserveId, filterTicker]);
+  }, [periodFiltered, allTransactionsAdjusted, searchTerm, searchAllPeriods, matchesSmartTransactionSearch, filterType, filterCategory, filterStatus, filterPaymentStatus, minAmount, maxAmount, sortBy, settings, includeCash, includeReserves, includeInvestments, filterReserveId, filterTicker, showFuture, globalPeriod, customDateRange]);
 
   // Future / Scheduled summary across all transactions so user always knows what is coming up
   const futureSummary = useMemo(() => {
@@ -3240,6 +3258,7 @@ export function History() {
       setIncludeInvestments(true);
       setSearchTerm('');
     } else if (chipId === 'future_scheduled') {
+      setShowFuture(true);
       setFilterType('all');
       setFilterCategory('all');
       setFilterPaymentStatus('all');
@@ -4044,10 +4063,14 @@ export function History() {
                 type="button"
                 onClick={() => {
                   if (period.id === 'future') {
+                    setShowFuture(true);
                     setGlobalPeriod('future');
                     setFilterStatus('scheduled');
                     setSortBy('date-asc');
                   } else {
+                    if (period.id === 'nextMonth' || period.id === 'next30Days') {
+                      setShowFuture(true);
+                    }
                     if (filterStatus === 'scheduled' || filterStatus === 'scheduled_30' || filterStatus === 'scheduled_90') {
                       setFilterStatus('all');
                     }
@@ -4196,7 +4219,29 @@ export function History() {
               </div>
             </div>
             
-            <div className="flex gap-2 w-full md:w-auto shrink-0 justify-end">
+            <div className="flex flex-wrap gap-2 w-full md:w-auto shrink-0 justify-end">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setShowFuture(prev => !prev)}
+                className={`h-11 text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 px-3.5 select-none transition-colors border cursor-pointer ${
+                  showFuture
+                    ? 'border-amber-500/40 bg-amber-500/15 text-amber-600 dark:text-amber-400'
+                    : 'border-border bg-card text-muted-foreground hover:text-foreground'
+                }`}
+                title={showFuture ? 'Ocultar lançamentos e contas futuras (padrão)' : 'Exibir lançamentos, parcelas e contas futuras no extrato'}
+              >
+                <CalendarClock className="w-4 h-4 shrink-0" />
+                <span>{showFuture ? 'Exibindo futuras' : 'Exibir futuras'}</span>
+                {futureSummary.futureCount > 0 && (
+                  <span className={`font-black text-[10px] px-1.5 py-0.5 rounded-full ${
+                    showFuture ? 'bg-amber-500 text-zinc-950' : 'bg-muted text-muted-foreground'
+                  }`}>
+                    {futureSummary.futureCount}
+                  </span>
+                )}
+              </Button>
+
               <Button
                 type="button"
                 variant="outline"
@@ -4235,6 +4280,7 @@ export function History() {
                     setFilterReserveId('all');
                     setFilterTicker('all');
                     setActiveQuickChip('all');
+                    setShowFuture(false);
                   }}
                   variant="outline"
                   className="h-11 text-xs font-bold border-rose-500/20 bg-rose-500/5 hover:bg-rose-500/10 text-rose-500 hover:text-rose-600 rounded-xl px-3 transition-colors flex items-center gap-1.5 cursor-pointer"

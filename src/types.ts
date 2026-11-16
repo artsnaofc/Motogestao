@@ -47,6 +47,12 @@ export interface Transaction {
   installment_index?: number | null;
   total_installments?: number | null;
 
+  // Vínculo com Cartão de Crédito
+  card_id?: string | null;
+  card_name?: string | null;
+  card_installments?: number | null;
+  card_installment_index?: number | null;
+
   // Vínculo com Garagem / Veículo
   vehicle_id?: string;
   fuel_liters?: number | null;

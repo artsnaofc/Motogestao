@@ -81,9 +81,16 @@ import { freightStorage } from '../lib/freightStorage';
 import { calculateNextOccurrence, getFrequencyLabel, generateUUID, parseLocalDate } from '../lib/recurrenceUtils';
 import { getTodayLocalDateStr } from '../lib/utils';
 import { getEffectiveUserId } from '../lib/authUtils';
-import { RefreshCw, CalendarClock, CalendarRange, CheckCircle2, AlertCircle, EyeOff } from 'lucide-react';
+import { RefreshCw, CalendarClock, CalendarRange, CheckCircle2, AlertCircle, EyeOff, Bookmark, X } from 'lucide-react';
 import { isVehicleRelatedCategory, shouldDefaultToNoVehicle } from '../lib/vehicleUtils';
 import { findMatchingReserveForExpense } from '../components/reserves/reserveUtils';
+import {
+  planningStorage,
+  TxQuickTemplate,
+  CreditCardConfig,
+  computeCardStatementDueDate,
+  isCreditCardCategoryName,
+} from '../lib/planningStorage';
 
 export function AddTransaction() {
   const navigate = useNavigate();
@@ -165,6 +172,58 @@ export function AddTransaction() {
   const [isRecurring, setIsRecurring] = useState<boolean>(false);
   const [recurrenceFrequency, setRecurrenceFrequency] = useState<RecurrenceFrequency>('monthly');
   const [recurrenceInstallments, setRecurrenceInstallments] = useState<string>('12');
+
+  // Quick Templates (1-click favorites) & Registered Credit Cards
+  const [templateUserId, setTemplateUserId] = useState<string>('');
+  const [quickTemplates, setQuickTemplates] = useState<TxQuickTemplate[]>([]);
+  const [showSaveTemplateInput, setShowSaveTemplateInput] = useState(false);
+  const [newTemplateName, setNewTemplateName] = useState('');
+  const [registeredCards, setRegisteredCards] = useState<CreditCardConfig[]>([]);
+  const [selectedCardId, setSelectedCardId] = useState<string>('');
+  const [cardInstallments, setCardInstallments] = useState<string>('1');
+  const [cardAmountMode, setCardAmountMode] = useState<'total' | 'installment'>('total');
+
+  useEffect(() => {
+    getEffectiveUserId().then(uid => {
+      if (uid) {
+        setTemplateUserId(uid);
+        setQuickTemplates(planningStorage.getTemplates(uid));
+        const cards = planningStorage.getCards(uid);
+        setRegisteredCards(cards);
+        if (cards.length > 0) {
+          setSelectedCardId(cards[0].id);
+        }
+      }
+    });
+  }, []);
+
+  const displayedExpenseCategories = useMemo(() => {
+    const hasCardCat = expenseCategories.some(c => isCreditCardCategoryName(c));
+    if (registeredCards.length > 0 && !hasCardCat) {
+      return [...expenseCategories, 'Cartão de Crédito'];
+    }
+    return expenseCategories;
+  }, [expenseCategories, registeredCards.length]);
+
+  const isCardCategorySelected = activeTab === 'despesa' && isCreditCardCategoryName(category);
+  const selectedCardObj = useMemo(() => {
+    if (!isCardCategorySelected || !selectedCardId || selectedCardId === '__none__') return null;
+    return registeredCards.find(c => c.id === selectedCardId) || null;
+  }, [isCardCategorySelected, selectedCardId, registeredCards]);
+
+  const cardPurchasePreview = useMemo(() => {
+    if (!selectedCardObj) return null;
+    const nInst = Math.max(1, Math.min(24, Number(cardInstallments) || 1));
+    const rawVal = Number(amount) || 0;
+    const totalPurchase =
+      cardAmountMode === 'total' ? rawVal : Math.round(rawVal * nInst * 100) / 100;
+    const perInstallment =
+      cardAmountMode === 'total' ? Math.round((rawVal / nInst) * 100) / 100 : rawVal;
+    const purchaseDate = date || getTodayLocalDateStr();
+    const first = computeCardStatementDueDate(purchaseDate, selectedCardObj.closingDay, selectedCardObj.dueDay, 1);
+    const last = computeCardStatementDueDate(purchaseDate, selectedCardObj.closingDay, selectedCardObj.dueDay, nInst);
+    return { nInst, totalPurchase, perInstallment, first, last };
+  }, [selectedCardObj, cardInstallments, amount, cardAmountMode, date]);
 
   const activeReservesList = useMemo(() => {
     return (reserves || []).filter(r => r.status !== 'inactive');
@@ -346,6 +405,114 @@ export function AddTransaction() {
     setIgnoreInCharts(false);
     setDeductFromReserve(false);
     setDeductReserveId('');
+    setCardInstallments('1');
+    setCardAmountMode('total');
+  };
+
+  const handleApplyTemplate = (tpl: TxQuickTemplate) => {
+    setActiveTab(tpl.tab);
+    setCategory(tpl.category || '');
+    setAmount(tpl.amount || '');
+    setDescription(tpl.description || '');
+    if (tpl.deliveries !== undefined) setDeliveries(tpl.deliveries);
+    if (tpl.outOfNeighborhood !== undefined) setOutOfNeighborhood(tpl.outOfNeighborhood);
+    if (tpl.operationalExpenses !== undefined) setOperationalExpenses(tpl.operationalExpenses);
+    if (tpl.paymentStatus) setPaymentStatus(tpl.paymentStatus);
+    setIgnoreInCharts(Boolean(tpl.ignoreInCharts));
+    toast.success(`Modelo "${tpl.name}" preenchido!`);
+  };
+
+  const handleQuickLogTemplate = async (tpl: TxQuickTemplate) => {
+    const uid = templateUserId || (await getEffectiveUserId());
+    if (!uid) return;
+    let finalAmt = Number(tpl.amount) || 0;
+    if (tpl.tab === 'pizzaria' && finalAmt <= 0 && settings) {
+      const d = Number(tpl.deliveries) || 0;
+      const o = Number(tpl.outOfNeighborhood) || 0;
+      finalAmt =
+        o * settings.pizzaria_out_of_neighborhood_rate +
+        (d <= settings.pizzaria_base_deliveries
+          ? settings.pizzaria_base_rate
+          : settings.pizzaria_daily_rate_above_base + d * settings.pizzaria_delivery_rate);
+    }
+    if (finalAmt <= 0) {
+      handleApplyTemplate(tpl);
+      return;
+    }
+    const todayStr = getTodayLocalDateStr();
+    const newId = generateUUID();
+    const payload = {
+      id: newId,
+      user_id: uid,
+      type: (tpl.tab === 'despesa' ? 'expense' : 'income') as TransactionType,
+      amount: finalAmt,
+      date: todayStr,
+      category: tpl.tab === 'pizzaria' ? 'Pizzaria' : tpl.tab === 'frete' ? 'Frete do Dia' : tpl.category || 'Outros',
+      description: tpl.description || tpl.name,
+      deliveries: tpl.tab === 'pizzaria' && tpl.deliveries ? Number(tpl.deliveries) : null,
+      out_of_neighborhood: tpl.tab === 'pizzaria' && tpl.outOfNeighborhood ? Number(tpl.outOfNeighborhood) : null,
+      payment_status: (tpl.tab === 'despesa' ? tpl.paymentStatus || 'paid' : 'paid') as PaymentStatus,
+      payment_date: (tpl.tab === 'despesa' && tpl.paymentStatus === 'pending') ? null : todayStr,
+      due_date: todayStr,
+      is_recurring: false,
+      ignore_in_charts: Boolean(tpl.ignoreInCharts),
+      created_at: new Date().toISOString(),
+    };
+    setTransactions(prev => {
+      const next = [payload, ...prev];
+      cacheManager.set(`transactions_${uid}`, next, undefined, 'transactions');
+      cacheManager.set('last_known_transactions', next, undefined, 'transactions');
+      return next;
+    });
+    syncQueueManager.enqueue('transactions', 'insert', newId, payload);
+    toast.success(`"${tpl.name}" (${formatCurrency(finalAmt)}) lançado com 1 clique!`);
+  };
+
+  const handleSaveCurrentAsTemplate = async () => {
+    if (activeTab === 'reserva') {
+      toast.error('Modelos rápidos estão disponíveis para ganhos, pizzaria, fretes e despesas.');
+      return;
+    }
+    const uid = templateUserId || (await getEffectiveUserId());
+    if (!uid) return;
+    const catName =
+      activeTab === 'pizzaria'
+        ? 'Pizzaria'
+        : activeTab === 'frete'
+          ? 'Frete do Dia'
+          : category || 'Outros';
+    const computedAmt =
+      activeTab === 'pizzaria' ? String(calcPizzariaEarnings()) : amount;
+    const tplName = (newTemplateName.trim() || description.trim() || catName).slice(0, 32);
+
+    const newTpl: TxQuickTemplate = {
+      id: generateUUID(),
+      name: tplName,
+      tab: activeTab,
+      category: catName,
+      amount: computedAmt,
+      description: description.trim() || tplName,
+      deliveries: activeTab === 'pizzaria' ? deliveries : undefined,
+      outOfNeighborhood: activeTab === 'pizzaria' ? outOfNeighborhood : undefined,
+      operationalExpenses: activeTab === 'frete' ? operationalExpenses : undefined,
+      paymentStatus: activeTab === 'despesa' ? paymentStatus : 'paid',
+      ignoreInCharts,
+      createdAt: new Date().toISOString(),
+    };
+
+    const next = [newTpl, ...quickTemplates].slice(0, 12);
+    setQuickTemplates(next);
+    planningStorage.saveTemplates(uid, next);
+    setShowSaveTemplateInput(false);
+    setNewTemplateName('');
+    toast.success(`Favorito "${tplName}" salvo para lançamentos em 1 clique!`);
+  };
+
+  const handleDeleteTemplate = (id: string) => {
+    const next = quickTemplates.filter(t => t.id !== id);
+    setQuickTemplates(next);
+    if (templateUserId) planningStorage.saveTemplates(templateUserId, next);
+    toast.success('Modelo rápido removido.');
   };
 
 
@@ -425,6 +592,7 @@ export function AddTransaction() {
 
     // Default fallbacks based on name
     const normalized = catName.toLowerCase();
+    if (isCreditCardCategoryName(catName)) return CreditCard;
     if (normalized.includes('combustível') || normalized.includes('gasolina')) return Fuel;
     if (normalized.includes('manutenção') || normalized.includes('oficina') || normalized.includes('peça')) return Wrench;
     if (normalized.includes('aliment') || normalized.includes('almoço')) return Utensils;
@@ -678,6 +846,95 @@ export function AddTransaction() {
         return;
       }
 
+      // Handle Credit Card Purchases linked to a registered card
+      if (activeTab === 'despesa' && isCardCategorySelected && selectedCardObj) {
+        const nInst = Math.max(1, Math.min(24, Number(cardInstallments) || 1));
+        const totalPurchase =
+          cardAmountMode === 'total' ? finalAmount : Math.round(finalAmount * nInst * 100) / 100;
+        const baseInstAmt = Math.floor((totalPurchase / nInst) * 100) / 100;
+        const remainderCents = Math.round((totalPurchase - baseInstAmt * nInst) * 100) / 100;
+        const groupId = nInst > 1 ? generateUUID() : null;
+        const rawLabel = (description || '').trim();
+        const cardPrefix = `[Cartão ${selectedCardObj.name}]`;
+        const cleanLabel = rawLabel || finalCategory || 'Compra no cartão';
+        const baseDesc = cleanLabel.toLowerCase().includes('[cartão') || cleanLabel.toLowerCase().includes('[cartao')
+          ? cleanLabel
+          : `${cardPrefix} ${cleanLabel}`;
+
+        const purchaseDate = date || getTodayLocalDateStr();
+        const cardBatch: any[] = [];
+        const cardBatchIds: string[] = [];
+
+        for (let i = 1; i <= nInst; i++) {
+          const { statementDueDate } = computeCardStatementDueDate(
+            purchaseDate,
+            selectedCardObj.closingDay,
+            selectedCardObj.dueDay,
+            i
+          );
+          const instId = generateUUID();
+          cardBatchIds.push(instId);
+          const instAmt = i === 1 ? Math.round((baseInstAmt + remainderCents) * 100) / 100 : baseInstAmt;
+          const parcelSuffix = nInst > 1 ? ` (${i}/${nInst})` : '';
+          const instStatus: PaymentStatus = i === 1 ? paymentStatus : 'pending';
+          const instPayDate =
+            instStatus === 'paid'
+              ? (paymentDate.trim() || statementDueDate)
+              : null;
+
+          const payload = {
+            id: instId,
+            user_id: userId,
+            type: 'expense' as TransactionType,
+            amount: instAmt,
+            date: statementDueDate,
+            due_date: statementDueDate,
+            category: finalCategory,
+            description: `${baseDesc}${parcelSuffix}`,
+            payment_status: instStatus,
+            payment_date: instPayDate,
+            is_recurring: nInst > 1,
+            recurrence_frequency: nInst > 1 ? ('monthly' as RecurrenceFrequency) : undefined,
+            recurrence_installments: nInst > 1 ? nInst : null,
+            recurrence_group_id: groupId,
+            installment_number: nInst > 1 ? i : null,
+            installment_total: nInst > 1 ? nInst : null,
+            start_km: null,
+            end_km: null,
+            deliveries: null,
+            out_of_neighborhood: null,
+            vehicle_id: getEffectiveVehicleId(),
+            card_id: selectedCardObj.id,
+            card_name: selectedCardObj.name,
+            card_installments: nInst,
+            card_installment_index: i,
+            ignore_in_charts: ignoreInCharts,
+            created_at: new Date().toISOString(),
+          };
+          cardBatch.push(payload);
+          syncQueueManager.enqueue('transactions', 'insert', instId, payload);
+        }
+
+        planningStorage.linkTxsToCard(userId, cardBatchIds, selectedCardObj.id);
+
+        setTransactions(prev => {
+          const newState = [...cardBatch, ...prev];
+          cacheManager.set(`transactions_${userId}`, newState, undefined, 'transactions');
+          cacheManager.set('last_known_transactions', newState, undefined, 'transactions');
+          return newState;
+        });
+
+        toast.success(
+          nInst > 1
+            ? `Compra parcelada em ${nInst}x lançada na fatura do ${selectedCardObj.name}!`
+            : `Compra lançada na fatura do ${selectedCardObj.name}!`,
+          { id: 'add-tx' }
+        );
+        resetForm();
+        navigate('/planning');
+        return;
+      }
+
       // Handle Recurring Expenses
       if (activeTab === 'despesa' && isRecurring) {
         const numInstallments = Math.max(2, Math.min(60, Number(recurrenceInstallments) || 12));
@@ -901,6 +1158,60 @@ export function AddTransaction() {
           <PiggyBank className="w-4 h-4 sm:w-5 sm:h-5 mb-1.5 transition-transform duration-200 hover:scale-105" /> Reserva
         </button>
       </div>
+
+      {/* Quick Templates / 1-click Favorites */}
+      {quickTemplates.length > 0 && (
+        <div className="rounded-2xl border border-border/70 bg-card/80 p-3.5 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-[10.5px] font-extrabold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+              <Zap className="w-3.5 h-3.5 text-amber-500" /> Modelos Rápidos (Clique p/ preencher ou ⚡ p/ lançar hoje)
+            </span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {quickTemplates.map(tpl => (
+              <div
+                key={tpl.id}
+                className="inline-flex items-center rounded-xl border border-border/70 bg-muted/25 hover:bg-muted/50 transition-all overflow-hidden"
+              >
+                <button
+                  type="button"
+                  onClick={() => handleApplyTemplate(tpl)}
+                  className="px-2.5 py-1.5 text-xs font-bold text-foreground flex items-center gap-1.5 cursor-pointer"
+                  title="Preencher formulário com este modelo"
+                >
+                  <span
+                    className={`w-2 h-2 rounded-full ${
+                      tpl.tab === 'despesa' ? 'bg-rose-500' : 'bg-emerald-500'
+                    }`}
+                  />
+                  <span>{tpl.name}</span>
+                  {Number(tpl.amount) > 0 && (
+                    <span className="text-[10.5px] font-mono font-extrabold text-muted-foreground">
+                      {formatCurrency(Number(tpl.amount))}
+                    </span>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleQuickLogTemplate(tpl)}
+                  className="px-2 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-500 border-l border-border/50 cursor-pointer"
+                  title="Lançar imediatamente na data de hoje (1 clique)"
+                >
+                  <Zap className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleDeleteTemplate(tpl.id)}
+                  className="px-1.5 py-1.5 text-muted-foreground hover:text-rose-500 hover:bg-rose-500/10 border-l border-border/50 cursor-pointer"
+                  title="Remover favorito"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <Card className="w-full border border-border/80 shadow-md rounded-2xl">
         <CardContent className="w-full p-5 sm:p-6 md:p-8">
@@ -1206,14 +1517,26 @@ export function AddTransaction() {
                   </div>
                   
                   <div className="grid grid-cols-2 xs:grid-cols-3 md:grid-cols-4 gap-2">
-                    {(activeTab === 'despesa' ? expenseCategories : incomeCategories).map(cat => {
+                    {(activeTab === 'despesa' ? displayedExpenseCategories : incomeCategories).map(cat => {
                       const Icon = getCategoryIcon(cat);
                       const isSelected = category === cat;
                       return (
                         <button
                           key={cat}
                           type="button"
-                          onClick={() => setCategory(cat)}
+                          onClick={() => {
+                            setCategory(cat);
+                            if (activeTab === 'despesa') {
+                              if (isCreditCardCategoryName(cat)) {
+                                setPaymentStatus('pending');
+                                if ((!selectedCardId || selectedCardId === '__none__') && registeredCards.length > 0) {
+                                  setSelectedCardId(registeredCards[0].id);
+                                }
+                              } else if (isCreditCardCategoryName(category)) {
+                                setPaymentStatus('paid');
+                              }
+                            }
+                          }}
                           className={`flex flex-col items-center justify-center p-3 rounded-xl border transition-all duration-200 cursor-pointer gap-2 ${
                             isSelected 
                               ? 'bg-primary/10 border-primary text-primary shadow-sm scale-[1.02]' 
@@ -1229,6 +1552,187 @@ export function AddTransaction() {
                     })}
                   </div>
                 </div>
+
+                {/* Seleção de Cartão de Crédito Cadastrado (aparece ao selecionar categoria Cartão) */}
+                {isCardCategorySelected && (
+                  <div className="p-4 rounded-xl border border-purple-500/30 bg-purple-500/[0.06] space-y-3.5 animate-fade-in">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <div className="p-1.5 rounded-lg bg-purple-500/15 text-purple-500">
+                          <CreditCard className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <h4 className="text-xs font-black text-foreground">
+                            Selecionar Cartão Cadastrado
+                          </h4>
+                          <p className="text-[10px] text-muted-foreground">
+                            O vencimento da fatura e as parcelas caem automaticamente no Calendário.
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => navigate('/planning')}
+                        className="text-[11px] font-extrabold text-purple-500 hover:underline cursor-pointer"
+                      >
+                        Gerenciar Cartões →
+                      </button>
+                    </div>
+
+                    {registeredCards.length === 0 ? (
+                      <div className="p-3 rounded-xl border border-dashed border-purple-500/40 bg-card/60 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <span className="text-xs font-semibold text-muted-foreground">
+                          Nenhum cartão cadastrado ainda. Cadastre em Calendário &amp; Cartões para vincular automaticamente.
+                        </span>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() => navigate('/planning')}
+                          className="h-8 rounded-lg text-xs font-extrabold border-purple-500/30 text-purple-600 dark:text-purple-400 shrink-0 cursor-pointer"
+                        >
+                          Cadastrar Cartão
+                        </Button>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="grid grid-cols-1 xs:grid-cols-2 sm:grid-cols-3 gap-2">
+                          {registeredCards.map(card => {
+                            const active = selectedCardId === card.id;
+                            return (
+                              <button
+                                key={card.id}
+                                type="button"
+                                onClick={() => setSelectedCardId(card.id)}
+                                className={`flex items-center gap-2.5 p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                                  active
+                                    ? 'border-purple-500 bg-purple-500/15 ring-1 ring-purple-500/30 shadow-xs'
+                                    : 'border-border/70 bg-card hover:bg-muted/40'
+                                }`}
+                              >
+                                <span
+                                  className="w-7 h-7 rounded-lg flex items-center justify-center text-white shrink-0"
+                                  style={{ backgroundColor: card.color }}
+                                >
+                                  <CreditCard className="w-3.5 h-3.5" />
+                                </span>
+                                <div className="min-w-0">
+                                  <p className="text-xs font-black text-foreground truncate">{card.name}</p>
+                                  <p className="text-[9.5px] font-semibold text-muted-foreground">
+                                    Fecha {card.closingDay} • Vence {card.dueDay}
+                                  </p>
+                                </div>
+                              </button>
+                            );
+                          })}
+                          <button
+                            type="button"
+                            onClick={() => setSelectedCardId('__none__')}
+                            className={`flex items-center justify-center p-2.5 rounded-xl border text-[11px] font-bold transition-all cursor-pointer ${
+                              selectedCardId === '__none__'
+                                ? 'border-primary bg-primary/10 text-primary'
+                                : 'border-border/60 bg-card/50 text-muted-foreground hover:bg-muted/40'
+                            }`}
+                          >
+                            Sem vínculo de cartão
+                          </button>
+                        </div>
+
+                        {selectedCardObj && (
+                          <div className="space-y-3 pt-2 border-t border-purple-500/20">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                              <div className="space-y-1.5">
+                                <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">
+                                  Parcelas no Cartão
+                                </label>
+                                <Select value={cardInstallments} onValueChange={setCardInstallments}>
+                                  <SelectTrigger className="h-9 rounded-xl bg-card text-xs font-bold">
+                                    <SelectValue>
+                                      {(val) => (val === '1' ? '1x (À vista na fatura)' : `${val || 1}x mensais`)}
+                                    </SelectValue>
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {Array.from({ length: 24 }, (_, idx) => String(idx + 1)).map(n => (
+                                      <SelectItem key={n} value={n}>
+                                        {n === '1' ? '1x (À vista na fatura)' : `${n}x mensais`}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+
+                              {Number(cardInstallments) > 1 && (
+                                <div className="space-y-1.5">
+                                  <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">
+                                    Valor Informado Acima é:
+                                  </label>
+                                  <div className="grid grid-cols-2 gap-1.5">
+                                    <button
+                                      type="button"
+                                      onClick={() => setCardAmountMode('total')}
+                                      className={`h-9 rounded-xl border text-[11px] font-bold cursor-pointer transition-all ${
+                                        cardAmountMode === 'total'
+                                          ? 'bg-purple-600 text-white border-purple-600'
+                                          : 'bg-card border-border text-muted-foreground'
+                                      }`}
+                                    >
+                                      Total ({cardInstallments}x)
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setCardAmountMode('installment')}
+                                      className={`h-9 rounded-xl border text-[11px] font-bold cursor-pointer transition-all ${
+                                        cardAmountMode === 'installment'
+                                          ? 'bg-purple-600 text-white border-purple-600'
+                                          : 'bg-card border-border text-muted-foreground'
+                                      }`}
+                                    >
+                                      Por Parcela
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+
+                            {cardPurchasePreview && (
+                              <div className="p-2.5 rounded-xl bg-card/80 border border-purple-500/20 text-[11px] space-y-0.5">
+                                <div className="flex flex-wrap items-center justify-between gap-1 font-bold text-foreground">
+                                  <span className="text-purple-500 font-black">
+                                    Fatura {selectedCardObj.name}
+                                  </span>
+                                  {Number(amount) > 0 && (
+                                    <span className="font-mono">
+                                      {cardPurchasePreview.nInst}x de{' '}
+                                      {formatCurrency(cardPurchasePreview.perInstallment)}
+                                      {cardPurchasePreview.nInst > 1
+                                        ? ` (Total ${formatCurrency(cardPurchasePreview.totalPurchase)})`
+                                        : ''}
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-muted-foreground text-[10.5px]">
+                                  {cardPurchasePreview.nInst > 1 ? '1ª parcela' : 'Vencimento'} cai em{' '}
+                                  <strong className="text-foreground">
+                                    {format(parseLocalDate(cardPurchasePreview.first.statementDueDate), 'dd/MM/yyyy')}
+                                  </strong>
+                                  {cardPurchasePreview.nInst > 1 && (
+                                    <>
+                                      {' '}
+                                      • Última em{' '}
+                                      <strong className="text-foreground">
+                                        {format(parseLocalDate(cardPurchasePreview.last.statementDueDate), 'dd/MM/yyyy')}
+                                      </strong>
+                                    </>
+                                  )}
+                                </p>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
 
                 {/* Alocação Inteligente por Categoria (Match Automático de Reserva) */}
                 {activeTab === 'despesa' && suggestedExpenseReserve && selectedDeductReserve && (
@@ -1263,7 +1767,12 @@ export function AddTransaction() {
                         </span>
                         <Select value={selectedDeductReserve.id} onValueChange={setDeductReserveId}>
                           <SelectTrigger className="h-8 text-xs font-bold rounded-lg bg-card sm:w-[240px]">
-                            <SelectValue />
+                            <SelectValue>
+                              {(val) => {
+                                const found = activeReservesList.find(r => r.id === val);
+                                return found ? `${found.name} (${formatCurrency(found.saldo_atual || 0)})` : 'Selecione a reserva...';
+                              }}
+                            </SelectValue>
                           </SelectTrigger>
                           <SelectContent className="text-xs">
                             {activeReservesList.map(r => (
@@ -1349,6 +1858,10 @@ export function AddTransaction() {
                         Caso deixe a data de pagamento vazia, o sistema considerará como pago na data informada ({date || 'hoje'}).
                       </p>
                     </div>
+                  ) : selectedCardObj ? (
+                    <div className="p-2.5 rounded-xl bg-purple-500/10 border border-purple-500/25 text-[10.5px] text-purple-600 dark:text-purple-300 font-semibold leading-relaxed">
+                      Vencimento calculado automaticamente pela fatura do cartão <strong>{selectedCardObj.name}</strong> (fecha dia {selectedCardObj.closingDay}, vence dia {selectedCardObj.dueDay}).
+                    </div>
                   ) : (
                     <div className="space-y-1.5 animate-fade-in">
                       <label className="text-[10px] font-extrabold uppercase tracking-wider text-amber-600 dark:text-amber-400 flex items-center gap-1 font-bold">
@@ -1371,7 +1884,7 @@ export function AddTransaction() {
             )}
 
             {/* ==== RECURRENCE & INSTALLMENTS SECTION ==== */}
-            {(activeTab === 'despesa' || (activeTab === 'reserva' && rtType === 'utilizacao')) && (
+            {((activeTab === 'despesa' && !selectedCardObj) || (activeTab === 'reserva' && rtType === 'utilizacao')) && (
               <div className="space-y-3 pt-1">
                 <div className="p-4 bg-primary/[0.03] border border-primary/20 rounded-xl space-y-4">
                   <div className="flex items-center justify-between cursor-pointer" onClick={() => setIsRecurring(!isRecurring)}>
@@ -1410,7 +1923,21 @@ export function AddTransaction() {
                             onValueChange={(val: RecurrenceFrequency) => setRecurrenceFrequency(val)}
                           >
                             <SelectTrigger className="h-10 rounded-xl border-border bg-card text-xs font-semibold">
-                              <SelectValue placeholder="Selecione a frequência" />
+                              <SelectValue placeholder="Selecione a frequência">
+                                {(val) => {
+                                  switch (val) {
+                                    case 'daily': return 'Diário';
+                                    case 'weekly': return 'Semanal';
+                                    case 'biweekly': return 'Quinzenal (14 dias)';
+                                    case 'monthly': return 'Mensal';
+                                    case 'bimonthly': return 'Bimestral (2 meses)';
+                                    case 'quarterly': return 'Trimestral (3 meses)';
+                                    case 'semiannual': return 'Semestral (6 meses)';
+                                    case 'yearly': return 'Anual';
+                                    default: return val || 'Selecione a frequência';
+                                  }
+                                }}
+                              </SelectValue>
                             </SelectTrigger>
                             <SelectContent>
                               <SelectItem value="daily">Diário</SelectItem>
@@ -1595,10 +2122,57 @@ export function AddTransaction() {
               </label>
             )}
 
-            <Button type="submit" className="w-full h-12 text-sm sm:text-base font-black uppercase tracking-wider bg-primary hover:bg-primary/95 text-primary-foreground focus:ring-1 focus:ring-offset-1 focus:ring-primary shadow-xs hover:shadow-md transition-all duration-200 mt-6 rounded-xl cursor-pointer" disabled={loading}>
-              {loading ? <Loader2 className="w-5 h-5 animate-spin mr-2" /> : null}
-              {loading ? 'Sincronizando...' : 'Salvar no Faturamento'}
-            </Button>
+            <div className="space-y-3 pt-2">
+              {activeTab !== 'reserva' && (
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  {!showSaveTemplateInput ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setNewTemplateName(description.trim() || (activeTab === 'pizzaria' ? 'Diária Pizzaria' : category) || '');
+                        setShowSaveTemplateInput(true);
+                      }}
+                      className="text-xs font-extrabold text-amber-500 hover:text-amber-400 inline-flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Bookmark className="w-3.5 h-3.5" />
+                      <span>Salvar como Modelo Rápido (Favorito)</span>
+                    </button>
+                  ) : (
+                    <div className="flex items-center gap-2 w-full">
+                      <Input
+                        type="text"
+                        placeholder="Nome do atalho (ex: Gasolina Cheia, Almoço...)"
+                        value={newTemplateName}
+                        onChange={e => setNewTemplateName(e.target.value)}
+                        className="h-9 rounded-xl text-xs flex-1"
+                      />
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={handleSaveCurrentAsTemplate}
+                        className="h-9 rounded-xl text-xs font-black bg-amber-500 hover:bg-amber-600 text-zinc-950 cursor-pointer"
+                      >
+                        Salvar Favorito
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setShowSaveTemplateInput(false)}
+                        className="h-9 rounded-xl text-xs font-bold cursor-pointer"
+                      >
+                        Cancelar
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <Button type="submit" className="w-full h-12 text-sm sm:text-base font-black uppercase tracking-wider bg-primary hover:bg-primary/95 text-primary-foreground focus:ring-1 focus:ring-offset-1 focus:ring-primary shadow-xs hover:shadow-md transition-all duration-200 rounded-xl cursor-pointer" disabled={loading}>
+                {loading ? <Loader2 className="w-5 h-5 animate-spin mr-2" /> : null}
+                {loading ? 'Sincronizando...' : 'Salvar no Faturamento'}
+              </Button>
+            </div>
             
           </form>
         </CardContent>

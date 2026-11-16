@@ -100,6 +100,15 @@ CREATE TABLE IF NOT EXISTS public.transactions (
     installment_index INTEGER,
     total_installments INTEGER,
 
+    -- Vínculo com Cartão de Crédito
+    card_id TEXT,
+    card_name TEXT,
+    card_installments INTEGER,
+    card_installment_index INTEGER,
+
+    -- Exibição Gerencial
+    ignore_in_charts BOOLEAN DEFAULT FALSE,
+
     -- Vínculo com Veículo / Abastecimento
     vehicle_id TEXT,
     fuel_liters NUMERIC,
@@ -115,6 +124,8 @@ CREATE INDEX IF NOT EXISTS idx_transactions_payment_status ON public.transaction
 CREATE INDEX IF NOT EXISTS idx_transactions_due_date ON public.transactions(due_date) WHERE payment_status = 'pending';
 CREATE INDEX IF NOT EXISTS idx_transactions_recurrence_group ON public.transactions(recurrence_group_id);
 CREATE INDEX IF NOT EXISTS idx_transactions_vehicle ON public.transactions(vehicle_id);
+CREATE INDEX IF NOT EXISTS idx_transactions_card_id ON public.transactions(user_id, card_id);
+CREATE INDEX IF NOT EXISTS idx_transactions_ignore_charts ON public.transactions(user_id, ignore_in_charts);
 
 -- ==============================================================================
 -- 3. RESERVAS FINANCEIRAS / COFRINHOS (reserves)
@@ -524,6 +535,80 @@ CREATE TABLE IF NOT EXISTS public.freight_clients (
 CREATE INDEX IF NOT EXISTS idx_freight_clients_user ON public.freight_clients(user_id);
 
 -- ==============================================================================
+-- 19. CARTÕES DE CRÉDITO (credit_cards)
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS public.credit_cards (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL DEFAULT 'default',
+    name TEXT NOT NULL,
+    brand TEXT NOT NULL DEFAULT 'outro',
+    color TEXT NOT NULL DEFAULT '#820ad1',
+    closing_day INTEGER NOT NULL DEFAULT 5 CHECK (closing_day BETWEEN 1 AND 31),
+    due_day INTEGER NOT NULL DEFAULT 12 CHECK (due_day BETWEEN 1 AND 31),
+    limit_amount NUMERIC,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_credit_cards_user ON public.credit_cards(user_id, created_at DESC);
+
+-- ==============================================================================
+-- 20. MODELOS RÁPIDOS DE LANÇAMENTO (tx_quick_templates)
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS public.tx_quick_templates (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL DEFAULT 'default',
+    name TEXT NOT NULL,
+    tab TEXT NOT NULL DEFAULT 'despesa',
+    category TEXT NOT NULL,
+    amount NUMERIC DEFAULT 0,
+    description TEXT,
+    deliveries INTEGER DEFAULT 0,
+    out_of_neighborhood INTEGER DEFAULT 0,
+    operational_expenses NUMERIC DEFAULT 0,
+    payment_status TEXT DEFAULT 'paid' CHECK (payment_status IN ('paid', 'pending')),
+    ignore_in_charts BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_tx_quick_templates_user ON public.tx_quick_templates(user_id, created_at DESC);
+
+-- ==============================================================================
+-- 21. ORÇAMENTOS POR CATEGORIA (category_budgets)
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS public.category_budgets (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL DEFAULT 'default',
+    category TEXT NOT NULL,
+    monthly_limit NUMERIC NOT NULL DEFAULT 0,
+    month TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_category_budgets_user_cat ON public.category_budgets(user_id, category);
+
+-- ==============================================================================
+-- 22. RECONCILIAÇÃO DE PLATAFORMAS (platform_reconciliations)
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS public.platform_reconciliations (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL DEFAULT 'default',
+    platform_category TEXT NOT NULL,
+    period_start DATE NOT NULL,
+    period_end DATE NOT NULL,
+    expected_amount NUMERIC NOT NULL DEFAULT 0,
+    actual_paid_amount NUMERIC NOT NULL DEFAULT 0,
+    difference NUMERIC NOT NULL DEFAULT 0,
+    reconciled_at DATE NOT NULL DEFAULT CURRENT_DATE,
+    notes TEXT,
+    adjustment_tx_id TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_platform_reconciliations_user ON public.platform_reconciliations(user_id, reconciled_at DESC);
+
+-- ==============================================================================
 -- HABILITAÇÃO DE ROW LEVEL SECURITY (RLS) EM TODAS AS TABELAS
 -- ==============================================================================
 ALTER TABLE public.user_settings ENABLE ROW LEVEL SECURITY;
@@ -540,6 +625,10 @@ ALTER TABLE public.b3_assets_history ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.freight_quotes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.freight_presets ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.freight_clients ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.credit_cards ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.tx_quick_templates ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.category_budgets ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.platform_reconciliations ENABLE ROW LEVEL SECURITY;
 
 -- ==============================================================================
 -- POLÍTICAS DE ACESSO UNIVERSAL PERMISSIVO (RLS)
@@ -586,6 +675,18 @@ CREATE POLICY "Acesso Total Freight Presets" ON public.freight_presets FOR ALL T
 DROP POLICY IF EXISTS "Acesso Total Freight Clients" ON public.freight_clients;
 CREATE POLICY "Acesso Total Freight Clients" ON public.freight_clients FOR ALL TO public USING (true) WITH CHECK (true);
 
+DROP POLICY IF EXISTS "Acesso Total Credit Cards" ON public.credit_cards;
+CREATE POLICY "Acesso Total Credit Cards" ON public.credit_cards FOR ALL TO public USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Acesso Total Quick Templates" ON public.tx_quick_templates;
+CREATE POLICY "Acesso Total Quick Templates" ON public.tx_quick_templates FOR ALL TO public USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Acesso Total Category Budgets" ON public.category_budgets;
+CREATE POLICY "Acesso Total Category Budgets" ON public.category_budgets FOR ALL TO public USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Acesso Total Platform Reconciliations" ON public.platform_reconciliations;
+CREATE POLICY "Acesso Total Platform Reconciliations" ON public.platform_reconciliations FOR ALL TO public USING (true) WITH CHECK (true);
+
 -- ==============================================================================
 -- CONCESSÃO DE PRIVILÉGIOS (GRANTS)
 -- ==============================================================================
@@ -603,6 +704,10 @@ GRANT ALL ON TABLE public.b3_assets_history TO anon, authenticated, service_role
 GRANT ALL ON TABLE public.freight_quotes TO anon, authenticated, service_role, postgres;
 GRANT ALL ON TABLE public.freight_presets TO anon, authenticated, service_role, postgres;
 GRANT ALL ON TABLE public.freight_clients TO anon, authenticated, service_role, postgres;
+GRANT ALL ON TABLE public.credit_cards TO anon, authenticated, service_role, postgres;
+GRANT ALL ON TABLE public.tx_quick_templates TO anon, authenticated, service_role, postgres;
+GRANT ALL ON TABLE public.category_budgets TO anon, authenticated, service_role, postgres;
+GRANT ALL ON TABLE public.platform_reconciliations TO anon, authenticated, service_role, postgres;
 
 COMMIT;
 

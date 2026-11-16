@@ -170,7 +170,14 @@ class SyncQueueManager {
               'category', 'operation', 'ticker', 'price', 'quantity', 'costs', 'cnpj', 
               'transaction_id', 'linked_investment_id', 'asset_type', 'unit_amount', 
               'status', 'data_com', 'data_ex', 'created_at', 'saldo_inicial', 'color', 
-              'payment_status', 'payment_date', 'due_date'
+              'payment_status', 'payment_date', 'due_date',
+              'ignore_in_charts', 'card_id', 'card_name', 'card_installments', 'card_installment_index',
+              'is_recurring', 'recurrence_frequency', 'recurrence_installments', 'recurrence_group_id',
+              'installment_number', 'installment_total',
+              'name', 'brand', 'closing_day', 'due_day', 'limit_amount',
+              'tab', 'deliveries', 'out_of_neighborhood', 'operational_expenses',
+              'monthly_limit', 'platform_category', 'period_start', 'period_end',
+              'expected_amount', 'actual_paid_amount', 'difference', 'reconciled_at', 'notes'
             ];
             const simplified: Record<string, any> = {};
             for (const k of coreKeys) {

@@ -87,14 +87,17 @@ import {
   RotateCcw,
   ChevronLeft,
   ChevronRight,
-  Flame
+  Flame,
+  AlertTriangle
 } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { getTodayLocalDateStr } from '../lib/utils';
 import { getEffectiveUserId } from '../lib/authUtils';
 import { syncQueueManager } from '../lib/syncQueue';
+import { planningStorage } from '../lib/planningStorage';
 import { useData } from '../contexts/DataContext';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
@@ -104,6 +107,9 @@ import { DailyProductivityHeatmap } from '../components/dashboard/DailyProductiv
 import { PassiveIncomeEvolutionChart } from '../components/dashboard/PassiveIncomeEvolutionChart';
 import { PersonalExpenseBarConfigDialog } from '../components/dashboard/PersonalExpenseBarConfigDialog';
 import { VacationSimulatorCard } from '../components/dashboard/VacationSimulatorCard';
+import { FutureCashFlowCard } from '../components/dashboard/FutureCashFlowCard';
+import { WeekdayPerformanceCard } from '../components/dashboard/WeekdayPerformanceCard';
+import { PlatformReconciliationCard } from '../components/dashboard/PlatformReconciliationCard';
 import { iconOptions } from '../components/reserves/reserveUtils';
 import { IndicatorHistoryModal, IndicatorType, MonthHistoryItem, formatIndicatorValue } from '../components/IndicatorHistoryModal';
 import {
@@ -447,9 +453,25 @@ export function Dashboard() {
 
   const [showIgnoredInCharts, setShowIgnoredInCharts] = useState<boolean>(false);
   const [showIgnoredModal, setShowIgnoredModal] = useState<boolean>(false);
+  const [dashUserId, setDashUserId] = useState<string>('');
+  const [categoryBudgets, setCategoryBudgets] = useState<Record<string, number>>({});
+  const [showBudgetModal, setShowBudgetModal] = useState<boolean>(false);
+  const [tempBudgets, setTempBudgets] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    let active = true;
+    getEffectiveUserId().then(uid => {
+      if (!active) return;
+      const effectiveId = uid || 'default';
+      setDashUserId(effectiveId);
+      setCategoryBudgets(planningStorage.getCategoryBudgets(effectiveId));
+    });
+    return () => { active = false; };
+  }, []);
 
   const { 
     transactions, 
+    setTransactions,
     updateTransaction,
     settings, 
     loading,
@@ -1780,6 +1802,14 @@ export function Dashboard() {
     const weeklyTxs = (chartTransactionsAdjusted || []).filter(t => isWithinInterval(parseLocalDate(t.date), { start: startOfW, end: endOfW }));
     const lastWeeklyTxs = (chartTransactionsAdjusted || []).filter(t => isWithinInterval(parseLocalDate(t.date), { start: startOfLastW, end: endOfLastW }));
 
+    const todayStr = format(today, 'yyyy-MM-dd');
+    const todayTxs = weeklyTxs.filter(t => ((t as any)._dateStr || t.date.split('T')[0]) === todayStr);
+    const todayTotals = calcTotals(todayTxs);
+    const todayIncome = todayTotals.income + (todayTotals.rendimentosReserva || 0) + (todayTotals.totalVendaInvestimento || 0);
+    const todayNet = todayTotals.net + todayTotals.reserveAporte + (todayTotals.rendimentosReserva || 0) - (todayTotals.totalVendaInvestimento || 0);
+
+    const daysRemainingInclusive = Math.max(1, differenceInCalendarDays(startOfDay(endOfW), startOfDay(today)) + 1);
+
     const weeklyTotals = calcTotals(weeklyTxs);
     const lastWeeklyTotals = calcTotals(lastWeeklyTxs);
 
@@ -1799,11 +1829,21 @@ export function Dashboard() {
     const netProgress = netGoal > 0 ? (weeklyNet / netGoal) * 100 : 0;
     const lastNetProgress = netGoal > 0 ? (lastWeeklyNet / netGoal) * 100 : 0;
 
+    const remainingGross = Math.max(0, goal - weeklyIncomeTotal);
+    const remainingNet = Math.max(0, netGoal - weeklyNet);
+    const neededDailyGross = remainingGross > 0 ? remainingGross / daysRemainingInclusive : 0;
+    const neededDailyNet = remainingNet > 0 ? remainingNet / daysRemainingInclusive : 0;
+
     return {
       income: weeklyIncomeTotal,
       lastIncome: lastWeeklyIncomeTotal,
       net: weeklyNet,
       lastNet: lastWeeklyNet,
+      todayIncome,
+      todayNet,
+      daysRemainingInclusive,
+      neededDailyGross,
+      neededDailyNet,
       goal,
       netGoal,
       progress: Math.min(progress, 100),
@@ -1818,6 +1858,139 @@ export function Dashboard() {
       netEvolution: lastWeeklyNet !== 0 ? ((weeklyNet - lastWeeklyNet) / Math.abs(lastWeeklyNet)) * 100 : (weeklyNet > 0 ? 100 : 0)
     };
   }, [chartTransactionsAdjusted, settings?.weekly_goal, settings?.weekly_net_goal]);
+
+  const urgentBillsAlert = useMemo(() => {
+    const todayStr = getTodayLocalDateStr();
+    const limitStr = format(addDays(new Date(), 3), 'yyyy-MM-dd');
+
+    let overdueCount = 0;
+    let overdueAmount = 0;
+    let dueSoonCount = 0;
+    let dueSoonAmount = 0;
+
+    (transactions || []).forEach(t => {
+      if (t.type !== 'expense' || t.payment_status !== 'pending') return;
+      if (t.category === 'Aporte Reserva' || t.category === 'Resgate Reserva' || t.category === 'Resgate de Reserva') return;
+      const d = ((t as any).due_date || t.date || '').split('T')[0];
+      if (!d) return;
+      const amt = Number(t.amount) || 0;
+      if (d < todayStr) {
+        overdueCount++;
+        overdueAmount += amt;
+      } else if (d >= todayStr && d <= limitStr) {
+        dueSoonCount++;
+        dueSoonAmount += amt;
+      }
+    });
+
+    (reserveTransactions || []).forEach(rt => {
+      if (rt.type !== 'utilizacao' || rt.payment_status !== 'pending') return;
+      const d = (rt.due_date || rt.date || '').split('T')[0];
+      if (!d) return;
+      const amt = Number(rt.amount) || 0;
+      if (d < todayStr) {
+        overdueCount++;
+        overdueAmount += amt;
+      } else if (d >= todayStr && d <= limitStr) {
+        dueSoonCount++;
+        dueSoonAmount += amt;
+      }
+    });
+
+    return {
+      overdueCount,
+      overdueAmount,
+      dueSoonCount,
+      dueSoonAmount,
+      totalCount: overdueCount + dueSoonCount,
+      totalAmount: overdueAmount + dueSoonAmount,
+    };
+  }, [transactions, reserveTransactions]);
+
+  const currentMonthExpenseByCategory = useMemo(() => {
+    const currMonth = format(new Date(), 'yyyy-MM');
+    const map: Record<string, number> = {};
+
+    (transactions || []).forEach(t => {
+      if (t.type !== 'expense' || t.payment_status === 'pending') return;
+      if (t.category === 'Aporte Reserva' || t.category === 'Resgate Reserva' || t.category === 'Resgate de Reserva') return;
+      const d = (t.date || '').split('T')[0];
+      if (!d.startsWith(currMonth)) return;
+      const cat = t.category || 'Outros';
+      map[cat] = (map[cat] || 0) + (Number(t.amount) || 0);
+    });
+
+    (reserveTransactions || []).forEach(rt => {
+      if (rt.type !== 'utilizacao' || rt.payment_status === 'pending') return;
+      if (isAssetPurchaseReserveTx(rt)) return;
+      const catNorm = (rt.category || '').toLowerCase().trim();
+      if (!rt.linked_investment_id && (!catNorm || catNorm === 'resgate' || catNorm === 'resgate reserva' || catNorm === 'resgate de reserva' || catNorm === 'outros')) {
+        return;
+      }
+      const d = (rt.payment_date || rt.date || '').split('T')[0];
+      if (!d.startsWith(currMonth)) return;
+      const cat = rt.category || 'Outros';
+      map[cat] = (map[cat] || 0) + (Number(rt.amount) || 0);
+    });
+
+    return map;
+  }, [transactions, reserveTransactions]);
+
+  const allEditableExpenseCategories = useMemo(() => {
+    const set = new Set<string>([
+      ...(settings?.operational_expense_categories || ['Combustível', 'Pedágio', 'Manutenção']),
+      ...(settings?.personal_expense_categories || ['Alimentação', 'Plano de Internet', 'Equipamento', 'Moradia', 'Lazer', 'Saúde', 'Transporte Pessoal', 'Outras Despesas']),
+      ...Object.keys(currentMonthExpenseByCategory),
+      ...Object.keys(categoryBudgets),
+    ]);
+    set.delete('Aporte Reserva');
+    set.delete('Compra de Investimentos');
+    return Array.from(set).filter(Boolean).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  }, [settings?.operational_expense_categories, settings?.personal_expense_categories, currentMonthExpenseByCategory, categoryBudgets]);
+
+  const reconcilableIncomeCategories = useMemo(() => {
+    const defaults = settings?.income_categories || [
+      'Pizzaria',
+      'Frete do Dia',
+      'iFood',
+      'Uber',
+      '99Moto',
+      'Particular',
+      'Gorjeta',
+    ];
+    const fromTxs = new Set<string>();
+    (transactions || []).forEach(t => {
+      if (t.type === 'income' && t.category && t.category !== 'Resgate Reserva' && t.category !== 'Resgate de Reserva') {
+        fromTxs.add(t.category);
+      }
+    });
+    return Array.from(new Set([...defaults, ...Array.from(fromTxs)]));
+  }, [settings?.income_categories, transactions]);
+
+  const handleOpenBudgetModal = () => {
+    const initial: Record<string, string> = {};
+    allEditableExpenseCategories.forEach(cat => {
+      const val = categoryBudgets[cat];
+      initial[cat] = val && val > 0 ? String(val).replace('.', ',') : '';
+    });
+    setTempBudgets(initial);
+    setShowBudgetModal(true);
+  };
+
+  const handleSaveCategoryBudgets = () => {
+    const cleaned: Record<string, number> = {};
+    Object.entries(tempBudgets).forEach(([cat, raw]) => {
+      const normalized = String(raw || '').replace(/[^\d.,]/g, '').replace(',', '.').trim();
+      const num = parseFloat(normalized);
+      if (!isNaN(num) && num > 0) {
+        cleaned[cat] = Math.round(num * 100) / 100;
+      }
+    });
+    setCategoryBudgets(cleaned);
+    planningStorage.saveCategoryBudgets(dashUserId || 'default', cleaned);
+    setShowBudgetModal(false);
+    toast.success('Tetos mensais por categoria salvos!');
+  };
 
   const divTotals = useMemo(() => {
     const received = dividends
@@ -3695,6 +3868,68 @@ export function Dashboard() {
         </div>
       </header>
 
+      {/* Proposta 6: Alerta Discreto de Contas Vencidas ou Vencendo nos Próximos 3 Dias */}
+      {urgentBillsAlert.totalCount > 0 && (
+        <div
+          className={`flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 px-3.5 py-2.5 rounded-2xl border transition-all ${
+            urgentBillsAlert.overdueCount > 0
+              ? 'bg-rose-500/10 border-rose-500/30 text-rose-700 dark:text-rose-300'
+              : 'bg-amber-500/10 border-amber-500/30 text-amber-700 dark:text-amber-300'
+          }`}
+        >
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div
+              className={`p-1.5 rounded-lg shrink-0 ${
+                urgentBillsAlert.overdueCount > 0
+                  ? 'bg-rose-500/20 text-rose-500'
+                  : 'bg-amber-500/20 text-amber-500'
+              }`}
+            >
+              <AlertTriangle className="w-4 h-4" />
+            </div>
+            <div className="text-xs font-semibold leading-snug">
+              {urgentBillsAlert.overdueCount > 0 && (
+                <span>
+                  <strong className="font-black">
+                    {urgentBillsAlert.overdueCount}{' '}
+                    {urgentBillsAlert.overdueCount === 1 ? 'conta vencida' : 'contas vencidas'}
+                  </strong>{' '}
+                  ({hideValues ? 'R$ •••' : formatCurrency(urgentBillsAlert.overdueAmount)})
+                  {urgentBillsAlert.dueSoonCount > 0 ? ' • ' : ''}
+                </span>
+              )}
+              {urgentBillsAlert.dueSoonCount > 0 && (
+                <span>
+                  <strong className="font-black">
+                    {urgentBillsAlert.dueSoonCount}{' '}
+                    {urgentBillsAlert.dueSoonCount === 1 ? 'vence até 3 dias' : 'vencem até 3 dias'}
+                  </strong>{' '}
+                  ({hideValues ? 'R$ •••' : formatCurrency(urgentBillsAlert.dueSoonAmount)})
+                </span>
+              )}
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => navigate('/history?filter=pending')}
+              className="h-7 px-2.5 rounded-lg text-[11px] font-bold border border-current/25 bg-background/60 hover:bg-background transition-all cursor-pointer"
+            >
+              Ver pendentes
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate('/planning')}
+              className="h-7 px-2.5 rounded-lg text-[11px] font-bold bg-primary text-primary-foreground hover:opacity-90 transition-all cursor-pointer inline-flex items-center gap-1"
+            >
+              <CalendarRange className="w-3 h-3" />
+              Calendário
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Patrimony / Financial Status Row */}
       {(() => {
         const totalInResv = (reserves || []).reduce((sum, r) => sum + (r.saldo_atual || 0), 0);
@@ -3953,12 +4188,27 @@ export function Dashboard() {
                     </span>
                   </div>
 
-                  <div className="text-[9.5px] font-bold text-muted-foreground">
+                  <div className="flex flex-wrap items-center justify-between gap-1.5 text-[9.5px] font-bold text-muted-foreground">
                     {weeklyGoalStats.income < weeklyGoalStats.goal ? (
-                      <span>Falta <span className="text-rose-500 font-extrabold">{hideValues ? '•••••' : formatCurrency(weeklyGoalStats.goal - weeklyGoalStats.income)}</span> para a meta</span>
+                      <span>
+                        Falta{' '}
+                        <span className="text-rose-500 font-extrabold">
+                          {hideValues ? '•••••' : formatCurrency(weeklyGoalStats.goal - weeklyGoalStats.income)}
+                        </span>{' '}
+                        ({weeklyGoalStats.daysRemainingInclusive}d rest. ·{' '}
+                        <span className="text-indigo-500 font-extrabold">
+                          {hideValues ? '•••' : formatCurrency(weeklyGoalStats.neededDailyGross)}/dia
+                        </span>
+                        )
+                      </span>
                     ) : (
-                      <span className="text-emerald-500 font-extrabold">Excedente: +{hideValues ? '•••••' : formatCurrency(weeklyGoalStats.income - weeklyGoalStats.goal)}</span>
+                      <span className="text-emerald-500 font-extrabold">
+                        Excedente: +{hideValues ? '•••••' : formatCurrency(weeklyGoalStats.income - weeklyGoalStats.goal)}
+                      </span>
                     )}
+                    <span className="font-mono text-foreground/80">
+                      Hoje: {hideValues ? '•••' : formatCurrency(weeklyGoalStats.todayIncome)}
+                    </span>
                   </div>
                 </div>
               ) : (
@@ -4016,12 +4266,27 @@ export function Dashboard() {
                     </span>
                   </div>
 
-                  <div className="text-[9.5px] font-bold text-muted-foreground">
+                  <div className="flex flex-wrap items-center justify-between gap-1.5 text-[9.5px] font-bold text-muted-foreground">
                     {weeklyGoalStats.net < weeklyGoalStats.netGoal ? (
-                      <span>Falta <span className="text-rose-500 font-extrabold">{hideValues ? '•••••' : formatCurrency(weeklyGoalStats.netGoal - weeklyGoalStats.net)}</span> para a meta</span>
+                      <span>
+                        Falta{' '}
+                        <span className="text-rose-500 font-extrabold">
+                          {hideValues ? '•••••' : formatCurrency(weeklyGoalStats.netGoal - weeklyGoalStats.net)}
+                        </span>{' '}
+                        ({weeklyGoalStats.daysRemainingInclusive}d rest. ·{' '}
+                        <span className="text-emerald-500 font-extrabold">
+                          {hideValues ? '•••' : formatCurrency(weeklyGoalStats.neededDailyNet)}/dia
+                        </span>
+                        )
+                      </span>
                     ) : (
-                      <span className="text-emerald-500 font-extrabold">Excedente: +{hideValues ? '•••••' : formatCurrency(weeklyGoalStats.net - weeklyGoalStats.netGoal)}</span>
+                      <span className="text-emerald-500 font-extrabold">
+                        Excedente: +{hideValues ? '•••••' : formatCurrency(weeklyGoalStats.net - weeklyGoalStats.netGoal)}
+                      </span>
                     )}
+                    <span className="font-mono text-foreground/80">
+                      Hoje: {hideValues ? '•••' : formatCurrency(weeklyGoalStats.todayNet)}
+                    </span>
                   </div>
                 </div>
               ) : (
@@ -4334,6 +4599,20 @@ export function Dashboard() {
           formatCurrency={formatCurrency}
         />
       </div>
+
+      {/* Projeção Inteligente de Fluxo de Caixa Futuro (Híbrida: Contas Agendadas/Cartões + Média Variável) */}
+      <FutureCashFlowCard
+        bancaLivre={bancaLivre}
+        totalInReserves={totalInReserves}
+        transactions={transactions}
+        reserveTransactions={reserveTransactions}
+        pastMonthsStats={pastMonthsStats}
+        fallbackMonthlyIncome={((summary.totalIncome || 0) + (summary.rendimentosReserva || 0)) * (30 / Math.max(1, (dayList || []).length))}
+        fallbackMonthlyExpense={((summary.perExpense || 0) + (summary.opExpensePuro || 0)) * (30 / Math.max(1, (dayList || []).length))}
+        hideValues={hideValues}
+        formatCurrency={formatCurrency}
+        onOpenPlanning={() => navigate('/planning')}
+      />
 
       {/* Barra de Períodos & Navegação (acima dos quadrados informativos de Faturamento, Lucro, Despesas, etc.) */}
       <div className="bg-card border border-border/70 p-3.5 sm:p-4 rounded-2xl shadow-xs space-y-3">
@@ -6609,6 +6888,16 @@ export function Dashboard() {
           </CardContent>
         </Card>
 
+        {/* Proposta 5: Desempenho Líquido por Dia da Semana (Melhor Dia para Folgar) */}
+        <div className="col-span-1 md:col-span-2">
+          <WeekdayPerformanceCard
+            transactions={chartTransactionsAdjusted}
+            operationalCategories={settings?.operational_expense_categories}
+            hideValues={hideValues}
+            formatCurrency={formatCurrency}
+          />
+        </div>
+
         {/* Income Circle */}
         <Card className="border border-border/80 shadow-xs">
           <CardHeader className="pb-2">
@@ -6881,10 +7170,19 @@ export function Dashboard() {
               
               {/* Saídas Separadas por Operacional e Pessoal */}
               <div className="space-y-5">
-                <h3 className="font-bold text-xs uppercase text-rose-500 flex items-center justify-between border-b border-rose-500/10 pb-2">
+                <h3 className="font-bold text-xs uppercase text-rose-500 flex items-center justify-between border-b border-rose-500/10 pb-2 gap-2">
                   <span className="flex items-center">
                     <TrendingDown className="w-4 h-4 mr-1.5 shrink-0" /> Saídas / Despesas ({formatCurrency((Object.values(expensesByCategory) as number[]).reduce((a, b) => a + b, 0))})
                   </span>
+                  <button
+                    type="button"
+                    onClick={handleOpenBudgetModal}
+                    className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-border/70 bg-muted/30 hover:bg-muted text-[10px] font-bold text-foreground normal-case tracking-normal cursor-pointer transition-all"
+                    title="Configurar tetos mensais de gasto por categoria"
+                  >
+                    <SlidersHorizontal className="w-3 h-3 text-primary" />
+                    <span>Tetos de Gastos</span>
+                  </button>
                 </h3>
 
                 {Object.keys(expensesByCategory).length === 0 ? (
@@ -6988,6 +7286,28 @@ export function Dashboard() {
                                         style={{ width: `${percentageOfGroup}%` }}
                                       />
                                     </div>
+                                    {categoryBudgets[cat] > 0 && (() => {
+                                      const cap = categoryBudgets[cat];
+                                      const spentMonth = currentMonthExpenseByCategory[cat] || 0;
+                                      const pct = (spentMonth / cap) * 100;
+                                      const barColor = pct >= 100 ? 'bg-rose-500' : pct >= 80 ? 'bg-amber-500' : 'bg-emerald-500';
+                                      const textColor = pct >= 100 ? 'text-rose-500' : pct >= 80 ? 'text-amber-500' : 'text-emerald-600 dark:text-emerald-400';
+                                      return (
+                                        <div className="px-1 pt-0.5 space-y-0.5">
+                                          <div className="flex items-center justify-between text-[9.5px] font-bold">
+                                            <span className="text-muted-foreground">
+                                              Teto mês: {hideValues ? '•••' : formatCurrency(spentMonth)} / {hideValues ? '•••' : formatCurrency(cap)}
+                                            </span>
+                                            <span className={textColor}>
+                                              {pct.toFixed(0)}% {pct >= 100 ? '(Excedido)' : pct >= 80 ? '(Atenção)' : ''}
+                                            </span>
+                                          </div>
+                                          <div className="w-full h-1.5 rounded-full bg-muted/80 overflow-hidden">
+                                            <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${Math.min(100, pct)}%` }} />
+                                          </div>
+                                        </div>
+                                      );
+                                    })()}
                                   </div>
                                 );
                               })}
@@ -7074,6 +7394,28 @@ export function Dashboard() {
                                         style={{ width: `${percentageOfGroup}%` }}
                                       />
                                     </div>
+                                    {categoryBudgets[cat] > 0 && (() => {
+                                      const cap = categoryBudgets[cat];
+                                      const spentMonth = currentMonthExpenseByCategory[cat] || 0;
+                                      const pct = (spentMonth / cap) * 100;
+                                      const barColor = pct >= 100 ? 'bg-rose-500' : pct >= 80 ? 'bg-amber-500' : 'bg-emerald-500';
+                                      const textColor = pct >= 100 ? 'text-rose-500' : pct >= 80 ? 'text-amber-500' : 'text-emerald-600 dark:text-emerald-400';
+                                      return (
+                                        <div className="px-1 pt-0.5 space-y-0.5">
+                                          <div className="flex items-center justify-between text-[9.5px] font-bold">
+                                            <span className="text-muted-foreground">
+                                              Teto mês: {hideValues ? '•••' : formatCurrency(spentMonth)} / {hideValues ? '•••' : formatCurrency(cap)}
+                                            </span>
+                                            <span className={textColor}>
+                                              {pct.toFixed(0)}% {pct >= 100 ? '(Excedido)' : pct >= 80 ? '(Atenção)' : ''}
+                                            </span>
+                                          </div>
+                                          <div className="w-full h-1.5 rounded-full bg-muted/80 overflow-hidden">
+                                            <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${Math.min(100, pct)}%` }} />
+                                          </div>
+                                        </div>
+                                      );
+                                    })()}
                                   </div>
                                 );
                               })}
@@ -7089,6 +7431,18 @@ export function Dashboard() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Proposta 4: Conferência de Repasses por Plataforma */}
+      <PlatformReconciliationCard
+        userId={dashUserId || 'default'}
+        transactions={transactions}
+        setTransactions={setTransactions}
+        incomeCategories={reconcilableIncomeCategories}
+        hideValues={hideValues}
+        formatCurrency={formatCurrency}
+        defaultExpanded={false}
+      />
+
       <ExecutiveReportModal
         open={showMonthlyReport}
         onOpenChange={setShowMonthlyReport}
@@ -8128,6 +8482,59 @@ export function Dashboard() {
         formatCurrency={formatCurrency}
         totalPersonalExpense={summary.perExpense}
       />
+
+      {/* Proposta 1: Modal Configurar Tetos Mensais de Gastos por Categoria */}
+      <Dialog open={showBudgetModal} onOpenChange={setShowBudgetModal}>
+        <DialogContent className="max-w-lg max-h-[85vh] p-0 bg-card border-border/70 rounded-3xl shadow-2xl overflow-hidden flex flex-col">
+          <DialogHeader className="p-5 pb-3 border-b border-border/40 shrink-0">
+            <DialogTitle className="text-lg font-black text-foreground flex items-center gap-2">
+              <SlidersHorizontal className="w-5 h-5 text-primary" />
+              Tetos Mensais por Categoria
+            </DialogTitle>
+            <DialogDescription className="text-xs font-medium text-muted-foreground">
+              Defina um limite mensal opcional (R$) para acompanhar seu orçamento no mês atual. Deixe em branco para categorias sem limite.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex-1 overflow-y-auto p-5 space-y-2.5 custom-scrollbar">
+            {allEditableExpenseCategories.map(cat => {
+              const spent = currentMonthExpenseByCategory[cat] || 0;
+              return (
+                <div
+                  key={cat}
+                  className="flex items-center justify-between gap-3 p-2.5 rounded-xl bg-muted/20 border border-border/50"
+                >
+                  <div className="min-w-0">
+                    <div className="text-xs font-bold text-foreground truncate">{cat}</div>
+                    <div className="text-[10px] text-muted-foreground font-mono">
+                      Gasto no mês: {hideValues ? 'R$ •••' : formatCurrency(spent)}
+                    </div>
+                  </div>
+                  <div className="w-32 shrink-0">
+                    <Input
+                      type="text"
+                      inputMode="decimal"
+                      placeholder="Sem teto"
+                      value={tempBudgets[cat] ?? ''}
+                      onChange={(e) => setTempBudgets(prev => ({ ...prev, [cat]: e.target.value }))}
+                      className="h-8 text-xs font-mono text-right"
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="p-4 border-t border-border/40 flex items-center justify-end gap-2 shrink-0 bg-muted/10">
+            <Button type="button" variant="outline" size="sm" onClick={() => setShowBudgetModal(false)}>
+              Cancelar
+            </Button>
+            <Button type="button" size="sm" onClick={handleSaveCategoryBudgets} className="font-bold">
+              Salvar Tetos
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

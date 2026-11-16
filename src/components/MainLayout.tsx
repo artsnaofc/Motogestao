@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Link, useLocation, useNavigate, Outlet } from 'react-router-dom';
-import { Home, List, PlusCircle, User, PiggyBank, TrendingUp, Bike, Sparkles, LogOut, ChevronRight, ShieldCheck, Terminal, Cloud, RefreshCw, Truck, Menu, X, Plus, ReceiptText, Scale, RotateCcw } from 'lucide-react';
+import { Home, List, PlusCircle, User, PiggyBank, TrendingUp, Bike, Sparkles, LogOut, ChevronRight, ShieldCheck, Terminal, Cloud, RefreshCw, Truck, Menu, X, Plus, ReceiptText, Scale, RotateCcw, CalendarRange } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { Button } from '@/components/ui/button';
 import { syncQueueManager, SyncTask } from '../lib/syncQueue';
@@ -24,6 +24,7 @@ export interface PageOption {
 const ALL_PAGE_OPTIONS: PageOption[] = [
   { path: '/', label: 'Painel Geral', shortLabel: 'Início', iconName: 'Home', desc: 'Visão holística do caixa e metas' },
   { path: '/history', label: 'Extrato & Histórico', shortLabel: 'Extrato', iconName: 'ReceiptText', desc: 'Corridas, fretes e lançamentos' },
+  { path: '/planning', label: 'Calendário & Cartões', shortLabel: 'Agenda', iconName: 'CalendarRange', desc: 'Faturas de cartão e contas futuras' },
   { path: '/freight', label: 'Orçamentos & Veículos', shortLabel: 'Fretes', iconName: 'Truck', desc: 'Calculadora de rotas, frota e propostas' },
   { path: '/reserves', label: 'Reservas Financeiras', shortLabel: 'Reservas', iconName: 'PiggyBank', desc: 'Fundo de emergência e manutenção' },
   { path: '/investments', label: 'Carteira de Ativos', shortLabel: 'Carteira', iconName: 'TrendingUp', desc: 'Ações, FIIs e rebalanceamento' },
@@ -128,6 +129,7 @@ export function MainLayout({ children }: { children?: React.ReactNode }) {
     switch (iconName) {
       case 'Home': return <Home className={className} />;
       case 'ReceiptText': return <ReceiptText className={className} />;
+      case 'CalendarRange': return <CalendarRange className={className} />;
       case 'Bike': return <Bike className={className} />;
       case 'Truck': return <Truck className={className} />;
       case 'PiggyBank': return <PiggyBank className={className} />;
@@ -141,6 +143,7 @@ export function MainLayout({ children }: { children?: React.ReactNode }) {
   const navItems = [
     { path: '/', label: 'Painel Geral', icon: Home, desc: 'Visão holística do caixa' },
     { path: '/history', label: 'Extrato & Histórico', icon: ReceiptText, desc: 'Corridas, fretes e despesas' },
+    { path: '/planning', label: 'Calendário & Cartões', icon: CalendarRange, desc: 'Faturas, parcelas e contas' },
     { path: '/freight', label: 'Orçamentos & Veículos', icon: Truck, desc: 'Calculadora, frota e propostas PDF' },
     { path: '/reserves', label: 'Reservas Financeiras', icon: PiggyBank, desc: 'Fundos de emergência' },
     { path: '/investments', label: 'Carteira de Ativos', icon: TrendingUp, desc: 'Ações e FIIs' },
@@ -148,7 +151,7 @@ export function MainLayout({ children }: { children?: React.ReactNode }) {
     { path: '/profile', label: 'Perfil & Ajustes', icon: User, desc: 'Categorias e parâmetros' },
   ];
 
-  const isMoreMenuActive = ['/reserves', '/investments', '/profile', '/admin'].some(p => location.pathname.startsWith(p));
+  const isMoreMenuActive = ['/planning', '/reserves', '/investments', '/profile', '/admin'].some(p => location.pathname.startsWith(p));
 
   const handleLogoClick = () => {
     const config = systemSettings.getConfig();
@@ -502,6 +505,28 @@ export function MainLayout({ children }: { children?: React.ReactNode }) {
 
               {/* Menu Options Grid / List using Instant Links */}
               <div className="grid grid-cols-1 gap-2.5">
+                {/* Calendário & Cartões */}
+                <Link
+                  to="/planning"
+                  onClick={() => setIsMobileMenuOpen(false)}
+                  className={`w-full p-3.5 rounded-2xl border transition-all flex items-center justify-between text-left ${
+                    location.pathname === '/planning'
+                      ? 'bg-primary/10 border-primary/40 text-primary font-bold shadow-xs'
+                      : 'bg-card hover:bg-muted/50 border-border/60 text-foreground'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="p-2.5 rounded-xl bg-purple-500/10 text-purple-500 shrink-0">
+                      <CalendarRange className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-bold text-foreground">Calendário &amp; Cartões</div>
+                      <div className="text-[10.5px] text-muted-foreground">Compras no cartão, faturas futuras e contas</div>
+                    </div>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
+                </Link>
+
                 {/* Orçamentos de Frete & Frota */}
                 <Link
                   to="/freight"

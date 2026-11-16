@@ -9,6 +9,7 @@ import { Reserves } from './pages/Reserves';
 import { Investments } from './pages/Investments';
 import Admin from './pages/Admin';
 import FreightQuotePage from './pages/FreightQuote';
+import { PlanningCalendar } from './pages/PlanningCalendar';
 import { DataProvider } from './contexts/DataContext';
 import React, { useEffect, useState } from 'react';
 import { supabase } from './lib/supabase';
@@ -166,6 +167,7 @@ export default function App() {
               <Route path="/add" element={<AddTransaction />} />
               <Route path="/add-transaction" element={<AddTransaction />} />
               <Route path="/freight" element={<FreightQuotePage />} />
+              <Route path="/planning" element={<PlanningCalendar />} />
               <Route path="/reserves" element={<Reserves />} />
               <Route path="/vehicles" element={<Navigate to="/freight?tab=vehicles" replace />} />
               <Route path="/vehicles/*" element={<Navigate to="/freight?tab=vehicles" replace />} />
