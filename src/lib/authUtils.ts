@@ -9,11 +9,36 @@ export interface EffectiveUser {
 const CURRENT_USER_KEY = 'current_user';
 const CURRENT_USER_ID_KEY = 'current_user_id';
 
+export function clearSharedLastKnownCaches(): void {
+  const sharedKeys = [
+    'last_known_owner_id',
+    'last_known_transactions',
+    'last_known_user_settings',
+    'last_known_reserves',
+    'last_known_reserve_transactions',
+    'last_known_investment_transactions',
+    'last_known_dividends',
+    'valuation_targets_cache',
+    'portfolio_target_allocations_cache',
+    'portfolio_rules_config_cache',
+    'dividend_analysis_mode',
+    'vehicles_cache',
+    'vehicle_odometer_cache',
+    'vehicle_maintenance_cache',
+    'vehicle_fipe_cache',
+  ];
+  sharedKeys.forEach(k => cacheManager.remove(k));
+}
+
 /**
  * Persists the authenticated user identity to local cache for offline availability.
  */
 export function setCachedUser(user: EffectiveUser | null): void {
   if (user && user.id) {
+    const prevId = cacheManager.get<string>(CURRENT_USER_ID_KEY);
+    if (prevId && prevId !== user.id) {
+      clearSharedLastKnownCaches();
+    }
     cacheManager.set(CURRENT_USER_KEY, { id: user.id, email: user.email }, undefined, 'auth');
     cacheManager.set(CURRENT_USER_ID_KEY, user.id, undefined, 'auth');
     try {
@@ -22,6 +47,7 @@ export function setCachedUser(user: EffectiveUser | null): void {
   } else {
     cacheManager.remove(CURRENT_USER_KEY);
     cacheManager.remove(CURRENT_USER_ID_KEY);
+    clearSharedLastKnownCaches();
     try {
       localStorage.removeItem('financas_pro_last_user_id');
     } catch {}

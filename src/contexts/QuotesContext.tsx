@@ -30,9 +30,20 @@ export interface QuotesContextType {
 
 const QuotesContext = createContext<QuotesContextType | undefined>(undefined);
 
-export function QuotesProvider({ children }: { children: ReactNode }) {
+export function QuotesProvider({
+  children,
+  userId: propUserId,
+  initialCachedQuotes,
+}: {
+  children: ReactNode;
+  userId?: string;
+  initialCachedQuotes?: Record<string, number>;
+}) {
   const [quotes, setQuotes] = useState<Record<string, number>>(() => {
-    return cacheManager.get<Record<string, number>>('cached_quotes') || {};
+    return {
+      ...(cacheManager.get<Record<string, number>>('cached_quotes') || {}),
+      ...(initialCachedQuotes || {}),
+    };
   });
   const [quoteVariations, setQuoteVariations] = useState<Record<string, number>>(() => {
     return cacheManager.get<Record<string, number>>('cached_quote_variations') || {};
@@ -47,6 +58,17 @@ export function QuotesProvider({ children }: { children: ReactNode }) {
   const [isFetchingQuotes, setIsFetchingQuotes] = useState(false);
   const [lastQuoteFetchResult, setLastQuoteFetchResult] = useState<QuoteFetchResult | null>(null);
 
+  // Hydrate quotes when initialCachedQuotes arrives from user_settings on a new device
+  useEffect(() => {
+    if (initialCachedQuotes && Object.keys(initialCachedQuotes).length > 0) {
+      setQuotes(prev => {
+        const merged = { ...initialCachedQuotes, ...prev };
+        cacheManager.set('cached_quotes', merged, undefined, 'quotes');
+        return merged;
+      });
+    }
+  }, [initialCachedQuotes]);
+
   // Sync quotes cached in Supabase on load (only if local cache is empty)
   useEffect(() => {
     const syncQuotesFromDb = async () => {
@@ -57,7 +79,7 @@ export function QuotesProvider({ children }: { children: ReactNode }) {
       if (cached && Object.keys(cached).length > 0) return;
 
       try {
-        const userId = await getEffectiveUserId();
+        const userId = propUserId || (await getEffectiveUserId());
         if (userId) {
           const { data: settingsData } = await supabase
             .from('user_settings')
@@ -79,7 +101,7 @@ export function QuotesProvider({ children }: { children: ReactNode }) {
     };
 
     syncQuotesFromDb();
-  }, []);
+  }, [propUserId]);
 
   const updateQuoteCache = useCallback(async (
     newQuotes: Record<string, number>,

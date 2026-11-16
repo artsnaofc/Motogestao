@@ -146,16 +146,33 @@ export function PlanningCalendar() {
   const [filterCardId, setFilterCardId] = useState<string>('all');
 
   useEffect(() => {
+    let activeUid = '';
+    const hydrateFromStorage = (uid: string) => {
+      const loadedCards = planningStorage.getCards(uid);
+      setCards(loadedCards);
+      setTxCardMap(planningStorage.getTxCardMap(uid));
+      if (loadedCards.length > 0) {
+        setSelectedCardId(prev => prev || loadedCards[0].id);
+      }
+    };
+
     getEffectiveUserId().then(uid => {
       const effectiveUid = uid || 'default';
+      activeUid = effectiveUid;
       setUserId(effectiveUid);
-      const loadedCards = planningStorage.getCards(effectiveUid);
-      setCards(loadedCards);
-      setTxCardMap(planningStorage.getTxCardMap(effectiveUid));
-      if (loadedCards.length > 0 && !selectedCardId) {
-        setSelectedCardId(loadedCards[0].id);
-      }
+      hydrateFromStorage(effectiveUid);
     });
+
+    const handleSync = (e: Event) => {
+      const detailUid = (e as CustomEvent)?.detail?.userId;
+      const targetUid = detailUid || activeUid;
+      if (targetUid) {
+        hydrateFromStorage(targetUid);
+      }
+    };
+
+    window.addEventListener('planning_data_synced', handleSync);
+    return () => window.removeEventListener('planning_data_synced', handleSync);
   }, []);
 
   const expenseCategories = useMemo(() => {

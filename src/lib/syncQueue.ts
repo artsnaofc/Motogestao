@@ -1,6 +1,7 @@
 import { supabase } from './supabase';
 import { cacheManager } from './cacheManager';
 import { toast } from './toast';
+import { getSyncEffectiveUserId } from './authUtils';
 
 export interface SyncTask {
   id: string;
@@ -13,7 +14,7 @@ export interface SyncTask {
 }
 
 class SyncQueueManager {
-  private queueKey = 'sync_queue';
+  private baseQueueKey = 'sync_queue';
   private processing = false;
   private listeners: ((queue: SyncTask[]) => void)[] = [];
   private hadMultipleOfflineTasks = false;
@@ -45,8 +46,43 @@ class SyncQueueManager {
     }
   }
 
+  private getQueueKey(): string {
+    const uid = getSyncEffectiveUserId();
+    return uid ? `${this.baseQueueKey}_${uid}` : this.baseQueueKey;
+  }
+
   public getQueue(): SyncTask[] {
-    return cacheManager.get<SyncTask[]>(this.queueKey) || [];
+    const uid = getSyncEffectiveUserId();
+    const scopedKey = this.getQueueKey();
+    const scoped = cacheManager.get<SyncTask[]>(scopedKey) || [];
+
+    // Migrate any legacy unscoped queue items that belong to this user (once)
+    if (uid) {
+      const legacy = cacheManager.get<SyncTask[]>(this.baseQueueKey);
+      if (legacy && Array.isArray(legacy) && legacy.length > 0) {
+        const forUser = legacy.filter(t => !t.payload?.user_id || t.payload.user_id === uid);
+        const forOthers = legacy.filter(t => t.payload?.user_id && t.payload.user_id !== uid);
+        if (forOthers.length > 0) {
+          cacheManager.set(this.baseQueueKey, forOthers, undefined, 'sync');
+        } else {
+          cacheManager.remove(this.baseQueueKey);
+        }
+        if (forUser.length > 0) {
+          const existingIds = new Set(scoped.map(t => `${t.table}:${t.action}:${t.targetId}`));
+          const merged = [...scoped];
+          for (const task of forUser) {
+            const sig = `${task.table}:${task.action}:${task.targetId}`;
+            if (!existingIds.has(sig)) {
+              merged.push(task);
+            }
+          }
+          cacheManager.set(scopedKey, merged, undefined, 'sync');
+          return merged;
+        }
+      }
+    }
+
+    return scoped;
   }
 
   public getPendingCount(): number {
@@ -54,7 +90,7 @@ class SyncQueueManager {
   }
 
   private saveQueue(queue: SyncTask[]) {
-    cacheManager.set(this.queueKey, queue, undefined, 'sync');
+    cacheManager.set(this.getQueueKey(), queue, undefined, 'sync');
     this.notifyListeners(queue);
   }
 
@@ -82,13 +118,28 @@ class SyncQueueManager {
   public enqueue(table: string, action: 'insert' | 'update' | 'delete', targetId: string, payload?: any) {
     const queue = this.getQueue();
 
+    // 0. De-duplicate redundant inserts for the exact same record
+    if (action === 'insert') {
+      const existingInsertIdx = queue.findIndex(t => t.table === table && t.targetId === targetId && t.action === 'insert');
+      if (existingInsertIdx !== -1) {
+        queue[existingInsertIdx].payload = { ...(queue[existingInsertIdx].payload || {}), ...(payload || {}) };
+        this.saveQueue(queue);
+        if (navigator.onLine) {
+          this.processQueue();
+        }
+        return;
+      }
+    }
+
     // 1. De-duplicate consecutive updates on the same record
     if (action === 'update') {
       const existingIdx = queue.findIndex(t => t.table === table && t.targetId === targetId && t.action === 'update');
       if (existingIdx !== -1) {
         queue[existingIdx].payload = { ...queue[existingIdx].payload, ...payload };
         this.saveQueue(queue);
-        this.processQueue();
+        if (navigator.onLine) {
+          this.processQueue();
+        }
         return;
       }
     }
@@ -218,6 +269,38 @@ class SyncQueueManager {
                 this.enqueue(task.table, 'update', task.targetId, updatePayload);
               }
             }
+          }
+        }
+
+        // Auto fallback 3: Duplicate primary key (23505) -> record already exists in Supabase; reconcile via update cleanly
+        if (error && error.code === '23505') {
+          const { id: _pk, ...updateFields } = payloadToInsert;
+          if (Object.keys(updateFields).length > 0) {
+            const { error: reconcileErr } = await supabase
+              .from(task.table)
+              .update(updateFields)
+              .eq('id', task.targetId);
+            if (!reconcileErr) {
+              error = null;
+            } else if (reconcileErr.code === '42703' || reconcileErr.code === 'PGRST204') {
+              // Retry reconciliation stripping optional client keys
+              const { source: _s, batch_id: _b, ...safeFields } = updateFields;
+              const { error: safeReconcileErr } = await supabase
+                .from(task.table)
+                .update(safeFields)
+                .eq('id', task.targetId);
+              if (!safeReconcileErr) {
+                error = null;
+              } else {
+                // Record is already persisted in Supabase; treat PK conflict as reconciled
+                error = null;
+              }
+            } else {
+              // PK already exists in DB; don't spam error logs
+              error = null;
+            }
+          } else {
+            error = null;
           }
         }
       } else if (task.action === 'update') {
@@ -411,7 +494,7 @@ class SyncQueueManager {
     } finally {
       this.processing = false;
       if (shouldScheduleImmediateNext && !this.retryBackoffTimeout) {
-        setTimeout(() => this.processQueue(), 100);
+        setTimeout(() => this.processQueue(), 25);
       }
     }
   }
@@ -427,12 +510,12 @@ class SyncQueueManager {
     return task?.payload;
   }
 
-  public async flushQueue(timeoutMs = 5000): Promise<void> {
+  public async flushQueue(timeoutMs = 15000): Promise<void> {
     if (!navigator.onLine || this.getPendingCount() === 0) return;
     const start = Date.now();
     this.processQueue();
     while (this.getPendingCount() > 0 && Date.now() - start < timeoutMs && navigator.onLine) {
-      await new Promise(r => setTimeout(r, 100));
+      await new Promise(r => setTimeout(r, 75));
     }
   }
 

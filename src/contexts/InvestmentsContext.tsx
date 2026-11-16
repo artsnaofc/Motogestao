@@ -7,7 +7,7 @@ import { toast } from '../lib/toast';
 import { cacheManager } from '../lib/cacheManager';
 import { syncQueueManager } from '../lib/syncQueue';
 import { getTodayLocalDateStr } from '../lib/utils';
-import { getEffectiveUserId, getEffectiveUser } from '../lib/authUtils';
+import { getEffectiveUserId, getEffectiveUser, getSyncEffectiveUserId } from '../lib/authUtils';
 
 export interface InvestmentsContextType {
   investmentTransactions: InvestmentTransaction[];
@@ -53,27 +53,56 @@ const generateUUID = () => {
   });
 };
 
+/**
+ * Generates a deterministic RFC-4122 UUID v4-formatted ID derived from a dividend ID.
+ * Guarantees two devices or concurrent effects can never insert duplicate reserve_transactions
+ * for the same dividend.
+ */
+const deriveDividendReserveTxId = (dividendId: string): string => {
+  const input = `div_rt:${dividendId}`;
+  const seeds = [0x811c9dc5, 0x9e3779b9, 0x85ebca6b, 0xc2b2ae35];
+  const hex = seeds.map((seed, idx) => {
+    let h = seed >>> 0;
+    const salted = `${idx}:${input}`;
+    for (let i = 0; i < salted.length; i++) {
+      h ^= salted.charCodeAt(i);
+      h = Math.imul(h, 0x01000193) >>> 0;
+    }
+    return h.toString(16).padStart(8, '0');
+  }).join('');
+  const v4 = '4' + hex.slice(13, 16);
+  const variant = ((parseInt(hex[16], 16) & 0x3) | 0x8).toString(16) + hex.slice(17, 20);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${v4}-${variant}-${hex.slice(20, 32)}`;
+};
+
 const InvestmentsContext = createContext<InvestmentsContextType | undefined>(undefined);
 
 export function InvestmentsProvider({
   children,
+  userId: propUserId,
+  isCloudHydrated = false,
   initialInvestmentTransactions = [],
   initialDividends = [],
   settings = null,
   reserves = [],
   reserveTransactions = [],
   onDataChange,
-  onUpdateSettings
+  onUpdateSettings,
+  onReserveTransactionsSync,
 }: {
   children: ReactNode;
+  userId?: string;
+  isCloudHydrated?: boolean;
   initialInvestmentTransactions?: InvestmentTransaction[];
   initialDividends?: Dividend[];
   settings?: UserSettings | null;
   reserves?: Reserve[];
   reserveTransactions?: ReserveTransaction[];
-  onDataChange?: () => Promise<void>;
+  onDataChange?: (force?: boolean) => Promise<void>;
   onUpdateSettings?: (newSettings: UserSettings) => void;
+  onReserveTransactionsSync?: React.Dispatch<React.SetStateAction<ReserveTransaction[]>>;
 }) {
+  const resolvedUserId = propUserId || getSyncEffectiveUserId() || 'default';
   const [investmentTransactions, setInvestmentTransactions] = useState<InvestmentTransaction[]>(initialInvestmentTransactions);
   const [dividends, setDividends] = useState<Dividend[]>(initialDividends);
 
@@ -94,26 +123,26 @@ export function InvestmentsProvider({
     return reserves[0]?.id || null;
   }, [settings?.default_investment_reserve_id, reserves]);
   const [valuationTargets, setValuationTargets] = useState<Record<string, ValuationTarget>>(() => {
-    return cacheManager.get<Record<string, ValuationTarget>>('valuation_targets_cache') || {};
+    return cacheManager.get<Record<string, ValuationTarget>>(`valuation_targets_cache_${resolvedUserId}`) || {};
   });
 
   const [targetAllocations, setTargetAllocations] = useState<Record<string, AssetAllocationTarget>>(() => {
-    return cacheManager.get<Record<string, AssetAllocationTarget>>('portfolio_target_allocations_cache') || {};
+    return cacheManager.get<Record<string, AssetAllocationTarget>>(`portfolio_target_allocations_cache_${resolvedUserId}`) || {};
   });
 
   const [rulesConfig, setRulesConfig] = useState<RebalanceRulesConfig>(() => {
-    return cacheManager.get<RebalanceRulesConfig>('portfolio_rules_config_cache') || DEFAULT_REBALANCE_RULES;
+    return cacheManager.get<RebalanceRulesConfig>(`portfolio_rules_config_cache_${resolvedUserId}`) || DEFAULT_REBALANCE_RULES;
   });
 
   const [b3AssetsMetadata, setB3AssetsMetadata] = useState<Record<string, any>>(() => {
     return cacheManager.get<Record<string, any>>('b3_assets_metadata_cache') || {};
   });
 
-  // Load from Supabase on mount (optimized with cache checks to reduce Supabase egress)
+  // Load from Supabase on mount / userId change (hydrates from cache first, always refreshes from cloud when online for multi-device consistency)
   useEffect(() => {
     const loadSupabaseData = async () => {
       try {
-        const user = await getEffectiveUser();
+        const effectiveUid = propUserId || (await getEffectiveUserId());
 
         // Load b3_assets_metadata: only query if cache is empty or older than 24h
         try {
@@ -143,77 +172,73 @@ export function InvestmentsProvider({
           console.warn('Could not load b3_assets_metadata from supabase:', mErr);
         }
 
-        if (!user) return;
+        if (!effectiveUid || (typeof navigator !== 'undefined' && !navigator.onLine)) return;
 
-        // 1. Target Allocations: only query if not present in cache
-        const cachedAlloc = cacheManager.get<Record<string, AssetAllocationTarget>>('portfolio_target_allocations_cache');
-        if (!cachedAlloc || Object.keys(cachedAlloc).length === 0) {
-          const { data: allocData } = await supabase
-            .from('portfolio_target_allocations')
-            .select('*')
-            .eq('user_id', user.id);
+        // 1. Target Allocations: always sync from Supabase when online so multi-device changes stay fresh
+        const { data: allocData, error: allocErr } = await supabase
+          .from('portfolio_target_allocations')
+          .select('*')
+          .eq('user_id', effectiveUid);
 
-          if (allocData && allocData.length > 0) {
-            const map: Record<string, AssetAllocationTarget> = {};
-            allocData.forEach((row: any) => {
-              map[row.ticker] = {
-                ticker: row.ticker,
-                type: row.asset_type || 'Ação',
-                minPct: Number(row.min_pct || 1),
-                targetPct: Number(row.target_pct || 5),
-                maxPct: Number(row.max_pct || 15),
-                locked: Boolean(row.is_locked),
-                notes: row.notes
-              };
-            });
-            setTargetAllocations(map);
-            cacheManager.set('portfolio_target_allocations_cache', map, undefined, 'investments');
-          }
+        if (!allocErr && allocData) {
+          const map: Record<string, AssetAllocationTarget> = {};
+          allocData.forEach((row: any) => {
+            map[row.ticker] = {
+              ticker: row.ticker,
+              type: row.asset_type || 'Ação',
+              minPct: Number(row.min_pct || 1),
+              targetPct: Number(row.target_pct || 5),
+              maxPct: Number(row.max_pct || 15),
+              locked: Boolean(row.is_locked),
+              notes: row.notes
+            };
+          });
+          setTargetAllocations(map);
+          cacheManager.set(`portfolio_target_allocations_cache_${effectiveUid}`, map, undefined, 'investments');
         }
 
-        // 2. Rules Config: only query if not present in cache
-        const cachedRules = cacheManager.get<RebalanceRulesConfig>('portfolio_rules_config_cache');
-        if (!cachedRules) {
-          const { data: rulesData } = await supabase
-            .from('portfolio_rules_config')
-            .select('*')
-            .eq('user_id', user.id)
-            .maybeSingle();
+        // 2. Rules Config: always sync from Supabase when online
+        const { data: rulesData, error: rulesErr } = await supabase
+          .from('portfolio_rules_config')
+          .select('*')
+          .eq('user_id', effectiveUid)
+          .maybeSingle();
 
-          if (rulesData) {
-            const conf: RebalanceRulesConfig = {
-              activeStrategy: rulesData.active_strategy || 'rebalance',
-              customWeights: {
-                gapWeight: rulesData.gap_weight ?? 40,
-                qualityWeight: rulesData.quality_weight ?? 25,
-                valuationWeight: rulesData.valuation_weight ?? 20,
-                dividendWeight: rulesData.dividend_weight ?? 10,
-                liquidityWeight: rulesData.liquidity_weight ?? 5,
-              },
-              maxAssetAllocationPct: Number(rulesData.max_asset_allocation_pct ?? 15),
-              maxSectorAllocationPct: Number(rulesData.max_sector_allocation_pct ?? 25),
-              minDailyLiquidity: Number(rulesData.min_daily_liquidity ?? 1000000),
-              maxDebtEbitdaAllowed: Number(rulesData.max_debt_ebitda_allowed ?? 3.5),
-              maxFiiPhysicalVacancyAllowed: Number(rulesData.max_fii_physical_vacancy_allowed ?? 15),
-              maxFiiPvpAllowed: Number(rulesData.max_fii_pvp_allowed ?? 1.08),
-              minScoreAllowed: Number(rulesData.min_score_allowed ?? 45),
-              allowNewPositions: Boolean(rulesData.allow_new_positions ?? false),
-            };
-            setRulesConfig(conf);
-            cacheManager.set('portfolio_rules_config_cache', conf, undefined, 'investments');
-          }
+        if (!rulesErr && rulesData) {
+          const conf: RebalanceRulesConfig = {
+            activeStrategy: rulesData.active_strategy || 'rebalance',
+            customWeights: {
+              gapWeight: rulesData.gap_weight ?? 40,
+              qualityWeight: rulesData.quality_weight ?? 25,
+              valuationWeight: rulesData.valuation_weight ?? 20,
+              dividendWeight: rulesData.dividend_weight ?? 10,
+              liquidityWeight: rulesData.liquidity_weight ?? 5,
+            },
+            maxAssetAllocationPct: Number(rulesData.max_asset_allocation_pct ?? 15),
+            maxSectorAllocationPct: Number(rulesData.max_sector_allocation_pct ?? 25),
+            minDailyLiquidity: Number(rulesData.min_daily_liquidity ?? 1000000),
+            maxDebtEbitdaAllowed: Number(rulesData.max_debt_ebitda_allowed ?? 3.5),
+            maxFiiPhysicalVacancyAllowed: Number(rulesData.max_fii_physical_vacancy_allowed ?? 15),
+            maxFiiPvpAllowed: Number(rulesData.max_fii_pvp_allowed ?? 1.08),
+            minScoreAllowed: Number(rulesData.min_score_allowed ?? 45),
+            allowNewPositions: Boolean(rulesData.allow_new_positions ?? false),
+          };
+          setRulesConfig(conf);
+          cacheManager.set(`portfolio_rules_config_cache_${effectiveUid}`, conf, undefined, 'investments');
         }
       } catch (e) {
         console.warn('Silent fallback loading supabase investment tables:', e);
       }
     };
     loadSupabaseData();
-  }, []);
+  }, [propUserId]);
+
   const processingDividendsRef = useRef<Set<string>>(new Set());
+  const isProcessingDividendsRef = useRef<boolean>(false);
 
   // Global Dividend Analysis Mode ('received_only' | 'include_provisioned')
   const [dividendAnalysisMode, setDividendAnalysisModeState] = useState<DividendAnalysisMode>(() => {
-    const saved = cacheManager.get<string>('dividend_analysis_mode');
+    const saved = cacheManager.get<string>(`dividend_analysis_mode_${resolvedUserId}`) || cacheManager.get<string>('dividend_analysis_mode');
     if (saved === 'received_only' || saved === 'include_provisioned') {
       return saved as DividendAnalysisMode;
     }
@@ -222,8 +247,8 @@ export function InvestmentsProvider({
 
   const setDividendAnalysisMode = useCallback((mode: DividendAnalysisMode) => {
     setDividendAnalysisModeState(mode);
-    cacheManager.set('dividend_analysis_mode', mode, undefined, 'investments');
-  }, []);
+    cacheManager.set(`dividend_analysis_mode_${resolvedUserId}`, mode, undefined, 'investments');
+  }, [resolvedUserId]);
 
   const isSyncingDividends = false;
   const dividendSyncStatus = null;
@@ -243,34 +268,50 @@ export function InvestmentsProvider({
     setDividends(initialDividends);
   }, [initialDividends]);
 
-  // Automated Processing for Provisioned Dividends & Missing Reserve Credits
+  // Automated Processing for Provisioned Dividends & Unlinked Legacy Dividends (Multi-device & Idempotent)
   useEffect(() => {
     const processReadyDividends = async () => {
+      if (isProcessingDividendsRef.current) return;
       if (dividends.length === 0) return;
+
+      const isOnline = typeof navigator === 'undefined' || navigator.onLine;
+      // CRITICAL: When online, NEVER evaluate or credit dividends until initial cloud hydration has completed!
+      // Prevents new devices from evaluating partial/empty state and duplicating existing reserve entries.
+      if (isOnline && !isCloudHydrated) return;
+
       const reserveIdToUse = settings?.default_investment_reserve_id || targetReserveId;
       if (!reserveIdToUse) return;
 
       const today = getTodayLocalDateStr();
-      const userId = (await getEffectiveUserId()) || 'default';
-      const curRts = (reserveTransactions && reserveTransactions.length > 0)
-        ? [...reserveTransactions]
-        : (cacheManager.get<ReserveTransaction[]>(`reserve_transactions_${userId}`) || []);
+      const userId = propUserId || (await getEffectiveUserId()) || 'default';
+      if (!userId || userId === 'default') return;
+
+      const curRts: ReserveTransaction[] = [
+        ...(reserveTransactions || []),
+        ...(cacheManager.get<ReserveTransaction[]>(`reserve_transactions_${userId}`) || []).filter(
+          cachedRt => !(reserveTransactions || []).some(stateRt => stateRt.id === cachedRt.id)
+        )
+      ];
 
       const normalizeDate = (d?: string | null) => (d ? d.split('T')[0] : '');
 
       const isMatchingReserveTx = (div: Dividend, rt: ReserveTransaction) => {
-        if (rt.transaction_id === div.id || rt.id === div.transaction_id) return true;
+        const detId = deriveDividendReserveTxId(div.id);
+        if (rt.id === detId || rt.transaction_id === div.id || (div.transaction_id && rt.id === div.transaction_id)) {
+          return true;
+        }
         const divPayDate = normalizeDate(div.date || div.data_ex || today);
         const rtDate = normalizeDate(rt.date);
         const matchesDate = rtDate === divPayDate;
-        const matchesAmount = Math.abs(Number(rt.amount) - Number(div.amount)) < 0.005;
+        const matchesAmount = Math.abs(Number(rt.amount) - Number(div.amount)) < 0.01;
         const matchesTicker = Boolean(div.ticker && rt.description?.toUpperCase().includes(div.ticker.toUpperCase()));
         return matchesDate && matchesAmount && matchesTicker;
       };
 
-      // Identify dividends that need action:
-      // 1. Provisioned that reached payment date (div.date <= today or div.data_ex <= today)
-      // 2. Received dividends that have a reserve configured but lack a matching credit in reserve_transactions
+      // Identify dividends that genuinely need action:
+      // 1. Provisioned dividends whose payment date has arrived (div.date <= today)
+      // 2. Received dividends that have NO transaction_id yet (never linked/credited) AND no matching reserve_transaction
+      //    (Dividends that ALREADY have div.transaction_id set were already processed on some device and MUST NOT be duplicated!)
       const currentReadyIds = new Set<string>();
 
       dividends.forEach(div => {
@@ -280,14 +321,14 @@ export function InvestmentsProvider({
         const payDate = normalizeDate(div.date || div.data_ex);
         const reachedPaymentDate = Boolean(payDate && payDate <= today);
 
-        // Case 1: Provisioned dividend whose payment date has arrived (or is today/past)
+        // Case 1: Provisioned dividend whose payment date has arrived
         if (div.status === 'provisioned' && reachedPaymentDate) {
           currentReadyIds.add(div.id);
           return;
         }
 
-        // Case 2: Received dividend that has a reserve available but lacks a matching credit in reserve transactions
-        if (div.status === 'received' && reserveIdToUse) {
+        // Case 2: Received dividend that has NEVER been linked (no transaction_id) and has no matching credit
+        if (div.status === 'received' && !div.transaction_id && reserveIdToUse) {
           const hasMatchingRt = curRts.some(rt => isMatchingReserveTx(div, rt));
           if (!hasMatchingRt) {
             currentReadyIds.add(div.id);
@@ -307,110 +348,179 @@ export function InvestmentsProvider({
 
       if (readyToProcess.length === 0) return;
 
+      isProcessingDividendsRef.current = true;
       readyToProcess.forEach(d => processingDividendsRef.current.add(d.id));
-      let processedAny = false;
-      const creditedTickers: string[] = [];
 
-      for (const div of readyToProcess) {
-        try {
-          const divPayDate = normalizeDate(div.date || div.data_ex || today);
-          const displayDivType = div.type === 'JCP' || (div.type as string) === 'JSCP' ? 'JSCP' : div.type;
+      try {
+        // Live Supabase verification when online to guarantee multi-device idempotency
+        let cloudDivMap = new Map<string, { id: string; status: string; transaction_id?: string | null }>();
+        if (isOnline) {
+          try {
+            const candidateIds = readyToProcess.map(d => d.id);
+            const [cloudDivRes, cloudRtRes] = await Promise.all([
+              supabase
+                .from('dividends')
+                .select('id, status, transaction_id')
+                .eq('user_id', userId)
+                .in('id', candidateIds),
+              supabase
+                .from('reserve_transactions')
+                .select('id, reserve_id, type, amount, date, description, category, transaction_id, payment_status, payment_date')
+                .eq('user_id', userId)
+            ]);
 
-          let reserveTxId: string | undefined = div.transaction_id;
-
-          // Strict Anti-Duplication: check if a matching reserve transaction already exists
-          const existingRt = curRts.find(rt => isMatchingReserveTx(div, rt));
-          reserveTxId = existingRt ? existingRt.id : generateUUID();
-
-          if (!existingRt) {
-            const newReserveTx: ReserveTransaction = {
-              id: reserveTxId,
-              user_id: div.user_id || userId,
-              reserve_id: reserveIdToUse,
-              type: 'aporte',
-              category: 'Proventos',
-              amount: Number(div.amount) || 0,
-              date: divPayDate,
-              description: `Provento: ${div.ticker} (${displayDivType})`,
-              transaction_id: div.id,
-              payment_status: 'paid',
-              payment_date: divPayDate,
-              source: 'dividends',
-              created_at: new Date().toISOString()
-            };
-
-            const { error: rtxError } = await supabase.from('reserve_transactions').insert(newReserveTx);
-            if (rtxError) console.warn('Aviso inserção reserva provento:', rtxError);
-            syncQueueManager.enqueue('reserve_transactions', 'insert', newReserveTx.id, newReserveTx);
-
-            curRts.unshift(newReserveTx);
-            cacheManager.set(`reserve_transactions_${userId}`, curRts, undefined, 'reserves');
-            creditedTickers.push(div.ticker);
-          } else {
-            let updatedRt = false;
-            if (existingRt.type !== 'aporte') {
-              existingRt.type = 'aporte';
-              existingRt.category = 'Proventos';
-              updatedRt = true;
+            if (cloudDivRes.error || cloudRtRes.error) {
+              // Abort automatic processing if cloud check failed so we never create duplicates on transient network errors
+              readyToProcess.forEach(d => processingDividendsRef.current.delete(d.id));
+              return;
             }
-            if (existingRt.transaction_id !== div.id) {
-              existingRt.transaction_id = div.id;
-              updatedRt = true;
+
+            if (cloudDivRes.data) {
+              cloudDivRes.data.forEach((row: any) => cloudDivMap.set(row.id, row));
             }
-            if (updatedRt) {
-              await supabase.from('reserve_transactions').update({ 
-                type: 'aporte', 
-                category: 'Proventos',
-                transaction_id: div.id 
-              }).eq('id', existingRt.id);
-              syncQueueManager.enqueue('reserve_transactions', 'update', existingRt.id, {
-                type: 'aporte',
-                category: 'Proventos',
-                transaction_id: div.id
-              });
+            if (cloudRtRes.data) {
+              const existingIds = new Set(curRts.map(r => r.id));
+              for (const remoteRt of cloudRtRes.data as ReserveTransaction[]) {
+                if (!existingIds.has(remoteRt.id)) {
+                  curRts.push(remoteRt);
+                  existingIds.add(remoteRt.id);
+                }
+              }
             }
-            cacheManager.set(`reserve_transactions_${userId}`, curRts, undefined, 'reserves');
+          } catch {
+            readyToProcess.forEach(d => processingDividendsRef.current.delete(d.id));
+            return;
           }
+        }
 
-          const { error: divError } = await supabase
-            .from('dividends')
-            .update({
+        let processedAny = false;
+        const creditedTickers: string[] = [];
+        const newlyAddedRts: ReserveTransaction[] = [];
+
+        for (const div of readyToProcess) {
+          try {
+            const cloudDiv = cloudDivMap.get(div.id);
+
+            // If another device ALREADY credited and linked this dividend in Supabase, just update local state cleanly
+            if (cloudDiv && cloudDiv.status === 'received' && cloudDiv.transaction_id) {
+              setDividends(prev => prev.map(d => d.id === div.id ? { ...d, status: 'received', transaction_id: cloudDiv.transaction_id || undefined } : d));
+              continue;
+            }
+
+            const divPayDate = normalizeDate(div.date || div.data_ex || today);
+            const displayDivType = div.type === 'JCP' || (div.type as string) === 'JSCP' ? 'JSCP' : div.type;
+            const deterministicRtId = deriveDividendReserveTxId(div.id);
+
+            // Strict Anti-Duplication: check if a matching reserve transaction already exists in cloud or local
+            const existingRt = curRts.find(rt => isMatchingReserveTx(div, rt));
+            const reserveTxId = existingRt ? existingRt.id : deterministicRtId;
+
+            if (!existingRt) {
+              const alreadyQueued = syncQueueManager.hasPendingTaskFor('reserve_transactions', reserveTxId);
+              if (!alreadyQueued) {
+                const newReserveTx: ReserveTransaction = {
+                  id: reserveTxId,
+                  user_id: div.user_id || userId,
+                  reserve_id: reserveIdToUse,
+                  type: 'aporte',
+                  category: 'Proventos',
+                  amount: Number(div.amount) || 0,
+                  date: divPayDate,
+                  description: `Provento: ${div.ticker} (${displayDivType})`,
+                  transaction_id: div.id,
+                  payment_status: 'paid',
+                  payment_date: divPayDate,
+                  source: 'dividends',
+                  created_at: new Date().toISOString()
+                };
+
+                const rtSupabasePayload: Record<string, any> = {
+                  id: newReserveTx.id,
+                  user_id: newReserveTx.user_id,
+                  reserve_id: newReserveTx.reserve_id,
+                  type: newReserveTx.type,
+                  category: newReserveTx.category,
+                  amount: newReserveTx.amount,
+                  date: newReserveTx.date,
+                  description: newReserveTx.description,
+                  transaction_id: newReserveTx.transaction_id,
+                  payment_status: newReserveTx.payment_status,
+                  payment_date: newReserveTx.payment_date,
+                  source: newReserveTx.source,
+                  created_at: newReserveTx.created_at,
+                };
+
+                // Enqueue ONCE through SyncQueue (no duplicate direct Supabase insert!)
+                syncQueueManager.enqueue('reserve_transactions', 'insert', newReserveTx.id, rtSupabasePayload);
+
+                curRts.unshift(newReserveTx);
+                newlyAddedRts.push(newReserveTx);
+                cacheManager.set(`reserve_transactions_${userId}`, curRts, undefined, 'reserves');
+                creditedTickers.push(div.ticker);
+              }
+            } else {
+              let updatedRt = false;
+              const rtPatch: Record<string, any> = {};
+              if (existingRt.type !== 'aporte') {
+                existingRt.type = 'aporte';
+                existingRt.category = 'Proventos';
+                rtPatch.type = 'aporte';
+                rtPatch.category = 'Proventos';
+                updatedRt = true;
+              }
+              if (existingRt.transaction_id !== div.id) {
+                existingRt.transaction_id = div.id;
+                rtPatch.transaction_id = div.id;
+                updatedRt = true;
+              }
+              if (updatedRt) {
+                syncQueueManager.enqueue('reserve_transactions', 'update', existingRt.id, rtPatch);
+              }
+              cacheManager.set(`reserve_transactions_${userId}`, curRts, undefined, 'reserves');
+            }
+
+            syncQueueManager.enqueue('dividends', 'update', div.id, {
               status: 'received',
               transaction_id: reserveTxId || null,
               date: divPayDate
-            })
-            .eq('id', div.id);
+            });
 
-          if (divError) console.warn('Aviso atualização dividendo recebido:', divError);
-          syncQueueManager.enqueue('dividends', 'update', div.id, {
-            status: 'received',
-            transaction_id: reserveTxId || null,
-            date: divPayDate
-          });
+            // Immediately update local React state and cache with transaction_id and status received
+            setDividends(prev => {
+              const updated = prev.map(d => d.id === div.id ? { ...d, status: 'received' as const, transaction_id: reserveTxId, date: divPayDate } : d);
+              cacheManager.set(`dividends_${userId}`, updated, undefined, 'investments');
+              return updated;
+            });
 
-          // Immediately update local React state and cache with transaction_id and status received
-          setDividends(prev => prev.map(d => d.id === div.id ? { ...d, status: 'received', transaction_id: reserveTxId, date: divPayDate } : d));
-          const cachedDivs = cacheManager.get<Dividend[]>(`dividends_${userId}`) || [];
-          cacheManager.set(`dividends_${userId}`, cachedDivs.map(d => d.id === div.id ? { ...d, status: 'received', transaction_id: reserveTxId, date: divPayDate } : d), undefined, 'investments');
-
-          processedAny = true;
-        } catch (err) {
-          console.error(`Error processing dividend for ${div.ticker}:`, err);
+            processedAny = true;
+          } catch (err) {
+            console.error(`Error processing dividend for ${div.ticker}:`, err);
+          }
         }
-      }
 
-      if (creditedTickers.length > 0) {
-        toast.success(`Provento de ${creditedTickers.join(', ')} creditado automaticamente na reserva!`, { id: 'div-auto-credit' });
-      }
+        if (newlyAddedRts.length > 0 && onReserveTransactionsSync) {
+          onReserveTransactionsSync(prev => {
+            const existingIds = new Set(prev.map(r => r.id));
+            const additions = newlyAddedRts.filter(r => !existingIds.has(r.id));
+            return additions.length > 0 ? [...additions, ...prev] : prev;
+          });
+        }
 
-      if (processedAny && onDataChange) {
-        await onDataChange();
+        if (creditedTickers.length > 0) {
+          toast.success(`Provento de ${Array.from(new Set(creditedTickers)).join(', ')} creditado automaticamente na reserva!`, { id: 'div-auto-credit' });
+        }
+
+        if (processedAny && onDataChange) {
+          await onDataChange(true);
+        }
+      } finally {
+        isProcessingDividendsRef.current = false;
       }
     };
 
     const timeout = setTimeout(processReadyDividends, 800);
     return () => clearTimeout(timeout);
-  }, [dividends, settings?.default_investment_reserve_id, targetReserveId, reserveTransactions, onDataChange]);
+  }, [dividends, settings?.default_investment_reserve_id, targetReserveId, reserveTransactions, onDataChange, onReserveTransactionsSync, isCloudHydrated, propUserId]);
 
   const addInvestmentTransaction = useCallback(async (
     newIt: Omit<InvestmentTransaction, 'id' | 'user_id' | 'created_at'>,
@@ -454,6 +564,9 @@ export function InvestmentsProvider({
 
         const curRts = cacheManager.get<ReserveTransaction[]>(`reserve_transactions_${userId}`) || [];
         cacheManager.set(`reserve_transactions_${userId}`, [rtObj, ...curRts.filter(r => r.id !== rtId)], undefined, 'reserves');
+        if (onReserveTransactionsSync) {
+          onReserveTransactionsSync(prev => [rtObj!, ...prev.filter(r => r.id !== rtId)]);
+        }
       }
 
       setInvestmentTransactions(prev => {
@@ -507,7 +620,7 @@ export function InvestmentsProvider({
       }
 
       if (rtObj && onDataChange) {
-        await onDataChange();
+        await onDataChange(true);
       }
 
       if (!options?.silent) toast.success('Lançamento de investimento registrado!', { id: 'inv-action' });
@@ -517,7 +630,7 @@ export function InvestmentsProvider({
       if (!options?.silent) toast.error('Erro ao salvar lançamento localmente.', { id: 'inv-action' });
       return itObj.id;
     }
-  }, [onDataChange]);
+  }, [onDataChange, onReserveTransactionsSync]);
 
   const deleteInvestmentTransaction = useCallback(async (id: string, options?: { silent?: boolean }) => {
     if (!options?.silent) toast.loading('Processando exclusão...', { id: 'del-inv' });
@@ -534,14 +647,17 @@ export function InvestmentsProvider({
     if (targetTx?.transaction_id) {
       const curRts = cacheManager.get<ReserveTransaction[]>(`reserve_transactions_${userId}`) || [];
       cacheManager.set(`reserve_transactions_${userId}`, curRts.filter(r => r.id !== targetTx.transaction_id), undefined, 'reserves');
+      if (onReserveTransactionsSync) {
+        onReserveTransactionsSync(prev => prev.filter(r => r.id !== targetTx.transaction_id));
+      }
       syncQueueManager.enqueue('reserve_transactions', 'delete', targetTx.transaction_id);
     }
     syncQueueManager.enqueue('investment_transactions', 'delete', id);
     if (targetTx?.transaction_id && onDataChange) {
-      await onDataChange();
+      await onDataChange(true);
     }
     if (!options?.silent) toast.success('Lançamento excluído!', { id: 'del-inv' });
-  }, [investmentTransactions, onDataChange]);
+  }, [investmentTransactions, onDataChange, onReserveTransactionsSync]);
 
   const updateInvestmentTransaction = useCallback(async (id: string, updatedFields: Partial<InvestmentTransaction>, options?: { silent?: boolean }) => {
     const userId = (await getEffectiveUserId()) || 'default';
@@ -582,14 +698,17 @@ export function InvestmentsProvider({
 
       const curRts = cacheManager.get<ReserveTransaction[]>(`reserve_transactions_${userId}`) || [];
       cacheManager.set(`reserve_transactions_${userId}`, curRts.map(r => r.id === targetTx.transaction_id ? { ...r, ...rtPayload } : r), undefined, 'reserves');
+      if (onReserveTransactionsSync) {
+        onReserveTransactionsSync(prev => prev.map(r => r.id === targetTx.transaction_id ? { ...r, ...rtPayload } : r));
+      }
       syncQueueManager.enqueue('reserve_transactions', 'update', targetTx.transaction_id, rtPayload);
       if (onDataChange) {
-        await onDataChange();
+        await onDataChange(true);
       }
     }
 
     if (!options?.silent) toast.success('Lançamento atualizado!', { id: 'inv-action' });
-  }, [investmentTransactions, onDataChange]);
+  }, [investmentTransactions, onDataChange, onReserveTransactionsSync]);
 
   const deleteInvestmentTransactionsByTicker = useCallback(async (ticker: string) => {
     toast.loading('Limpando posição de ' + ticker + '...', { id: 'del-ticker' });
@@ -636,7 +755,9 @@ export function InvestmentsProvider({
       const divDate = divObj.date || divObj.data_ex || today;
 
       // Anti-duplication check: check if an identical reserve transaction already exists
+      const deterministicRtId = deriveDividendReserveTxId(divObj.id);
       const existingRt = curRts.find(rt =>
+        rt.id === deterministicRtId ||
         rt.transaction_id === divObj.id ||
         rt.id === divObj.transaction_id ||
         (
@@ -656,7 +777,7 @@ export function InvestmentsProvider({
           syncQueueManager.enqueue('reserve_transactions', 'update', existingRt.id, { type: 'aporte', category: 'Proventos' });
         }
       } else {
-        const reserveTxId = generateUUID();
+        const reserveTxId = deterministicRtId;
         divObj.transaction_id = reserveTxId;
         const displayDivType = divObj.type === 'JCP' || (divObj.type as string) === 'JSCP' ? 'JSCP' : divObj.type;
         newReserveTx = {
@@ -675,6 +796,9 @@ export function InvestmentsProvider({
           created_at: new Date().toISOString()
         };
         cacheManager.set(`reserve_transactions_${userId}`, [newReserveTx, ...curRts.filter(r => r.id !== reserveTxId)], undefined, 'reserves');
+        if (onReserveTransactionsSync) {
+          onReserveTransactionsSync(prev => [newReserveTx!, ...prev.filter(r => r.id !== reserveTxId)]);
+        }
       }
     }
 
@@ -723,9 +847,9 @@ export function InvestmentsProvider({
 
     if (!options?.silent) toast.success('Provento registrado!', { id: 'div-action' });
     if (newReserveTx && onDataChange) {
-      await onDataChange();
+      await onDataChange(true);
     }
-  }, [settings?.default_investment_reserve_id, targetReserveId, onDataChange]);
+  }, [settings?.default_investment_reserve_id, targetReserveId, onDataChange, onReserveTransactionsSync]);
 
   const updateDividend = useCallback(async (id: string, updatedFields: Partial<Dividend>, options?: { silent?: boolean }) => {
     const userId = (await getEffectiveUserId()) || 'default';
@@ -751,7 +875,9 @@ export function InvestmentsProvider({
       const divTicker = (updatedFields.ticker || currentDiv.ticker).toUpperCase();
       const displayType = (updatedFields.type || currentDiv.type) === 'JCP' ? 'JSCP' : (updatedFields.type || currentDiv.type);
 
+      const deterministicRtId = deriveDividendReserveTxId(id);
       const existingRt = curRts.find(rt =>
+        rt.id === deterministicRtId ||
         rt.transaction_id === id ||
         rt.id === currentDiv.transaction_id ||
         (
@@ -784,15 +910,17 @@ export function InvestmentsProvider({
           transaction_id: id,
           payment_status: 'paid' as const,
           payment_date: divDate,
-          source: 'dividends'
+          source: 'dividends' as const
         };
 
         syncQueueManager.enqueue('reserve_transactions', 'update', existingRt.id, rtUpdatePayload);
-        supabase.from('reserve_transactions').update(rtUpdatePayload).eq('id', existingRt.id);
         cacheManager.set(`reserve_transactions_${userId}`, curRts, undefined, 'reserves');
+        if (onReserveTransactionsSync) {
+          onReserveTransactionsSync(prev => prev.map(r => r.id === existingRt.id ? { ...r, ...rtUpdatePayload } : r));
+        }
         updatedExistingRt = true;
       } else {
-        const reserveTxId = generateUUID();
+        const reserveTxId = deterministicRtId;
         finalFields.transaction_id = reserveTxId;
         newReserveTx = {
           id: reserveTxId,
@@ -810,15 +938,21 @@ export function InvestmentsProvider({
           created_at: new Date().toISOString()
         };
         cacheManager.set(`reserve_transactions_${userId}`, [newReserveTx, ...curRts.filter(r => r.id !== reserveTxId)], undefined, 'reserves');
+        if (onReserveTransactionsSync) {
+          onReserveTransactionsSync(prev => [newReserveTx!, ...prev.filter(r => r.id !== reserveTxId)]);
+        }
         syncQueueManager.enqueue('reserve_transactions', 'insert', reserveTxId, newReserveTx);
-        supabase.from('reserve_transactions').insert(newReserveTx);
       }
     }
 
     // If changing status from received to provisioned or cancelled, remove linked reserve transaction if existing
     if (currentDiv && currentDiv.status === 'received' && (updatedFields.status === 'provisioned' || updatedFields.status === 'cancelled')) {
-      const curRts = cacheManager.get<ReserveTransaction[]>(`reserve_transactions_${userId}`) || [];
+      const curRts = (reserveTransactions && reserveTransactions.length > 0)
+        ? [...reserveTransactions]
+        : (cacheManager.get<ReserveTransaction[]>(`reserve_transactions_${userId}`) || []);
+      const deterministicRtId = deriveDividendReserveTxId(id);
       const rtToDelete = curRts.find(rt => 
+        rt.id === deterministicRtId ||
         rt.id === currentDiv.transaction_id || 
         rt.transaction_id === id ||
         ((rt.type === 'aporte' || rt.type === 'rendimento') && 
@@ -827,8 +961,10 @@ export function InvestmentsProvider({
       );
       if (rtToDelete) {
         syncQueueManager.enqueue('reserve_transactions', 'delete', rtToDelete.id);
-        supabase.from('reserve_transactions').delete().eq('id', rtToDelete.id);
         cacheManager.set(`reserve_transactions_${userId}`, curRts.filter(r => r.id !== rtToDelete.id), undefined, 'reserves');
+        if (onReserveTransactionsSync) {
+          onReserveTransactionsSync(prev => prev.filter(r => r.id !== rtToDelete.id));
+        }
       }
       finalFields.transaction_id = undefined;
     }
@@ -849,26 +985,32 @@ export function InvestmentsProvider({
         cleanPayload[k] = finalFields[k];
       }
     }
+    if (updatedFields.status === 'provisioned' || updatedFields.status === 'cancelled') {
+      cleanPayload.transaction_id = null;
+    }
 
     syncQueueManager.enqueue('dividends', 'update', id, cleanPayload);
-    supabase.from('dividends').update(cleanPayload).eq('id', id);
     if (!options?.silent) toast.success('Provento atualizado!', { id: 'div-action' });
     if ((newReserveTx || updatedExistingRt || (currentDiv?.status === 'received' && (updatedFields.status === 'provisioned' || updatedFields.status === 'cancelled'))) && onDataChange) {
-      await onDataChange();
+      await onDataChange(true);
     }
-  }, [dividends, settings?.default_investment_reserve_id, targetReserveId, reserveTransactions, onDataChange]);
+  }, [dividends, settings?.default_investment_reserve_id, targetReserveId, reserveTransactions, onDataChange, onReserveTransactionsSync]);
 
   const deleteDividend = useCallback(async (id: string, options?: { silent?: boolean }) => {
     const userId = (await getEffectiveUserId()) || 'default';
 
     const currentDiv = dividends.find(d => d.id === id);
-    const curRts = cacheManager.get<ReserveTransaction[]>(`reserve_transactions_${userId}`) || [];
+    const curRts = (reserveTransactions && reserveTransactions.length > 0)
+      ? [...reserveTransactions]
+      : (cacheManager.get<ReserveTransaction[]>(`reserve_transactions_${userId}`) || []);
+    const deterministicRtId = deriveDividendReserveTxId(id);
     const matchedRt = curRts.find(rt => 
+      rt.id === deterministicRtId ||
       rt.id === currentDiv?.transaction_id || 
       rt.transaction_id === id ||
       ((rt.type === 'aporte' || rt.type === 'rendimento') &&
        currentDiv && rt.description?.toUpperCase().includes(currentDiv.ticker.toUpperCase()) &&
-       Math.abs(Number(rt.amount) - Number(currentDiv.amount)) < 0.001 &&
+       Math.abs(Number(rt.amount) - Number(currentDiv.amount)) < 0.005 &&
        (rt.date === currentDiv.data_ex || rt.date === currentDiv.date))
     );
 
@@ -877,6 +1019,9 @@ export function InvestmentsProvider({
     if (rtIdToDelete) {
       syncQueueManager.enqueue('reserve_transactions', 'delete', rtIdToDelete);
       cacheManager.set(`reserve_transactions_${userId}`, curRts.filter(r => r.id !== rtIdToDelete), undefined, 'reserves');
+      if (onReserveTransactionsSync) {
+        onReserveTransactionsSync(prev => prev.filter(r => r.id !== rtIdToDelete));
+      }
     }
 
     setDividends(prev => {
@@ -887,8 +1032,8 @@ export function InvestmentsProvider({
 
     syncQueueManager.enqueue('dividends', 'delete', id);
     if (!options?.silent) toast.success('Provento removido!', { id: 'div-action' });
-    if (onDataChange) await onDataChange();
-  }, [dividends, onDataChange]);
+    if (onDataChange) await onDataChange(true);
+  }, [dividends, reserveTransactions, onDataChange, onReserveTransactionsSync]);
 
 
 
@@ -936,32 +1081,34 @@ export function InvestmentsProvider({
     toast.success(`CNPJ de ${tk} atualizado com sucesso!`);
   }, [settings, onUpdateSettings]);
 
-  // Load Saved Valuations from Supabase & Cache on Mount
+  // Load Saved Valuations from Supabase & Cache on Mount / userId change
   useEffect(() => {
     const loadValuations = async () => {
-      // 1. Check cache first
-      const local = cacheManager.get<Record<string, ValuationTarget>>('valuation_targets_cache');
+      const uid = propUserId || (await getEffectiveUserId()) || 'default';
+      // 1. Hydrate from user-scoped cache first
+      const local = cacheManager.get<Record<string, ValuationTarget>>(`valuation_targets_cache_${uid}`);
       if (local && Object.keys(local).length > 0) {
         setValuationTargets(local);
-        return;
       }
 
-      // 2. Fetch from Supabase
+      if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+
+      // 2. Always fetch latest from Supabase when online for multi-device consistency
       try {
-        const user = await getEffectiveUser();
+        const user = propUserId ? { id: propUserId } : await getEffectiveUser();
         if (user) {
           const { data, error } = await supabase
             .from('valuation_targets')
             .select('*')
             .eq('user_id', user.id);
 
-          if (data && data.length > 0) {
+          if (!error && data) {
             const valMap: Record<string, ValuationTarget> = {};
             data.forEach(item => {
               valMap[item.ticker.toUpperCase()] = item;
             });
-            setValuationTargets(prev => ({ ...prev, ...valMap }));
-            cacheManager.set('valuation_targets_cache', valMap, undefined, 'investments');
+            setValuationTargets(valMap);
+            cacheManager.set(`valuation_targets_cache_${user.id}`, valMap, undefined, 'investments');
           }
         }
       } catch (err) {
@@ -970,13 +1117,14 @@ export function InvestmentsProvider({
     };
 
     loadValuations();
-  }, []);
+  }, [propUserId]);
 
   // Save Valuation Target
   const saveValuationTarget = useCallback(async (target: ValuationTarget) => {
     const tk = target.ticker.toUpperCase().trim();
     if (!tk) return;
 
+    const uid = propUserId || (await getEffectiveUserId()) || 'default';
     const normalizedTarget: ValuationTarget = {
       ...target,
       ticker: tk,
@@ -985,12 +1133,12 @@ export function InvestmentsProvider({
 
     setValuationTargets(prev => {
       const next = { ...prev, [tk]: normalizedTarget };
-      cacheManager.set('valuation_targets_cache', next, undefined, 'investments');
+      cacheManager.set(`valuation_targets_cache_${uid}`, next, undefined, 'investments');
       return next;
     });
 
     try {
-      const user = await getEffectiveUser();
+      const user = propUserId ? { id: propUserId } : await getEffectiveUser();
       if (user) {
         const { error } = await supabase
           .from('valuation_targets')
@@ -1012,22 +1160,23 @@ export function InvestmentsProvider({
       console.warn('Error saving valuation target to database:', err);
       toast.success(`Valuation de ${tk} salvo localmente!`);
     }
-  }, []);
+  }, [propUserId]);
 
   // Delete Valuation Target
   const deleteValuationTarget = useCallback(async (ticker: string) => {
     const tk = ticker.toUpperCase().trim();
     if (!tk) return;
 
+    const uid = propUserId || (await getEffectiveUserId()) || 'default';
     setValuationTargets(prev => {
       const next = { ...prev };
       delete next[tk];
-      cacheManager.set('valuation_targets_cache', next, undefined, 'investments');
+      cacheManager.set(`valuation_targets_cache_${uid}`, next, undefined, 'investments');
       return next;
     });
 
     try {
-      const user = await getEffectiveUser();
+      const user = propUserId ? { id: propUserId } : await getEffectiveUser();
       if (user) {
         await supabase
           .from('valuation_targets')
@@ -1040,15 +1189,16 @@ export function InvestmentsProvider({
       console.warn('Error deleting valuation target from database:', err);
       toast.success(`Valuation de ${tk} removido localmente.`);
     }
-  }, []);
+  }, [propUserId]);
 
   // Save Target Allocations
   const saveTargetAllocations = useCallback(async (newTargets: Record<string, AssetAllocationTarget>) => {
+    const uid = propUserId || (await getEffectiveUserId()) || 'default';
     setTargetAllocations(newTargets);
-    cacheManager.set('portfolio_target_allocations_cache', newTargets, undefined, 'investments');
+    cacheManager.set(`portfolio_target_allocations_cache_${uid}`, newTargets, undefined, 'investments');
 
     try {
-      const user = await getEffectiveUser();
+      const user = propUserId ? { id: propUserId } : await getEffectiveUser();
       if (user) {
         const remainingTickers = Object.keys(newTargets);
         if (remainingTickers.length > 0) {
@@ -1099,15 +1249,16 @@ export function InvestmentsProvider({
     } catch (err) {
       console.warn('Error persisting target allocations to Supabase:', err);
     }
-  }, []);
+  }, [propUserId]);
 
   // Save Rules Config
   const saveRulesConfig = useCallback(async (newConfig: RebalanceRulesConfig) => {
+    const uid = propUserId || (await getEffectiveUserId()) || 'default';
     setRulesConfig(newConfig);
-    cacheManager.set('portfolio_rules_config_cache', newConfig, undefined, 'investments');
+    cacheManager.set(`portfolio_rules_config_cache_${uid}`, newConfig, undefined, 'investments');
 
     try {
-      const user = await getEffectiveUser();
+      const user = propUserId ? { id: propUserId } : await getEffectiveUser();
       if (user) {
         const { error } = await supabase
           .from('portfolio_rules_config')
@@ -1134,7 +1285,7 @@ export function InvestmentsProvider({
     } catch (err) {
       console.warn('Error persisting rules config to Supabase:', err);
     }
-  }, []);
+  }, [propUserId]);
 
   // Helper to ensure clean numeric values (or null)
   const cleanNum = (val: any): number | null => {

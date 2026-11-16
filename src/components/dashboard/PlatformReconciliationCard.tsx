@@ -76,6 +76,18 @@ export const PlatformReconciliationCard: React.FC<PlatformReconciliationCardProp
     planningStorage.getReconciliations(userId)
   );
 
+  React.useEffect(() => {
+    setReconciliations(planningStorage.getReconciliations(userId));
+    const handleSync = (e: Event) => {
+      const detailUid = (e as CustomEvent)?.detail?.userId;
+      if (!detailUid || detailUid === userId) {
+        setReconciliations(planningStorage.getReconciliations(userId));
+      }
+    };
+    window.addEventListener('planning_data_synced', handleSync);
+    return () => window.removeEventListener('planning_data_synced', handleSync);
+  }, [userId]);
+
   const activeRange = useMemo(() => {
     const now = new Date();
     if (periodPreset === 'this_week') {

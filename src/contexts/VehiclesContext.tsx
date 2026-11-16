@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase';
 import { cacheManager } from '../lib/cacheManager';
 import { syncQueueManager } from '../lib/syncQueue';
 import { toast } from '../lib/toast';
-import { getEffectiveUserId } from '../lib/authUtils';
+import { getEffectiveUserId, getSyncEffectiveUserId } from '../lib/authUtils';
 import {
   Vehicle,
   VehicleFipeHistory,
@@ -85,11 +85,22 @@ interface VehiclesContextType {
 
 const VehiclesContext = createContext<VehiclesContextType | undefined>(undefined);
 
-export const VehiclesProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [vehicles, setVehicles] = useState<Vehicle[]>(() => cacheManager.get<Vehicle[]>('vehicles_cache') || []);
-  const [odometerLogs, setOdometerLogs] = useState<Record<string, VehicleOdometerLog[]>>(() => cacheManager.get<Record<string, VehicleOdometerLog[]>>('vehicle_odometer_cache') || {});
-  const [maintenanceRecords, setMaintenanceRecords] = useState<Record<string, VehicleMaintenanceRecord[]>>(() => cacheManager.get<Record<string, VehicleMaintenanceRecord[]>>('vehicle_maintenance_cache') || {});
-  const [fipeHistory, setFipeHistory] = useState<Record<string, VehicleFipeHistory[]>>(() => cacheManager.get<Record<string, VehicleFipeHistory[]>>('vehicle_fipe_cache') || {});
+export const VehiclesProvider: React.FC<{ children: React.ReactNode; userId?: string }> = ({ children, userId: propUserId }) => {
+  const initialUid = propUserId || getSyncEffectiveUserId() || '';
+  const [resolvedUserId, setResolvedUserId] = useState<string>(initialUid);
+
+  const [vehicles, setVehicles] = useState<Vehicle[]>(() =>
+    cacheManager.get<Vehicle[]>(`vehicles_cache_${initialUid}`) || []
+  );
+  const [odometerLogs, setOdometerLogs] = useState<Record<string, VehicleOdometerLog[]>>(() =>
+    cacheManager.get<Record<string, VehicleOdometerLog[]>>(`vehicle_odometer_cache_${initialUid}`) || {}
+  );
+  const [maintenanceRecords, setMaintenanceRecords] = useState<Record<string, VehicleMaintenanceRecord[]>>(() =>
+    cacheManager.get<Record<string, VehicleMaintenanceRecord[]>>(`vehicle_maintenance_cache_${initialUid}`) || {}
+  );
+  const [fipeHistory, setFipeHistory] = useState<Record<string, VehicleFipeHistory[]>>(() =>
+    cacheManager.get<Record<string, VehicleFipeHistory[]>>(`vehicle_fipe_cache_${initialUid}`) || {}
+  );
   const [isLoadingVehicles, setIsLoadingVehicles] = useState(false);
 
   // Active Vehicle based on is_active flag or first vehicle
@@ -99,22 +110,26 @@ export const VehiclesProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     return active || vehicles[0];
   }, [vehicles]);
 
-  // Sync state to multi-tier cache
+  // Sync state to multi-tier cache (scoped by userId)
   useEffect(() => {
-    cacheManager.set('vehicles_cache', vehicles, undefined, 'vehicles');
-  }, [vehicles]);
+    if (!resolvedUserId) return;
+    cacheManager.set(`vehicles_cache_${resolvedUserId}`, vehicles, undefined, 'vehicles');
+  }, [vehicles, resolvedUserId]);
 
   useEffect(() => {
-    cacheManager.set('vehicle_odometer_cache', odometerLogs, undefined, 'vehicles');
-  }, [odometerLogs]);
+    if (!resolvedUserId) return;
+    cacheManager.set(`vehicle_odometer_cache_${resolvedUserId}`, odometerLogs, undefined, 'vehicles');
+  }, [odometerLogs, resolvedUserId]);
 
   useEffect(() => {
-    cacheManager.set('vehicle_maintenance_cache', maintenanceRecords, undefined, 'vehicles');
-  }, [maintenanceRecords]);
+    if (!resolvedUserId) return;
+    cacheManager.set(`vehicle_maintenance_cache_${resolvedUserId}`, maintenanceRecords, undefined, 'vehicles');
+  }, [maintenanceRecords, resolvedUserId]);
 
   useEffect(() => {
-    cacheManager.set('vehicle_fipe_cache', fipeHistory, undefined, 'vehicles');
-  }, [fipeHistory]);
+    if (!resolvedUserId) return;
+    cacheManager.set(`vehicle_fipe_cache_${resolvedUserId}`, fipeHistory, undefined, 'vehicles');
+  }, [fipeHistory, resolvedUserId]);
 
   const lastVehiclesFetchTimeRef = useRef<number>(0);
 
@@ -126,8 +141,13 @@ export const VehiclesProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
     try {
       setIsLoadingVehicles(true);
-      const userId = await getEffectiveUserId();
+      const userId = propUserId || (await getEffectiveUserId());
       if (!userId) return;
+      setResolvedUserId(userId);
+
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        return;
+      }
 
       lastVehiclesFetchTimeRef.current = now;
 
@@ -139,11 +159,17 @@ export const VehiclesProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         supabase.from('vehicle_fipe_history').select('*').eq('user_id', userId).order('fetched_at', { ascending: false }),
       ]);
 
-      if (vRes.status === 'fulfilled' && vRes.value.data) {
-        setVehicles(vRes.value.data as Vehicle[]);
+      if (vRes.status === 'fulfilled' && !vRes.value.error && vRes.value.data) {
+        const remoteVehicles = vRes.value.data as Vehicle[];
+        setVehicles(prev => {
+          const pendingLocal = prev.filter(v => syncQueueManager.hasPendingTaskFor('vehicles', v.id));
+          const mergedMap = new Map(remoteVehicles.map(v => [v.id, v]));
+          pendingLocal.forEach(v => mergedMap.set(v.id, v));
+          return Array.from(mergedMap.values());
+        });
       }
 
-      if (oRes.status === 'fulfilled' && oRes.value.data) {
+      if (oRes.status === 'fulfilled' && !oRes.value.error && oRes.value.data) {
         const logsGrouped: Record<string, VehicleOdometerLog[]> = {};
         (oRes.value.data as VehicleOdometerLog[]).forEach(log => {
           if (!logsGrouped[log.vehicle_id]) logsGrouped[log.vehicle_id] = [];
@@ -152,7 +178,7 @@ export const VehiclesProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         setOdometerLogs(logsGrouped);
       }
 
-      if (mRes.status === 'fulfilled' && mRes.value.data) {
+      if (mRes.status === 'fulfilled' && !mRes.value.error && mRes.value.data) {
         const mainGrouped: Record<string, VehicleMaintenanceRecord[]> = {};
         (mRes.value.data as VehicleMaintenanceRecord[]).forEach(item => {
           if (!mainGrouped[item.vehicle_id]) mainGrouped[item.vehicle_id] = [];
@@ -161,7 +187,7 @@ export const VehiclesProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         setMaintenanceRecords(mainGrouped);
       }
 
-      if (fRes.status === 'fulfilled' && fRes.value.data) {
+      if (fRes.status === 'fulfilled' && !fRes.value.error && fRes.value.data) {
         const fipeGrouped: Record<string, VehicleFipeHistory[]> = {};
         (fRes.value.data as VehicleFipeHistory[]).forEach(fipe => {
           if (!fipeGrouped[fipe.vehicle_id]) fipeGrouped[fipe.vehicle_id] = [];
@@ -174,10 +200,10 @@ export const VehiclesProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     } finally {
       setIsLoadingVehicles(false);
     }
-  }, []);
+  }, [propUserId]);
 
   useEffect(() => {
-    refreshVehicles();
+    refreshVehicles(true);
   }, [refreshVehicles]);
 
   // Add Vehicle

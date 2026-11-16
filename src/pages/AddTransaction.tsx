@@ -184,17 +184,32 @@ export function AddTransaction() {
   const [cardAmountMode, setCardAmountMode] = useState<'total' | 'installment'>('total');
 
   useEffect(() => {
+    let activeUid = '';
+    const hydrate = (uid: string) => {
+      setQuickTemplates(planningStorage.getTemplates(uid));
+      const cards = planningStorage.getCards(uid);
+      setRegisteredCards(cards);
+      if (cards.length > 0) {
+        setSelectedCardId(prev => prev || cards[0].id);
+      }
+    };
+
     getEffectiveUserId().then(uid => {
       if (uid) {
+        activeUid = uid;
         setTemplateUserId(uid);
-        setQuickTemplates(planningStorage.getTemplates(uid));
-        const cards = planningStorage.getCards(uid);
-        setRegisteredCards(cards);
-        if (cards.length > 0) {
-          setSelectedCardId(cards[0].id);
-        }
+        hydrate(uid);
       }
     });
+
+    const handleSync = (e: Event) => {
+      const detailUid = (e as CustomEvent)?.detail?.userId;
+      const targetUid = detailUid || activeUid;
+      if (targetUid) hydrate(targetUid);
+    };
+
+    window.addEventListener('planning_data_synced', handleSync);
+    return () => window.removeEventListener('planning_data_synced', handleSync);
   }, []);
 
   const displayedExpenseCategories = useMemo(() => {

@@ -156,7 +156,7 @@ export default function App() {
             <Route
               element={
                 <PrivateRoute session={session}>
-                  <DataProvider>
+                  <DataProvider key={session?.user?.id || 'anon'} userId={session?.user?.id}>
                     <MainLayout />
                   </DataProvider>
                 </PrivateRoute>

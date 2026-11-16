@@ -458,6 +458,9 @@ export const planningStorage = {
           await supabase.from('platform_reconciliations').upsert(dbItems);
         }
       }
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('planning_data_synced', { detail: { userId } }));
+      }
     } catch (err) {
       console.warn('[planningStorage] Erro ao sincronizar dados da nuvem:', err);
     }

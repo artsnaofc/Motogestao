@@ -32,7 +32,7 @@ export interface DataContextType {
   deleteTransaction: (id: string, options?: { silent?: boolean }) => Promise<void>;
   settings: UserSettings | null;
   loading: boolean;
-  refreshData: (silent?: boolean) => Promise<void>;
+  refreshData: (silent?: boolean, force?: boolean) => Promise<void>;
   globalPeriod: string;
   setGlobalPeriod: (period: string) => void;
   customDateRange: { start: string, end: string } | null;
@@ -276,16 +276,19 @@ async function fetchAllUserTableRows<T = any>(
 }
 
 // Master DataProvider that fetches data from backend and mounts segregated providers
-export function DataProvider({ children }: { children: ReactNode }) {
+export function DataProvider({ children, userId: propUserId }: { children: ReactNode; userId?: string }) {
   const getInitialCache = <T,>(keySuffix: string, fallback: T): T => {
     try {
-      const uid = localStorage.getItem('financas_pro_last_user_id') || cacheManager.get<string>('current_user_id');
+      const uid = propUserId || localStorage.getItem('financas_pro_last_user_id') || cacheManager.get<string>('current_user_id');
       if (uid) {
         const cached = cacheManager.get<T>(`${keySuffix}_${uid}`);
         if (cached !== null && cached !== undefined) return cached;
+        const lastKnownOwner = cacheManager.get<string>('last_known_owner_id');
+        if (lastKnownOwner === uid) {
+          const generic = cacheManager.get<T>(`last_known_${keySuffix}`);
+          if (generic !== null && generic !== undefined) return generic;
+        }
       }
-      const generic = cacheManager.get<T>(`last_known_${keySuffix}`);
-      if (generic !== null && generic !== undefined) return generic;
     } catch {}
     return fallback;
   };
@@ -297,6 +300,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const [investmentTransactions, setInvestmentTransactions] = useState<InvestmentTransaction[]>(() => getInitialCache('investment_transactions', []));
   const [dividends, setDividends] = useState<Dividend[]>(() => getInitialCache('dividends', []));
   const [loading, setLoading] = useState(false);
+  const [cloudHydrated, setCloudHydrated] = useState(false);
 
   const settingsRef = useRef<UserSettings | null>(settings);
   useEffect(() => {
@@ -321,7 +325,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     activeRefreshPromise = (async () => {
       if (!silent && !settingsRef.current) setLoading(true);
       try {
-        const userId = await getEffectiveUserId();
+        const userId = propUserId || (await getEffectiveUserId());
         if (!userId) {
           if (!silent) setLoading(false);
           return;
@@ -329,23 +333,26 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
         lastFetchTimestampRef.current = Date.now();
 
-        // 1. Immediately hydrate all available data from cacheManager (0ms L1/L2)
-        const localSettings = cacheManager.get<UserSettings>(`user_settings_${userId}`) || cacheManager.get<UserSettings>('last_known_user_settings');
+        // 1. Immediately hydrate all available data from user-scoped cacheManager (0ms L1/L2)
+        const lastKnownOwner = cacheManager.get<string>('last_known_owner_id');
+        const allowLastKnown = lastKnownOwner === userId;
+
+        const localSettings = cacheManager.get<UserSettings>(`user_settings_${userId}`) || (allowLastKnown ? cacheManager.get<UserSettings>('last_known_user_settings') : null);
         if (localSettings) setSettings(localSettings);
 
-        const localTxs = cacheManager.get<Transaction[]>(`transactions_${userId}`) || cacheManager.get<Transaction[]>('last_known_transactions');
+        const localTxs = cacheManager.get<Transaction[]>(`transactions_${userId}`) || (allowLastKnown ? cacheManager.get<Transaction[]>('last_known_transactions') : null);
         if (localTxs) setTransactions(localTxs);
 
-        const localRes = cacheManager.get<Reserve[]>(`reserves_${userId}`) || cacheManager.get<Reserve[]>('last_known_reserves');
+        const localRes = cacheManager.get<Reserve[]>(`reserves_${userId}`) || (allowLastKnown ? cacheManager.get<Reserve[]>('last_known_reserves') : null);
         if (localRes) setReserves(localRes);
 
-        const localRts = cacheManager.get<ReserveTransaction[]>(`reserve_transactions_${userId}`) || cacheManager.get<ReserveTransaction[]>('last_known_reserve_transactions');
+        const localRts = cacheManager.get<ReserveTransaction[]>(`reserve_transactions_${userId}`) || (allowLastKnown ? cacheManager.get<ReserveTransaction[]>('last_known_reserve_transactions') : null);
         if (localRts) setReserveTransactions(localRts);
 
-        const localIts = cacheManager.get<InvestmentTransaction[]>(`investment_transactions_${userId}`) || cacheManager.get<InvestmentTransaction[]>('last_known_investment_transactions');
+        const localIts = cacheManager.get<InvestmentTransaction[]>(`investment_transactions_${userId}`) || (allowLastKnown ? cacheManager.get<InvestmentTransaction[]>('last_known_investment_transactions') : null);
         if (localIts) setInvestmentTransactions(localIts);
 
-        const localDivs = cacheManager.get<Dividend[]>(`dividends_${userId}`) || cacheManager.get<Dividend[]>('last_known_dividends');
+        const localDivs = cacheManager.get<Dividend[]>(`dividends_${userId}`) || (allowLastKnown ? cacheManager.get<Dividend[]>('last_known_dividends') : null);
         if (localDivs) setDividends(localDivs);
 
         // If device is offline, stop right here! Cache is already loaded and UI is intact!
@@ -358,7 +365,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         // When online: first flush any pending sync queue items
         try {
           if (syncQueueManager.getPendingCount() > 0) {
-            await syncQueueManager.flushQueue(4000);
+            await syncQueueManager.flushQueue(15000);
           }
         } catch (qErr) {
           console.warn('[DataContext] Aviso na sincronização prévia da fila:', qErr);
@@ -434,7 +441,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         }
 
         // Process Transactions
-        if (txResult.status === 'fulfilled' && txResult.value.data) {
+        if (txResult.status === 'fulfilled' && !txResult.value.error && txResult.value.data) {
           const txData = txResult.value.data;
           const localStored = cacheManager.get<Transaction[]>(`transactions_${userId}`) || [];
           const supaMap = new Map(txData.map(item => [item.id, item]));
@@ -447,8 +454,6 @@ export function DataProvider({ children }: { children: ReactNode }) {
               merged.push(localItem);
             } else if (supaMap.has(localItem.id)) {
               merged.push(supaMap.get(localItem.id)!);
-            } else if (txData.length === 0 && txResult.value.error) {
-              merged.push(localItem);
             }
           }
 
@@ -468,6 +473,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
           setTransactions(merged);
           cacheManager.set(`transactions_${userId}`, merged, undefined, 'transactions');
+          cacheManager.set('last_known_owner_id', userId, undefined, 'transactions');
           cacheManager.set('last_known_transactions', merged, undefined, 'transactions');
 
           // Map any transactions with card_id to local txCardMap
@@ -486,13 +492,13 @@ export function DataProvider({ children }: { children: ReactNode }) {
           }
         }
 
-        // Process Reserves
-        if (reservesResult.status === 'fulfilled') {
-          const rSupadata = reservesResult.value.data;
+        // Process Reserves (only seed defaults when Supabase cleanly returned 0 rows with no error!)
+        if (reservesResult.status === 'fulfilled' && !reservesResult.value.error) {
+          const rSupadata = reservesResult.value.data || [];
           const hasSeededKey = `has_seeded_reserves_${userId}`;
           const hasSeeded = cacheManager.get<boolean>(hasSeededKey) === true;
 
-          if (rSupadata && rSupadata.length > 0) {
+          if (rSupadata.length > 0) {
             const localStored = cacheManager.get<Reserve[]>(`reserves_${userId}`) || [];
             const supaMap = new Map(rSupadata.map(item => [item.id, item]));
             const merged: Reserve[] = [];
@@ -504,8 +510,6 @@ export function DataProvider({ children }: { children: ReactNode }) {
                 merged.push(localItem);
               } else if (supaMap.has(localItem.id)) {
                 merged.push(supaMap.get(localItem.id)!);
-              } else {
-                merged.push(localItem);
               }
             }
 
@@ -535,11 +539,14 @@ export function DataProvider({ children }: { children: ReactNode }) {
               cacheManager.set(`reserves_${userId}`, defaults, undefined, 'reserves');
               cacheManager.set(hasSeededKey, true, undefined, 'reserves');
             }
+          } else {
+            setReserves([]);
+            cacheManager.set(`reserves_${userId}`, [], undefined, 'reserves');
           }
         }
 
         // Process Reserve Transactions
-        if (rtResult.status === 'fulfilled' && rtResult.value.data) {
+        if (rtResult.status === 'fulfilled' && !rtResult.value.error && rtResult.value.data) {
           const rtSupadata = rtResult.value.data;
           const localStored = cacheManager.get<ReserveTransaction[]>(`reserve_transactions_${userId}`) || [];
           const supaMap = new Map(rtSupadata.map(item => [item.id, item]));
@@ -552,8 +559,6 @@ export function DataProvider({ children }: { children: ReactNode }) {
               merged.push(localItem);
             } else if (supaMap.has(localItem.id)) {
               merged.push(supaMap.get(localItem.id)!);
-            } else {
-              merged.push(localItem);
             }
           }
 
@@ -568,7 +573,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         }
 
         // Process Investment Transactions
-        if (itResult.status === 'fulfilled' && itResult.value.data) {
+        if (itResult.status === 'fulfilled' && !itResult.value.error && itResult.value.data) {
           const itSupadata = itResult.value.data;
           const localStored = cacheManager.get<InvestmentTransaction[]>(`investment_transactions_${userId}`) || [];
           const supaMap = new Map(itSupadata.map(item => [item.id, item]));
@@ -581,8 +586,6 @@ export function DataProvider({ children }: { children: ReactNode }) {
               merged.push(localItem);
             } else if (supaMap.has(localItem.id)) {
               merged.push(supaMap.get(localItem.id)!);
-            } else {
-              merged.push(localItem);
             }
           }
 
@@ -597,7 +600,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         }
 
         // Process Dividends
-        if (divResult.status === 'fulfilled' && divResult.value.data) {
+        if (divResult.status === 'fulfilled' && !divResult.value.error && divResult.value.data) {
           const divData = divResult.value.data;
           const localStored = cacheManager.get<Dividend[]>(`dividends_${userId}`) || [];
           const supaMap = new Map(divData.map(item => [item.id, item]));
@@ -610,8 +613,6 @@ export function DataProvider({ children }: { children: ReactNode }) {
               merged.push(localItem);
             } else if (supaMap.has(localItem.id)) {
               merged.push(supaMap.get(localItem.id)!);
-            } else {
-              merged.push(localItem);
             }
           }
 
@@ -623,6 +624,14 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
           setDividends(merged);
           cacheManager.set(`dividends_${userId}`, merged, undefined, 'investments');
+        }
+
+        // Mark cloud hydration complete only if critical collections loaded cleanly without errors
+        const reservesClean = reservesResult.status === 'fulfilled' && !reservesResult.value.error;
+        const rtsClean = rtResult.status === 'fulfilled' && !rtResult.value.error;
+        const divsClean = divResult.status === 'fulfilled' && !divResult.value.error;
+        if (reservesClean && rtsClean && divsClean) {
+          setCloudHydrated(true);
         }
 
         // Record last sync timestamp
@@ -644,10 +653,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
     })();
 
     return activeRefreshPromise;
-  }, []);
+  }, [propUserId]);
 
   useEffect(() => {
-    refreshData();
+    refreshData(false, true);
   }, [refreshData]);
 
   // Automatic online synchronization: when internet reconnects, flush queue and refresh data automatically!
@@ -655,7 +664,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     const handleOnline = async () => {
       console.log('[Finanças Pro - DataContext] Internet reconectada! Sincronizando fila pendente e atualizando dados...');
       toast.info('Internet reconectada! Sincronizando dados com a nuvem...');
-      await syncQueueManager.flushQueue(5000);
+      await syncQueueManager.flushQueue(15000);
       await refreshData(true, true);
     };
 
@@ -664,8 +673,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
   }, [refreshData]);
 
   // Stable handlers for nested providers to prevent cascading effect triggers
-  const handleDataChange = useCallback(() => {
-    return refreshData(true);
+  const handleDataChange = useCallback((force = true) => {
+    return refreshData(true, force);
   }, [refreshData]);
 
   const handleUpdateSettings = useCallback((newSettings: UserSettings) => {
@@ -690,6 +699,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
         onDataChange={handleDataChange}
       >
         <InvestmentsProvider
+          userId={propUserId}
+          isCloudHydrated={cloudHydrated}
           initialInvestmentTransactions={investmentTransactions}
           initialDividends={dividends}
           settings={settings}
@@ -697,9 +708,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
           reserveTransactions={reserveTransactions}
           onDataChange={handleDataChange}
           onUpdateSettings={handleUpdateSettings}
+          onReserveTransactionsSync={setReserveTransactions}
         >
-          <QuotesProvider>
-            <VehiclesProvider>
+          <QuotesProvider userId={propUserId} initialCachedQuotes={settings?.cached_quotes}>
+            <VehiclesProvider userId={propUserId}>
               <DataContextBridge>
                 {children}
               </DataContextBridge>

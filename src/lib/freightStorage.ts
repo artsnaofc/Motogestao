@@ -577,8 +577,8 @@ export const freightStorage = {
         } catch (e) {}
       }
 
-      // 2. Load from default / other client keys
-      if (userId !== 'default') {
+      // 2. Fallback to default key only if user has no dedicated local list yet
+      if (userId !== 'default' && !rawUser) {
         const rawDefault = localStorage.getItem(`${CLIENTS_KEY_PREFIX}default`);
         if (rawDefault) {
           try {
@@ -590,27 +590,8 @@ export const freightStorage = {
         }
       }
 
-      // 3. Scan all localStorage keys for freight_clients
-      try {
-        for (let i = 0; i < localStorage.length; i++) {
-          const k = localStorage.key(i);
-          if (k && k.startsWith(CLIENTS_KEY_PREFIX)) {
-            const val = localStorage.getItem(k);
-            if (val) {
-              const parsed = JSON.parse(val);
-              if (Array.isArray(parsed)) {
-                parsed.forEach(addOrMerge);
-              }
-            }
-          }
-        }
-      } catch (e) {}
-
-      // 4. Auto-harvest clients from all saved quotes
-      const allQuotes = [
-        ...this.getQuotes(userId),
-        ...(userId !== 'default' ? this.getQuotes('default') : [])
-      ];
+      // 3. Auto-harvest clients from current user's saved quotes
+      const allQuotes = this.getQuotes(userId);
 
       for (const q of allQuotes) {
         if (q.client_name && q.client_name.trim().length >= 2) {

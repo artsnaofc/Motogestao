@@ -460,13 +460,29 @@ export function Dashboard() {
 
   useEffect(() => {
     let active = true;
+    let activeUid = '';
     getEffectiveUserId().then(uid => {
       if (!active) return;
       const effectiveId = uid || 'default';
+      activeUid = effectiveId;
       setDashUserId(effectiveId);
       setCategoryBudgets(planningStorage.getCategoryBudgets(effectiveId));
     });
-    return () => { active = false; };
+
+    const handleSync = (e: Event) => {
+      if (!active) return;
+      const detailUid = (e as CustomEvent)?.detail?.userId;
+      const targetUid = detailUid || activeUid;
+      if (targetUid) {
+        setCategoryBudgets(planningStorage.getCategoryBudgets(targetUid));
+      }
+    };
+
+    window.addEventListener('planning_data_synced', handleSync);
+    return () => {
+      active = false;
+      window.removeEventListener('planning_data_synced', handleSync);
+    };
   }, []);
 
   const { 
