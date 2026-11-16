@@ -1326,10 +1326,10 @@ export function PlanningCalendar() {
                   i => i.paymentStatus === 'pending' && dStr < todayStr
                 );
 
-                // Clamp card dueDay to actual days in this month (so day 31 shows on Feb 28 / Apr 30)
+                // Clamp card closingDay to actual days in this month
                 const daysInThisMonth = endOfMonth(day).getDate();
-                const cardsDueThisDay = inMonth
-                  ? cards.filter(c => Math.min(c.dueDay, daysInThisMonth) === day.getDate())
+                const cardsClosingThisDay = inMonth
+                  ? cards.filter(c => Math.min(c.closingDay, daysInThisMonth) === day.getDate())
                   : [];
 
                 return (
@@ -1363,14 +1363,14 @@ export function PlanningCalendar() {
                       >
                         {day.getDate()}
                       </span>
-                      {cardsDueThisDay.length > 0 && (
+                      {cardsClosingThisDay.length > 0 && (
                         <span className="flex items-center gap-0.5">
-                          {cardsDueThisDay.slice(0, 2).map(c => (
+                          {cardsClosingThisDay.slice(0, 2).map(c => (
                             <span
                               key={c.id}
                               className="w-2 h-2 rounded-full"
                               style={{ backgroundColor: c.color }}
-                              title={`Vencimento ${c.name}`}
+                              title={`Fechamento ${c.name}`}
                             />
                           ))}
                         </span>
