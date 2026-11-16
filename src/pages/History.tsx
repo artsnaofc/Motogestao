@@ -5322,8 +5322,8 @@ export function History() {
             const reserveAporte = rawReserveAporte - reserveSpending;
             const standardExpense = opExpPuro + perExpPuro + reserveAporte;
 
-            // Caixa Liq (Caixa Líquido): cash in - standard cash out (plus investment sales). Asset purchases are excluded.
-            const dailyNet = (incStandard - dailyReserveRendimento) + totalVendaInvestimento - standardExpense;
+            // Caixa Liq (Caixa Líquido): cash in - standard cash out. Asset purchases and sales are excluded.
+            const dailyNet = (incStandard - dailyReserveRendimento) - standardExpense;
             
             // Líquido Real: Standard operating profit (does not count investment purchases as wealth loss)
             const dailyNetReal = incStandard - opExpPuro - perExpPuro;

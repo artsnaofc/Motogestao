@@ -383,8 +383,8 @@ export const DailyProductivityHeatmap: React.FC<DailyProductivityHeatmapProps> =
       const netReserveAporte = rawReserveAporte - reserveSpending;
       const standardExpense = opExpPuro + perExpPuro + netReserveAporte;
 
-      // Caixa Liq (Caixa Líquido do dia): cash in - standard cash out (plus investment sales). Asset purchases are excluded.
-      const dailyNet = (incStandard - dailyReserveRendimento) + totalVendaInvestimento - standardExpense;
+      // Caixa Liq (Caixa Líquido do dia): cash in - standard cash out. Asset purchases and sales are excluded.
+      const dailyNet = (incStandard - dailyReserveRendimento) - standardExpense;
       
       // Líquido Real (Lucro Líquido Real do dia): Standard operating profit
       const dailyNetReal = incStandard - opExpPuro - perExpPuro;

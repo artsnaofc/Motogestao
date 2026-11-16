@@ -197,7 +197,7 @@ class SyncQueueManager {
 
         const { error: insertErr } = await supabase
           .from(task.table)
-          .insert(payloadToInsert);
+          .upsert(payloadToInsert, { onConflict: 'id' });
         error = insertErr;
 
         // Auto fallback 1: If column does not exist in schema
@@ -210,7 +210,7 @@ class SyncQueueManager {
                           error.message?.match(/column ['"]?([a-zA-Z0-9_]+)['"]? of relation/i);
             if (match && match[1] && sanitizedVehicle[match[1]] !== undefined) {
               delete sanitizedVehicle[match[1]];
-              const { error: vehicleRetryErr } = await supabase.from('vehicles').insert(sanitizedVehicle);
+              const { error: vehicleRetryErr } = await supabase.from('vehicles').upsert(sanitizedVehicle, { onConflict: 'id' });
               if (!vehicleRetryErr) {
                 error = null;
               }
@@ -234,7 +234,7 @@ class SyncQueueManager {
             for (const k of coreKeys) {
               if (payloadToInsert[k] !== undefined) simplified[k] = payloadToInsert[k];
             }
-            const { error: fallbackErr } = await supabase.from(task.table).insert(simplified);
+            const { error: fallbackErr } = await supabase.from(task.table).upsert(simplified, { onConflict: 'id' });
             if (!fallbackErr) {
               error = null;
             }
@@ -256,7 +256,7 @@ class SyncQueueManager {
           }
 
           if (omitted) {
-            const { error: fkRetryErr } = await supabase.from(task.table).insert(sanitizedPayload);
+            const { error: fkRetryErr } = await supabase.from(task.table).upsert(sanitizedPayload, { onConflict: 'id' });
             if (!fkRetryErr) {
               error = null;
               const updatePayload: Record<string, any> = {};

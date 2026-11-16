@@ -1444,7 +1444,7 @@ export function Dashboard() {
 
     switch (ind) {
       case 'faturamento_bruto': {
-        return Number((totals.income + (totals.totalVendaInvestimento || 0) + (totals.rendimentosReserva || 0)).toFixed(2));
+        return Number((totals.income + (totals.rendimentosReserva || 0)).toFixed(2));
       }
       case 'fat_liquido_op': {
         return Number((totals.income - totals.opExpPuro).toFixed(2));
@@ -1477,7 +1477,7 @@ export function Dashboard() {
         return Number((totals.opExpPuro || 0).toFixed(2));
       }
       case 'lucro_liquido': {
-        return Number((totals.net + totals.reserveAporte + (totals.rendimentosReserva || 0) - (totals.totalVendaInvestimento || 0)).toFixed(2));
+        return Number((totals.net + totals.reserveAporte + (totals.rendimentosReserva || 0)).toFixed(2));
       }
       case 'balanco_caixa': {
         return Number((totals.net || 0).toFixed(2));
@@ -1823,8 +1823,8 @@ export function Dashboard() {
     const todayStr = format(today, 'yyyy-MM-dd');
     const todayTxs = weeklyTxs.filter(t => ((t as any)._dateStr || t.date.split('T')[0]) === todayStr);
     const todayTotals = calcTotals(todayTxs);
-    const todayIncome = todayTotals.income + (todayTotals.rendimentosReserva || 0) + (todayTotals.totalVendaInvestimento || 0);
-    const todayNet = todayTotals.net + todayTotals.reserveAporte + (todayTotals.rendimentosReserva || 0) - (todayTotals.totalVendaInvestimento || 0);
+    const todayIncome = todayTotals.income + (todayTotals.rendimentosReserva || 0);
+    const todayNet = todayTotals.net + todayTotals.reserveAporte + (todayTotals.rendimentosReserva || 0);
 
     const daysRemainingInclusive = Math.max(1, differenceInCalendarDays(startOfDay(endOfW), startOfDay(today)) + 1);
 
@@ -1835,11 +1835,11 @@ export function Dashboard() {
     const netGoal = settings?.weekly_net_goal || 0;
     
     // Net profit (Lucro Líquido) is calculated as standard net balance + reserve contributions (or simply income - expenses)
-    const weeklyNet = weeklyTotals.net + weeklyTotals.reserveAporte + (weeklyTotals.rendimentosReserva || 0) - (weeklyTotals.totalVendaInvestimento || 0);
-    const lastWeeklyNet = lastWeeklyTotals.net + lastWeeklyTotals.reserveAporte + (lastWeeklyTotals.rendimentosReserva || 0) - (lastWeeklyTotals.totalVendaInvestimento || 0);
+    const weeklyNet = weeklyTotals.net + weeklyTotals.reserveAporte + (weeklyTotals.rendimentosReserva || 0);
+    const lastWeeklyNet = lastWeeklyTotals.net + lastWeeklyTotals.reserveAporte + (lastWeeklyTotals.rendimentosReserva || 0);
     
-    const weeklyIncomeTotal = weeklyTotals.income + (weeklyTotals.rendimentosReserva || 0) + (weeklyTotals.totalVendaInvestimento || 0);
-    const lastWeeklyIncomeTotal = lastWeeklyTotals.income + (lastWeeklyTotals.rendimentosReserva || 0) + (lastWeeklyTotals.totalVendaInvestimento || 0);
+    const weeklyIncomeTotal = weeklyTotals.income + (weeklyTotals.rendimentosReserva || 0);
+    const lastWeeklyIncomeTotal = lastWeeklyTotals.income + (lastWeeklyTotals.rendimentosReserva || 0);
 
     const progress = goal > 0 ? (weeklyIncomeTotal / goal) * 100 : 0;
     const lastProgress = goal > 0 ? (lastWeeklyIncomeTotal / goal) * 100 : 0;
@@ -2030,8 +2030,8 @@ export function Dashboard() {
     const currentOpPuro = current.opExpPuro;
     const pastOpPuro = past.opExpPuro;
 
-    const currentNetPatrimony = current.net + current.reserveAporte + (current.rendimentosReserva || 0) - (current.totalVendaInvestimento || 0);
-    const pastNetPatrimony = past.net + past.reserveAporte + (past.rendimentosReserva || 0) - (past.totalVendaInvestimento || 0);
+    const currentNetPatrimony = current.net + current.reserveAporte + (current.rendimentosReserva || 0);
+    const pastNetPatrimony = past.net + past.reserveAporte + (past.rendimentosReserva || 0);
 
     const currentNetOpProfit = current.income - currentOpPuro;
     const pastNetOpProfit = past.income - pastOpPuro;
@@ -2075,7 +2075,7 @@ export function Dashboard() {
   }, [current, past, globalPeriod]);
 
   const analyticsMargins = useMemo(() => {
-    const income = (summary.totalIncome || 0) + (summary.rendimentosReserva || 0) + (summary.totalVendaInvestimento || 0);
+    const income = (summary.totalIncome || 0) + (summary.rendimentosReserva || 0);
     const opPuro = summary.opExpensePuro || 0;
     const per = Math.max(0, summary.perExpense || 0);
     const totalExp = opPuro + per;
@@ -2166,7 +2166,7 @@ export function Dashboard() {
 
     Object.entries(dailyGroups).forEach(([date, txs]) => {
       const totals = calcTotals(txs);
-      const fatTotal = totals.income + (totals.rendimentosReserva || 0) + (totals.totalVendaInvestimento || 0);
+      const fatTotal = totals.income + (totals.rendimentosReserva || 0);
       const realExpense = totals.opExpPuro + totals.perExp;
       const patrimonyProfit = fatTotal - realExpense;
 
@@ -2194,7 +2194,7 @@ export function Dashboard() {
 
     Object.entries(monthlyGroups).forEach(([month, txs]) => {
       const totals = calcTotals(txs);
-      const fatTotal = totals.income + (totals.rendimentosReserva || 0) + (totals.totalVendaInvestimento || 0);
+      const fatTotal = totals.income + (totals.rendimentosReserva || 0);
       const realExpense = totals.opExpPuro + totals.perExp;
       const patrimonyProfit = fatTotal - realExpense;
 
@@ -2539,7 +2539,7 @@ export function Dashboard() {
       const outrasOp = Math.max(0, opPuro - fuelAndToll);
       const perExp = Math.max(0, totals.perExp || 0);
 
-      const lucroLiquido = totals.net + totals.reserveAporte + (totals.rendimentosReserva || 0) - (totals.totalVendaInvestimento || 0);
+      const lucroLiquido = totals.net + totals.reserveAporte + (totals.rendimentosReserva || 0);
       const lucroOperacional = fatTotal - opPuro;
 
       // Unique days with activity in that month
@@ -2618,7 +2618,7 @@ export function Dashboard() {
       const outrasOp = Math.max(0, opPuro - fuelAndToll);
       const perExp = Math.max(0, totals.perExp || 0);
 
-      const lucroLiquido = totals.net + totals.reserveAporte + (totals.rendimentosReserva || 0) - (totals.totalVendaInvestimento || 0);
+      const lucroLiquido = totals.net + totals.reserveAporte + (totals.rendimentosReserva || 0);
       const lucroOperacional = fatTotal - opPuro;
 
       const rpk = kmTotal > 0 ? fatTotal / kmTotal : 0;
@@ -2831,10 +2831,10 @@ export function Dashboard() {
       const dailyData = filteredDays.map(day => {
         const dayStr = format(day, 'yyyy-MM-dd');
         const dayTxs = txsByDate[dayStr] || [];
-        const { income, expense, rendimentosReserva, totalVendaInvestimento } = calcTotals(dayTxs);
+        const { income, expense, rendimentosReserva } = calcTotals(dayTxs);
         return { 
           date: format(day, 'dd/MM'), 
-          income: Number((income + (rendimentosReserva || 0) + (totalVendaInvestimento || 0)).toFixed(2)), 
+          income: Number((income + (rendimentosReserva || 0)).toFixed(2)), 
           expense: Number(expense.toFixed(2)) 
         };
       });
@@ -2861,22 +2861,22 @@ export function Dashboard() {
         const pastDayStr = format(pastDay, 'yyyy-MM-dd');
         const pastTxs = pastTxsByDate[pastDayStr] || [];
 
-        const { income, expense, net, opExpPuro, perExp, reserveAporte, rendimentosReserva, totalVendaInvestimento, totalCompraInvestimento } = calcTotals(dayTxs);
+        const { income, expense, net, opExpPuro, perExp, reserveAporte, rendimentosReserva } = calcTotals(dayTxs);
         const pastTotals = calcTotals(pastTxs);
 
-        const fatTotal = income + (rendimentosReserva || 0) + (totalVendaInvestimento || 0);
-        const pastFatTotal = pastTotals.income + (pastTotals.rendimentosReserva || 0) + (pastTotals.totalVendaInvestimento || 0);
+        const fatTotal = income + (rendimentosReserva || 0);
+        const pastFatTotal = pastTotals.income + (pastTotals.rendimentosReserva || 0);
 
         cumDespesasTotais += expense;
         cumDespesasPessoais += perExp;
         cumDespesasOperacionais += opExpPuro;
         cumFaturamento += fatTotal;
         cumLucroLiquido += net;
-        cumLucroPatrimonio += (net + reserveAporte + (rendimentosReserva || 0) - (totalVendaInvestimento || 0));
+        cumLucroPatrimonio += (net + reserveAporte + (rendimentosReserva || 0));
 
         cumFaturamentoAnt += pastFatTotal;
         cumLucroLiquidoAnt += pastTotals.net;
-        cumLucroPatrimonioAnt += (pastTotals.net + pastTotals.reserveAporte + (pastTotals.rendimentosReserva || 0) - (pastTotals.totalVendaInvestimento || 0));
+        cumLucroPatrimonioAnt += (pastTotals.net + pastTotals.reserveAporte + (pastTotals.rendimentosReserva || 0));
         cumDespesasOperacionaisAnt += pastTotals.opExpPuro;
         cumDespesasTotaisAnt += pastTotals.expense;
         cumDespesasPessoaisAnt += pastTotals.perExp;
@@ -2938,10 +2938,10 @@ export function Dashboard() {
 
       const dailyData = sortedWeeks.map(w => {
         const label = `${format(w.start, 'dd/MM')} - ${format(w.end, 'dd/MM')}`;
-        const { income, expense, rendimentosReserva, totalVendaInvestimento } = calcTotals(w.txs);
+        const { income, expense, rendimentosReserva } = calcTotals(w.txs);
         return { 
           date: label, 
-          income: Number((income + (rendimentosReserva || 0) + (totalVendaInvestimento || 0)).toFixed(2)), 
+          income: Number((income + (rendimentosReserva || 0)).toFixed(2)), 
           expense: Number(expense.toFixed(2)) 
         };
       });
@@ -2962,22 +2962,22 @@ export function Dashboard() {
 
       const dailyTrendData = sortedWeeks.map(w => {
         const label = `${format(w.start, 'dd/MM')} - ${format(w.end, 'dd/MM')}`;
-        const { income, expense, net, opExpPuro, perExp, reserveAporte, rendimentosReserva, totalVendaInvestimento, totalCompraInvestimento } = calcTotals(w.txs);
+        const { income, expense, net, opExpPuro, perExp, reserveAporte, rendimentosReserva } = calcTotals(w.txs);
         const pastTotals = calcTotals(w.pastTxs);
 
-        const fatTotal = income + (rendimentosReserva || 0) + (totalVendaInvestimento || 0);
-        const pastFatTotal = pastTotals.income + (pastTotals.rendimentosReserva || 0) + (pastTotals.totalVendaInvestimento || 0);
+        const fatTotal = income + (rendimentosReserva || 0);
+        const pastFatTotal = pastTotals.income + (pastTotals.rendimentosReserva || 0);
 
         cumDespesasTotais += expense;
         cumDespesasPessoais += perExp;
         cumDespesasOperacionais += opExpPuro;
         cumFaturamento += fatTotal;
         cumLucroLiquido += net;
-        cumLucroPatrimonio += (net + reserveAporte + (rendimentosReserva || 0) - (totalVendaInvestimento || 0));
+        cumLucroPatrimonio += (net + reserveAporte + (rendimentosReserva || 0));
 
         cumFaturamentoAnt += pastFatTotal;
         cumLucroLiquidoAnt += pastTotals.net;
-        cumLucroPatrimonioAnt += (pastTotals.net + pastTotals.reserveAporte + (pastTotals.rendimentosReserva || 0) - (pastTotals.totalVendaInvestimento || 0));
+        cumLucroPatrimonioAnt += (pastTotals.net + pastTotals.reserveAporte + (pastTotals.rendimentosReserva || 0));
         cumDespesasOperacionaisAnt += pastTotals.opExpPuro;
         cumDespesasTotaisAnt += pastTotals.expense;
         cumDespesasPessoaisAnt += pastTotals.perExp;
@@ -3030,10 +3030,10 @@ export function Dashboard() {
         .map(day => {
           const dayStr = format(day, 'yyyy-MM-dd');
           const dayTxs = allTxsByDate[dayStr] || [];
-          const { income, expense, rendimentosReserva, totalVendaInvestimento } = calcTotals(dayTxs);
+          const { income, expense, rendimentosReserva } = calcTotals(dayTxs);
           return {
             date: format(day, 'dd/MM'),
-            income: Number((income + (rendimentosReserva || 0) + (totalVendaInvestimento || 0)).toFixed(2)),
+            income: Number((income + (rendimentosReserva || 0)).toFixed(2)),
             expense: Number(expense.toFixed(2))
           };
         });
@@ -3067,10 +3067,10 @@ export function Dashboard() {
         .map(mKey => {
           const item = monthsMap[mKey];
           const label = format(item.start, 'MMM/yy', { locale: ptBR });
-          const { income, expense, rendimentosReserva, totalVendaInvestimento } = calcTotals(item.txs);
+          const { income, expense, rendimentosReserva } = calcTotals(item.txs);
           return {
             date: label,
-            income: Number((income + (rendimentosReserva || 0) + (totalVendaInvestimento || 0)).toFixed(2)),
+            income: Number((income + (rendimentosReserva || 0)).toFixed(2)),
             expense: Number(expense.toFixed(2))
           };
         });
@@ -3113,10 +3113,10 @@ export function Dashboard() {
 
     return sortedWeeks.map(w => {
       const label = `Sem. ${format(w.start, 'dd/MM')}-${format(w.end, 'dd/MM')}`;
-      const { income, expense, rendimentosReserva, totalVendaInvestimento } = calcTotals(w.txs);
+      const { income, expense, rendimentosReserva } = calcTotals(w.txs);
       return { 
         date: label, 
-        income: Number((income + (rendimentosReserva || 0) + (totalVendaInvestimento || 0)).toFixed(2)), 
+        income: Number((income + (rendimentosReserva || 0)).toFixed(2)), 
         expense: Number(expense.toFixed(2)) 
       };
     });
@@ -3185,8 +3185,8 @@ export function Dashboard() {
       .filter(seg => seg.txs.length > 0);
 
     return sortedSegments.map(seg => {
-      const { income, opExpPuro, perExp, rendimentosReserva, totalVendaInvestimento } = calcTotals(seg.txs);
-      const fatTotal = income + (rendimentosReserva || 0) + (totalVendaInvestimento || 0);
+      const { income, opExpPuro, perExp, rendimentosReserva } = calcTotals(seg.txs);
+      const fatTotal = income + (rendimentosReserva || 0);
       const totalExp = opExpPuro + perExp;
 
       const opMargin = fatTotal > 0 ? ((fatTotal - opExpPuro) / fatTotal) * 100 : (opExpPuro > 0 ? -100 : 0);
@@ -3357,7 +3357,7 @@ export function Dashboard() {
     return monthsList.map(month => {
       const monthStr = format(month, 'yyyy-MM');
       const monthTxs = (chartTransactionsAdjusted || []).filter(t => (t as any)._monthStr === monthStr);
-      const { income, expense, net, reserveAporte, rendimentosReserva, totalVendaInvestimento } = calcTotals(monthTxs);
+      const { income, expense, net, reserveAporte, rendimentosReserva } = calcTotals(monthTxs);
       
       const rawMonthName = format(month, 'MMM', { locale: ptBR });
       const monthLabel = rawMonthName.charAt(0).toUpperCase() + rawMonthName.slice(1).replace('.', '');
@@ -3367,10 +3367,10 @@ export function Dashboard() {
         monthKey: monthStr,
         month: monthLabel,
         fullMonth: fullLabel.charAt(0).toUpperCase() + fullLabel.slice(1),
-        faturamento: Number((income + (rendimentosReserva || 0) + (totalVendaInvestimento || 0)).toFixed(2)),
+        faturamento: Number((income + (rendimentosReserva || 0)).toFixed(2)),
         despesas: Number(expense.toFixed(2)),
         lucro: Number(net.toFixed(2)),
-        lucroPatrimonio: Number((net + reserveAporte + (rendimentosReserva || 0) - (totalVendaInvestimento || 0)).toFixed(2)),
+        lucroPatrimonio: Number((net + reserveAporte + (rendimentosReserva || 0)).toFixed(2)),
         txCount: monthTxs.length,
         hasTxs: monthTxs.length > 0
       };
