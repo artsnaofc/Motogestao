@@ -402,6 +402,21 @@ export function ReserveHistoryTab({
           isSuggestion: false
         };
       }
+      const isInvestmentSale = tx.source === 'investment' ||
+                               Boolean(tx.linked_investment_id) ||
+                               Boolean(tx.description && tx.description.toLowerCase().includes('investimento: venda'));
+      if (isInvestmentSale) {
+        return {
+          label: 'Venda de Ativo (D+2)',
+          shortLabel: 'Venda',
+          categoryKey: 'manual_aporte',
+          badgeClass: 'bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/20',
+          icon: ArrowDownLeft,
+          color: 'text-sky-600 dark:text-sky-400',
+          isMass: false,
+          isSuggestion: false
+        };
+      }
       return {
         label: 'Aporte Manual',
         shortLabel: 'Manual',
@@ -748,6 +763,7 @@ export function ReserveHistoryTab({
 
     filteredItems.forEach(item => {
       if (item.kind === 'transaction') {
+        if (item.tx.payment_status === 'pending' || (item.tx as any).status === 'pending') return;
         const info = getTxCategoryInfo(item.tx);
         const amount = Number(item.tx.amount || 0);
 
@@ -2966,11 +2982,11 @@ export function ReserveHistoryTab({
               {/* Payment Status Tag */}
               {tx.payment_status === 'pending' ? (
                 <span className="px-1.5 py-0.2 text-[9px] font-bold rounded-md bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
-                  ⏳ Pendente
+                  {tx.due_date ? `⏳ Liquida em ${formatDateDisplay(tx.due_date)}` : '⏳ Pendente'}
                 </span>
               ) : tx.payment_status === 'paid' && (
                 <span className="px-1.5 py-0.2 text-[9px] font-bold rounded-md bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
-                  ✓ Pago
+                  ✓ Liquidado
                 </span>
               )}
 
@@ -3041,6 +3057,23 @@ export function ReserveHistoryTab({
 
           {/* Action Buttons */}
           <div className="flex items-center gap-1">
+            {onEditTransaction && tx.payment_status === 'pending' && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() =>
+                  onEditTransaction(tx.id, {
+                    payment_status: 'paid',
+                    payment_date: getTodayLocalDateStr(),
+                    due_date: null as any,
+                  })
+                }
+                className="w-8 h-8 p-0 rounded-xl text-emerald-600 hover:text-emerald-700 hover:bg-emerald-500/10 cursor-pointer"
+                title="Confirmar liquidação agora"
+              >
+                <CheckCircle2 className="w-4 h-4" />
+              </Button>
+            )}
             <Button
               variant="ghost"
               size="sm"

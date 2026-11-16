@@ -17,7 +17,7 @@ import { parseNumericValue } from '../lib/numberUtils';
 import { fetchSingleQuote } from '../lib/quoteService';
 import { calculateAssetDividendProjection, calculatePortfolioProjections, calculatePortfolioPerformanceMetrics } from '../lib/investmentCalculations';
 import { InvestmentTransaction, Dividend, DividendType, DividendStatus } from '../types';
-import { getTodayLocalDateStr } from '../lib/utils';
+import { addBusinessDays, formatLocalDateBR, getTodayLocalDateStr } from '../lib/utils';
 import { toast } from '@/lib/toast';
 import { 
   PlusCircle, 
@@ -95,6 +95,7 @@ export function Investments() {
     lastQuoteFetchResult,
     fetchQuotes,
     reserves,
+    reserveTransactions,
     settings,
     updateAssetCnpj,
     dividendAnalysisMode,
@@ -660,10 +661,8 @@ export function Investments() {
 
       if (editItem) {
         await updateInvestmentTransaction(editItem.id, payload);
-        toast.success('Lançamento atualizado!');
       } else {
         await addInvestmentTransaction(payload);
-        toast.success('Lançamento realizado!');
       }
       
       setIsModalOpen(false);
@@ -2205,11 +2204,32 @@ export function Investments() {
                           {new Date(tx.date + 'T12:00:00Z').toLocaleDateString('pt-BR', { timeZone: 'UTC' })}
                         </td>
                         <td className="px-4 py-3">
-                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md uppercase ${
-                            tx.operation === 'buy' ? 'bg-emerald-500/10 text-emerald-600' : 'bg-rose-500/10 text-rose-600'
-                          }`}>
-                            {tx.operation === 'buy' ? 'Compra' : 'Venda'}
-                          </span>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md uppercase ${
+                              tx.operation === 'buy' ? 'bg-emerald-500/10 text-emerald-600' : 'bg-rose-500/10 text-rose-600'
+                            }`}>
+                              {tx.operation === 'buy' ? 'Compra' : 'Venda'}
+                            </span>
+                            {tx.operation === 'sell' && tx.reserve_id && (() => {
+                              const linkedRt = (reserveTransactions || []).find(
+                                rt => rt.id === tx.transaction_id || rt.linked_investment_id === tx.id
+                              );
+                              const settleDate = linkedRt?.due_date || linkedRt?.date || addBusinessDays(tx.date, 2);
+                              const isPending = linkedRt ? linkedRt.payment_status === 'pending' : settleDate > getTodayLocalDateStr();
+                              return (
+                                <span
+                                  className={`text-[9.5px] font-bold px-1.5 py-0.5 rounded-md border ${
+                                    isPending
+                                      ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20'
+                                      : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20'
+                                  }`}
+                                  title={isPending ? 'Aguardando liquidação em 2 dias úteis (D+2)' : 'Liquidado na reserva'}
+                                >
+                                  {isPending ? `⏳ D+2: ${formatLocalDateBR(settleDate)}` : `✓ Liq. ${formatLocalDateBR(settleDate)}`}
+                                </span>
+                              );
+                            })()}
+                          </div>
                         </td>
                         <td className="px-4 py-3 font-black text-foreground">{tx.ticker}</td>
                         <td className="px-4 py-3 text-right font-bold">{tx.quantity}</td>
@@ -2387,15 +2407,17 @@ export function Investments() {
                 const subtotal = numP * numQ;
                 const isBuy = operation === 'buy';
                 const totalOp = isBuy ? subtotal + numC : Math.max(0, subtotal - numC);
+                const settlementStr = !isBuy ? addBusinessDays(date || getTodayLocalDateStr(), 2) : null;
+                const isFutureSettlement = Boolean(settlementStr && settlementStr > getTodayLocalDateStr());
 
                 if (subtotal <= 0) return null;
 
                 return (
-                  <div className="sm:col-span-2 p-3.5 rounded-2xl bg-muted/30 border border-border/50 space-y-1">
-                    <div className="flex items-center justify-between text-xs">
+                  <div className="sm:col-span-2 p-3.5 rounded-2xl bg-muted/30 border border-border/50 space-y-1.5">
+                    <div className="flex items-center justify-between text-xs gap-2 flex-wrap">
                       <span className="text-muted-foreground font-bold">Resumo da Operação:</span>
                       <span className={`font-black text-sm ${isBuy ? 'text-emerald-500' : 'text-emerald-600 dark:text-emerald-400'}`}>
-                        {isBuy ? 'Aporte Total (Retirado da Reserva): ' : 'Valor a Receber (Creditado na Reserva): '}
+                        {isBuy ? 'Aporte Total (Retirado da Reserva): ' : 'Valor Líquido (Liquidação D+2): '}
                         {formatCurrency(totalOp)}
                       </span>
                     </div>
@@ -2403,6 +2425,16 @@ export function Investments() {
                       <span>Subtotal ({numQ} {numQ === 1 ? 'cota' : 'cotas'} x {formatCurrency(numP)}): {formatCurrency(subtotal)}</span>
                       {numC > 0 && <span>Taxas: {formatCurrency(numC)}</span>}
                     </div>
+                    {!isBuy && reserveId && settlementStr && (
+                      <div className={`text-[11px] font-bold flex items-center gap-1.5 pt-1 border-t border-border/40 ${isFutureSettlement ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                        <Clock className="w-3.5 h-3.5 shrink-0" />
+                        <span>
+                          {isFutureSettlement
+                            ? `Crédito previsto na reserva em 2 dias úteis: ${formatLocalDateBR(settlementStr)} (pendente até liquidar)`
+                            : `Liquidação D+2 concluída em ${formatLocalDateBR(settlementStr)} (creditado na reserva)`}
+                        </span>
+                      </div>
+                    )}
                   </div>
                 );
               })()}

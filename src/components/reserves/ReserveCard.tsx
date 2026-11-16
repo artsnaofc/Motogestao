@@ -117,6 +117,17 @@ export function ReserveCard({
   const totalYield = yieldStats.yieldAmount;
   const projection = calculateReserveGoalProjection(reserve, transactions, reserveTransactions);
 
+  const pendingCredits = Math.round(
+    (reserveTransactions || [])
+      .filter(
+        rt =>
+          rt.reserve_id === reserve.id &&
+          (rt.type === 'aporte' || rt.type === 'rendimento') &&
+          rt.payment_status === 'pending'
+      )
+      .reduce((sum, rt) => sum + Number(rt.amount || 0), 0) * 100
+  ) / 100;
+
   // Rule label format
   const getRuleBadge = () => {
     if (!reserve.regra_ativa || !reserve.regra_tipo) return null;
@@ -340,6 +351,15 @@ export function ReserveCard({
               </span>
             )}
           </div>
+
+          {pendingCredits > 0 && (
+            <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-[10px] font-bold text-amber-600 dark:text-amber-400">
+              <Clock className="w-2.5 h-2.5 shrink-0" />
+              <span>
+                {hideValues ? '+R$ ••• a liquidar' : `+${formatCurrency(pendingCredits)} a liquidar (D+2 / pendente)`}
+              </span>
+            </div>
+          )}
 
           {/* Goal Progress Bar */}
           {hasGoal && (

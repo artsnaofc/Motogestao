@@ -24,3 +24,32 @@ export function getTodayLocalDateStr(date: Date = new Date()): string {
   return `${y}-${m}-${d}`;
 }
 
+/**
+ * Soma N dias úteis (segunda a sexta) a uma data no formato YYYY-MM-DD,
+ * retornando YYYY-MM-DD em fuso horário local (ex: liquidação D+2 da B3).
+ */
+export function addBusinessDays(dateStr: string, businessDays: number): string {
+  const clean = String(dateStr || '').split('T')[0];
+  const [y, m, d] = clean.split('-').map(Number);
+  const base = (y && m && d) ? new Date(y, m - 1, d) : new Date();
+  let remaining = Math.max(0, Math.floor(businessDays));
+  while (remaining > 0) {
+    base.setDate(base.getDate() + 1);
+    const dayOfWeek = base.getDay();
+    if (dayOfWeek !== 0 && dayOfWeek !== 6) {
+      remaining--;
+    }
+  }
+  return getTodayLocalDateStr(base);
+}
+
+/**
+ * Formata uma data YYYY-MM-DD para DD/MM/YYYY sem deslocamento de fuso UTC.
+ */
+export function formatLocalDateBR(dateStr?: string | null): string {
+  if (!dateStr) return '--/--/----';
+  const clean = String(dateStr).split('T')[0];
+  const parts = clean.split('-');
+  if (parts.length !== 3) return clean;
+  return `${parts[2]}/${parts[1]}/${parts[0]}`;
+}

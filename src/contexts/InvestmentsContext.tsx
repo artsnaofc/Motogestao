@@ -6,7 +6,7 @@ import { B3AssetHistoryRecord, getAssetTypeForTicker } from '../lib/b3Fundamenta
 import { toast } from '../lib/toast';
 import { cacheManager } from '../lib/cacheManager';
 import { syncQueueManager } from '../lib/syncQueue';
-import { getTodayLocalDateStr } from '../lib/utils';
+import { addBusinessDays, formatCurrency, formatLocalDateBR, getTodayLocalDateStr } from '../lib/utils';
 import { getEffectiveUserId, getEffectiveUser, getSyncEffectiveUserId } from '../lib/authUtils';
 
 export interface InvestmentsContextType {
@@ -235,6 +235,7 @@ export function InvestmentsProvider({
 
   const processingDividendsRef = useRef<Set<string>>(new Set());
   const isProcessingDividendsRef = useRef<boolean>(false);
+  const isProcessingSaleSettlementsRef = useRef<boolean>(false);
 
   // Global Dividend Analysis Mode ('received_only' | 'include_provisioned')
   const [dividendAnalysisMode, setDividendAnalysisModeState] = useState<DividendAnalysisMode>(() => {
@@ -522,6 +523,150 @@ export function InvestmentsProvider({
     return () => clearTimeout(timeout);
   }, [dividends, settings?.default_investment_reserve_id, targetReserveId, reserveTransactions, onDataChange, onReserveTransactionsSync, isCloudHydrated, propUserId]);
 
+  // Automated D+2 Business-Day Settlement for Asset Sales (and safe migration of recent pre-fix sales inside D+2 window)
+  useEffect(() => {
+    const processSaleSettlements = async () => {
+      if (isProcessingSaleSettlementsRef.current) return;
+      const isOnline = typeof navigator === 'undefined' || navigator.onLine;
+      if (isOnline && !isCloudHydrated) return;
+
+      const userId = propUserId || (await getEffectiveUserId()) || 'default';
+      if (!userId || userId === 'default') return;
+
+      const curRts: ReserveTransaction[] = [
+        ...(reserveTransactions || []),
+        ...(cacheManager.get<ReserveTransaction[]>(`reserve_transactions_${userId}`) || []).filter(
+          cachedRt => !(reserveTransactions || []).some(stateRt => stateRt.id === cachedRt.id)
+        )
+      ];
+      if (curRts.length === 0) return;
+
+      const today = getTodayLocalDateStr();
+      const pendingDueToSettle = curRts.filter(rt => {
+        if (!rt.linked_investment_id || rt.type !== 'aporte') return false;
+        if (rt.payment_status !== 'pending') return false;
+        const settleDate = (rt.due_date || rt.date || '').split('T')[0];
+        return Boolean(settleDate && settleDate <= today);
+      });
+
+      const legacyRecentSalesToHold = (investmentTransactions || []).filter(it => {
+        if (it.operation !== 'sell' || !it.reserve_id) return false;
+        const settlementDate = addBusinessDays(it.date, 2);
+        if (settlementDate <= today) return false;
+        const linkedRt = curRts.find(rt => rt.id === it.transaction_id || rt.linked_investment_id === it.id);
+        if (!linkedRt || linkedRt.type !== 'aporte') return false;
+        const rtDate = (linkedRt.date || '').split('T')[0];
+        const itDate = (it.date || '').split('T')[0];
+        return (
+          linkedRt.payment_status !== 'pending' &&
+          !linkedRt.due_date &&
+          !linkedRt.payment_date &&
+          rtDate === itDate
+        );
+      });
+
+      if (pendingDueToSettle.length === 0 && legacyRecentSalesToHold.length === 0) return;
+
+      isProcessingSaleSettlementsRef.current = true;
+      try {
+        let updatedRts = [...curRts];
+        let changed = false;
+        const settledTickers: string[] = [];
+
+        if (pendingDueToSettle.length > 0) {
+          let cloudPendingSet: Set<string> | null = null;
+          if (isOnline) {
+            try {
+              const ids = pendingDueToSettle.map(r => r.id);
+              const { data, error } = await supabase
+                .from('reserve_transactions')
+                .select('id, payment_status')
+                .eq('user_id', userId)
+                .in('id', ids);
+              if (!error && data) {
+                cloudPendingSet = new Set(
+                  data.filter((row: any) => row.payment_status === 'pending').map((row: any) => row.id)
+                );
+              }
+            } catch {
+              // fallback to local check only if offline/error
+            }
+          }
+
+          for (const rt of pendingDueToSettle) {
+            if (cloudPendingSet !== null && !cloudPendingSet.has(rt.id)) continue;
+            const settleDate = (rt.due_date || rt.date || today).split('T')[0];
+            const updatePayload = {
+              payment_status: 'paid' as const,
+              payment_date: settleDate,
+              due_date: null as string | null,
+            };
+            updatedRts = updatedRts.map(item =>
+              item.id === rt.id
+                ? { ...item, payment_status: 'paid', payment_date: settleDate, due_date: undefined }
+                : item
+            );
+            syncQueueManager.enqueue('reserve_transactions', 'update', rt.id, updatePayload);
+            changed = true;
+            const linkedIt = investmentTransactions.find(it => it.id === rt.linked_investment_id || it.transaction_id === rt.id);
+            if (linkedIt?.ticker) settledTickers.push(linkedIt.ticker);
+          }
+        }
+
+        for (const it of legacyRecentSalesToHold) {
+          const linkedRt = updatedRts.find(rt => rt.id === it.transaction_id || rt.linked_investment_id === it.id);
+          if (!linkedRt) continue;
+          const settlementDate = addBusinessDays(it.date, 2);
+          const nextDesc = `Investimento: Venda ${it.ticker} (Liq. D+2)`;
+          const updatePayload = {
+            date: settlementDate,
+            due_date: settlementDate,
+            payment_status: 'pending' as const,
+            payment_date: null as string | null,
+            description: nextDesc,
+            source: 'investment' as const,
+          };
+          updatedRts = updatedRts.map(item =>
+            item.id === linkedRt.id
+              ? {
+                  ...item,
+                  date: settlementDate,
+                  due_date: settlementDate,
+                  payment_status: 'pending',
+                  payment_date: undefined,
+                  description: nextDesc,
+                  source: 'investment',
+                }
+              : item
+          );
+          syncQueueManager.enqueue('reserve_transactions', 'update', linkedRt.id, updatePayload);
+          changed = true;
+        }
+
+        if (changed) {
+          cacheManager.set(`reserve_transactions_${userId}`, updatedRts, undefined, 'reserves');
+          if (onReserveTransactionsSync) {
+            onReserveTransactionsSync(updatedRts);
+          }
+          if (settledTickers.length > 0) {
+            toast.success(
+              `Liquidação D+2 de ${Array.from(new Set(settledTickers)).join(', ')} creditada na reserva!`,
+              { id: 'sale-d2-settle' }
+            );
+          }
+          if (onDataChange) {
+            await onDataChange(true);
+          }
+        }
+      } finally {
+        isProcessingSaleSettlementsRef.current = false;
+      }
+    };
+
+    const timeout = setTimeout(processSaleSettlements, 500);
+    return () => clearTimeout(timeout);
+  }, [investmentTransactions, reserveTransactions, isCloudHydrated, propUserId, onReserveTransactionsSync, onDataChange]);
+
   const addInvestmentTransaction = useCallback(async (
     newIt: Omit<InvestmentTransaction, 'id' | 'user_id' | 'created_at'>,
     options?: { silent?: boolean }
@@ -549,16 +694,26 @@ export function InvestmentsProvider({
           ? (isBuy ? itObj.amount + txCosts : Math.max(0, itObj.amount - txCosts))
           : itObj.amount;
 
+        const today = getTodayLocalDateStr();
+        const settlementDate = isBuy ? itObj.date : addBusinessDays(itObj.date, 2);
+        const isSettled = isBuy || settlementDate <= today;
+
         rtObj = {
           id: rtId,
           user_id: userId,
           reserve_id: itObj.reserve_id,
           type: isBuy ? 'utilizacao' : 'aporte',
           amount: reserveAmount,
-          date: itObj.date,
+          date: settlementDate,
           category: 'Investimentos',
-          description: `Investimento: ${isBuy ? 'Compra' : 'Venda'} ${itObj.ticker}`,
+          description: isBuy
+            ? `Investimento: Compra ${itObj.ticker}`
+            : `Investimento: Venda ${itObj.ticker} (Liq. D+2)`,
           linked_investment_id: itObj.id,
+          payment_status: isSettled ? 'paid' : 'pending',
+          payment_date: isSettled ? settlementDate : undefined,
+          due_date: isSettled ? undefined : settlementDate,
+          source: 'investment',
           created_at: new Date().toISOString(),
         };
 
@@ -608,8 +763,12 @@ export function InvestmentsProvider({
           category: rtObj.category,
           description: rtObj.description,
           linked_investment_id: rtObj.linked_investment_id,
+          payment_status: rtObj.payment_status || 'paid',
+          source: 'investment',
           created_at: rtObj.created_at,
         };
+        if (rtObj.payment_date) rtSupabasePayload.payment_date = rtObj.payment_date;
+        if (rtObj.due_date) rtSupabasePayload.due_date = rtObj.due_date;
 
         syncQueueManager.enqueue('reserve_transactions', 'insert', rtObj.id, rtSupabasePayload);
 
@@ -623,7 +782,16 @@ export function InvestmentsProvider({
         await onDataChange(true);
       }
 
-      if (!options?.silent) toast.success('Lançamento de investimento registrado!', { id: 'inv-action' });
+      if (!options?.silent) {
+        if (rtObj && itObj.operation === 'sell' && rtObj.payment_status === 'pending') {
+          toast.success(
+            `Venda de ${itObj.ticker} registrada! Liquidação de ${formatCurrency(rtObj.amount)} na reserva em ${formatLocalDateBR(rtObj.date)} (D+2).`,
+            { id: 'inv-action' }
+          );
+        } else {
+          toast.success('Lançamento de investimento registrado!', { id: 'inv-action' });
+        }
+      }
       return itObj.id;
     } catch (err: any) {
       console.warn('Error queuing investment transaction:', err);
@@ -687,19 +855,60 @@ export function InvestmentsProvider({
     // Sync linked reserve transaction
     if (merged.reserve_id && targetTx?.transaction_id) {
       const isBuy = merged.operation === 'buy';
-      const rtAmount = isBuy ? (merged.amount + (merged.costs || 0)) : Math.max(0, merged.amount - (merged.costs || 0));
+      const subtotal = Number(merged.price) * Number(merged.quantity);
+      const txCosts = Number(merged.costs || 0);
+      const isSubtotalOnly = Math.abs(Number(merged.amount) - subtotal) < 0.01 && txCosts > 0;
+      const rtAmount = isSubtotalOnly
+        ? (isBuy ? Number(merged.amount) + txCosts : Math.max(0, Number(merged.amount) - txCosts))
+        : Number(merged.amount);
+
+      const today = getTodayLocalDateStr();
+      const settlementDate = isBuy ? merged.date : addBusinessDays(merged.date, 2);
+      const isSettled = isBuy || settlementDate <= today;
+
       const rtPayload = {
         reserve_id: merged.reserve_id,
         type: isBuy ? 'utilizacao' as const : 'aporte' as const,
         amount: rtAmount,
-        date: merged.date,
-        description: `Investimento: ${isBuy ? 'Compra' : 'Venda'} ${merged.ticker}`
+        date: settlementDate,
+        payment_status: (isSettled ? 'paid' : 'pending') as 'paid' | 'pending',
+        payment_date: isSettled ? settlementDate : null,
+        due_date: isSettled ? null : settlementDate,
+        description: isBuy
+          ? `Investimento: Compra ${merged.ticker}`
+          : `Investimento: Venda ${merged.ticker} (Liq. D+2)`,
+        source: 'investment' as const,
       };
 
       const curRts = cacheManager.get<ReserveTransaction[]>(`reserve_transactions_${userId}`) || [];
-      cacheManager.set(`reserve_transactions_${userId}`, curRts.map(r => r.id === targetTx.transaction_id ? { ...r, ...rtPayload } : r), undefined, 'reserves');
+      cacheManager.set(
+        `reserve_transactions_${userId}`,
+        curRts.map(r =>
+          r.id === targetTx.transaction_id
+            ? {
+                ...r,
+                ...rtPayload,
+                payment_date: rtPayload.payment_date || undefined,
+                due_date: rtPayload.due_date || undefined,
+              }
+            : r
+        ),
+        undefined,
+        'reserves'
+      );
       if (onReserveTransactionsSync) {
-        onReserveTransactionsSync(prev => prev.map(r => r.id === targetTx.transaction_id ? { ...r, ...rtPayload } : r));
+        onReserveTransactionsSync(prev =>
+          prev.map(r =>
+            r.id === targetTx.transaction_id
+              ? {
+                  ...r,
+                  ...rtPayload,
+                  payment_date: rtPayload.payment_date || undefined,
+                  due_date: rtPayload.due_date || undefined,
+                }
+              : r
+          )
+        );
       }
       syncQueueManager.enqueue('reserve_transactions', 'update', targetTx.transaction_id, rtPayload);
       if (onDataChange) {
