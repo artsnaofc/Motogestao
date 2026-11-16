@@ -134,6 +134,7 @@ export function ReserveModal({
         setRegraTipo('');
         setRegraValor('');
         setRegraCategorias(allCategories);
+        setRegraInicioValidade(getTodayLocalDateStr());
         setRequireCategoryOnUse(true);
         setDefaultUseCategory(profileExpenseCategories[0] || 'Manutenção');
       }
@@ -328,6 +329,19 @@ export function ReserveModal({
                 )}
               </div>
 
+              {isEditing && reserveToEdit && (() => {
+                const parsedNewGoal = Math.round((parseFloat(String(metaObjetivo || '').replace(',', '.').trim()) || 0) * 100) / 100;
+                const prevGoal = Math.round(Number(reserveToEdit.meta_objetivo || 0) * 100) / 100;
+                if (Math.abs(parsedNewGoal - prevGoal) > 0.009 && (regraAtiva || reserveToEdit.regra_ativa)) {
+                  return (
+                    <div className="p-2.5 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-[11px] text-indigo-700 dark:text-indigo-300 font-medium leading-snug">
+                      Ao alterar a meta, a contagem da sugestão de aporte será reiniciada a partir de agora para evitar acúmulo de dias e lançamentos anteriores.
+                    </div>
+                  );
+                }
+                return null;
+              })()}
+
               {/* Color Palette */}
               <div className="space-y-1.5 pt-1">
                 <label className="text-xs font-bold text-muted-foreground">Cor do Tema</label>
@@ -384,7 +398,13 @@ export function ReserveModal({
                 <input
                   type="checkbox"
                   checked={regraAtiva}
-                  onChange={e => setRegraAtiva(e.target.checked)}
+                  onChange={e => {
+                    const checked = e.target.checked;
+                    setRegraAtiva(checked);
+                    if (checked && reserveToEdit && !reserveToEdit.regra_ativa) {
+                      setRegraInicioValidade(getTodayLocalDateStr());
+                    }
+                  }}
                   className="w-5 h-5 rounded text-indigo-600 accent-indigo-600 cursor-pointer"
                 />
               </div>

@@ -67,7 +67,8 @@ import {
   RefreshCw,
   RotateCcw,
   Globe,
-  Landmark
+  Landmark,
+  EyeOff
 } from 'lucide-react';
 import { ExecutiveReportModal } from '../components/ExecutiveReportModal';
 import { TransactionDetailView } from '../components/history/TransactionDetailView';
@@ -576,6 +577,7 @@ export function History() {
   const [editPaymentStatus, setEditPaymentStatus] = useState<'paid' | 'pending'>('paid');
   const [editPaymentDate, setEditPaymentDate] = useState('');
   const [editDueDate, setEditDueDate] = useState('');
+  const [editIgnoreInCharts, setEditIgnoreInCharts] = useState(false);
 
   // Recurrence Edit States
   const [editIsRecurring, setEditIsRecurring] = useState(false);
@@ -678,6 +680,7 @@ export function History() {
       setEditDesc(tDescription || '');
       setEditReserveCategory((t as any).reserveCategory || '');
       setEditVehicleId((t as any).vehicle_id || '');
+      setEditIgnoreInCharts(false);
       setShowEditVehicleSelect(false);
 
       const matchRt = (reserveTransactions || []).find(r => r.id === t.id);
@@ -748,6 +751,7 @@ export function History() {
         setEditDeliveries(t.deliveries?.toString() || '');
         setEditOutOfNeighborhood(t.out_of_neighborhood?.toString() || '');
         setEditVehicleId(t.vehicle_id || '');
+        setEditIgnoreInCharts(Boolean(t.ignore_in_charts));
         setShowEditVehicleSelect(false);
       }
     } else {
@@ -763,6 +767,7 @@ export function History() {
       setEditDeliveries(t.deliveries?.toString() || '');
       setEditOutOfNeighborhood(t.out_of_neighborhood?.toString() || '');
       setEditVehicleId(t.vehicle_id || '');
+      setEditIgnoreInCharts(Boolean(t.ignore_in_charts));
       setShowEditVehicleSelect(false);
     }
   };
@@ -1108,6 +1113,7 @@ export function History() {
                 deliveries: null,
                 out_of_neighborhood: null,
                 vehicle_id: finalVehicleId || undefined,
+                ignore_in_charts: editIgnoreInCharts,
                 created_at: new Date().toISOString()
               };
 
@@ -1161,6 +1167,7 @@ export function History() {
                   category: editCategory,
                   description: subDesc,
                   vehicle_id: finalVehicleId || undefined,
+                  ignore_in_charts: editIgnoreInCharts,
                   recurrence_frequency: editRecurrenceFrequency,
                   recurrence_installments: numInstallments,
                   installment_total: numInstallments,
@@ -1172,6 +1179,7 @@ export function History() {
                   category: editCategory,
                   description: subDesc,
                   vehicle_id: finalVehicleId || undefined,
+                  ignore_in_charts: editIgnoreInCharts,
                   recurrence_frequency: editRecurrenceFrequency,
                   recurrence_installments: numInstallments,
                   installment_total: numInstallments,
@@ -1222,6 +1230,7 @@ export function History() {
       payment_date: effectivePaymentDate,
       due_date: effectiveDueDate,
       vehicle_id: finalVehicleId,
+      ignore_in_charts: editIgnoreInCharts,
       ...recurrenceFields,
     };
 
@@ -1253,8 +1262,19 @@ export function History() {
     }
     setEditItem(null);
     setEditVehicleId('');
+    setEditIgnoreInCharts(false);
     setShowEditVehicleSelect(false);
     setSaving(false);
+  };
+
+  const handleToggleIgnoreInCharts = async (t: Transaction) => {
+    const nextVal = !t.ignore_in_charts;
+    await updateTransaction(t.id, { ignore_in_charts: nextVal }, { silent: true });
+    toast.success(
+      nextVal
+        ? 'Lançamento ocultado dos gráficos e médias (balanço preservado).'
+        : 'Lançamento restaurado nos gráficos e médias.'
+    );
   };
 
   const askDelete = (id: string, type: 'transaction' | 'reserve_transaction' | 'investment_transaction' | 'dividend') => {
@@ -3406,6 +3426,13 @@ export function History() {
                     {pizzariaBreakdown.dels} entregas {pizzariaBreakdown.out > 0 ? `(${pizzariaBreakdown.out} fora)` : ''}
                   </span>
                 )}
+
+                {Boolean(t.ignore_in_charts) && !isReserveTx && !(t as any).isInvestmentTx && !isProventoTx && (
+                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-md bg-slate-500/10 text-slate-600 dark:text-slate-300 border border-slate-500/25 flex items-center gap-1">
+                    <EyeOff className="w-2.5 h-2.5" />
+                    <span>Ignorado nos gráficos</span>
+                  </span>
+                )}
               </div>
 
               {!isNoDescTx && t.description && (
@@ -3485,6 +3512,7 @@ export function History() {
               calculateFuel={calculateFuel}
               getTransactionReserveContributions={getTransactionReserveContributions}
               onSettlePending={handleOpenSettle}
+              onToggleIgnoreInCharts={handleToggleIgnoreInCharts}
             />
           </div>
         )}
@@ -5145,6 +5173,11 @@ export function History() {
                                     {t.deliveries} entregas
                                   </span>
                                 )}
+                                {Boolean(t.ignore_in_charts) && !isReserveTx && !(t as any).isInvestmentTx && !(t as any).isDividendTx && (
+                                  <span className="text-[9px] font-bold bg-slate-500/10 text-slate-600 dark:text-slate-300 border border-slate-500/25 rounded px-1 flex items-center gap-0.5">
+                                    <EyeOff className="w-2.5 h-2.5" /> Ignorado nos gráficos
+                                  </span>
+                                )}
                               </div>
                               <p className="text-[10px] sm:text-xs text-muted-foreground truncate font-medium mt-0.5">
                                 {t.description ? t.description.replace(/^\[Reserva\]\s*/, '') : 'Sem descrição cadastrada'}
@@ -6240,6 +6273,24 @@ export function History() {
                   onChange={(e) => setEditDesc(e.target.value)}
                 />
               </div>
+
+              <label className="flex items-start gap-2.5 p-3 rounded-xl border border-border/70 bg-muted/20 hover:bg-muted/35 transition-colors cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={editIgnoreInCharts}
+                  onChange={(e) => setEditIgnoreInCharts(e.target.checked)}
+                  className="h-4 w-4 mt-0.5 rounded border-border text-primary focus:ring-primary cursor-pointer accent-primary"
+                />
+                <div className="space-y-0.5">
+                  <span className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                    <EyeOff className="w-3.5 h-3.5 text-muted-foreground" />
+                    Ignorar nos gráficos e médias
+                  </span>
+                  <p className="text-[10px] text-muted-foreground leading-snug">
+                    Mantém o lançamento no seu balanço e extrato, mas desconsidera dos gráficos, recordes e indicadores.
+                  </p>
+                </div>
+              </label>
 
               <Button type="submit" className="w-full h-11 mt-3 rounded-xl font-black uppercase tracking-wider text-sm shadow-xs" disabled={saving}>
                 {saving ? <Loader2 className="w-5 h-5 animate-spin mr-2" /> : null}

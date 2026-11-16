@@ -241,7 +241,8 @@ export function SuggestionAuditModal({
                 <li className="flex items-start gap-2 text-indigo-600 dark:text-indigo-400 font-semibold">
                   <span className="font-bold">•</span>
                   <span>
-                    <strong>Início da vigência da regra:</strong> {new Date(audit.ruleStartDate + 'T00:00:00').toLocaleDateString('pt-BR')} (Sugestões reiniciadas a partir desta data).
+                    <strong>Início da vigência da regra:</strong> {new Date(audit.ruleStartDate + 'T00:00:00').toLocaleDateString('pt-BR')}
+                    {audit.cutoffAt ? ` às ${new Date(audit.cutoffAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}` : ''} (Sugestões reiniciadas a partir deste momento).
                   </span>
                 </li>
               )}

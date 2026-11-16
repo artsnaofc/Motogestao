@@ -116,8 +116,8 @@ export const ALLOWED_TABLE_COLUMNS: Record<string, string[]> = {
   transactions: [
     'id', 'user_id', 'type', 'amount', 'date', 'category', 'description', 'notes',
     'start_km', 'end_km', 'deliveries', 'out_of_neighborhood', 'is_reserve_use',
-    'dividend_id', 'payment_status', 'payment_date', 'due_date', 'is_recurring',
-    'recurrence_frequency', 'recurrence_installments', 'recurrence_group_id',
+    'ignore_in_charts', 'dividend_id', 'payment_status', 'payment_date', 'due_date',
+    'is_recurring', 'recurrence_frequency', 'recurrence_installments', 'recurrence_group_id',
     'installment_number', 'installment_total', 'installment_index', 'total_installments',
     'vehicle_id', 'fuel_liters', 'fuel_price_per_liter', 'fuel_station', 'refuel_km',
     'created_at'
@@ -769,9 +769,13 @@ CREATE TABLE IF NOT EXISTS public.transactions (
     fuel_price_per_liter NUMERIC,
     fuel_station TEXT,
     refuel_km NUMERIC,
+    ignore_in_charts BOOLEAN DEFAULT FALSE,
 
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Garantir adição de coluna se a tabela já existir no Supabase
+ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS ignore_in_charts BOOLEAN DEFAULT FALSE;
 
 CREATE INDEX IF NOT EXISTS idx_transactions_user_date ON public.transactions(user_id, date DESC);
 CREATE INDEX IF NOT EXISTS idx_transactions_payment_status ON public.transactions(user_id, payment_status);

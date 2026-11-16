@@ -68,7 +68,7 @@ export function DividendSummaryCards({
 
   // Calculate average personal monthly expense from transactions
   const avgPersonalExpense = useMemo(() => {
-    const expenseTxs = transactions.filter(t => t.type === 'expense');
+    const expenseTxs = transactions.filter(t => t.type === 'expense' && !t.ignore_in_charts);
     if (expenseTxs.length === 0) return 0;
 
     const monthlyTotals: Record<string, number> = {};

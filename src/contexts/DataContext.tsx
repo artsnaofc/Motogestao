@@ -27,8 +27,8 @@ export interface DataContextType {
   // Operational Transactions & Settings
   transactions: Transaction[];
   setTransactions: React.Dispatch<React.SetStateAction<Transaction[]>>;
-  updateTransaction: (id: string, transaction: Partial<Transaction>) => Promise<void>;
-  deleteTransaction: (id: string) => Promise<void>;
+  updateTransaction: (id: string, transaction: Partial<Transaction>, options?: { silent?: boolean }) => Promise<void>;
+  deleteTransaction: (id: string, options?: { silent?: boolean }) => Promise<void>;
   settings: UserSettings | null;
   loading: boolean;
   refreshData: (silent?: boolean) => Promise<void>;

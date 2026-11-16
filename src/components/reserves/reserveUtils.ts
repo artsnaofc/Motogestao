@@ -378,6 +378,30 @@ export const getLatestWithdrawalDate = (
   return sorted[0].payment_date || sorted[0].date;
 };
 
+/**
+ * Returns an ISO cutoff timestamp (ms) when a reserve rule was unpaused, reactivated,
+ * or had its goal updated on `ruleStartDate`. Any transaction/aporte on `ruleStartDate`
+ * created strictly before this timestamp is excluded so same-day actions don't pull
+ * earlier entries back into the suggestion pool.
+ */
+export const getRuleCutoffTimestamp = (res: Reserve, ruleStartDate: string | null | undefined): number | null => {
+  if (!ruleStartDate || !Array.isArray(res.rule_history) || res.rule_history.length === 0) {
+    return null;
+  }
+  let latestMs: number | null = null;
+  for (const h of res.rule_history) {
+    if (!h || !h.cutoff_at) continue;
+    const targetStart = toDateInputString(h.cutoff_rule_start || h.end_date || '');
+    if (targetStart && targetStart === ruleStartDate) {
+      const parsed = new Date(h.cutoff_at).getTime();
+      if (!isNaN(parsed) && (latestMs === null || parsed > latestMs)) {
+        latestMs = parsed;
+      }
+    }
+  }
+  return latestMs;
+};
+
 export const calculateSuggestion = (
   res: Reserve,
   transactions: Transaction[],
@@ -397,6 +421,7 @@ export const calculateSuggestion = (
   const lastWDate = getLatestWithdrawalDate(res, reserveTransactions);
   const cleanLastWDate = lastWDate ? toDateInputString(lastWDate) : null;
   const ruleStartDate = toDateInputString(res.regra_inicio_validade);
+  const cutoffMs = getRuleCutoffTimestamp(res, ruleStartDate);
 
   const periodTxs = (transactions || []).filter(t => {
     // Ignore pending revenue or expense transactions for contribution suggestions
@@ -412,6 +437,11 @@ export const calculateSuggestion = (
     if (cleanLastWDate && txDay <= cleanLastWDate) return false;
     // Rule counts strictly starting from its effective validity date (zerando sugestões anteriores à vigência)
     if (ruleStartDate && txDay < ruleStartDate) return false;
+    // Same-day cutoff: if rule was unpaused or goal changed today, exclude entries created earlier today
+    if (cutoffMs !== null && ruleStartDate && txDay === ruleStartDate && t.created_at) {
+      const txCreatedMs = new Date(t.created_at).getTime();
+      if (!isNaN(txCreatedMs) && txCreatedMs < cutoffMs) return false;
+    }
     return true;
   });
   
@@ -467,9 +497,18 @@ export const calculateSuggestion = (
     totalSuggestion = Math.round(eligibleDates.size * ruleValue * 100) / 100;
   }
 
-  if (res.meta_objetivo && res.meta_objetivo > 0) {
-    if (totalSuggestion > res.meta_objetivo) {
-      totalSuggestion = res.meta_objetivo;
+  // Never suggest more than what remains to achieve meta_objetivo
+  if (roundedGoal > 0) {
+    const remainingToGoal = Math.max(0, roundedGoal - roundedBalance);
+    const effectiveAportesInWindow = getEffectiveAportesInPeriod(
+      res,
+      reserveTransactions,
+      globalPeriod,
+      customDateRange
+    );
+    const effectiveCap = Math.min(roundedGoal, Math.round((remainingToGoal + effectiveAportesInWindow) * 100) / 100);
+    if (totalSuggestion > effectiveCap) {
+      totalSuggestion = effectiveCap;
     }
   }
 
@@ -481,6 +520,7 @@ export interface SuggestionAuditResult {
   ruleValue: number;
   categories: string[];
   ruleStartDate: string | null;
+  cutoffAt: string | null;
   details: string[];
   totalSuggested: number;
   effectiveAportes: number;
@@ -510,6 +550,8 @@ export const getSuggestionAudit = (
   const lastWDate = getLatestWithdrawalDate(res, reserveTransactions);
   const cleanLastWDate = lastWDate ? toDateInputString(lastWDate) : null;
   const ruleStartDate = toDateInputString(res.regra_inicio_validade);
+  const cutoffMs = getRuleCutoffTimestamp(res, ruleStartDate);
+  const cutoffAtIso = cutoffMs !== null ? new Date(cutoffMs).toISOString() : null;
   
   // Count pending withdrawals that were correctly ignored
   const pendingWithdrawalsIgnored = (reserveTransactions || []).filter(
@@ -530,6 +572,10 @@ export const getSuggestionAudit = (
     }
     if (cleanLastWDate && txDay <= cleanLastWDate) return false;
     if (ruleStartDate && txDay < ruleStartDate) return false;
+    if (cutoffMs !== null && ruleStartDate && txDay === ruleStartDate && t.created_at) {
+      const txCreatedMs = new Date(t.created_at).getTime();
+      if (!isNaN(txCreatedMs) && txCreatedMs < cutoffMs) return false;
+    }
     return true;
   });
 
@@ -540,7 +586,10 @@ export const getSuggestionAudit = (
 
   const calculated = calculateSuggestion(res, transactions, reserveTransactions, globalPeriod, customDateRange);
   const effectiveAportes = getEffectiveAportesInPeriod(res, reserveTransactions, globalPeriod, customDateRange);
-  const pendingSuggestion = Math.round(Math.max(0, calculated - effectiveAportes) * 100) / 100;
+  const rawPending = Math.round(Math.max(0, calculated - effectiveAportes) * 100) / 100;
+  const pendingSuggestion = roundedGoal > 0
+    ? Math.min(rawPending, Math.max(0, Math.round((roundedGoal - roundedBalance) * 100) / 100))
+    : rawPending;
 
   // Total de aportes manuais no período (não abatem o motor de sugestão)
   const manualAportes = (reserveTransactions || [])
@@ -548,8 +597,13 @@ export const getSuggestionAudit = (
       if (rt.reserve_id !== res.id || rt.type !== 'aporte') return false;
       if (rt.payment_status === 'pending' || (rt as any).status === 'pending') return false;
       if (!isTxInPeriod(rt.date, globalPeriod, customDateRange)) return false;
-      if (cleanLastWDate && rt.date <= cleanLastWDate) return false;
-      if (ruleStartDate && rt.date < ruleStartDate) return false;
+      const rtDay = toDateInputString(rt.date) || rt.date;
+      if (cleanLastWDate && rtDay <= cleanLastWDate) return false;
+      if (ruleStartDate && rtDay < ruleStartDate) return false;
+      if (cutoffMs !== null && ruleStartDate && rtDay === ruleStartDate && rt.created_at) {
+        const rtCreatedMs = new Date(rt.created_at).getTime();
+        if (!isNaN(rtCreatedMs) && rtCreatedMs < cutoffMs) return false;
+      }
       return isManualAporte(rt);
     })
     .reduce((sum, rt) => sum + Number(rt.amount || 0), 0);
@@ -622,7 +676,10 @@ export const getSuggestionAudit = (
 
   if (ruleStartDate) {
     const formattedRuleDate = new Date(ruleStartDate + 'T00:00:00').toLocaleDateString('pt-BR');
-    details.push(`Vigência da regra ativa: A partir de ${formattedRuleDate} (lançamentos anteriores desconsiderados).`);
+    const timeSuffix = cutoffMs !== null
+      ? ` às ${new Date(cutoffMs).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`
+      : '';
+    details.push(`Vigência da regra ativa: A partir de ${formattedRuleDate}${timeSuffix} (lançamentos anteriores desconsiderados).`);
   }
 
   if (cleanLastWDate) {
@@ -641,6 +698,7 @@ export const getSuggestionAudit = (
     ruleValue: Number(res.regra_valor) || 0,
     categories: res.regra_categorias || [],
     ruleStartDate,
+    cutoffAt: cutoffAtIso,
     details,
     totalSuggested: calculated,
     effectiveAportes,
@@ -709,7 +767,9 @@ export const getEffectiveAportesInPeriod = (
   customDateRange: { start: string; end: string }
 ): number => {
   const lastWDate = getLatestWithdrawalDate(res, reserveTransactions);
+  const cleanLastWDate = lastWDate ? toDateInputString(lastWDate) : null;
   const ruleStartDate = toDateInputString(res.regra_inicio_validade);
+  const cutoffMs = getRuleCutoffTimestamp(res, ruleStartDate);
   const total = (reserveTransactions || [])
     .filter(rt => {
       const matches = rt.reserve_id === res.id && 
@@ -719,8 +779,13 @@ export const getEffectiveAportesInPeriod = (
                       isTxInPeriod(rt.date, globalPeriod, customDateRange) && 
                       rt.category !== 'Rendimento';
       if (!matches) return false;
-      if (lastWDate && rt.date <= lastWDate) return false;
-      if (ruleStartDate && rt.date < ruleStartDate) return false;
+      const rtDay = toDateInputString(rt.date) || rt.date;
+      if (cleanLastWDate && rtDay <= cleanLastWDate) return false;
+      if (ruleStartDate && rtDay < ruleStartDate) return false;
+      if (cutoffMs !== null && ruleStartDate && rtDay === ruleStartDate && rt.created_at) {
+        const rtCreatedMs = new Date(rt.created_at).getTime();
+        if (!isNaN(rtCreatedMs) && rtCreatedMs < cutoffMs) return false;
+      }
       // Regra de negócio: Aportes manuais NÃO abatem o cálculo da sugestão das regras
       if (isManualAporte(rt)) return false;
       return true;

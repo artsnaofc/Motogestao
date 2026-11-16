@@ -87,6 +87,7 @@ export const ExecutiveReportModal: React.FC<ExecutiveReportModalProps> = ({
   const availableMonths = useMemo(() => {
     const monthMap: Record<string, Date> = {};
     allTransactions.forEach(t => {
+      if (t.ignore_in_charts) return;
       const d = parseLocalDate(t.date);
       const key = format(d, 'yyyy-MM');
       if (key >= '2026-03' && !monthMap[key]) {
@@ -139,6 +140,7 @@ export const ExecutiveReportModal: React.FC<ExecutiveReportModalProps> = ({
   // Filter transactions for period
   const periodTransactions = useMemo(() => {
     return allTransactions.filter(t => {
+      if (t.ignore_in_charts) return false;
       const d = parseLocalDate(t.date);
       return isWithinInterval(d, { start: dateRange.start, end: dateRange.end });
     });

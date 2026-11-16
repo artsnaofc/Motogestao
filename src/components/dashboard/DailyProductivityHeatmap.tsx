@@ -206,7 +206,7 @@ export const DailyProductivityHeatmap: React.FC<DailyProductivityHeatmapProps> =
     const opCats = settings?.operational_expense_categories || ['Combustível', 'Pedágio', 'Manutenção'];
 
     (transactions || []).forEach(t => {
-      if (!t) return;
+      if (!t || t.ignore_in_charts) return;
       const dateObj = parseLocalDate(t.date);
       const dateKey = format(dateObj, 'yyyy-MM-dd');
       if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) return;

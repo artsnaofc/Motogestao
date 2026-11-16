@@ -536,8 +536,51 @@ export function Reserves() {
   // 6. Create or Edit Reserve
   const handleSaveReserve = async (reserveData: Partial<Reserve>, initialBalance?: number) => {
     if (reserveToEdit) {
-      await updateReserve(reserveToEdit.id, reserveData);
-      toast.success('Reserva atualizada com sucesso!');
+      const todayStr = getTodayLocalDateStr();
+      const nowIso = new Date().toISOString();
+      const prevGoal = Math.round(Number(reserveToEdit.meta_objetivo || 0) * 100) / 100;
+      const newGoal = Math.round(Number(reserveData.meta_objetivo || 0) * 100) / 100;
+      const goalChanged = Math.abs(newGoal - prevGoal) > 0.009;
+      const ruleReenabled = !reserveToEdit.regra_ativa && Boolean(reserveData.regra_ativa);
+      const hasActiveRuleAfterSave = Boolean(reserveData.regra_ativa && reserveData.regra_tipo);
+
+      const finalPayload: Partial<Reserve> = { ...reserveData };
+
+      if ((goalChanged || ruleReenabled) && hasActiveRuleAfterSave) {
+        const updatedHistory = Array.isArray(reserveToEdit.rule_history) ? [...reserveToEdit.rule_history] : [];
+        const rawPrevStart = reserveToEdit.regra_inicio_validade || reserveToEdit.created_at || todayStr;
+        const prevStartDate = toDateInputString(rawPrevStart) || todayStr;
+
+        const reasonDesc = goalChanged && ruleReenabled
+          ? `Meta alterada (${formatCurrency(prevGoal)} ➔ ${formatCurrency(newGoal)}) e regra ativada (sugestão recalculada a partir de agora)`
+          : goalChanged
+            ? `Meta alterada (${formatCurrency(prevGoal)} ➔ ${formatCurrency(newGoal)}) — base de sugestão reiniciada`
+            : `Regra reativada (sugestão recalculada a partir de agora)`;
+
+        updatedHistory.push({
+          start_date: prevStartDate,
+          end_date: todayStr,
+          cutoff_rule_start: todayStr,
+          cutoff_at: nowIso,
+          action_type: goalChanged ? 'goal_change' : 'unpause',
+          regra_tipo: reserveToEdit.regra_tipo || reserveData.regra_tipo,
+          regra_valor: reserveToEdit.regra_valor ?? reserveData.regra_valor ?? 0,
+          regra_categorias: reserveToEdit.regra_categorias || reserveData.regra_categorias || [],
+          regra_ativa: Boolean(reserveToEdit.regra_ativa),
+          updated_at: nowIso,
+          description: reasonDesc,
+        });
+
+        finalPayload.regra_inicio_validade = todayStr;
+        finalPayload.rule_history = updatedHistory;
+      }
+
+      await updateReserve(reserveToEdit.id, finalPayload);
+      if ((goalChanged || ruleReenabled) && hasActiveRuleAfterSave) {
+        toast.success('Reserva atualizada e sugestão de aporte recalculada a partir de agora!');
+      } else {
+        toast.success('Reserva atualizada com sucesso!');
+      }
     } else {
       const payload: Omit<Reserve, 'id' | 'user_id' | 'created_at' | 'updated_at'> = {
         name: reserveData.name || 'Nova Reserva',
@@ -551,6 +594,7 @@ export function Reserves() {
         regra_tipo: reserveData.regra_tipo,
         regra_valor: reserveData.regra_valor,
         regra_categorias: reserveData.regra_categorias || [],
+        regra_inicio_validade: reserveData.regra_inicio_validade || getTodayLocalDateStr(),
         require_category_on_use: reserveData.require_category_on_use,
         default_use_category: reserveData.default_use_category,
         status: 'active',
@@ -570,8 +614,11 @@ export function Reserves() {
       return;
     }
 
-    const effectiveDate = toDateInputString(ruleData.regra_inicio_validade) || getTodayLocalDateStr();
+    const todayStr = getTodayLocalDateStr();
+    const nowIso = new Date().toISOString();
+    const effectiveDate = toDateInputString(ruleData.regra_inicio_validade) || todayStr;
     const hadPrevRule = Boolean(currentRes.regra_tipo && currentRes.regra_valor);
+    const wasReenabled = !currentRes.regra_ativa && Boolean(ruleData.regra_ativa);
     let updatedHistory = Array.isArray(currentRes.rule_history) ? [...currentRes.rule_history] : [];
 
     if (hadPrevRule && (currentRes.regra_tipo !== ruleData.regra_tipo || currentRes.regra_valor !== ruleData.regra_valor || currentRes.regra_ativa !== ruleData.regra_ativa)) {
@@ -588,12 +635,27 @@ export function Reserves() {
       updatedHistory.push({
         start_date: prevStartDate,
         end_date: effectiveDate,
+        ...(effectiveDate === todayStr ? { cutoff_rule_start: effectiveDate, cutoff_at: nowIso, action_type: wasReenabled ? 'unpause' : 'rule_update' } : {}),
         regra_tipo: currentRes.regra_tipo,
         regra_valor: currentRes.regra_valor,
         regra_categorias: currentRes.regra_categorias || [],
         regra_ativa: currentRes.regra_ativa,
-        updated_at: new Date().toISOString(),
-        description: `Regra anterior: ${typeLabel}`
+        updated_at: nowIso,
+        description: wasReenabled ? `Regra reativada (anterior: ${typeLabel})` : `Regra anterior: ${typeLabel}`
+      });
+    } else if (wasReenabled && effectiveDate === todayStr && ruleData.regra_tipo) {
+      updatedHistory.push({
+        start_date: effectiveDate,
+        end_date: effectiveDate,
+        cutoff_rule_start: effectiveDate,
+        cutoff_at: nowIso,
+        action_type: 'unpause',
+        regra_tipo: ruleData.regra_tipo,
+        regra_valor: ruleData.regra_valor ?? 0,
+        regra_categorias: ruleData.regra_categorias || [],
+        regra_ativa: false,
+        updated_at: nowIso,
+        description: 'Regra ativada a partir de agora'
       });
     }
 
@@ -614,15 +676,76 @@ export function Reserves() {
   // 7. Toggle Pause/Play automation
   const handleTogglePause = async (res: Reserve) => {
     const isNowPaused = !res.is_paused;
-    await updateReserve(res.id, { is_paused: isNowPaused });
-    toast.success(isNowPaused ? `Automação de "${res.name}" pausada.` : `Automação de "${res.name}" reativada!`);
+    if (!isNowPaused) {
+      // Unpausing: anchor baseline to today + current timestamp so old/paused days don't accumulate
+      const todayStr = getTodayLocalDateStr();
+      const nowIso = new Date().toISOString();
+      const updatedHistory = Array.isArray(res.rule_history) ? [...res.rule_history] : [];
+      const rawPrev = res.regra_inicio_validade || res.created_at || todayStr;
+      const prevStartDate = toDateInputString(rawPrev) || todayStr;
+
+      if (res.regra_tipo) {
+        updatedHistory.push({
+          start_date: prevStartDate,
+          end_date: todayStr,
+          cutoff_rule_start: todayStr,
+          cutoff_at: nowIso,
+          action_type: 'unpause',
+          regra_tipo: res.regra_tipo,
+          regra_valor: res.regra_valor ?? 0,
+          regra_categorias: res.regra_categorias || [],
+          regra_ativa: Boolean(res.regra_ativa),
+          updated_at: nowIso,
+          description: 'Automação retomada após pausa (base de sugestão reiniciada)'
+        });
+      }
+
+      const payload: Partial<Reserve> = {
+        is_paused: false,
+        ...(res.regra_tipo ? { regra_inicio_validade: todayStr, rule_history: updatedHistory } : {})
+      };
+      await updateReserve(res.id, payload);
+      if (auditReserve?.id === res.id) {
+        setAuditReserve(prev => prev ? { ...prev, ...payload } : null);
+      }
+      toast.success(`Automação de "${res.name}" reativada! Sugestões recalculadas a partir de agora.`);
+    } else {
+      await updateReserve(res.id, { is_paused: true });
+      toast.success(`Automação de "${res.name}" pausada.`);
+    }
   };
 
   // 8. Finalize / Deactivate / Reactivate Reserve
   const handleFinalize = async (res: Reserve) => {
     if (res.status === 'inactive') {
       if (confirm(`Deseja reativar a reserva "${res.name}"?`)) {
-        await updateReserve(res.id, { status: 'active', is_paused: false });
+        const todayStr = getTodayLocalDateStr();
+        const nowIso = new Date().toISOString();
+        const updatedHistory = Array.isArray(res.rule_history) ? [...res.rule_history] : [];
+        const rawPrev = res.regra_inicio_validade || res.created_at || todayStr;
+        const prevStartDate = toDateInputString(rawPrev) || todayStr;
+
+        if (res.regra_ativa && res.regra_tipo) {
+          updatedHistory.push({
+            start_date: prevStartDate,
+            end_date: todayStr,
+            cutoff_rule_start: todayStr,
+            cutoff_at: nowIso,
+            action_type: 'unpause',
+            regra_tipo: res.regra_tipo,
+            regra_valor: res.regra_valor ?? 0,
+            regra_categorias: res.regra_categorias || [],
+            regra_ativa: true,
+            updated_at: nowIso,
+            description: 'Reserva reativada (sugestão recalculada a partir de agora)'
+          });
+        }
+
+        await updateReserve(res.id, {
+          status: 'active',
+          is_paused: false,
+          ...(res.regra_ativa && res.regra_tipo ? { regra_inicio_validade: todayStr, rule_history: updatedHistory } : {})
+        });
         toast.success(`Reserva "${res.name}" reativada com sucesso!`);
         if (refreshData) await refreshData(true);
       }

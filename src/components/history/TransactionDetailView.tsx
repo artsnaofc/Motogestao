@@ -49,7 +49,9 @@ import {
   CalendarClock,
   RefreshCw,
   AlertCircle,
-  Landmark
+  Landmark,
+  Eye,
+  EyeOff
 } from 'lucide-react';
 import { getPaymentStatusMeta, formatRecurrenceFrequency } from '../../lib/recurrenceUtils';
 
@@ -95,6 +97,7 @@ interface TransactionDetailViewProps {
   calculateFuel: (start: string | number | null, end: string | number | null) => number;
   getTransactionReserveContributions: (t: Transaction) => { reserve: Reserve; amount: number }[];
   onSettlePending?: (t: Transaction) => void;
+  onToggleIgnoreInCharts?: (t: Transaction) => void;
 }
 
 export function TransactionDetailView({
@@ -110,6 +113,7 @@ export function TransactionDetailView({
   calculateFuel,
   getTransactionReserveContributions,
   onSettlePending,
+  onToggleIgnoreInCharts,
 }: TransactionDetailViewProps) {
   const isReserveTx = (t as any).isReserveTx;
   const isInvestmentTx = (t as any).isInvestmentTx;
@@ -811,12 +815,39 @@ export function TransactionDetailView({
         </div>
       )}
 
+      {!isReserveTx && !isInvestmentTx && !isDividendTx && Boolean(t.ignore_in_charts) && (
+        <div className="p-2.5 rounded-xl bg-slate-500/10 border border-slate-500/25 flex items-center justify-between gap-2 text-xs">
+          <div className="flex items-center gap-2 min-w-0">
+            <EyeOff className="w-3.5 h-3.5 text-slate-600 dark:text-slate-300 shrink-0" />
+            <span className="font-semibold text-foreground/90 leading-snug">
+              <strong>Ignorado nos gráficos:</strong> contabilizado apenas no balanço e extrato, sem alterar gráficos ou médias.
+            </span>
+          </div>
+        </div>
+      )}
+
       {/* Common Footer Actions Bar */}
-      <div className="flex items-center justify-between border-t border-border/40 pt-2.5">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border/40 pt-2.5">
         <span className="text-[10px] text-muted-foreground font-mono">
           ID: {t.id.slice(0, 8)}
         </span>
-        <div className="flex items-center gap-1.5">
+        <div className="flex flex-wrap items-center gap-1.5">
+          {!isReserveTx && !isInvestmentTx && !isDividendTx && onToggleIgnoreInCharts && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => onToggleIgnoreInCharts(t)}
+              className={`h-7 px-2.5 text-[11px] font-semibold flex items-center gap-1 cursor-pointer ${
+                t.ignore_in_charts
+                  ? 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300 hover:bg-amber-500/20'
+                  : 'border-border bg-card text-muted-foreground hover:text-foreground hover:bg-muted/10'
+              }`}
+              title={t.ignore_in_charts ? 'Voltar a incluir nos gráficos' : 'Ignorar nos gráficos sem afetar o balanço'}
+            >
+              {t.ignore_in_charts ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
+              {t.ignore_in_charts ? 'Mostrar nos gráficos' : 'Ignorar nos gráficos'}
+            </Button>
+          )}
           {!isInvestmentTx && !isDividendTx ? (
             <Button 
               variant="outline" 

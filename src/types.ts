@@ -25,6 +25,7 @@ export interface Transaction {
   deliveries?: number | null;
   out_of_neighborhood?: number | null;
   is_reserve_use?: boolean;
+  ignore_in_charts?: boolean;
   notes?: string;
   dividend_id?: string;
   isInvestmentTx?: boolean;

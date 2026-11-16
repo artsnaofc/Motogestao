@@ -81,7 +81,7 @@ import { freightStorage } from '../lib/freightStorage';
 import { calculateNextOccurrence, getFrequencyLabel, generateUUID, parseLocalDate } from '../lib/recurrenceUtils';
 import { getTodayLocalDateStr } from '../lib/utils';
 import { getEffectiveUserId } from '../lib/authUtils';
-import { RefreshCw, CalendarClock, CalendarRange, CheckCircle2, AlertCircle } from 'lucide-react';
+import { RefreshCw, CalendarClock, CalendarRange, CheckCircle2, AlertCircle, EyeOff } from 'lucide-react';
 import { isVehicleRelatedCategory, shouldDefaultToNoVehicle } from '../lib/vehicleUtils';
 
 export function AddTransaction() {
@@ -158,6 +158,7 @@ export function AddTransaction() {
   const [paymentStatus, setPaymentStatus] = useState<PaymentStatus>('paid');
   const [paymentDate, setPaymentDate] = useState<string>('');
   const [dueDate, setDueDate] = useState<string>('');
+  const [ignoreInCharts, setIgnoreInCharts] = useState<boolean>(false);
   const [isRecurring, setIsRecurring] = useState<boolean>(false);
   const [recurrenceFrequency, setRecurrenceFrequency] = useState<RecurrenceFrequency>('monthly');
   const [recurrenceInstallments, setRecurrenceInstallments] = useState<string>('12');
@@ -313,6 +314,7 @@ export function AddTransaction() {
     setIsRecurring(false);
     setRecurrenceFrequency('monthly');
     setRecurrenceInstallments('12');
+    setIgnoreInCharts(false);
   };
 
 
@@ -606,6 +608,7 @@ export function AddTransaction() {
             deliveries: null,
             out_of_neighborhood: null,
             vehicle_id: getEffectiveVehicleId(),
+            ignore_in_charts: ignoreInCharts,
             created_at: new Date().toISOString()
           };
 
@@ -652,6 +655,7 @@ export function AddTransaction() {
         due_date: effectiveDueDate,
         vehicle_id: getEffectiveVehicleId(),
         is_recurring: false,
+        ignore_in_charts: ignoreInCharts,
         created_at: new Date().toISOString()
       };
 
@@ -683,6 +687,7 @@ export function AddTransaction() {
             payment_status: 'paid' as PaymentStatus,
             payment_date: date,
             due_date: date,
+            ignore_in_charts: ignoreInCharts,
             created_at: new Date().toISOString()
           };
 
@@ -1395,6 +1400,28 @@ export function AddTransaction() {
                 onChange={(e) => setDescription(e.target.value)}
               />
             </div>
+
+            {activeTab !== 'reserva' && (
+              <label className="flex items-start gap-3 p-3.5 rounded-xl border border-border/80 bg-muted/20 hover:bg-muted/35 transition-colors cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={ignoreInCharts}
+                  onChange={(e) => setIgnoreInCharts(e.target.checked)}
+                  className="h-4 w-4 mt-0.5 rounded border-border text-primary focus:ring-primary cursor-pointer accent-primary"
+                />
+                <div className="flex-1 space-y-0.5">
+                  <div className="flex items-center gap-1.5">
+                    <EyeOff className="w-3.5 h-3.5 text-muted-foreground" />
+                    <span className="text-xs font-extrabold text-foreground">
+                      Ignorar nos gráficos e médias
+                    </span>
+                  </div>
+                  <p className="text-[10.5px] text-muted-foreground leading-snug">
+                    Útil para venda de veículo ou movimentações atípicas: o valor entra normalmente no seu balanço e caixa, mas é desconsiderado dos gráficos e indicadores.
+                  </p>
+                </div>
+              </label>
+            )}
 
             <Button type="submit" className="w-full h-12 text-sm sm:text-base font-black uppercase tracking-wider bg-primary hover:bg-primary/95 text-primary-foreground focus:ring-1 focus:ring-offset-1 focus:ring-primary shadow-xs hover:shadow-md transition-all duration-200 mt-6 rounded-xl cursor-pointer" disabled={loading}>
               {loading ? <Loader2 className="w-5 h-5 animate-spin mr-2" /> : null}

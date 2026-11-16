@@ -1054,15 +1054,20 @@ export function Dashboard() {
     });
   }, [allTransactions, settings]);
 
+  // Lançamentos filtrados para gráficos, médias, KPIs, recordes e relatórios (preservando o saldo real intacto)
+  const chartTransactionsAdjusted = useMemo(() => {
+    return (allTransactionsAdjusted || []).filter(t => !t.ignore_in_charts);
+  }, [allTransactionsAdjusted]);
+
   const currentPeriodTx = useMemo(() => {
-    if (globalPeriod === 'all') return allTransactionsAdjusted;
-    return allTransactionsAdjusted.filter(t => (t as any)._ts >= currentStartTime && (t as any)._ts <= currentEndTime);
-  }, [allTransactionsAdjusted, globalPeriod, currentStartTime, currentEndTime]);
+    if (globalPeriod === 'all') return chartTransactionsAdjusted;
+    return chartTransactionsAdjusted.filter(t => (t as any)._ts >= currentStartTime && (t as any)._ts <= currentEndTime);
+  }, [chartTransactionsAdjusted, globalPeriod, currentStartTime, currentEndTime]);
 
   const pastPeriodTx = useMemo(() => {
     if (globalPeriod === 'all') return [];
-    return allTransactionsAdjusted.filter(t => (t as any)._ts >= pastStartTime && (t as any)._ts <= pastEndTime);
-  }, [allTransactionsAdjusted, globalPeriod, pastStartTime, pastEndTime]);
+    return chartTransactionsAdjusted.filter(t => (t as any)._ts >= pastStartTime && (t as any)._ts <= pastEndTime);
+  }, [chartTransactionsAdjusted, globalPeriod, pastStartTime, pastEndTime]);
 
   const currentPeriodInvTx = useMemo(() => {
     if (!investmentTransactions || investmentTransactions.length === 0) return [];
@@ -1146,7 +1151,7 @@ export function Dashboard() {
     ];
 
     const txCats = new Set<string>();
-    (allTransactionsAdjusted || []).forEach(t => {
+    (chartTransactionsAdjusted || []).forEach(t => {
       if (t.type === 'expense' && !isPersonalOpCategory(t.category) && t.category !== 'Aporte Reserva' && !(t as any).isInvestmentTx) {
         if (t.category && t.category.trim()) {
           txCats.add(t.category.trim());
@@ -1155,7 +1160,7 @@ export function Dashboard() {
     });
 
     return Array.from(new Set([...defaultCats, ...Array.from(txCats)]));
-  }, [settings?.personal_expense_categories, allTransactionsAdjusted, isPersonalOpCategory]);
+  }, [settings?.personal_expense_categories, chartTransactionsAdjusted, isPersonalOpCategory]);
 
   const currentPeriodPersonalCategoryAmounts = useMemo(() => {
     const amounts: Record<string, number> = {};
@@ -1390,7 +1395,7 @@ export function Dashboard() {
 
   const allRecordedMonths = useMemo(() => {
     const monthsSet = new Set<string>();
-    (allTransactionsAdjusted || []).forEach(t => {
+    (chartTransactionsAdjusted || []).forEach(t => {
       const m = (t as any)._monthStr;
       if (m && m.length === 7) {
         monthsSet.add(m);
@@ -1403,7 +1408,7 @@ export function Dashboard() {
       }
     });
     return Array.from(monthsSet).sort((a, b) => b.localeCompare(a));
-  }, [allTransactionsAdjusted, reserveTransactions]);
+  }, [chartTransactionsAdjusted, reserveTransactions]);
 
   const currentPeriodMonths = useMemo(() => {
     if (globalPeriod === 'all') return allRecordedMonths;
@@ -1448,7 +1453,7 @@ export function Dashboard() {
     const chronologicalResults: MonthHistoryItem[] = [];
 
     chronologicalMonths.forEach((mStr) => {
-      const mTxs = (allTransactionsAdjusted || []).filter(t => (t as any)._monthStr === mStr);
+      const mTxs = (chartTransactionsAdjusted || []).filter(t => (t as any)._monthStr === mStr);
       const val = getIndicatorMonthValue(selectedIndicator, mStr, mTxs);
 
       // "Nos gráficos e tabelas não mostre os valores zerados que ainda irão vir"
@@ -1479,7 +1484,7 @@ export function Dashboard() {
     });
 
     return [...chronologicalResults].reverse();
-  }, [selectedIndicator, allRecordedMonths, allTransactionsAdjusted, getIndicatorMonthValue, formatMonthTitle, formatMonthShort]);
+  }, [selectedIndicator, allRecordedMonths, chartTransactionsAdjusted, getIndicatorMonthValue, formatMonthTitle, formatMonthShort]);
 
   const filteredIndicatorHistoryData = useMemo((): MonthHistoryItem[] => {
     if (!selectedIndicator) return [];
@@ -1706,8 +1711,8 @@ export function Dashboard() {
     const startOfLastW = subWeeks(startOfW, 1);
     const endOfLastW = subWeeks(endOfW, 1);
     
-    const weeklyTxs = (allTransactionsAdjusted || []).filter(t => isWithinInterval(parseLocalDate(t.date), { start: startOfW, end: endOfW }));
-    const lastWeeklyTxs = (allTransactionsAdjusted || []).filter(t => isWithinInterval(parseLocalDate(t.date), { start: startOfLastW, end: endOfLastW }));
+    const weeklyTxs = (chartTransactionsAdjusted || []).filter(t => isWithinInterval(parseLocalDate(t.date), { start: startOfW, end: endOfW }));
+    const lastWeeklyTxs = (chartTransactionsAdjusted || []).filter(t => isWithinInterval(parseLocalDate(t.date), { start: startOfLastW, end: endOfLastW }));
 
     const weeklyTotals = calcTotals(weeklyTxs);
     const lastWeeklyTotals = calcTotals(lastWeeklyTxs);
@@ -1746,7 +1751,7 @@ export function Dashboard() {
       evolution: lastWeeklyIncomeTotal > 0 ? ((weeklyIncomeTotal - lastWeeklyIncomeTotal) / lastWeeklyIncomeTotal) * 100 : (weeklyIncomeTotal > 0 ? 100 : 0),
       netEvolution: lastWeeklyNet !== 0 ? ((weeklyNet - lastWeeklyNet) / Math.abs(lastWeeklyNet)) * 100 : (weeklyNet > 0 ? 100 : 0)
     };
-  }, [allTransactionsAdjusted, settings?.weekly_goal, settings?.weekly_net_goal]);
+  }, [chartTransactionsAdjusted, settings?.weekly_goal, settings?.weekly_net_goal]);
 
   const divTotals = useMemo(() => {
     const received = dividends
@@ -1852,7 +1857,7 @@ export function Dashboard() {
   }, [summary]);
 
   const queryRecords = useMemo(() => {
-    if (!allTransactionsAdjusted || allTransactionsAdjusted.length === 0) {
+    if (!chartTransactionsAdjusted || chartTransactionsAdjusted.length === 0) {
       return {
         maxDailyIncome: { amount: 0, date: null as string | null },
         maxDailyProfit: { amount: 0, date: null as string | null },
@@ -1871,7 +1876,7 @@ export function Dashboard() {
     let maxSingleIncome = { amount: 0, category: '', date: null as string | null, description: '' };
     let maxSingleExpense = { amount: 0, category: '', date: null as string | null, description: '' };
 
-    allTransactionsAdjusted.forEach(t => {
+    chartTransactionsAdjusted.forEach(t => {
       const dateStr = t.date.split('T')[0];
       const monthStr = dateStr.substring(0, 7);
       const amount = Number(t.amount) || 0;
@@ -1961,7 +1966,7 @@ export function Dashboard() {
       maxSingleExpense,
       maxDailyKm
     };
-  }, [allTransactionsAdjusted, settings]);
+  }, [chartTransactionsAdjusted, settings]);
 
   const formatRecordDate = (dateStr: string | null) => {
     if (!dateStr) return 'Nenhum lançamento';
@@ -2010,7 +2015,7 @@ export function Dashboard() {
 
   const allTxsByDate = useMemo(() => {
     const groups: Record<string, Transaction[]> = {};
-    (allTransactionsAdjusted || []).forEach(t => {
+    (chartTransactionsAdjusted || []).forEach(t => {
       const dateStr = (t as any)._dateStr || t.date.split('T')[0];
       if (!groups[dateStr]) {
         groups[dateStr] = [];
@@ -2018,7 +2023,7 @@ export function Dashboard() {
       groups[dateStr].push(t);
     });
     return groups;
-  }, [allTransactionsAdjusted]);
+  }, [chartTransactionsAdjusted]);
 
   // Generate list of days in the interval
   const dayList = useMemo(() => {
@@ -2041,7 +2046,7 @@ export function Dashboard() {
     const currentMonthStr = format(new Date(), 'yyyy-MM');
     const pastMonthMap: Record<string, Transaction[]> = {};
 
-    (allTransactionsAdjusted || []).forEach(t => {
+    (chartTransactionsAdjusted || []).forEach(t => {
       const dateStr = (t as any)._dateStr || t.date.split('T')[0];
       const monthStr = dateStr.substring(0, 7);
       if (monthStr < currentMonthStr) {
@@ -2091,7 +2096,7 @@ export function Dashboard() {
       avgMonthlyTotal,
       monthsCount: validMonthsCount
     };
-  }, [allTransactionsAdjusted, calcTotals]);
+  }, [chartTransactionsAdjusted, calcTotals]);
 
   // Índices Fundamentalistas e de Desempenho Operacional
   const fundamentalIndexes = useMemo(() => {
@@ -2249,7 +2254,7 @@ export function Dashboard() {
   const fundamentalMonthlyHistory = useMemo(() => {
     const currentMonthStr = format(new Date(), 'yyyy-MM');
     const monthMap: Record<string, Transaction[]> = {};
-    (allTransactionsAdjusted || []).forEach(t => {
+    (chartTransactionsAdjusted || []).forEach(t => {
       const dateStr = (t as any)._dateStr || t.date.split('T')[0];
       const monthStr = dateStr.substring(0, 7);
       if (monthStr < '2026-03') return; // Exibir a partir de março de 2026
@@ -2327,7 +2332,7 @@ export function Dashboard() {
         hasActivity: monthTxs.length > 0
       };
     });
-  }, [allTransactionsAdjusted, settings]);
+  }, [chartTransactionsAdjusted, settings]);
 
   // Histórico Diário do Período Selecionado com datas precisas (estritamente até a data atual)
   const fundamentalDailyHistory = useMemo(() => {
@@ -3054,7 +3059,7 @@ export function Dashboard() {
 
     // Gather all distinct recorded months from transactions
     const recordedMonthStrings = new Set<string>();
-    (allTransactionsAdjusted || []).forEach(t => {
+    (chartTransactionsAdjusted || []).forEach(t => {
       const mStr = (t as any)._monthStr;
       if (mStr && mStr.length === 7) recordedMonthStrings.add(mStr);
     });
@@ -3089,7 +3094,7 @@ export function Dashboard() {
 
     return monthsList.map(month => {
       const monthStr = format(month, 'yyyy-MM');
-      const monthTxs = (allTransactionsAdjusted || []).filter(t => (t as any)._monthStr === monthStr);
+      const monthTxs = (chartTransactionsAdjusted || []).filter(t => (t as any)._monthStr === monthStr);
       const { income, expense, net, reserveAporte, rendimentosReserva, totalVendaInvestimento } = calcTotals(monthTxs);
       
       const rawMonthName = format(month, 'MMM', { locale: ptBR });
@@ -3111,7 +3116,7 @@ export function Dashboard() {
       if (monthlyTrendPeriod === '6m') return true;
       return m.hasTxs || m.monthKey >= '2026-03';
     });
-  }, [allTransactionsAdjusted, settings, monthlyTrendPeriod]);
+  }, [chartTransactionsAdjusted, settings, monthlyTrendPeriod]);
 
   const weekdayData = useMemo(() => {
     const weekdayNames = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
@@ -3834,7 +3839,7 @@ export function Dashboard() {
 
       {/* Calendário & Heatmap de Produtividade Diária (GitHub Style) */}
       <DailyProductivityHeatmap
-        transactions={allTransactionsAdjusted}
+        transactions={chartTransactionsAdjusted}
         settings={settings}
         hideValues={hideValues}
         formatCurrency={formatCurrency}
@@ -6719,7 +6724,7 @@ export function Dashboard() {
       <ExecutiveReportModal
         open={showMonthlyReport}
         onOpenChange={setShowMonthlyReport}
-        allTransactions={allTransactionsAdjusted}
+        allTransactions={chartTransactionsAdjusted}
         settings={settings}
         reserves={reserves}
       />

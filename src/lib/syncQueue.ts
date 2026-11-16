@@ -261,6 +261,26 @@ class SyncQueueManager {
               }
             }
           }
+
+          // If still failing and table is transactions, strip newer optional columns
+          if (error && task.table === 'transactions') {
+            const optionalTransactionKeys = ['ignore_in_charts'];
+            const safeTxUpdate: Record<string, any> = {};
+            for (const k of Object.keys(task.payload || {})) {
+              if (!optionalTransactionKeys.includes(k)) {
+                safeTxUpdate[k] = task.payload[k];
+              }
+            }
+            if (Object.keys(safeTxUpdate).length > 0) {
+              const { error: coreTxRetryErr } = await supabase
+                .from(task.table)
+                .update(safeTxUpdate)
+                .eq('id', task.targetId);
+              if (!coreTxRetryErr) {
+                error = null;
+              }
+            }
+          }
         }
 
         if (error && error.code === '23503') {
