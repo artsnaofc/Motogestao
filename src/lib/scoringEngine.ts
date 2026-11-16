@@ -29,7 +29,7 @@ export interface ScorePillarBreakdown {
 
 export interface AssetScoreResult {
   ticker: string;
-  type: 'Ação' | 'FII';
+  type: 'Ação' | 'FII' | string;
   totalScore: number; // 0 to 100
   grade: 'A+' | 'A' | 'B+' | 'B' | 'C' | 'D';
   summary: string;
@@ -523,7 +523,7 @@ export function getGradeColor(grade: string): string {
 }
 
 /**
- * Universal scorer helper for any B3 Asset
+ * Universal scorer helper for any Portfolio Asset Class
  */
 export function calculateUniversalAssetScore(
   fundamental: B3AssetFundamental,
@@ -533,5 +533,139 @@ export function calculateUniversalAssetScore(
   if (fundamental.type === 'FII') {
     return calculateFiiScore(fundamental, customFiiWeights || DEFAULT_FII_WEIGHTS);
   }
+
+  const assetClass = fundamental.assetClass;
+  if (assetClass && assetClass !== 'Ação' && assetClass !== 'FII') {
+    if (assetClass === 'Tesouro Direto' || assetClass === 'Renda Fixa') {
+      const isTesouro = assetClass === 'Tesouro Direto';
+      const safetyScore = isTesouro ? 98 : 85;
+      const liqScore = isTesouro ? 95 : 80;
+      const yieldScore = 88;
+      const totalScore = Math.round((safetyScore * 0.45) + (liqScore * 0.25) + (yieldScore * 0.30));
+      return {
+        ticker: fundamental.ticker,
+        type: assetClass,
+        totalScore,
+        grade: totalScore >= 88 ? 'A+' : 'A',
+        summary: isTesouro
+          ? 'Título Público Federal com garantia soberana, alta previsibilidade e proteção patrimonial.'
+          : 'Ativo de Renda Fixa com previsibilidade de retorno e baixa volatilidade.',
+        strengths: [
+          isTesouro ? 'Risco soberano (Tesouro Nacional)' : 'Fluxo de rendimento previsível em Renda Fixa',
+          'Baixa volatilidade para equilíbrio da carteira'
+        ],
+        warnings: isTesouro ? [] : ['Verifique carência de resgate e cobertura do FGC quando aplicável'],
+        pillars: [
+          {
+            name: 'Segurança & Crédito',
+            weightPct: 45,
+            score: safetyScore,
+            weightedScore: safetyScore * 0.45,
+            description: isTesouro ? 'Garantia Soberana Federal' : 'Renda Fixa Privada / Bancária',
+            status: 'excellent'
+          },
+          {
+            name: 'Rentabilidade & Indexador',
+            weightPct: 30,
+            score: yieldScore,
+            weightedScore: yieldScore * 0.30,
+            description: `Taxa/Retorno referencial est. ${fundamental.dividendYield.toFixed(1)}% a.a.`,
+            status: 'excellent'
+          },
+          {
+            name: 'Liquidez & Resgate',
+            weightPct: 25,
+            score: liqScore,
+            weightedScore: liqScore * 0.25,
+            description: isTesouro ? 'Liquidez diária D+1 no Tesouro Direto' : 'Liquidez conforme vencimento/carência',
+            status: isTesouro ? 'excellent' : 'good'
+          }
+        ]
+      };
+    }
+
+    if (assetClass === 'ETF' || assetClass === 'BDR') {
+      const divScore = assetClass === 'ETF' ? 92 : 84;
+      const liqScore = 85;
+      const costScore = 80;
+      const totalScore = Math.round((divScore * 0.4) + (liqScore * 0.3) + (costScore * 0.3));
+      return {
+        ticker: fundamental.ticker,
+        type: assetClass,
+        totalScore,
+        grade: totalScore >= 88 ? 'A+' : totalScore >= 78 ? 'A' : 'B+',
+        summary: assetClass === 'ETF'
+          ? 'Fundo de índice com ampla diversificação automática e replicação passiva de mercado.'
+          : 'Exposição internacional simplificada na B3 em moeda forte.',
+        strengths: [
+          assetClass === 'ETF' ? 'Diversificação instantânea em cesta de ativos' : 'Diversificação geográfica e cambial',
+          'Negociação prática diretamente na bolsa brasileira'
+        ],
+        warnings: [],
+        pillars: [
+          {
+            name: 'Diversificação & Exposição',
+            weightPct: 40,
+            score: divScore,
+            weightedScore: divScore * 0.4,
+            description: assetClass === 'ETF' ? 'Cesta multi-ativos indexada' : 'Exposição ao mercado global',
+            status: 'excellent'
+          },
+          {
+            name: 'Liquidez de Mercado',
+            weightPct: 30,
+            score: liqScore,
+            weightedScore: liqScore * 0.3,
+            description: 'Negociação em pregão B3',
+            status: 'excellent'
+          },
+          {
+            name: 'Eficiência Estrutural',
+            weightPct: 30,
+            score: costScore,
+            weightedScore: costScore * 0.3,
+            description: 'Acesso simplificado via B3',
+            status: 'excellent'
+          }
+        ]
+      };
+    }
+
+    // Cripto / Outros
+    const isCrypto = assetClass === 'Cripto';
+    const totalScore = isCrypto ? 72 : 75;
+    return {
+      ticker: fundamental.ticker,
+      type: assetClass,
+      totalScore,
+      grade: 'B+',
+      summary: isCrypto
+        ? 'Ativo digital de alta assimetria e volatilidade; recomendado dimensionar percentual com controle de risco.'
+        : 'Ativo alternativo complementar para diversificação da carteira.',
+      strengths: [
+        isCrypto ? 'Alta liquidez global 24/7 e descorrelação tradicional' : 'Diversificação patrimonial fora das classes padrão'
+      ],
+      warnings: isCrypto ? ['Alta volatilidade histórica — respeite seu limite máximo na carteira'] : [],
+      pillars: [
+        {
+          name: 'Liquidez & Mercado',
+          weightPct: 40,
+          score: 82,
+          weightedScore: 82 * 0.4,
+          description: isCrypto ? 'Mercado global contínuo' : 'Liquidez específica do ativo',
+          status: 'excellent'
+        },
+        {
+          name: 'Gestão de Risco',
+          weightPct: 60,
+          score: 65,
+          weightedScore: 65 * 0.6,
+          description: isCrypto ? 'Volatilidade elevada' : 'Classe complementar',
+          status: 'good'
+        }
+      ]
+    };
+  }
+
   return calculateStockScore(fundamental, customStockWeights || DEFAULT_STOCK_WEIGHTS);
 }

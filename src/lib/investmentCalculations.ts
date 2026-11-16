@@ -1,6 +1,27 @@
 import { Dividend, InvestmentTransaction, DividendAnalysisMode, ValuationTarget } from '../types';
 import { getTodayLocalDateStr } from './utils';
 
+/**
+ * Canonical net financial amount for an investment operation:
+ * - Buy: (price * quantity) + costs
+ * - Sell: max(0, (price * quantity) - costs)
+ */
+export function getInvestmentTransactionNetAmount(
+  tx: Pick<InvestmentTransaction, 'operation' | 'price' | 'quantity' | 'costs' | 'amount'>
+): number {
+  const price = Number(tx.price || 0);
+  const qty = Number(tx.quantity || 0);
+  const costs = Number(tx.costs || 0);
+  const isBuy = tx.operation === 'buy';
+
+  if (price > 0 && qty > 0) {
+    const subtotal = price * qty;
+    return isBuy ? subtotal + costs : Math.max(0, subtotal - costs);
+  }
+
+  return Math.max(0, Number(tx.amount || 0));
+}
+
 export interface AssetProjectionResult {
   ticker: string;
   type: string;
@@ -623,11 +644,11 @@ export function calculatePortfolioPerformanceMetrics(
 
   sortedTx.forEach(tx => {
     const txDate = new Date(tx.date + 'T12:00:00Z');
-    const costs = tx.costs || 0;
+    const netAmount = getInvestmentTransactionNetAmount(tx);
     if (tx.operation === 'buy') {
-      cashFlows.push({ date: txDate, amount: -(tx.amount + costs) });
+      cashFlows.push({ date: txDate, amount: -netAmount });
     } else {
-      cashFlows.push({ date: txDate, amount: +(tx.amount - costs) });
+      cashFlows.push({ date: txDate, amount: +netAmount });
     }
   });
 
@@ -750,10 +771,9 @@ export function calculatePortfolioPerformanceMetrics(
         currentHoldings[tk] = { qty: 0, totalCost: 0, firstBuyDate: tx.date };
       }
       const h = currentHoldings[tk];
-      const costs = tx.costs || 0;
       if (tx.operation === 'buy') {
         h.qty += tx.quantity;
-        h.totalCost += (tx.amount + costs);
+        h.totalCost += getInvestmentTransactionNetAmount(tx);
       } else if (tx.operation === 'sell') {
         const avgP = h.qty > 0 ? h.totalCost / h.qty : 0;
         h.qty = Math.max(0, h.qty - tx.quantity);

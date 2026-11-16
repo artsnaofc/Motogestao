@@ -1,12 +1,14 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { cacheManager } from '../lib/cacheManager';
+import { getInvestmentTransactionNetAmount } from '../lib/investmentCalculations';
 import { 
   Transaction, 
   ReserveTransaction, 
   InvestmentTransaction, 
   Reserve, 
   UserSettings,
-  Dividend 
+  Dividend,
+  MonthlyPatrimonySnapshot
 } from '../types';
 import { format, endOfMonth, startOfMonth, parseISO } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -56,6 +58,7 @@ interface PatrimonyEvolutionProps {
   dividends?: Dividend[];
   hideValues: boolean;
   formatCurrency: (val: any) => string;
+  onSaveMonthlySnapshot?: (monthKey: string, snapshot: MonthlyPatrimonySnapshot) => Promise<void>;
 }
 
 type ChartType = 'area' | 'line' | 'bar';
@@ -78,10 +81,14 @@ export const PatrimonyEvolution: React.FC<PatrimonyEvolutionProps> = ({
   quotes,
   dividends = [],
   hideValues,
-  formatCurrency
+  formatCurrency,
+  onSaveMonthlySnapshot
 }) => {
   const now = useMemo(() => new Date(), []);
   const currentYear = now.getFullYear();
+  const currentMonthKey = format(now, 'yyyy-MM');
+  const savedSnapshots = settings?.monthly_patrimony_snapshots || {};
+  const lastSavedSnapshotSignatureRef = useRef<string>('');
   const savedPrefs = useMemo(() => cacheManager.get<any>('patrimony_evolution_prefs_v1') || null, []);
 
   // Selected Year
@@ -204,7 +211,7 @@ export const PatrimonyEvolution: React.FC<PatrimonyEvolutionProps> = ({
         const txDate = parseLocalDate(tx.date);
         if (txDate > endOfMonthDate) return;
 
-        const amount = Number(tx.price) * Number(tx.quantity) + Number(tx.costs || 0);
+        const amount = getInvestmentTransactionNetAmount(tx);
         if (tx.operation === 'buy') {
           rawNet -= amount;
         } else {
@@ -268,19 +275,46 @@ export const PatrimonyEvolution: React.FC<PatrimonyEvolutionProps> = ({
         }
       });
 
-      const totalInvestmentEquity = Object.entries(posMap).reduce((acc, [ticker, quantity]) => {
-        if (quantity <= 0) return acc;
-        const lastTx = investmentTransactions
-          .filter(t => t.ticker === ticker && (t as any).payment_status !== 'pending' && parseLocalDate(t.date) <= endOfMonthDate)
-          .sort((a, b) => (b.date || '').localeCompare(a.date || ''))[0];
-        const fallbackPrice = lastTx ? Number(lastTx.price) : 0;
+      const activeTickersEntries = Object.entries(posMap).filter(([, qty]) => qty > 0);
+      const isPastClosedMonth = monthKey < currentMonthKey;
+      const periodSnapshot = savedSnapshots[monthKey];
 
-        // Use live quote ONLY if this month is current or future month; for past months, use last tx price
-        const isCurrentOrFutureMonth = isCurrentYearSelected ? monthDate >= startOfMonth(now) : false;
-        const price = isCurrentOrFutureMonth ? (quotes[ticker] || fallbackPrice) : (fallbackPrice || quotes[ticker] || 0);
+      let totalInvestmentEquity = 0;
+      const monthTickerPrices: Record<string, number> = {};
 
-        return acc + price * quantity;
-      }, 0);
+      if (isPastClosedMonth && periodSnapshot) {
+        if (activeTickersEntries.length > 0 && periodSnapshot.tickerPrices && Object.keys(periodSnapshot.tickerPrices).length > 0) {
+          totalInvestmentEquity = activeTickersEntries.reduce((acc, [ticker, quantity]) => {
+            const lastTx = investmentTransactions
+              .filter(t => t.ticker === ticker && (t as any).payment_status !== 'pending' && parseLocalDate(t.date) <= endOfMonthDate)
+              .sort((a, b) => (b.date || '').localeCompare(a.date || ''))[0];
+            const fallbackPrice = lastTx ? Number(lastTx.price) : 0;
+            const savedTickerPrice = periodSnapshot.tickerPrices?.[ticker];
+            const price = savedTickerPrice && savedTickerPrice > 0
+              ? savedTickerPrice
+              : (fallbackPrice || quotes[ticker] || 0);
+            monthTickerPrices[ticker] = price;
+            return acc + price * quantity;
+          }, 0);
+        } else {
+          totalInvestmentEquity = Number(periodSnapshot.Investimentos || 0);
+        }
+      } else {
+        totalInvestmentEquity = activeTickersEntries.reduce((acc, [ticker, quantity]) => {
+          const lastTx = investmentTransactions
+            .filter(t => t.ticker === ticker && (t as any).payment_status !== 'pending' && parseLocalDate(t.date) <= endOfMonthDate)
+            .sort((a, b) => (b.date || '').localeCompare(a.date || ''))[0];
+          const fallbackPrice = lastTx ? Number(lastTx.price) : 0;
+
+          // Current or future month uses live quote; past month without a saved snapshot falls back to last trade / quote
+          const isCurrentOrFutureMonth = monthKey >= currentMonthKey;
+          const price = isCurrentOrFutureMonth
+            ? (quotes[ticker] || fallbackPrice)
+            : (fallbackPrice || quotes[ticker] || 0);
+          if (price > 0) monthTickerPrices[ticker] = price;
+          return acc + price * quantity;
+        }, 0);
+      }
 
       const totalPatrimonyVal = caixaMaisReservasVal + totalInvestmentEquity;
       const isFuture = isCurrentYearSelected ? monthDate > now : false;
@@ -297,6 +331,8 @@ export const PatrimonyEvolution: React.FC<PatrimonyEvolutionProps> = ({
         Reservas: Number(totalInResv.toFixed(2)),
         Caixa: Number(caixaBalance.toFixed(2)),
         PatrimonioTotal: Number(totalPatrimonyVal.toFixed(2)),
+        tickerPrices: monthTickerPrices,
+        isSnapshotLocked: Boolean(isPastClosedMonth && periodSnapshot),
         isFuture,
         hasTransactionsInMonth
       };
@@ -310,14 +346,68 @@ export const PatrimonyEvolution: React.FC<PatrimonyEvolutionProps> = ({
   }, [
     selectedYear,
     currentYear,
+    currentMonthKey,
     now,
     realTransactions,
     reserveTransactions,
     investmentTransactions,
     reserves,
     settings,
+    savedSnapshots,
     quotes,
     dividends
+  ]);
+
+  // Automatically persist the latest closing balance of the current month across devices (Supabase + cache)
+  useEffect(() => {
+    if (!onSaveMonthlySnapshot || !settings?.user_id) return;
+    if (selectedYear !== currentYear) return;
+
+    const currentMonthData = monthlyEvolution.find(m => m.monthKey === currentMonthKey);
+    if (!currentMonthData) return;
+
+    const hasAnyValue =
+      currentMonthData.Investimentos > 0 ||
+      currentMonthData.Reservas !== 0 ||
+      currentMonthData.Caixa !== 0 ||
+      Object.keys(currentMonthData.tickerPrices || {}).length > 0;
+    if (!hasAnyValue) return;
+
+    const existingSnap = savedSnapshots[currentMonthKey];
+    const hasSignificantChange =
+      !existingSnap ||
+      Math.abs((existingSnap.Investimentos || 0) - currentMonthData.Investimentos) > 0.01 ||
+      Math.abs((existingSnap.Reservas || 0) - currentMonthData.Reservas) > 0.01 ||
+      Math.abs((existingSnap.Caixa || 0) - currentMonthData.Caixa) > 0.01 ||
+      JSON.stringify(existingSnap.tickerPrices || {}) !== JSON.stringify(currentMonthData.tickerPrices || {});
+
+    if (!hasSignificantChange) return;
+
+    const signature = `${currentMonthKey}|${currentMonthData.Investimentos}|${currentMonthData.Reservas}|${currentMonthData.Caixa}|${JSON.stringify(currentMonthData.tickerPrices || {})}`;
+    if (lastSavedSnapshotSignatureRef.current === signature) return;
+
+    const timer = setTimeout(() => {
+      lastSavedSnapshotSignatureRef.current = signature;
+      onSaveMonthlySnapshot(currentMonthKey, {
+        monthKey: currentMonthKey,
+        Investimentos: currentMonthData.Investimentos,
+        Reservas: currentMonthData.Reservas,
+        Caixa: currentMonthData.Caixa,
+        PatrimonioTotal: currentMonthData.PatrimonioTotal,
+        tickerPrices: currentMonthData.tickerPrices,
+        updatedAt: new Date().toISOString(),
+      });
+    }, 1200);
+
+    return () => clearTimeout(timer);
+  }, [
+    onSaveMonthlySnapshot,
+    settings?.user_id,
+    selectedYear,
+    currentYear,
+    currentMonthKey,
+    monthlyEvolution,
+    savedSnapshots
   ]);
 
   // Compute Month-over-Month variation

@@ -50,11 +50,30 @@ export const PortfolioDiagnosisDashboard: React.FC<PortfolioDiagnosisDashboardPr
 }) => {
   const [activeConcentrationTab, setActiveConcentrationTab] = useState<'assets' | 'sectors' | 'segments' | 'issuers'>('assets');
 
-  // Macro pie data (Ações vs FIIs)
-  const macroPieData = [
-    { name: 'Ações B3', value: diagnosis.stocksValue, count: diagnosis.stocksCount, color: '#0284c7' },
-    { name: 'Fundos Imobiliários (FIIs)', value: diagnosis.fiisValue, count: diagnosis.fiisCount, color: '#10b981' },
-  ].filter(d => d.value > 0);
+  const CLASS_COLORS: Record<string, string> = {
+    'Ação': '#0284c7',
+    'FII': '#10b981',
+    'ETF': '#ec4899',
+    'BDR': '#f59e0b',
+    'Tesouro Direto': '#14b8a6',
+    'Renda Fixa': '#8b5cf6',
+    'Cripto': '#f97316',
+    'Outros': '#64748b',
+  };
+
+  // Macro pie data (todas as classes presentes)
+  const macroPieData = (diagnosis.classBreakdown && diagnosis.classBreakdown.length > 0)
+    ? diagnosis.classBreakdown.map((item, idx) => ({
+        name: item.name,
+        value: item.value,
+        count: item.count,
+        pct: item.pct,
+        color: CLASS_COLORS[item.name] || item.color || COLORS[idx % COLORS.length],
+      }))
+    : [
+        { name: 'Ações B3', value: diagnosis.stocksValue, count: diagnosis.stocksCount, pct: diagnosis.stocksPct, color: '#0284c7' },
+        { name: 'Fundos Imobiliários (FIIs)', value: diagnosis.fiisValue, count: diagnosis.fiisCount, pct: diagnosis.fiisPct, color: '#10b981' },
+      ].filter(d => d.value > 0);
 
   // Sector pie data
   const sectorPieData = diagnosis.sectorConcentrations.map((item, idx) => ({
@@ -246,9 +265,9 @@ export const PortfolioDiagnosisDashboard: React.FC<PortfolioDiagnosisDashboardPr
           <div>
             <h4 className="text-sm font-bold text-white flex items-center gap-2 mb-1">
               <PieIcon className="w-4 h-4 text-sky-400" />
-              Alocação Macro: Ações vs. FIIs
+              Alocação Macro por Classe
             </h4>
-            <p className="text-xs text-slate-400">Distribuição patrimonial por classe de ativo</p>
+            <p className="text-xs text-slate-400">Distribuição patrimonial entre todas as classes</p>
           </div>
 
           <div className="h-56 w-full flex items-center justify-center my-2">
@@ -280,20 +299,15 @@ export const PortfolioDiagnosisDashboard: React.FC<PortfolioDiagnosisDashboardPr
           </div>
 
           <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-800/80 text-xs">
-            <div className="flex items-center gap-2">
-              <div className="w-3 h-3 rounded-full bg-sky-500" />
-              <div>
-                <div className="text-slate-400 text-[11px]">Ações ({diagnosis.stocksCount})</div>
-                <div className="font-bold text-white">{diagnosis.stocksPct.toFixed(1)}%</div>
+            {macroPieData.map(entry => (
+              <div key={entry.name} className="flex items-center gap-2 min-w-0">
+                <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: entry.color }} />
+                <div className="min-w-0">
+                  <div className="text-slate-400 text-[11px] truncate">{entry.name} ({entry.count})</div>
+                  <div className="font-bold text-white">{entry.pct.toFixed(1)}%</div>
+                </div>
               </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-3 h-3 rounded-full bg-emerald-500" />
-              <div>
-                <div className="text-slate-400 text-[11px]">FIIs ({diagnosis.fiisCount})</div>
-                <div className="font-bold text-white">{diagnosis.fiisPct.toFixed(1)}%</div>
-              </div>
-            </div>
+            ))}
           </div>
         </div>
 

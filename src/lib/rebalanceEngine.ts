@@ -34,7 +34,7 @@ export interface RebalanceRulesConfig {
 
 export interface AssetAllocationTarget {
   ticker: string;
-  type: 'Ação' | 'FII';
+  type: string;
   minPct: number;      // Faixa Mínima (ex: 3%)
   targetPct: number;   // Alvo Ideal (ex: 5%)
   maxPct: number;      // Faixa Máxima (ex: 8%)
@@ -56,7 +56,7 @@ export interface PositionForRebalance {
 export interface ContributionItemSuggestion {
   ticker: string;
   name: string;
-  type: 'Ação' | 'FII';
+  type: string;
   currentPrice: number;
   
   // Prioritization score (0 to 100)
@@ -209,6 +209,10 @@ export function simulatePortfolioContribution(
     let isRestricted = false;
     let restrictionReason = '';
 
+    const effectiveType = pos.type || targetSpec.type || fundamental.assetClass || fundamental.type;
+    const isEquityOrFii = effectiveType === 'Ação' || effectiveType === 'FII';
+    const isB3Listed = effectiveType !== 'Tesouro Direto' && effectiveType !== 'Renda Fixa' && effectiveType !== 'Outros';
+
     // Check Rules & Filters
     if (isLocked) {
       isRestricted = true;
@@ -219,16 +223,16 @@ export function simulatePortfolioContribution(
     } else if (scoreResult.totalScore < rules.minScoreAllowed) {
       isRestricted = true;
       restrictionReason = `Score fundamentalista (${scoreResult.totalScore}) abaixo da nota mínima exigida (${rules.minScoreAllowed}).`;
-    } else if (fundamental.dailyLiquidity < rules.minDailyLiquidity) {
+    } else if (isB3Listed && fundamental.dailyLiquidity < rules.minDailyLiquidity) {
       isRestricted = true;
       restrictionReason = `Liquidez diária média (R$ ${(fundamental.dailyLiquidity / 1000).toFixed(0)}k) abaixo da regra mínima de R$ ${(rules.minDailyLiquidity / 1000000).toFixed(1)}M.`;
-    } else if (fundamental.type === 'Ação' && fundamental.sector !== 'Financeiro' && fundamental.netDebtOverEbitda > rules.maxDebtEbitdaAllowed) {
+    } else if (effectiveType === 'Ação' && fundamental.type === 'Ação' && fundamental.sector !== 'Financeiro' && fundamental.netDebtOverEbitda > rules.maxDebtEbitdaAllowed) {
       isRestricted = true;
       restrictionReason = `Endividamento elevado: Dívida/EBITDA de ${fundamental.netDebtOverEbitda.toFixed(2)}x excede o limite de ${rules.maxDebtEbitdaAllowed.toFixed(1)}x.`;
-    } else if (fundamental.type === 'FII' && fundamental.fiiType === 'Tijolo' && fundamental.physicalVacancy > rules.maxFiiPhysicalVacancyAllowed) {
+    } else if (effectiveType === 'FII' && fundamental.type === 'FII' && fundamental.fiiType === 'Tijolo' && fundamental.physicalVacancy > rules.maxFiiPhysicalVacancyAllowed) {
       isRestricted = true;
       restrictionReason = `Vacância física de ${fundamental.physicalVacancy.toFixed(1)}% ultrapassa a trava de risco de ${rules.maxFiiPhysicalVacancyAllowed.toFixed(1)}%.`;
-    } else if (fundamental.type === 'FII' && fundamental.pvp > rules.maxFiiPvpAllowed) {
+    } else if (effectiveType === 'FII' && fundamental.type === 'FII' && fundamental.pvp > rules.maxFiiPvpAllowed) {
       isRestricted = true;
       restrictionReason = `P/VP de ${fundamental.pvp.toFixed(2)}x está acima do teto de preço estipulado (${rules.maxFiiPvpAllowed.toFixed(2)}x).`;
     }
@@ -241,23 +245,25 @@ export function simulatePortfolioContribution(
     }
 
     if (scoreResult.totalScore >= 75) {
-      reasons.push(`Alta qualidade fundamentalista (Score ${scoreResult.totalScore}/100 - Grau ${scoreResult.grade})`);
+      reasons.push(`Alta qualidade (Score ${scoreResult.totalScore}/100 - Grau ${scoreResult.grade})`);
     }
 
-    if (fundamental.type === 'FII') {
+    if (effectiveType === 'FII' && fundamental.type === 'FII') {
       if (fundamental.pvp < 1.0) {
         reasons.push(`Negociado com desconto patrimonial (P/VP ${fundamental.pvp.toFixed(2)}x)`);
       }
       if (fundamental.dividendYield >= 9.0) {
         reasons.push(`Proventos atrativos (DY 12M de ${fundamental.dividendYield.toFixed(1)}%)`);
       }
-    } else {
+    } else if (effectiveType === 'Ação' && fundamental.type === 'Ação') {
       if (fundamental.pl > 0 && fundamental.pl < 10.0) {
         reasons.push(`Múltiplo Preço/Lucro favorável (P/L ${fundamental.pl.toFixed(1)}x)`);
       }
       if (fundamental.dividendYield >= 7.0) {
         reasons.push(`Forte fluxo de dividendos (DY ${fundamental.dividendYield.toFixed(1)}%)`);
       }
+    } else if (!isEquityOrFii) {
+      reasons.push(`Alocação estratégica em ${effectiveType}`);
     }
 
     if (scoreResult.warnings.length > 0) {
@@ -337,7 +343,7 @@ export function simulatePortfolioContribution(
     }
 
     // - Valuation Safety: If asset has P/VP > 1.2 (FII) or P/L > 25 (Stock), penalize it 20%
-    if ((fundamental.type === 'FII' && fundamental.pvp > 1.2) || (fundamental.type === 'Ação' && fundamental.pl > 25)) {
+    if ((effectiveType === 'FII' && fundamental.type === 'FII' && fundamental.pvp > 1.2) || (effectiveType === 'Ação' && fundamental.type === 'Ação' && fundamental.pl > 25)) {
       rawPriority *= 0.8;
       risks.push(`Múltiplos de mercado elevados (P/VP ou P/L acima da média histórica)`);
     }
@@ -353,7 +359,7 @@ export function simulatePortfolioContribution(
     return {
       ticker: pos.ticker,
       name: fundamental.name,
-      type: fundamental.type,
+      type: effectiveType,
       currentPrice: price,
       priorityScore,
       rank: 0,

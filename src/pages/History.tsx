@@ -82,7 +82,8 @@ import {
   RecurrenceFrequency 
 } from '../lib/recurrenceUtils';
 import { syncQueueManager } from '../lib/syncQueue';
-import { getTodayLocalDateStr } from '../lib/utils';
+import { getTodayLocalDateStr, addBusinessDays, formatLocalDateBR } from '../lib/utils';
+import { getInvestmentTransactionNetAmount } from '../lib/investmentCalculations';
 import { VehicleSelect } from '../components/VehicleSelect';
 import { useVehicles } from '../contexts/VehiclesContext';
 import { isVehicleRelatedCategory } from '../lib/vehicleUtils';
@@ -428,7 +429,13 @@ export function History() {
   const [maxAmount, setMaxAmount] = useState(savedFilters?.maxAmount || '');
   const [sortBy, setSortBy] = useState(savedFilters?.sortBy || 'date-desc');
   const [showAdvanced, setShowAdvanced] = useState(savedFilters?.showAdvanced || false);
-  const [showFuture, setShowFuture] = useState<boolean>(false);
+  const [showFuture, setShowFuture] = useState<boolean>(() => Boolean(
+    savedFilters?.showFuture ||
+    savedFilters?.filterPaymentStatus === 'pending' ||
+    savedFilters?.filterStatus === 'scheduled' ||
+    savedFilters?.filterStatus === 'scheduled_30' ||
+    savedFilters?.filterStatus === 'scheduled_90'
+  ));
 
   // Source filters
   const [includeCash, setIncludeCash] = useState(savedFilters?.includeCash ?? true);
@@ -478,7 +485,7 @@ export function History() {
           payment_date: finalPaymentDate,
         });
       }
-      toast.success('Despesa quitada com sucesso!');
+      toast.success(settleItem.type === 'income' ? 'Entrada confirmada com sucesso!' : 'Despesa quitada com sucesso!');
       setSettleItem(null);
       await refreshData(true);
     } catch (err) {
@@ -525,7 +532,14 @@ export function History() {
         newParams.delete('category');
       }
       if (urlFilter === 'pending') {
+        setShowFuture(true);
+        setFilterType('expense');
         setFilterPaymentStatus('pending');
+        setFilterStatus('all');
+        setSortBy('date-asc');
+        setIncludeCash(true);
+        setIncludeReserves(true);
+        setIncludeInvestments(false);
         setActiveQuickChip('pending_expenses');
         setShowBillsAgenda(true);
         newParams.delete('filter');
@@ -547,6 +561,7 @@ export function History() {
       maxAmount,
       sortBy,
       showAdvanced,
+      showFuture,
       includeCash,
       includeReserves,
       includeInvestments,
@@ -557,7 +572,7 @@ export function History() {
     cacheManager.set(HISTORY_FILTERS_KEY, filterState, undefined, 'settings');
   }, [
     searchTerm, searchAllPeriods, filterType, filterCategory, filterStatus, filterPaymentStatus, minAmount, maxAmount,
-    sortBy, showAdvanced, includeCash, includeReserves, includeInvestments,
+    sortBy, showAdvanced, showFuture, includeCash, includeReserves, includeInvestments,
     filterReserveId, filterTicker, activeQuickChip
   ]);
 
@@ -1463,10 +1478,23 @@ export function History() {
   };
 
   const allTransactions = useMemo(() => {
+    const todayStr = getTodayLocalDateStr();
+
     // Create virtual transaction objects for reserve transactions
     const reserveTxsAsVirtual = (reserveTransactions || [])
       .filter(rt => {
-        if (rt.linked_investment_id) {
+        const rawCat = (rt.category || '').toLowerCase().trim();
+        const rawDesc = (rt.description || '').toLowerCase().trim();
+        const isSaleSettlement =
+          rt.type === 'aporte' &&
+          (Boolean(rt.linked_investment_id) ||
+            rawCat === 'venda de ativos' ||
+            rawDesc.includes('venda de ativo') ||
+            rawDesc.includes('liq. d+2') ||
+            (rawCat === 'investimentos' && rawDesc.includes('venda')));
+
+        // Mantém liquidações D+2 de vendas visíveis no Extrato na data exata da entrada (oculta apenas compras vinculadas para não duplicar com investmentTxsAsVirtual)
+        if (rt.linked_investment_id && !isSaleSettlement) {
           return false;
         }
         // Evita duplicar provento/dividendo gerenciado pela página de investimentos com o lançamento das reservas
@@ -1492,6 +1520,24 @@ export function History() {
         const isUtilizacao = rt.type === 'utilizacao';
         const rawCat = (rt.category || '').toLowerCase().trim();
         const rawDesc = (rt.description || '').toLowerCase().trim();
+        const isSaleSettlement =
+          rt.type === 'aporte' &&
+          (Boolean(rt.linked_investment_id) ||
+            rawCat === 'venda de ativos' ||
+            rawDesc.includes('venda de ativo') ||
+            rawDesc.includes('liq. d+2') ||
+            (rawCat === 'investimentos' && rawDesc.includes('venda')));
+
+        const linkedInvTx = rt.linked_investment_id
+          ? (investmentTransactions || []).find(it => it.id === rt.linked_investment_id)
+          : undefined;
+        const tickerMatch = (rt.description || '').match(/\b([A-Z]{4}\d{1,2}F?|BTC|ETH|SOL|TESOURO\S*)\b/i);
+        const settlementTicker = linkedInvTx?.ticker?.toUpperCase() || (tickerMatch ? tickerMatch[1].toUpperCase() : undefined);
+        const settlementDate = rt.due_date || rt.date;
+        const isSettlementPending = isSaleSettlement
+          ? (rt.payment_status === 'pending' || (!rt.payment_date && settlementDate > todayStr))
+          : false;
+
         const isTransferToCash = isUtilizacao && (
           rawCat === 'resgate de reserva' ||
           rawCat === 'resgate reserva' ||
@@ -1503,34 +1549,41 @@ export function History() {
           rawDesc.includes('p/ o caixa') ||
           rawDesc.includes('para o caixa')
         );
-        const effectiveCategory = isRendimento
-          ? 'Rendimentos'
-          : (isTransferToCash
-              ? 'Transferência p/ Caixa'
-              : (isUtilizacao
-                  ? (rt.category || matchedRes?.default_use_category || 'Manutenção')
-                  : 'Aporte Reserva'));
+        const effectiveCategory = isSaleSettlement
+          ? 'Liquidação D+2'
+          : isRendimento
+            ? 'Rendimentos'
+            : (isTransferToCash
+                ? 'Transferência p/ Caixa'
+                : (isUtilizacao
+                    ? (rt.category || matchedRes?.default_use_category || 'Manutenção')
+                    : 'Aporte Reserva'));
         return {
           id: rt.id,
           user_id: rt.user_id,
-          type: isRendimento ? 'income' : 'expense' as const,
+          type: (isRendimento || isSaleSettlement) ? 'income' : 'expense' as const,
           amount: Number(rt.amount),
-          date: rt.date,
+          date: settlementDate,
           category: effectiveCategory,
-          description: rt.description || (isTransferToCash ? `Transferência para o Caixa: ${reserveName}` : (isRendimento ? `Rendimento da ${reserveName}` : (isUtilizacao ? `Utilização da ${reserveName}` : `Aporte para ${reserveName}`))),
+          description: isSaleSettlement
+            ? (rt.description || `Crédito D+2 de venda (${settlementTicker || 'Ativo'}) na reserva ${reserveName}`)
+            : (rt.description || (isTransferToCash ? `Transferência para o Caixa: ${reserveName}` : (isRendimento ? `Rendimento da ${reserveName}` : (isUtilizacao ? `Utilização da ${reserveName}` : `Aporte para ${reserveName}`)))),
           isReserveTx: true,
           reserveTxType: rt.type,
+          isSaleSettlement,
+          ticker: settlementTicker,
+          tradeDate: linkedInvTx?.date,
           isTransferToCash,
           reserveId: rt.reserve_id,
           reserveName: reserveName,
-          reserveColor: isTransferToCash ? '#10b981' : (matchedRes?.color || '#ec4899'),
-          reserveIcon: isTransferToCash ? 'Landmark' : (matchedRes?.icon || 'PiggyBank'),
+          reserveColor: isSaleSettlement ? '#10b981' : (isTransferToCash ? '#10b981' : (matchedRes?.color || '#ec4899')),
+          reserveIcon: isSaleSettlement ? 'CalendarClock' : (isTransferToCash ? 'Landmark' : (matchedRes?.icon || 'PiggyBank')),
           created_at: rt.created_at,
           originalCategory: rt.category,
           linkedInvestmentId: rt.linked_investment_id,
-          payment_status: rt.payment_status || 'paid',
+          payment_status: isSaleSettlement ? (isSettlementPending ? 'pending' : 'paid') : (rt.payment_status || 'paid'),
           payment_date: rt.payment_date,
-          due_date: rt.due_date,
+          due_date: isSaleSettlement ? settlementDate : rt.due_date,
           is_recurring: rt.is_recurring,
           recurrence_frequency: rt.recurrence_frequency,
           recurrence_installments: rt.recurrence_installments,
@@ -1543,29 +1596,69 @@ export function History() {
         } as unknown as Transaction;
       });
 
-    // Create virtual transaction objects for investment transactions
-    const investmentTxsAsVirtual = (investmentTransactions || [])
-      .map(it => {
-        const isBuy = it.operation === 'buy';
-        const totalAmount = (Number(it.price) * Number(it.quantity)) + Number(it.costs || 0);
-        return {
-          id: it.id,
+    // Create virtual transaction objects for investment transactions (and D+2 unlinked sell settlements)
+    const investmentTxsAsVirtual: Transaction[] = [];
+    (investmentTransactions || []).forEach(it => {
+      const isBuy = it.operation === 'buy';
+      const costs = Number(it.costs || 0);
+      const totalAmount = getInvestmentTransactionNetAmount(it);
+      const settlementDate = !isBuy ? addBusinessDays(it.date, 2) : it.date;
+      const linkedRt = !isBuy
+        ? (reserveTransactions || []).find(rt => rt.linked_investment_id === it.id && rt.type === 'aporte')
+        : undefined;
+      const effectiveSettlementDate = linkedRt?.due_date || linkedRt?.date || settlementDate;
+
+      investmentTxsAsVirtual.push({
+        id: it.id,
+        user_id: it.user_id,
+        type: isBuy ? 'expense' : 'income' as const,
+        amount: totalAmount,
+        date: it.date,
+        category: 'Investimentos',
+        description: it.description || (
+          isBuy
+            ? `Compra de ${it.quantity} un do ativo ${it.ticker.toUpperCase()}`
+            : `Venda de ${it.quantity} un de ${it.ticker.toUpperCase()} • Liquidação D+2 em ${formatLocalDateBR(effectiveSettlementDate)}`
+        ),
+        isInvestmentTx: true,
+        investmentType: it.asset_type,
+        investmentTxType: it.operation,
+        settlementDate: !isBuy ? effectiveSettlementDate : undefined,
+        ticker: it.ticker.toUpperCase(),
+        quantity: it.quantity,
+        price: it.price,
+        costs,
+        created_at: it.created_at,
+      } as unknown as Transaction);
+
+      // Se foi venda sem reserva vinculada, também gera lançamento futuro/liquidado D+2 na data exata da entrada
+      if (!isBuy && !linkedRt && totalAmount > 0) {
+        const isPendingD2 = effectiveSettlementDate > todayStr;
+        investmentTxsAsVirtual.push({
+          id: `d2-settlement-${it.id}`,
           user_id: it.user_id,
-          type: isBuy ? 'expense' : 'income' as const,
+          type: 'income' as const,
           amount: totalAmount,
-          date: it.date,
-          category: 'Investimentos',
-          description: it.description || `${isBuy ? 'Compra' : 'Venda'} de ${it.quantity} un do ativo ${it.ticker.toUpperCase()}`,
+          date: effectiveSettlementDate,
+          due_date: effectiveSettlementDate,
+          payment_date: isPendingD2 ? undefined : effectiveSettlementDate,
+          payment_status: isPendingD2 ? 'pending' : 'paid',
+          category: 'Liquidação D+2',
+          description: `Entrada D+2 referente à venda de ${it.quantity} un de ${it.ticker.toUpperCase()} em ${formatLocalDateBR(it.date)}`,
           isInvestmentTx: true,
+          isSaleSettlement: true,
           investmentType: it.asset_type,
-          investmentTxType: it.operation,
+          investmentTxType: 'sell_settlement',
+          linkedInvestmentId: it.id,
+          tradeDate: it.date,
           ticker: it.ticker.toUpperCase(),
           quantity: it.quantity,
           price: it.price,
-          costs: it.costs || 0,
+          costs,
           created_at: it.created_at,
-        } as unknown as Transaction;
-      });
+        } as unknown as Transaction);
+      }
+    });
 
     // Create virtual transaction objects for dividend payments
     const dividendTxsAsVirtual = (dividends || [])
@@ -2005,7 +2098,7 @@ export function History() {
     (investmentTransactions || []).forEach(tx => {
       if ((tx as any).payment_status === 'pending') return;
       if (tx.reserve_id) return; // Handled by reserveTransactions
-      const amount = (Number(tx.price) * Number(tx.quantity)) + Number(tx.costs || 0);
+      const amount = getInvestmentTransactionNetAmount(tx);
       if (tx.operation === 'buy') {
         patrimonio -= amount;
       } else {
@@ -2084,10 +2177,11 @@ export function History() {
         const isReserveTx = (t as any).isReserveTx === true;
         const isDividendTx = (t as any).isDividendTx === true;
         const isInvestmentTx = (t as any).isInvestmentTx === true;
+        const isSaleSettlement = (t as any).isSaleSettlement === true;
         const isResgateReserva = t.category === 'Resgate Reserva';
         const isReserveInternalTransfer = isReserveTx && ((t as any).reserveTxType === 'utilizacao' || (t as any).reserveTxType === 'aporte');
 
-        if (!isInvestmentTx && !isResgateReserva && !isReserveInternalTransfer) {
+        if (!isInvestmentTx && !isSaleSettlement && !isResgateReserva && !isReserveInternalTransfer) {
           ganhosBrutos += amount;
         }
       } else {
@@ -2232,7 +2326,7 @@ export function History() {
           };
         }),
       ...(investmentTransactions || []).filter(tx => (tx as any).payment_status !== 'pending').map(tx => {
-        const amount = (Number(tx.price) * Number(tx.quantity)) + Number(tx.costs || 0);
+        const amount = getInvestmentTransactionNetAmount(tx);
         const effectiveDate = (tx.date || '').split('T')[0];
         return {
           date: effectiveDate,
@@ -2553,6 +2647,7 @@ export function History() {
       isOp ? 'operacional' : (t.type === 'expense' ? 'pessoal' : ''),
       (t as any).isReserveTx ? `reserva cofrinho ${(t as any).reserveName || ''} ${(t as any).reserveTxType || ''}` : '',
       (t as any).isInvestmentTx ? `investimento ativo ${(t as any).ticker || ''}` : '',
+      (t as any).isSaleSettlement ? `liquidacao d+2 d2 venda resgate a receber ${(t as any).ticker || ''}` : '',
       (t as any).isDividendTx ? `provento dividendo jscp rendimento ${(t as any).ticker || ''}` : '',
     ].join(' ');
 
@@ -2780,9 +2875,11 @@ export function History() {
     let totalPendingAmount = 0;
     let overdueCount = 0;
     let overdueAmount = 0;
+    let receivableCount = 0;
+    let totalReceivableAmount = 0;
 
     allTransactionsAdjusted.forEach(t => {
-      if (t.payment_status === 'pending') {
+      if (t.payment_status === 'pending' && t.type === 'expense') {
         const dueDateStr = (t.due_date || t.date || '').split('T')[0];
         if (dueDateStr <= in30DaysStr) {
           const amt = Number((t as any).rawAmount !== undefined ? (t as any).rawAmount : t.amount) || 0;
@@ -2793,6 +2890,10 @@ export function History() {
             overdueAmount += amt;
           }
         }
+      } else if (t.type === 'income' && (t.payment_status === 'pending' || (t as any).dividendStatus === 'provisioned')) {
+        const amt = Number((t as any).rawAmount !== undefined ? (t as any).rawAmount : t.amount) || 0;
+        receivableCount++;
+        totalReceivableAmount += amt;
       }
     });
 
@@ -2801,6 +2902,8 @@ export function History() {
       totalPendingAmount,
       overdueCount,
       overdueAmount,
+      receivableCount,
+      totalReceivableAmount,
     };
   }, [allTransactionsAdjusted]);
 
@@ -2982,8 +3085,8 @@ export function History() {
       const isPending = t.payment_status === 'pending';
 
       if (!isPending) {
-        if (isTransferToCashTx(t)) {
-          // Internal balance transfer from reserve to cash: do not sum into daily income or expenses
+        if (isTransferToCashTx(t) || (t as any).isSaleSettlement) {
+          // Internal balance transfer / asset sale D+2 settlement: do not inflate daily operating income
         } else if (t.type === 'income') {
           if (!isInvestmentTx && t.category !== 'Resgate Reserva' && (!(t as any).isReserveTx || (t as any).reserveTxType === 'rendimento')) {
             groups[dateKey].income += Number(t.amount);
@@ -3149,7 +3252,12 @@ export function History() {
     return { total, count: selectedIds.size };
   }, [selectedIds, filteredTransactions]);
 
+  const isInvestmentManagedTx = (t: Transaction) =>
+    Boolean((t as any).isInvestmentTx || (t as any).isDividendTx || (t as any).isSaleSettlement);
+
   const toggleSelectId = (id: string) => {
+    const target = filteredTransactions.find(t => t.id === id);
+    if (target && isInvestmentManagedTx(target)) return;
     setSelectedIds(prev => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
@@ -3159,10 +3267,13 @@ export function History() {
   };
 
   const selectAllFiltered = () => {
-    if (selectedIds.size === filteredTransactions.length) {
+    const selectableIds = filteredTransactions
+      .filter(t => !isInvestmentManagedTx(t))
+      .map(t => t.id);
+    if (selectedIds.size === selectableIds.length && selectableIds.length > 0) {
       setSelectedIds(new Set());
     } else {
-      setSelectedIds(new Set(filteredTransactions.map(t => t.id)));
+      setSelectedIds(new Set(selectableIds));
     }
   };
 
@@ -3224,7 +3335,15 @@ export function History() {
     try {
       const ids = Array.from(selectedIds);
       const stdIds = ids.filter(id => transactions.some(t => t.id === id));
-      const rtIds = ids.filter(id => (reserveTransactions || []).some(rt => rt.id === id));
+      const rtIds = ids.filter(id =>
+        (reserveTransactions || []).some(rt =>
+          rt.id === id &&
+          !rt.linked_investment_id &&
+          rt.source !== 'investment' &&
+          rt.source !== 'dividends' &&
+          !(rt.description || '').toLowerCase().includes('liq. d+2')
+        )
+      );
 
       // Optimistically delete standard transactions instantly and queue
       for (const id of stdIds) {
@@ -3246,17 +3365,66 @@ export function History() {
     }
   };
 
+  const clearAllFilters = () => {
+    setSearchTerm('');
+    setFilterType('all');
+    setFilterCategory('all');
+    setFilterStatus('all');
+    setFilterPaymentStatus('all');
+    setMinAmount('');
+    setMaxAmount('');
+    setSortBy('date-desc');
+    setIncludeCash(true);
+    setIncludeReserves(true);
+    setIncludeInvestments(true);
+    setFilterReserveId('all');
+    setFilterTicker('all');
+    setActiveQuickChip('all');
+    setShowFuture(false);
+  };
+
+  const handleToggleShowFuture = () => {
+    setShowFuture(prev => {
+      const next = !prev;
+      if (!next && (filterStatus === 'scheduled' || filterStatus === 'scheduled_30' || filterStatus === 'scheduled_90')) {
+        setFilterStatus('all');
+        if (activeQuickChip === 'future_scheduled' || activeQuickChip === 'future_receivables') {
+          setActiveQuickChip('all');
+        }
+        setSortBy('date-desc');
+      }
+      return next;
+    });
+  };
+
+  const handlePaymentStatusChange = (val: string) => {
+    setFilterPaymentStatus(val);
+    if (val === 'pending') {
+      // Dynamic behavior: filtering pending items automatically enables future entries & chronological due-date sort
+      setShowFuture(true);
+      setSortBy('date-asc');
+      if (filterType === 'expense') {
+        setActiveQuickChip('pending_expenses');
+      }
+    } else if (val === 'overdue') {
+      setSortBy('date-asc');
+      setActiveQuickChip('overdue');
+    } else if (activeQuickChip === 'pending_expenses' || activeQuickChip === 'overdue') {
+      setActiveQuickChip('all');
+      if (sortBy === 'date-asc') setSortBy('date-desc');
+    }
+  };
+
   const handleQuickChipClick = (chipId: string) => {
+    // Clicking an already active preset (except 'all') toggles back to 'all' smoothly
+    if (chipId !== 'all' && activeQuickChip === chipId) {
+      clearAllFilters();
+      return;
+    }
+
     setActiveQuickChip(chipId);
     if (chipId === 'all') {
-      setFilterType('all');
-      setFilterCategory('all');
-      setFilterPaymentStatus('all');
-      setFilterStatus('all');
-      setIncludeCash(true);
-      setIncludeReserves(true);
-      setIncludeInvestments(true);
-      setSearchTerm('');
+      clearAllFilters();
     } else if (chipId === 'future_scheduled') {
       setShowFuture(true);
       setFilterType('all');
@@ -3269,19 +3437,46 @@ export function History() {
       setIncludeInvestments(true);
       setSearchTerm('');
     } else if (chipId === 'pending_expenses') {
-      setFilterType('all');
+      // Padrão dinâmico: ao clicar em Despesas Pendentes, ativa "Exibir futuras" e ordena do vencimento mais próximo
+      setShowFuture(true);
+      setFilterType('expense');
       setFilterCategory('all');
       setFilterPaymentStatus('pending');
       setFilterStatus('all');
+      setSortBy('date-asc');
       setIncludeCash(true);
       setIncludeReserves(true);
       setIncludeInvestments(false);
+      setSearchTerm('');
+    } else if (chipId === 'overdue') {
+      setShowFuture(false);
+      setFilterType('expense');
+      setFilterCategory('all');
+      setFilterPaymentStatus('overdue');
+      setFilterStatus('all');
+      setSortBy('date-asc');
+      setIncludeCash(true);
+      setIncludeReserves(true);
+      setIncludeInvestments(false);
+      setSearchTerm('');
+    } else if (chipId === 'future_receivables') {
+      // Entradas futuras: D+2 de vendas + proventos a receber + receitas agendadas
+      setShowFuture(true);
+      setFilterType('income');
+      setFilterCategory('all');
+      setFilterPaymentStatus('all');
+      setFilterStatus('scheduled');
+      setSortBy('date-asc');
+      setIncludeCash(true);
+      setIncludeReserves(true);
+      setIncludeInvestments(true);
       setSearchTerm('');
     } else if (chipId === 'income') {
       setFilterType('income');
       setFilterCategory('all');
       setFilterPaymentStatus('all');
       setFilterStatus('all');
+      setSortBy('date-desc');
       setIncludeCash(true);
       setIncludeReserves(true);
       setIncludeInvestments(true);
@@ -3290,6 +3485,7 @@ export function History() {
       setFilterCategory('all');
       setFilterPaymentStatus('all');
       setFilterStatus('all');
+      setSortBy('date-desc');
       setIncludeCash(true);
       setIncludeReserves(true);
       setIncludeInvestments(true);
@@ -3319,6 +3515,7 @@ export function History() {
       setIncludeReserves(true);
       setIncludeInvestments(true);
     } else if (chipId === 'reservas') {
+      setShowFuture(true);
       setFilterType('all');
       setFilterCategory('all');
       setFilterPaymentStatus('all');
@@ -3327,6 +3524,7 @@ export function History() {
       setIncludeReserves(true);
       setIncludeInvestments(false);
     } else if (chipId === 'investimentos') {
+      setShowFuture(true);
       setFilterType('all');
       setFilterCategory('all');
       setFilterPaymentStatus('all');
@@ -3339,13 +3537,14 @@ export function History() {
 
   const renderTransactionItem = (t: Transaction) => {
     const isReserveTx = (t as any).isReserveTx;
-    const isAporte = isReserveTx ? ((t as any).reserveTxType === 'aporte') : false;
+    const isSaleSettlement = Boolean((t as any).isSaleSettlement);
+    const isAporte = isReserveTx && !isSaleSettlement ? ((t as any).reserveTxType === 'aporte') : false;
     const isRendimento = isReserveTx ? ((t as any).reserveTxType === 'rendimento') : false;
     const isUtilizacao = isReserveTx ? ((t as any).reserveTxType === 'utilizacao') : false;
     const isReserveUseEx = !isReserveTx && (t.is_reserve_use || (t as any).isReserveUseOriginal || t.description?.startsWith('[Reserva]') || (t as any).rawDescription?.startsWith('[Reserva]'));
     const isIncome = t.type === 'income';
 
-    const isAporteTx = isAporte || t.category === 'Aporte Reserva' || ((t as any).isInvestmentTx && ((t as any).investmentTxType === 'buy' || t.type === 'expense'));
+    const isAporteTx = isAporte || t.category === 'Aporte Reserva' || ((t as any).isInvestmentTx && !isSaleSettlement && ((t as any).investmentTxType === 'buy' || t.type === 'expense'));
     const isProventoTx = (t as any).isDividendTx || t.category === 'Proventos' || t.category === 'Dividendos';
     const isRendimentoTx = isRendimento || (isReserveTx && (t as any).reserveTxType === 'rendimento');
     const isNoDescTx = isAporteTx || isRendimentoTx;
@@ -3356,10 +3555,10 @@ export function History() {
       t.description?.includes('Investimento:')
     );
 
-    const isVendaAtivo = isReserveTx && isRendimento && (
+    const isVendaAtivo = isSaleSettlement || (isReserveTx && isRendimento && (
       (t as any).originalCategory === 'Venda de Ativos' ||
       t.description?.includes('Venda de Ativo')
-    );
+    ));
 
     const matchedReserveInfo = isReserveUseEx ? (() => {
       const matchRt = (reserveTransactions || []).find(
@@ -3381,6 +3580,13 @@ export function History() {
           icon: Landmark,
           color: 'text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border-emerald-500/20'
         }
+      : isSaleSettlement
+        ? {
+            icon: t.payment_status === 'pending' ? CalendarClock : TrendingUp,
+            color: t.payment_status === 'pending'
+              ? 'text-amber-600 dark:text-amber-400 bg-amber-500/10 border-amber-500/20'
+              : 'text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border-emerald-500/20'
+          }
       : isReserveTx
         ? { 
             icon: PiggyBank, 
@@ -3470,6 +3676,8 @@ export function History() {
         style={
           isTransfer
             ? { borderLeft: '4px solid #10b981' }
+            : isSaleSettlement
+              ? { borderLeft: t.payment_status === 'pending' ? '4px dashed #f59e0b' : '4px solid #10b981' }
             : isReserveTx 
               ? { borderLeft: `4px ${isRendimento || isUtilizacao ? 'dashed' : 'solid'} ${(t as any).reserveColor}` } 
               : isReserveUseEx 
@@ -3499,8 +3707,7 @@ export function History() {
           }`}
         >
           <div className="flex items-center gap-3 overflow-hidden">
-            {/* Checkbox for Select Mode */}
-            {selectMode && (
+            {selectMode && !isInvestmentManagedTx(t) && (
               <div className="shrink-0 text-indigo-500">
                 {selectedIds.has(t.id) ? (
                   <CheckSquare className="w-5 h-5 text-indigo-600 dark:text-indigo-400 fill-indigo-100 dark:fill-indigo-900/40" />
@@ -3519,6 +3726,10 @@ export function History() {
                 <span className="font-extrabold text-xs sm:text-sm text-foreground truncate tracking-tight">
                   {isTransfer
                     ? `Transferência: ${(t as any).reserveName || 'Reserva'} ➔ Caixa`
+                    : isSaleSettlement
+                      ? ((t as any).reserveName
+                          ? `${(t as any).reserveName} · Liquidação D+2`
+                          : `Liquidação D+2 · ${(t as any).ticker || 'Ativo'}`)
                     : isReserveTx 
                       ? (t as any).reserveName 
                       : isReserveUseEx 
@@ -3534,6 +3745,22 @@ export function History() {
                     <Landmark className="w-2.5 h-2.5" />
                     <span>Transferência Caixa</span>
                   </span>
+                ) : isSaleSettlement ? (
+                  <>
+                    <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-md uppercase tracking-wider border flex items-center gap-1 ${
+                      t.payment_status === 'pending'
+                        ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30'
+                        : 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/20'
+                    }`}>
+                      <CalendarClock className="w-2.5 h-2.5" />
+                      <span>{t.payment_status === 'pending' ? 'Entrada D+2 (Futura)' : 'Liquidado D+2'}</span>
+                    </span>
+                    {(t as any).ticker && (
+                      <span className="text-[9px] font-mono font-black px-1.5 py-0.5 rounded-md bg-secondary text-secondary-foreground border border-border/40">
+                        {(t as any).ticker}
+                      </span>
+                    )}
+                  </>
                 ) : isReserveTx ? (
                   <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-md uppercase tracking-wider ${
                     isAporte 
@@ -3556,7 +3783,7 @@ export function History() {
                   </span>
                 )}
 
-                {(t as any).isInvestmentTx && (
+                {(t as any).isInvestmentTx && !isSaleSettlement && (
                   <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-md uppercase tracking-wider ${
                     t.type === 'income' 
                       ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20' 
@@ -3578,6 +3805,14 @@ export function History() {
 
                 {/* Status de Pagamento / Pendente */}
                 {t.payment_status === 'pending' && (() => {
+                  if (isSaleSettlement) {
+                    return (
+                      <span className="text-[9px] font-black px-1.5 py-0.5 rounded-md uppercase tracking-wider border flex items-center gap-1 bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30">
+                        <span>⏳</span>
+                        <span>Previsto p/ {formatLocalDateBR(t.due_date || t.date)}</span>
+                      </span>
+                    );
+                  }
                   const statusMeta = getPaymentStatusMeta(t.payment_status, t.due_date, t.date);
                   return (
                     <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-md uppercase tracking-wider border flex items-center gap-1 ${statusMeta.bgColor} ${statusMeta.color} ${statusMeta.borderColor}`}>
@@ -3635,7 +3870,7 @@ export function History() {
 
           {/* Right Amount & Quick Settle & Expand Toggle */}
           <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-            {t.payment_status === 'pending' && !selectMode && (
+            {t.payment_status === 'pending' && !selectMode && !isSaleSettlement && !(t as any).isDividendTx && (
               <button
                 type="button"
                 onClick={(e) => {
@@ -3659,6 +3894,15 @@ export function History() {
                   </span>
                   <span className="text-[9px] font-mono text-emerald-600/80 dark:text-emerald-400/80 block">
                     Crédito em Caixa
+                  </span>
+                </>
+              ) : isSaleSettlement ? (
+                <>
+                  <span className="text-xs sm:text-sm font-mono font-black block tracking-tight text-emerald-600 dark:text-emerald-400">
+                    +{formatCurrency(displayAmount)}
+                  </span>
+                  <span className="text-[9px] font-mono text-emerald-600/80 dark:text-emerald-400/80 block">
+                    {(t as any).reserveName ? `D+2 → ${(t as any).reserveName}` : 'Crédito D+2'}
                   </span>
                 </>
               ) : (
@@ -4223,13 +4467,13 @@ export function History() {
               <Button
                 type="button"
                 variant="outline"
-                onClick={() => setShowFuture(prev => !prev)}
+                onClick={handleToggleShowFuture}
                 className={`h-11 text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 px-3.5 select-none transition-colors border cursor-pointer ${
                   showFuture
                     ? 'border-amber-500/40 bg-amber-500/15 text-amber-600 dark:text-amber-400'
                     : 'border-border bg-card text-muted-foreground hover:text-foreground'
                 }`}
-                title={showFuture ? 'Ocultar lançamentos e contas futuras (padrão)' : 'Exibir lançamentos, parcelas e contas futuras no extrato'}
+                title={showFuture ? 'Ocultar lançamentos e contas futuras (padrão)' : 'Exibir lançamentos, liquidações D+2, parcelas e contas futuras no extrato'}
               >
                 <CalendarClock className="w-4 h-4 shrink-0" />
                 <span>{showFuture ? 'Exibindo futuras' : 'Exibir futuras'}</span>
@@ -4265,23 +4509,7 @@ export function History() {
               {(activeFiltersCount > 0 || searchTerm.trim() !== '') && (
                 <Button
                   type="button"
-                  onClick={() => {
-                    setSearchTerm('');
-                    setFilterType('all');
-                    setFilterCategory('all');
-                    setFilterStatus('all');
-                    setFilterPaymentStatus('all');
-                    setMinAmount('');
-                    setMaxAmount('');
-                    setSortBy('date-desc');
-                    setIncludeCash(true);
-                    setIncludeReserves(true);
-                    setIncludeInvestments(true);
-                    setFilterReserveId('all');
-                    setFilterTicker('all');
-                    setActiveQuickChip('all');
-                    setShowFuture(false);
-                  }}
+                  onClick={clearAllFilters}
                   variant="outline"
                   className="h-11 text-xs font-bold border-rose-500/20 bg-rose-500/5 hover:bg-rose-500/10 text-rose-500 hover:text-rose-600 rounded-xl px-3 transition-colors flex items-center gap-1.5 cursor-pointer"
                   title="Limpar todos os filtros ativos"
@@ -4293,81 +4521,184 @@ export function History() {
             </div>
           </div>
 
-          {/* Smart Search Shortcuts & Operators Helper */}
-          <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none text-[11px]">
-            <span className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground shrink-0">
-              Busca Rápida:
-            </span>
-            {[
-              { label: 'Acima de R$ 100', query: '>100' },
-              { label: 'Até R$ 50', query: '<=50' },
-              { label: 'Recorrentes 🔄', query: 'recorrente' },
-              { label: 'Agendados 📅', query: 'futuro' },
-              { label: 'Vencidos ⚠️', query: 'vencido' },
-              { label: 'Operacional ⛽', query: 'operacional' },
-              { label: 'Pessoal ❤️', query: 'pessoal' },
-              { label: 'Proventos 💰', query: 'provento' },
-            ].map(suggestion => {
-              const isSelectedQuery = searchTerm.trim().toLowerCase() === suggestion.query.toLowerCase();
-              return (
-                <button
-                  key={suggestion.query}
-                  type="button"
-                  onClick={() => setSearchTerm(isSelectedQuery ? '' : suggestion.query)}
-                  className={`px-2.5 py-1 rounded-lg font-bold shrink-0 border transition-all cursor-pointer ${
-                    isSelectedQuery
-                      ? 'bg-primary/15 text-primary border-primary/40 font-extrabold'
-                      : 'bg-muted/20 hover:bg-muted/60 text-muted-foreground hover:text-foreground border-border/40'
-                  }`}
-                >
-                  {suggestion.label}
-                </button>
-              );
-            })}
-          </div>
+          {/* Dynamic Filter Presets (Primary One-Click Modes) */}
+          <div className="space-y-2 pt-2 border-t border-border/30">
+            <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none pb-0.5">
+              <span className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground shrink-0 mr-1">
+                Padrões:
+              </span>
+              {[
+                { id: 'all', label: 'Tudo' },
+                { 
+                  id: 'pending_expenses', 
+                  label: `Despesas Pendentes ⏳${pendingSummary.pendingCount > 0 ? ` (${pendingSummary.pendingCount})` : ''}`,
+                  highlight: pendingSummary.pendingCount > 0
+                },
+                ...(pendingSummary.overdueCount > 0 ? [{
+                  id: 'overdue',
+                  label: `Vencidos ⚠️ (${pendingSummary.overdueCount})`,
+                  danger: true
+                }] : []),
+                {
+                  id: 'future_scheduled',
+                  label: `Futuros & Agendados 📅${futureSummary.futureCount > 0 ? ` (${futureSummary.futureCount})` : ''}`,
+                  highlight: futureSummary.futureCount > 0
+                },
+                {
+                  id: 'future_receivables',
+                  label: `D+2 / A Receber 💸${pendingSummary.receivableCount > 0 ? ` (${pendingSummary.receivableCount})` : ''}`,
+                  highlight: pendingSummary.receivableCount > 0
+                },
+                { id: 'income', label: 'Receitas 🟢' },
+                { id: 'expense', label: 'Despesas 🔴' },
+                { id: 'reservas', label: 'Reservas 🐷' },
+                { id: 'investimentos', label: 'Investimentos 📈' },
+                { id: 'combustivel', label: 'Combustível ⛽' },
+                { id: 'uber_ifood', label: 'Uber / iFood 🚗' },
+                { id: 'pizzaria', label: 'Pizzaria 🍕' },
+              ].map((chip: any) => {
+                const isActive =
+                  activeQuickChip === chip.id ||
+                  (chip.id === 'future_scheduled' && filterType === 'all' && (filterStatus === 'scheduled' || filterStatus === 'scheduled_30' || filterStatus === 'scheduled_90')) ||
+                  (chip.id === 'pending_expenses' && filterPaymentStatus === 'pending' && filterType !== 'income') ||
+                  (chip.id === 'overdue' && filterPaymentStatus === 'overdue');
+                return (
+                  <button
+                    key={chip.id}
+                    type="button"
+                    onClick={() => handleQuickChipClick(chip.id)}
+                    className={`px-3 py-1.5 text-xs font-extrabold rounded-xl shrink-0 transition-all cursor-pointer border flex items-center gap-1.5 ${
+                      isActive
+                        ? 'bg-primary text-primary-foreground border-primary shadow-xs'
+                        : chip.danger
+                          ? 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/30 hover:bg-rose-500/20'
+                          : chip.highlight
+                            ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30 hover:bg-amber-500/20'
+                            : 'bg-muted/30 text-muted-foreground border-border/60 hover:bg-muted hover:text-foreground'
+                    }`}
+                  >
+                    <span>{chip.label}</span>
+                  </button>
+                );
+              })}
+            </div>
 
-          {/* Quick Filter Chips */}
-          <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none pb-1 pt-2 border-t border-border/30">
-            {[
-              { id: 'all', label: 'Tudo' },
-              {
-                id: 'future_scheduled',
-                label: `Futuros / Agendados 📅${futureSummary.futureCount > 0 ? ` (${futureSummary.futureCount})` : ''}`,
-                highlight: futureSummary.futureCount > 0
-              },
-              { 
-                id: 'pending_expenses', 
-                label: `Pendentes ⏳${pendingSummary.pendingCount > 0 ? ` (${pendingSummary.pendingCount})` : ''}`,
-                highlight: pendingSummary.pendingCount > 0
-              },
-              { id: 'income', label: 'Receitas 🟢' },
-              { id: 'expense', label: 'Despesas 🔴' },
-              { id: 'combustivel', label: 'Combustível ⛽' },
-              { id: 'uber_ifood', label: 'Uber / iFood 🚗' },
-              { id: 'pizzaria', label: 'Pizzaria 🍕' },
-              { id: 'reservas', label: 'Reservas 🐷' },
-              { id: 'investimentos', label: 'Investimentos 📈' },
-            ].map((chip) => {
-              const isActive =
-                activeQuickChip === chip.id ||
-                (chip.id === 'future_scheduled' && (filterStatus === 'scheduled' || filterStatus === 'scheduled_30' || filterStatus === 'scheduled_90'));
-              return (
-                <button
-                  key={chip.id}
-                  type="button"
-                  onClick={() => handleQuickChipClick(chip.id)}
-                  className={`px-3 py-1.5 text-xs font-extrabold rounded-xl shrink-0 transition-all cursor-pointer border flex items-center gap-1.5 ${
-                    isActive
-                      ? 'bg-primary text-primary-foreground border-primary shadow-xs'
-                      : (chip as any).highlight
-                        ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30 hover:bg-amber-500/20'
-                        : 'bg-muted/30 text-muted-foreground border-border/60 hover:bg-muted hover:text-foreground'
-                  }`}
-                >
-                  <span>{chip.label}</span>
-                </button>
-              );
-            })}
+            {/* Smart Search Shortcuts */}
+            <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none text-[11px]">
+              <span className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground shrink-0">
+                Busca Rápida:
+              </span>
+              {[
+                { label: 'Acima de R$ 100', query: '>100', future: false },
+                { label: 'Até R$ 50', query: '<=50', future: false },
+                { label: 'Recorrentes 🔄', query: 'recorrente', future: true },
+                { label: 'Liquidação D+2 💸', query: 'd+2', future: true },
+                { label: 'Operacional ⛽', query: 'operacional', future: false },
+                { label: 'Pessoal ❤️', query: 'pessoal', future: false },
+                { label: 'Proventos 💰', query: 'provento', future: true },
+              ].map(suggestion => {
+                const isSelectedQuery = searchTerm.trim().toLowerCase() === suggestion.query.toLowerCase();
+                return (
+                  <button
+                    key={suggestion.query}
+                    type="button"
+                    onClick={() => {
+                      const next = isSelectedQuery ? '' : suggestion.query;
+                      setSearchTerm(next);
+                      if (next && suggestion.future) {
+                        setShowFuture(true);
+                      }
+                    }}
+                    className={`px-2.5 py-1 rounded-lg font-bold shrink-0 border transition-all cursor-pointer ${
+                      isSelectedQuery
+                        ? 'bg-primary/15 text-primary border-primary/40 font-extrabold'
+                        : 'bg-muted/20 hover:bg-muted/60 text-muted-foreground hover:text-foreground border-border/40'
+                    }`}
+                  >
+                    {suggestion.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Active Removable Filter Pills */}
+            {(activeFiltersCount > 0 || searchTerm.trim() !== '') && (
+              <div className="flex items-center flex-wrap gap-1.5 pt-1">
+                <span className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground mr-0.5">
+                  Ativos:
+                </span>
+                {showFuture && (
+                  <button
+                    type="button"
+                    onClick={handleToggleShowFuture}
+                    className="px-2 py-0.5 text-[11px] font-bold rounded-lg bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30 flex items-center gap-1 cursor-pointer hover:bg-amber-500/25"
+                  >
+                    <span>Exibindo futuras</span>
+                    <X className="w-3 h-3" />
+                  </button>
+                )}
+                {filterPaymentStatus !== 'all' && (
+                  <button
+                    type="button"
+                    onClick={() => handlePaymentStatusChange('all')}
+                    className="px-2 py-0.5 text-[11px] font-bold rounded-lg bg-primary/10 text-primary border border-primary/30 flex items-center gap-1 cursor-pointer hover:bg-primary/20"
+                  >
+                    <span>Status: {filterPaymentStatus === 'pending' ? 'Pendentes' : filterPaymentStatus === 'overdue' ? 'Vencidos' : 'Pagos'}</span>
+                    <X className="w-3 h-3" />
+                  </button>
+                )}
+                {filterType !== 'all' && (
+                  <button
+                    type="button"
+                    onClick={() => setFilterType('all')}
+                    className="px-2 py-0.5 text-[11px] font-bold rounded-lg bg-primary/10 text-primary border border-primary/30 flex items-center gap-1 cursor-pointer hover:bg-primary/20"
+                  >
+                    <span>Tipo: {filterType === 'income' ? 'Receitas' : filterType === 'expense' ? 'Despesas' : filterType}</span>
+                    <X className="w-3 h-3" />
+                  </button>
+                )}
+                {filterCategory !== 'all' && (
+                  <button
+                    type="button"
+                    onClick={() => setFilterCategory('all')}
+                    className="px-2 py-0.5 text-[11px] font-bold rounded-lg bg-primary/10 text-primary border border-primary/30 flex items-center gap-1 cursor-pointer hover:bg-primary/20"
+                  >
+                    <span>Cat: {filterCategory}</span>
+                    <X className="w-3 h-3" />
+                  </button>
+                )}
+                {filterStatus !== 'all' && (
+                  <button
+                    type="button"
+                    onClick={() => setFilterStatus('all')}
+                    className="px-2 py-0.5 text-[11px] font-bold rounded-lg bg-primary/10 text-primary border border-primary/30 flex items-center gap-1 cursor-pointer hover:bg-primary/20"
+                  >
+                    <span>Data: {filterStatus === 'confirmed' ? 'Ativos' : 'Futuros'}</span>
+                    <X className="w-3 h-3" />
+                  </button>
+                )}
+                {(!includeCash || !includeReserves || !includeInvestments) && (
+                  <button
+                    type="button"
+                    onClick={() => { setIncludeCash(true); setIncludeReserves(true); setIncludeInvestments(true); }}
+                    className="px-2 py-0.5 text-[11px] font-bold rounded-lg bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/30 flex items-center gap-1 cursor-pointer hover:bg-indigo-500/20"
+                  >
+                    <span>Fontes filtradas</span>
+                    <X className="w-3 h-3" />
+                  </button>
+                )}
+                {searchTerm.trim() !== '' && (
+                  <button
+                    type="button"
+                    onClick={() => setSearchTerm('')}
+                    className="px-2 py-0.5 text-[11px] font-bold rounded-lg bg-muted text-foreground border border-border flex items-center gap-1 cursor-pointer hover:bg-muted/80"
+                  >
+                    <span>Busca: "{searchTerm.trim()}"</span>
+                    <X className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Advanced collapsible section */}
@@ -4488,7 +4819,7 @@ export function History() {
                     <label className="text-[10px] font-extrabold uppercase tracking-widest text-muted-foreground">
                       Pagamento / Quitação
                     </label>
-                    <Select value={filterPaymentStatus} onValueChange={setFilterPaymentStatus}>
+                    <Select value={filterPaymentStatus} onValueChange={handlePaymentStatusChange}>
                       <SelectTrigger className="w-full h-10 text-xs font-semibold border-border bg-card rounded-xl">
                         <div className="flex items-center gap-2 truncate text-foreground">
                           <CalendarClock className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
@@ -4519,6 +4850,7 @@ export function History() {
                       onValueChange={(val) => {
                         setFilterStatus(val);
                         if (val === 'scheduled' || val === 'scheduled_30' || val === 'scheduled_90') {
+                          setShowFuture(true);
                           setSortBy('date-asc');
                           setActiveQuickChip('future_scheduled');
                         } else if (activeQuickChip === 'future_scheduled') {
@@ -4659,22 +4991,7 @@ export function History() {
               type="button"
               variant="ghost"
               size="sm"
-              onClick={() => {
-                setSearchTerm('');
-                setFilterType('all');
-                setFilterCategory('all');
-                setFilterPaymentStatus('all');
-                setFilterStatus('all');
-                setMinAmount('');
-                setMaxAmount('');
-                setSortBy('date-desc');
-                setIncludeCash(true);
-                setIncludeReserves(true);
-                setIncludeInvestments(true);
-                setFilterReserveId('all');
-                setFilterTicker('all');
-                setActiveQuickChip('all');
-              }}
+              onClick={clearAllFilters}
               className="h-8 text-xs font-bold text-rose-500 hover:bg-rose-500/10 rounded-xl px-2.5 cursor-pointer"
             >
               Limpar Filtros
@@ -5225,6 +5542,7 @@ export function History() {
 
                   group.transactions.forEach(t => {
                     const isReserveTx = (t as any).isReserveTx;
+                    const isSaleSettlement = Boolean((t as any).isSaleSettlement);
                     const isInvestmentTx = (t as any).isInvestmentTx;
                     const isDividendTx = (t as any).isDividendTx;
                     const isReserveRendimento = isReserveTx && (t as any).reserveTxType === 'rendimento';
@@ -5240,6 +5558,8 @@ export function History() {
 
                     if (isTransferToCashTx(t)) {
                       groupKey = 'reserves';
+                    } else if (isSaleSettlement) {
+                      groupKey = isReserveTx ? 'reserves' : 'investments';
                     } else if (isDividendTx || isReserveRendimento) {
                       groupKey = 'income';
                     } else if (isInvestmentTx) {
@@ -5270,7 +5590,7 @@ export function History() {
                     } else if (groupKey === 'op_expense' || groupKey === 'personal_expense') {
                       subGroupBuckets[groupKey].sum += amt;
                     } else if (groupKey === 'reserves') {
-                      if (isTransferToCashTx(t)) {
+                      if (isTransferToCashTx(t) || isSaleSettlement) {
                         subGroupBuckets[groupKey].sum += amt;
                       } else if (t.type === 'income' || (t as any).reserveTxType === 'rendimento') {
                         subGroupBuckets[groupKey].sum += amt;
@@ -5278,7 +5598,7 @@ export function History() {
                         subGroupBuckets[groupKey].sum -= amt;
                       }
                     } else if (groupKey === 'investments') {
-                      if ((t as any).investmentTxType === 'sell' || (t as any).isDividendTx) {
+                      if ((t as any).investmentTxType === 'sell' || (t as any).investmentTxType === 'sell_settlement' || (t as any).isDividendTx) {
                         subGroupBuckets[groupKey].sum += amt;
                       } else {
                         subGroupBuckets[groupKey].sum -= amt;
@@ -5480,7 +5800,7 @@ export function History() {
                         >
                           <div className="flex items-center gap-3 overflow-hidden">
                             {/* Checkbox for Select Mode */}
-                            {selectMode && (
+                            {selectMode && !isInvestmentManagedTx(t) && (
                               <div className="shrink-0 text-indigo-500">
                                 {selectedIds.has(t.id) ? (
                                   <CheckSquare className="w-4.5 h-4.5 text-indigo-500" />
@@ -5837,7 +6157,7 @@ export function History() {
                                 ID do Lançamento: <span className="font-mono">{t.id.slice(0, 8)}...</span>
                               </span>
                               <div className="flex items-center gap-2">
-                                {!((t as any).isInvestmentTx || (t as any).isDividendTx) ? (
+                                {!((t as any).isInvestmentTx || (t as any).isDividendTx || (t as any).isSaleSettlement) ? (
                                   <Button 
                                     variant="outline" 
                                     size="sm" 
@@ -5852,24 +6172,22 @@ export function History() {
                                     Gerenciável em Investimentos
                                   </span>
                                 )}
-                                <Button 
-                                  variant="ghost" 
-                                  size="sm" 
-                                  onClick={() => {
-                                    const deleteType = (t as any).isInvestmentTx 
-                                      ? 'investment_transaction' 
-                                      : (t as any).isDividendTx 
-                                        ? 'dividend' 
-                                        : isReserveTx 
-                                          ? 'reserve_transaction' 
-                                          : 'transaction';
-                                    askDelete(t.id, deleteType);
-                                  }} 
-                                  className="h-8 text-rose-500 font-bold px-3 text-xs flex items-center gap-1.5 hover:bg-rose-500/10 hover:text-rose-600 border border-transparent hover:border-rose-200"
-                                >
-                                  <Trash className="w-3.5 h-3.5" />
-                                  Excluir
-                                </Button>
+                                {!((t as any).isInvestmentTx || (t as any).isDividendTx || (t as any).isSaleSettlement) && (
+                                  <Button 
+                                    variant="ghost" 
+                                    size="sm" 
+                                    onClick={() => {
+                                      const deleteType = isReserveTx 
+                                        ? 'reserve_transaction' 
+                                        : 'transaction';
+                                      askDelete(t.id, deleteType);
+                                    }} 
+                                    className="h-8 text-rose-500 font-bold px-3 text-xs flex items-center gap-1.5 hover:bg-rose-500/10 hover:text-rose-600 border border-transparent hover:border-rose-200"
+                                  >
+                                    <Trash className="w-3.5 h-3.5" />
+                                    Excluir
+                                  </Button>
+                                )}
                               </div>
                             </div>
                           </div>

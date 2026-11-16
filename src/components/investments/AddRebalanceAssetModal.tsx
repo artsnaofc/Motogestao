@@ -12,6 +12,7 @@ import {
   AlertCircle
 } from 'lucide-react';
 import { CurrencyInput } from '../CurrencyInput';
+import { getAssetTypeForTicker, isMarketQuotedAsset } from '../../lib/b3Fundamentals';
 import { fetchSingleQuote } from '../../lib/quoteService';
 import { toast } from '@/lib/toast';
 
@@ -38,24 +39,23 @@ const COMMON_ASSET_TYPES = [
   'FII',
   'ETF',
   'BDR',
+  'Tesouro Direto',
   'Renda Fixa',
   'Cripto',
-  'Outro'
+  'Outros'
 ];
 
 const SUGGESTED_ASSETS = [
   { ticker: 'WEGE3', type: 'Ação', name: 'WEG S.A.' },
   { ticker: 'ITUB4', type: 'Ação', name: 'Itaú Unibanco' },
-  { ticker: 'VALE3', type: 'Ação', name: 'Vale S.A.' },
-  { ticker: 'PETR4', type: 'Ação', name: 'Petrobras' },
-  { ticker: 'BBAS3', type: 'Ação', name: 'Banco do Brasil' },
   { ticker: 'MXRF11', type: 'FII', name: 'Maxi Renda FII' },
   { ticker: 'HGLG11', type: 'FII', name: 'CSHG Logística FII' },
-  { ticker: 'KNCR11', type: 'FII', name: 'Kinea Rendimentos FII' },
-  { ticker: 'XPML11', type: 'FII', name: 'XP Malls FII' },
   { ticker: 'IVVB11', type: 'ETF', name: 'iShares S&P 500' },
   { ticker: 'BOVA11', type: 'ETF', name: 'iShares Ibovespa' },
   { ticker: 'AAPL34', type: 'BDR', name: 'Apple Inc.' },
+  { ticker: 'TESOURO SELIC 2029', type: 'Tesouro Direto', name: 'Tesouro Selic' },
+  { ticker: 'CDB DI 100%', type: 'Renda Fixa', name: 'CDB Liquidez Diária' },
+  { ticker: 'BTC', type: 'Cripto', name: 'Bitcoin' },
 ];
 
 export function AddRebalanceAssetModal({
@@ -92,21 +92,30 @@ export function AddRebalanceAssetModal({
   if (!isOpen) return null;
 
   const handleTickerChange = (raw: string) => {
-    const clean = raw.toUpperCase().replace(/\s+/g, '');
+    const clean = raw.toUpperCase();
     setTicker(clean);
 
-    // Auto-detect type if ticker ends with 11
-    if (clean.length >= 5 && clean.endsWith('11') && type === 'Ação') {
-      setType('FII');
-    } else if (clean.length >= 5 && clean.endsWith('34') && type === 'Ação') {
-      setType('BDR');
+    if (clean.trim().length >= 3) {
+      const detected = getAssetTypeForTicker(clean);
+      if (detected !== 'Ação' || !['Tesouro Direto', 'Renda Fixa', 'Outros'].includes(type)) {
+        setType(detected);
+      }
     }
   };
 
-  const handleFetchQuote = async (targetTicker?: string) => {
+  const handleFetchQuote = async (targetTicker?: string, explicitType?: string) => {
     const tk = (targetTicker || ticker).trim().toUpperCase();
     if (!tk) {
       toast.error('Digite o ticker do ativo primeiro.');
+      return;
+    }
+
+    const effectiveType = explicitType || type;
+    if (!isMarketQuotedAsset(effectiveType, tk)) {
+      if (effectiveType === 'Tesouro Direto' || effectiveType === 'Renda Fixa') {
+        setPriceStr('100,00');
+      }
+      toast.info(`Ativos de "${effectiveType}" não possuem cotação na bolsa — defina o preço/valor unitário manualmente.`);
       return;
     }
 
@@ -132,7 +141,7 @@ export function AddRebalanceAssetModal({
   const handleSelectSuggested = (s: { ticker: string; type: string }) => {
     setTicker(s.ticker);
     setType(s.type);
-    handleFetchQuote(s.ticker);
+    handleFetchQuote(s.ticker, s.type);
   };
 
   const parseNumber = (val: string): number => {
@@ -251,7 +260,7 @@ export function AddRebalanceAssetModal({
                   type="text"
                   value={ticker}
                   onChange={e => handleTickerChange(e.target.value)}
-                  placeholder="Ex: WEGE3, MXRF11"
+                  placeholder="Ex: WEGE3, MXRF11, TESOURO SELIC 2029, BTC"
                   className="w-full bg-background border border-border/70 rounded-xl px-3 py-2 text-sm font-black text-foreground uppercase tracking-wider outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500 transition-all pr-10"
                   required
                 />

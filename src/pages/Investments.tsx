@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useSearchParams, useLocation } from 'react-router-dom';
 import { useData } from '../contexts/DataContext';
 import { useInvestments } from '../contexts/InvestmentsContext';
@@ -12,11 +12,12 @@ import { DividendSummaryCards } from '../components/investments/DividendSummaryC
 import { PortfolioReportModal } from '../components/investments/PortfolioReportModal';
 import { QuoteProviderSelectorModal } from '../components/investments/QuoteProviderSelectorModal';
 import { EditAssetMetadataModal } from '../components/investments/EditAssetMetadataModal';
+import { ASSET_CLASS_OPTIONS, getAssetTypeForTicker as detectAssetClassFromTicker, isMarketQuotedAsset } from '../lib/b3Fundamentals';
 import { getAssetCnpj, formatCnpj, fetchCnpjOnline } from '../lib/cnpjUtils';
 import { parseNumericValue } from '../lib/numberUtils';
-import { fetchSingleQuote } from '../lib/quoteService';
-import { calculateAssetDividendProjection, calculatePortfolioProjections, calculatePortfolioPerformanceMetrics } from '../lib/investmentCalculations';
-import { InvestmentTransaction, Dividend, DividendType, DividendStatus } from '../types';
+import { fetchSingleQuote, fetchCryptoQuoteBRL } from '../lib/quoteService';
+import { calculateAssetDividendProjection, calculatePortfolioProjections, calculatePortfolioPerformanceMetrics, getInvestmentTransactionNetAmount } from '../lib/investmentCalculations';
+import { InvestmentTransaction, Dividend, DividendType, DividendStatus, ReserveTransaction } from '../types';
 import { addBusinessDays, formatLocalDateBR, getTodayLocalDateStr } from '../lib/utils';
 import { toast } from '@/lib/toast';
 import { 
@@ -74,6 +75,125 @@ interface Position {
   realizedGain?: number;
 }
 
+export const TESOURO_DIRETO_GROUPS = [
+  {
+    category: 'Tesouro Selic (Pós-fixado)',
+    options: ['Tesouro Selic 2029', 'Tesouro Selic 2031']
+  },
+  {
+    category: 'Tesouro IPCA+ (Inflação)',
+    options: ['Tesouro IPCA+ 2029', 'Tesouro IPCA+ 2035', 'Tesouro IPCA+ 2045']
+  },
+  {
+    category: 'Tesouro IPCA+ c/ Juros Semestrais',
+    options: ['Tesouro IPCA+ com Juros Semestrais 2035', 'Tesouro IPCA+ com Juros Semestrais 2045', 'Tesouro IPCA+ com Juros Semestrais 2055']
+  },
+  {
+    category: 'Tesouro Prefixado',
+    options: ['Tesouro Prefixado 2027', 'Tesouro Prefixado 2031', 'Tesouro Prefixado com Juros Semestrais 2035']
+  },
+  {
+    category: 'Tesouro RendA+ (Aposentadoria)',
+    options: ['Tesouro RendA+ 2030', 'Tesouro RendA+ 2035', 'Tesouro RendA+ 2040', 'Tesouro RendA+ 2045']
+  },
+  {
+    category: 'Tesouro Educa+ (Estudos)',
+    options: ['Tesouro Educa+ 2030', 'Tesouro Educa+ 2035', 'Tesouro Educa+ 2040']
+  }
+];
+
+export const RENDA_FIXA_SUBTYPES = [
+  { id: 'CDB', label: 'CDB', desc: 'Certificado de Depósito Bancário' },
+  { id: 'RDB', label: 'RDB', desc: 'Recibo de Depósito Bancário' },
+  { id: 'LCI', label: 'LCI', desc: 'Letra de Crédito Imobiliário' },
+  { id: 'LCA', label: 'LCA', desc: 'Letra de Crédito do Agronegócio' },
+  { id: 'CRI', label: 'CRI', desc: 'Certificado de Recebíveis Imobiliários' },
+  { id: 'CRA', label: 'CRA', desc: 'Certificado de Recebíveis do Agro' },
+  { id: 'Debênture', label: 'Debênture', desc: 'Dívida Corporativa' },
+  { id: 'LC', label: 'LC', desc: 'Letra de Câmbio' },
+  { id: 'Poupança', label: 'Poupança', desc: 'Poupança Tradicional' },
+  { id: 'Outros', label: 'Outros', desc: 'Outro Ativo de Renda Fixa' }
+];
+
+export const RENDA_FIXA_INDEXER_PRESETS = [
+  '100% CDI', '105% CDI', '110% CDI', '115% CDI', '120% CDI',
+  'IPCA + 5,5%', 'IPCA + 6,0%', 'IPCA + 6,5%', 'IPCA + 7,0%',
+  '11,5% a.a.', '12,0% a.a.', '13,0% a.a.', '100% Selic'
+];
+
+export const RENDA_FIXA_ISSUER_PRESETS = [
+  'Banco Inter', 'Nubank', 'Itaú', 'Bradesco', 'Banco do Brasil',
+  'Santander', 'BTG Pactual', 'XP Investimentos', 'C6 Bank', 'Sofisa Direto', 'Daycoval'
+];
+
+export const POPULAR_CRYPTOS = [
+  { sym: 'BTC', name: 'Bitcoin' },
+  { sym: 'ETH', name: 'Ethereum' },
+  { sym: 'SOL', name: 'Solana' },
+  { sym: 'USDT', name: 'Tether' },
+  { sym: 'USDC', name: 'USD Coin' },
+  { sym: 'BNB', name: 'BNB' },
+  { sym: 'XRP', name: 'Ripple' },
+  { sym: 'ADA', name: 'Cardano' },
+  { sym: 'DOGE', name: 'Dogecoin' },
+  { sym: 'AVAX', name: 'Avalanche' },
+  { sym: 'LINK', name: 'Chainlink' },
+  { sym: 'DOT', name: 'Polkadot' },
+];
+
+export function estimateNextDividendDate(lastPaymentDateStr?: string, lastDataComStr?: string): { estimatedDataCom: string; estimatedDataEx: string } {
+  const today = new Date();
+  const todayStr = getTodayLocalDateStr();
+
+  if (!lastPaymentDateStr) {
+    const endOfLastMonth = new Date(today.getFullYear(), today.getMonth(), 0);
+    const estCom = `${endOfLastMonth.getFullYear()}-${String(endOfLastMonth.getMonth() + 1).padStart(2, '0')}-${String(endOfLastMonth.getDate()).padStart(2, '0')}`;
+    const estEx = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-15`;
+    return { estimatedDataCom: estCom, estimatedDataEx: estEx };
+  }
+
+  const lastPay = new Date(lastPaymentDateStr.includes('T') ? lastPaymentDateStr : `${lastPaymentDateStr}T12:00:00`);
+  const lastPayDay = lastPay.getDate();
+  
+  let dayDiff = 15;
+  let isLastDayOfMonth = false;
+  
+  if (lastDataComStr) {
+    const lastCom = new Date(lastDataComStr.includes('T') ? lastDataComStr : `${lastDataComStr}T12:00:00`);
+    const nextDay = new Date(lastCom.getFullYear(), lastCom.getMonth(), lastCom.getDate() + 1);
+    if (nextDay.getDate() === 1) isLastDayOfMonth = true;
+    const diffMs = lastPay.getTime() - lastCom.getTime();
+    if (diffMs > 0) dayDiff = Math.max(1, Math.round(diffMs / (1000 * 60 * 60 * 24)));
+  }
+
+  let targetYear = today.getFullYear();
+  let targetMonth = today.getMonth();
+
+  let candidatePay = new Date(targetYear, targetMonth, lastPayDay);
+  let candidatePayStr = `${candidatePay.getFullYear()}-${String(candidatePay.getMonth() + 1).padStart(2, '0')}-${String(candidatePay.getDate()).padStart(2, '0')}`;
+  if (candidatePayStr < todayStr) {
+    targetMonth += 1;
+    candidatePay = new Date(targetYear, targetMonth, lastPayDay);
+  }
+
+  const payYear = candidatePay.getFullYear();
+  const payMonth = candidatePay.getMonth();
+  const maxDayInPayMonth = new Date(payYear, payMonth + 1, 0).getDate();
+  const payDay = Math.min(lastPayDay, maxDayInPayMonth);
+  const estimatedDataEx = `${payYear}-${String(payMonth + 1).padStart(2, '0')}-${String(payDay).padStart(2, '0')}`;
+
+  let estimatedDataCom: string;
+  if (isLastDayOfMonth) {
+    const prevMonthLastDay = new Date(payYear, payMonth, 0);
+    estimatedDataCom = `${prevMonthLastDay.getFullYear()}-${String(prevMonthLastDay.getMonth() + 1).padStart(2, '0')}-${String(prevMonthLastDay.getDate()).padStart(2, '0')}`;
+  } else {
+    const comDate = new Date(candidatePay.getTime() - dayDiff * 24 * 60 * 60 * 1000);
+    estimatedDataCom = `${comDate.getFullYear()}-${String(comDate.getMonth() + 1).padStart(2, '0')}-${String(comDate.getDate()).padStart(2, '0')}`;
+  }
+
+  return { estimatedDataCom, estimatedDataEx };
+}
+
 export function Investments() {
   const { 
     investmentTransactions, 
@@ -96,6 +216,7 @@ export function Investments() {
     fetchQuotes,
     reserves,
     reserveTransactions,
+    updateReserveTransaction,
     settings,
     updateAssetCnpj,
     dividendAnalysisMode,
@@ -195,6 +316,7 @@ export function Investments() {
   
   const [isSaving, setIsSaving] = useState(false);
   const [isLoadingQuote, setIsLoadingQuote] = useState(false);
+  const hasManualTypeRef = useRef(false);
 
   // Transaction Form State
   const [operation, setOperation] = useState<'buy' | 'sell'>('buy');
@@ -237,7 +359,11 @@ export function Investments() {
   // Fetch fresh live quotes when entering the Investments page (on component mount)
   useEffect(() => {
     if (investmentTransactions.length > 0) {
-      const tickers = Array.from(new Set(investmentTransactions.map(it => it.ticker.toUpperCase().trim()))).filter(Boolean);
+      const tickers = Array.from(new Set(
+        investmentTransactions
+          .filter(it => isMarketQuotedAsset(it.type, it.ticker))
+          .map(it => it.ticker.toUpperCase().trim())
+      )).filter(Boolean);
       if (tickers.length > 0) {
         // Silently fetch fresh live quotes in background with fallback to cache
         fetchQuotes(undefined, undefined, tickers, true);
@@ -247,9 +373,13 @@ export function Investments() {
 
   // Manual refresh handler with notification
   const handleManualRefreshQuotes = async () => {
-    const tickers = Array.from(new Set(investmentTransactions.map(it => it.ticker.toUpperCase().trim()))).filter(Boolean);
+    const tickers = Array.from(new Set(
+      investmentTransactions
+        .filter(it => isMarketQuotedAsset(it.type, it.ticker))
+        .map(it => it.ticker.toUpperCase().trim())
+    )).filter(Boolean);
     if (tickers.length === 0) {
-      toast.info('Nenhum ativo na carteira para atualizar.');
+      toast.info('Nenhum ativo com cotação online (Ação/FII/ETF/BDR/Cripto) na carteira para atualizar.');
       return;
     }
 
@@ -260,10 +390,46 @@ export function Investments() {
     });
   };
 
+  // Specialized asset class modal states
+  const [rfSubtype, setRfSubtype] = useState<string>('CDB');
+  const [rfIndexer, setRfIndexer] = useState<string>('100% CDI');
+  const [rfIssuer, setRfIssuer] = useState<string>('');
+  const [selectedTesouroBond, setSelectedTesouroBond] = useState<string>('');
+  const [divAutoFillNotice, setDivAutoFillNotice] = useState<{
+    ticker: string;
+    unitAmount: number;
+    lastPaymentDate: string;
+    divType: DividendType;
+  } | null>(null);
+
   // Helper to fetch live quote for modal
-  const handleFetchQuoteForTicker = async (targetTicker: string, force = false) => {
+  const handleFetchQuoteForTicker = async (targetTicker: string, force = false, typeOverride?: string) => {
     const clean = targetTicker.toUpperCase().trim();
-    if (!clean || clean.length < 3) return;
+    if (!clean || clean.length < 2) return;
+    const effectiveType = typeOverride ?? type;
+
+    // Direct crypto handler in BRL (Coinbase Spot + CoinGecko)
+    if (effectiveType === 'Cripto' || ['BTC', 'ETH', 'SOL', 'USDT', 'USDC', 'BNB', 'XRP', 'ADA', 'DOGE', 'AVAX', 'LINK', 'DOT'].includes(clean)) {
+      setIsLoadingQuote(true);
+      try {
+        const cryptoResult = await fetchCryptoQuoteBRL(clean);
+        if (cryptoResult && cryptoResult.price > 0) {
+          setPrice(cryptoResult.price.toString().replace('.', ','));
+          toast.info(`Cotação de ${clean} atualizada (${cryptoResult.provider}): R$ ${cryptoResult.price.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`);
+          setIsLoadingQuote(false);
+          return;
+        }
+      } catch (err) {
+        console.warn('Erro ao buscar cripto:', err);
+      }
+    }
+
+    if (!isMarketQuotedAsset(effectiveType, clean)) {
+      if (force) {
+        toast.info(`Ativos do tipo "${effectiveType}" utilizam valor manual — informe o preço/valor unitário.`);
+      }
+      return;
+    }
 
     if (!force && quotes[clean] && quotes[clean] > 0) {
       setPrice(quotes[clean].toString().replace('.', ','));
@@ -305,13 +471,13 @@ export function Investments() {
     } else {
       const meta = b3AssetsMetadata[clean];
       const livePrice = quotes[clean] || meta?.last_price || meta?.lastPrice || 0;
-      const isFii = meta?.asset_type === 'FII' || clean.endsWith('11');
+      const detectedClass = meta?.asset_type || detectAssetClassFromTicker(clean);
       setSelectedAssetDetail({
         id: `synthetic-${clean}`,
         ticker: clean,
-        name: meta?.name || `${clean} ${isFii ? 'FII' : 'S.A.'}`,
-        type: isFii ? 'FII' : 'Ação',
-        assetType: isFii ? 'FII' : 'Ação',
+        name: meta?.name || `${clean} (${detectedClass})`,
+        type: detectedClass,
+        assetType: detectedClass,
         quantity: 0,
         averagePrice: 0,
         totalInvested: 0,
@@ -329,8 +495,12 @@ export function Investments() {
     handleOpenRaioXModal(assetTicker, 'valuation');
   };
 
-  const getAssetTypeForTicker = (tk: string, explicitType?: string): 'Ação' | 'FII' => {
-    if (explicitType === 'FII' || explicitType === 'Ação') {
+  const VALID_CLASSES_SET = new Set([
+    'Ação', 'FII', 'ETF', 'BDR', 'Tesouro Direto', 'Renda Fixa', 'Cripto', 'Outros'
+  ]);
+
+  const getAssetTypeForTicker = (tk: string, explicitType?: string): string => {
+    if (explicitType && VALID_CLASSES_SET.has(explicitType)) {
       return explicitType;
     }
     const clean = (tk || '').toUpperCase().trim();
@@ -338,37 +508,36 @@ export function Investments() {
 
     // Check positions
     const pos = positions.find(p => p.ticker.toUpperCase() === clean) || allPositions.find(p => p.ticker.toUpperCase() === clean);
-    if (pos && (pos.type === 'FII' || pos.type === 'Ação')) {
-      return pos.type as 'Ação' | 'FII';
+    if (pos && pos.type && VALID_CLASSES_SET.has(pos.type)) {
+      return pos.type;
     }
 
     // Check saved valuation targets
     const valTarget = valuationTargets[clean];
-    if (valTarget?.asset_type === 'FII' || valTarget?.asset_type === 'Ação') {
-      return valTarget.asset_type as 'Ação' | 'FII';
+    if (valTarget?.asset_type && VALID_CLASSES_SET.has(valTarget.asset_type)) {
+      return valTarget.asset_type;
     }
 
     // Check transactions
     const lastTx = investmentTransactions.slice().reverse().find(t => t.ticker.toUpperCase() === clean);
-    if (lastTx && (lastTx.type === 'FII' || lastTx.type === 'Ação')) {
-      return lastTx.type as 'Ação' | 'FII';
+    if (lastTx && lastTx.type && VALID_CLASSES_SET.has(lastTx.type)) {
+      return lastTx.type;
     }
 
-    // Check suffix standard for Brazilian market (FIIs end in 11)
-    if (clean.endsWith('11')) return 'FII';
-
-    return 'Ação';
+    return detectAssetClassFromTicker(clean);
   };
 
   const resetForm = (prefilledTicker?: string, initialOp: 'buy' | 'sell' = 'buy', prefilledType?: string) => {
     const tk = prefilledTicker || '';
+    hasManualTypeRef.current = Boolean(prefilledType);
     setOperation(initialOp);
     
-    // Auto-detect asset type (Ação vs FII)
     const detectedType = getAssetTypeForTicker(tk, prefilledType);
     setType(detectedType);
     setTicker(tk);
-    setFormCnpj(tk ? (getAssetCnpj(tk, settings) || '') : '');
+    
+    const isNoCnpjClass = detectedType === 'Tesouro Direto' || detectedType === 'Renda Fixa' || detectedType === 'Cripto';
+    setFormCnpj(isNoCnpjClass ? '' : (tk ? (getAssetCnpj(tk, settings) || '') : ''));
     
     // Auto-fill price from cache if exists
     if (tk && quotes[tk.toUpperCase()] && quotes[tk.toUpperCase()] > 0) {
@@ -382,6 +551,10 @@ export function Investments() {
     setReserveId(settings?.default_investment_reserve_id || '');
     setDate(getTodayLocalDateStr());
     setEditItem(null);
+    setSelectedTesouroBond(detectedType === 'Tesouro Direto' ? tk : '');
+    setRfSubtype('CDB');
+    setRfIndexer('100% CDI');
+    setRfIssuer('');
   };
 
   const openAddModal = (prefilledTicker?: string, initialOp: 'buy' | 'sell' = 'buy', prefilledType?: string) => {
@@ -390,36 +563,122 @@ export function Investments() {
 
     if (prefilledTicker) {
       const clean = prefilledTicker.toUpperCase().trim();
-      if (!quotes[clean] || quotes[clean] <= 0) {
-        handleFetchQuoteForTicker(clean);
+      const targetType = getAssetTypeForTicker(clean, prefilledType);
+      if (targetType === 'Cripto') {
+        handleFetchQuoteForTicker(clean, true, 'Cripto');
+      } else if ((!quotes[clean] || quotes[clean] <= 0) && isMarketQuotedAsset(targetType, clean)) {
+        handleFetchQuoteForTicker(clean, false, targetType);
       }
     }
   };
 
   const openEditModal = (tx: InvestmentTransaction) => {
+    hasManualTypeRef.current = true;
     setEditItem(tx);
     setOperation(tx.operation);
     setType(tx.type);
     setTicker(tx.ticker);
-    setFormCnpj(tx.cnpj || getAssetCnpj(tx.ticker, settings) || '');
+    const isNoCnpjClass = tx.type === 'Tesouro Direto' || tx.type === 'Renda Fixa' || tx.type === 'Cripto';
+    setFormCnpj(isNoCnpjClass ? '' : (tx.cnpj || getAssetCnpj(tx.ticker, settings) || ''));
     setPrice(tx.price.toString().replace('.', ','));
     setQuantity(tx.quantity.toString().replace('.', ','));
     setCosts(tx.costs ? tx.costs.toString().replace('.', ',') : '');
     setReserveId(tx.reserve_id || '');
     setDate(tx.date);
+    setSelectedTesouroBond(tx.type === 'Tesouro Direto' ? tx.ticker : '');
     setIsModalOpen(true);
+  };
+
+  const applyAutoFillForDividendTicker = (targetTicker: string) => {
+    const clean = targetTicker.toUpperCase().trim();
+    setDivTicker(clean);
+    if (!clean) {
+      setDivAutoFillNotice(null);
+      return;
+    }
+
+    // Find all past dividends for this ticker, newest first
+    const matchingDivs = dividends
+      .filter(d => d.ticker.toUpperCase().trim() === clean)
+      .sort((a, b) => {
+        const dateA = a.data_ex || a.date || '';
+        const dateB = b.data_ex || b.date || '';
+        return dateB.localeCompare(dateA);
+      });
+
+    const lastDiv = matchingDivs[0];
+    const matchingPos = positions.find(p => p.ticker.toUpperCase() === clean);
+    const isFii = clean.endsWith('11') || matchingPos?.type === 'FII';
+
+    if (lastDiv) {
+      let unitVal = lastDiv.unit_amount;
+      if (unitVal === undefined || unitVal === null || unitVal <= 0) {
+        if (lastDiv.eligible_quantity && lastDiv.eligible_quantity > 0) {
+          unitVal = lastDiv.amount / lastDiv.eligible_quantity;
+        } else if (matchingPos && matchingPos.totalQuantity > 0) {
+          unitVal = lastDiv.amount / matchingPos.totalQuantity;
+        } else {
+          unitVal = lastDiv.amount;
+        }
+      }
+
+      const targetType: DividendType = (lastDiv.type as string) === 'JSCP' ? 'JCP' : lastDiv.type;
+      setDivType(targetType);
+
+      if (targetType === 'JCP') {
+        const grossVal = Math.round((unitVal / 0.85) * 100000) / 100000;
+        setDivGrossAmount(grossVal.toFixed(5));
+        setDivAmount(unitVal.toFixed(5));
+      } else {
+        const valStr = unitVal.toFixed(5);
+        setDivAmount(valStr);
+        setDivGrossAmount(valStr);
+      }
+
+      const { estimatedDataCom, estimatedDataEx } = estimateNextDividendDate(lastDiv.data_ex || lastDiv.date, lastDiv.data_com);
+      setDivDataCom(estimatedDataCom);
+      setDivDataEx(estimatedDataEx);
+
+      setDivAutoFillNotice({
+        ticker: clean,
+        unitAmount: unitVal,
+        lastPaymentDate: lastDiv.data_ex || lastDiv.date || '',
+        divType: targetType
+      });
+    } else {
+      setDivAutoFillNotice(null);
+      if (isFii) {
+        setDivType('Rendimento');
+        const today = new Date();
+        const endOfLastMonth = new Date(today.getFullYear(), today.getMonth(), 0);
+        const estCom = `${endOfLastMonth.getFullYear()}-${String(endOfLastMonth.getMonth() + 1).padStart(2, '0')}-${String(endOfLastMonth.getDate()).padStart(2, '0')}`;
+        const estEx = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-15`;
+        setDivDataCom(estCom);
+        setDivDataEx(estEx);
+      } else {
+        setDivType('Dividendo');
+        const todayStr = getTodayLocalDateStr();
+        setDivDataEx(todayStr);
+        setDivDataCom(todayStr);
+      }
+    }
   };
 
   const openAddDivModal = (prefilledTicker?: string) => {
     setEditDiv(null);
-    setDivTicker(prefilledTicker || '');
-    setDivAmount('');
-    setDivGrossAmount('');
-    setDivType('Dividendo');
-    setDivDataCom('');
-    const today = getTodayLocalDateStr();
-    setDivDataEx(today);
     setIsDivModalOpen(true);
+    if (prefilledTicker) {
+      applyAutoFillForDividendTicker(prefilledTicker);
+    } else {
+      setDivTicker('');
+      setDivAmount('');
+      setDivGrossAmount('');
+      setDivType('Dividendo');
+      setDivDataCom('');
+      const today = getTodayLocalDateStr();
+      setDivDataEx(today);
+      setDivAutoFillNotice(null);
+    }
   };
 
   const openEditDivModal = (div: Dividend) => {
@@ -611,6 +870,20 @@ export function Investments() {
     }
   };
 
+  const handleSettleSaleD2 = async (tx: InvestmentTransaction, linkedRt: ReserveTransaction) => {
+    try {
+      const todayStr = getTodayLocalDateStr();
+      await updateReserveTransaction(linkedRt.id, {
+        payment_status: 'paid',
+        payment_date: todayStr,
+      });
+      toast.success(`Liquidação D+2 de ${tx.ticker} creditada na reserva!`);
+    } catch (error) {
+      console.error('Error settling D+2 sale:', error);
+      toast.error('Erro ao creditar liquidação D+2.');
+    }
+  };
+
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isSaving) return;
@@ -633,12 +906,20 @@ export function Investments() {
       }
 
       const cleanTicker = ticker.toUpperCase().trim();
+      const isNoCnpjClass = type === 'Tesouro Direto' || type === 'Renda Fixa' || type === 'Cripto';
 
-      if (formCnpj) {
+      if (formCnpj && !isNoCnpjClass) {
         const cleanCnpjDigits = formCnpj.replace(/\D/g, '');
         if (cleanCnpjDigits.length >= 8) {
           const formatted = formatCnpj(cleanCnpjDigits);
           await updateAssetCnpj(cleanTicker, formatted);
+        }
+      }
+
+      if (operation === 'sell') {
+        const matchingPos = positions.find(p => p.ticker.toUpperCase() === cleanTicker);
+        if (matchingPos && numQtd > matchingPos.totalQuantity + 0.000001) {
+          toast.warning(`Atenção: A quantidade informada (${numQtd}) é superior ao saldo em custódia (${matchingPos.totalQuantity}).`);
         }
       }
 
@@ -650,7 +931,7 @@ export function Investments() {
         operation,
         type,
         ticker: cleanTicker,
-        cnpj: formCnpj || undefined,
+        cnpj: isNoCnpjClass ? undefined : (formCnpj || undefined),
         price: numPrice,
         quantity: numQtd,
         costs: numCosts,
@@ -702,21 +983,14 @@ export function Investments() {
       }
       
       const pos = posMap[tk];
-      const txCosts = it.costs || 0;
-      
-      if (it.operation === 'buy') {
-        const subtotal = it.price * it.quantity;
-        const isAmountSubtotalOnly = Math.abs(it.amount - subtotal) < 0.01 && txCosts > 0;
-        const costBasis = isAmountSubtotalOnly ? it.amount + txCosts : it.amount;
+      const netAmount = getInvestmentTransactionNetAmount(it);
 
-        pos.totalInvested += costBasis;
+      if (it.operation === 'buy') {
+        pos.totalInvested += netAmount;
         pos.totalQuantity += it.quantity;
         pos.averagePrice = pos.totalQuantity > 0 ? pos.totalInvested / pos.totalQuantity : 0;
       } else if (it.operation === 'sell') {
-        const subtotal = it.price * it.quantity;
-        const isAmountSubtotalOnly = Math.abs(it.amount - subtotal) < 0.01 && txCosts > 0;
-        const netProceeds = isAmountSubtotalOnly ? Math.max(0, it.amount - txCosts) : it.amount;
-
+        const netProceeds = netAmount;
         const costBasisSold = it.quantity * pos.averagePrice;
         const gainOnSale = netProceeds - costBasisSold;
 
@@ -1422,7 +1696,7 @@ export function Investments() {
               {/* Multi-segment bar */}
               <div className="w-full h-3 rounded-full bg-muted/50 overflow-hidden flex cursor-pointer">
                 {allocationBreakdown.map((item, idx) => {
-                  const colors = ['bg-blue-500', 'bg-emerald-500', 'bg-amber-500', 'bg-purple-500', 'bg-pink-500'];
+                  const colors = ['bg-blue-500', 'bg-emerald-500', 'bg-amber-500', 'bg-purple-500', 'bg-teal-500', 'bg-cyan-500', 'bg-orange-500', 'bg-slate-500'];
                   const colorClass = colors[idx % colors.length];
                   const isSelected = portfolioTypeFilter.toLowerCase() === item.type.toLowerCase();
                   return (
@@ -1450,7 +1724,7 @@ export function Investments() {
                   Todas ({positions.length})
                 </button>
                 {allocationBreakdown.map((item, idx) => {
-                  const bgColors = ['bg-blue-500', 'bg-emerald-500', 'bg-amber-500', 'bg-purple-500', 'bg-pink-500'];
+                  const bgColors = ['bg-blue-500', 'bg-emerald-500', 'bg-amber-500', 'bg-purple-500', 'bg-teal-500', 'bg-cyan-500', 'bg-orange-500', 'bg-slate-500'];
                   const isSelected = portfolioTypeFilter.toLowerCase() === item.type.toLowerCase();
                   return (
                     <button
@@ -1498,12 +1772,9 @@ export function Investments() {
                 className="bg-card border border-border/50 rounded-xl px-3 py-2 text-xs font-bold text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all min-h-[40px]"
               >
                 <option value="all">Todas as Classes</option>
-                <option value="Ação">Ações</option>
-                <option value="FII">Fundos Imobiliários</option>
-                <option value="BDR">BDRs</option>
-                <option value="ETF">ETFs</option>
-                <option value="Renda Fixa">Renda Fixa</option>
-                <option value="Cripto">Cripto</option>
+                {ASSET_CLASS_OPTIONS.map(opt => (
+                  <option key={opt.value} value={opt.value}>{opt.shortLabel}</option>
+                ))}
               </select>
             </div>
 
@@ -1589,13 +1860,17 @@ export function Investments() {
                 const currentAssetCnpj = getAssetCnpj(p.ticker, settings);
 
                 // Category avatar colors
-                const getTypeColor = (type: string) => {
-                  switch (type.toLowerCase()) {
+                const getTypeColor = (t: string) => {
+                  switch (t.toLowerCase()) {
                     case 'ação': return 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20';
                     case 'fii': return 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20';
                     case 'bdr': return 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20';
                     case 'etf': return 'bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20';
-                    case 'renda fixa': return 'bg-teal-500/10 text-teal-600 dark:text-teal-400 border-teal-500/20';
+                    case 'tesouro direto': return 'bg-teal-500/10 text-teal-600 dark:text-teal-400 border-teal-500/20';
+                    case 'renda fixa': return 'bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border-cyan-500/20';
+                    case 'cripto': return 'bg-orange-500/10 text-orange-600 dark:text-orange-400 border-orange-500/20';
+                    case 'outros':
+                    case 'outro': return 'bg-slate-500/10 text-slate-600 dark:text-slate-400 border-slate-500/20';
                     default: return 'bg-secondary text-secondary-foreground border-border/40';
                   }
                 };
@@ -1635,9 +1910,23 @@ export function Investments() {
                             const subtitleText = meta
                               ? (p.type === 'Ação' || p.type === 'BDR' ? meta.sector : (meta.fii_segment || meta.fiiSegment))
                               : null;
+                            const fallbackLabel =
+                              p.type === 'Ação' || p.type === 'FII'
+                                ? 'Ativo da B3'
+                                : p.type === 'Tesouro Direto'
+                                ? 'Título Público Federal'
+                                : p.type === 'Renda Fixa'
+                                ? 'Título de Renda Fixa'
+                                : p.type === 'ETF'
+                                ? 'Fundo de Índice (ETF)'
+                                : p.type === 'BDR'
+                                ? 'Recibo Internacional (BDR)'
+                                : p.type === 'Cripto'
+                                ? 'Ativo Digital / Cripto'
+                                : p.type;
                             return (
                               <p className="text-[10px] text-muted-foreground font-semibold truncate max-w-[150px] sm:max-w-[180px]">
-                                {subtitleText || 'Ativo da B3'}
+                                {subtitleText || fallbackLabel}
                               </p>
                             );
                           })()}
@@ -1833,6 +2122,9 @@ export function Investments() {
                                   if (sector) {
                                     return <span className="text-[10px] text-muted-foreground font-semibold mt-0.5 truncate max-w-[150px]" title={sector}>{sector}</span>;
                                   }
+                                }
+                                if (p.type !== 'Ação' && p.type !== 'FII') {
+                                  return <span className="text-[10px] text-muted-foreground font-semibold mt-0.5 truncate max-w-[150px]">{p.type}</span>;
                                 }
                                 return null;
                               })()}
@@ -2198,7 +2490,19 @@ export function Investments() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border/40 font-medium">
-                    {filteredTransactions.map(tx => (
+                    {filteredTransactions.map(tx => {
+                      const linkedRt = tx.operation === 'sell' && tx.reserve_id
+                        ? (reserveTransactions || []).find(
+                            rt => rt.id === tx.transaction_id || rt.linked_investment_id === tx.id
+                          )
+                        : undefined;
+                      const settleDate = linkedRt?.due_date || linkedRt?.date || addBusinessDays(tx.date, 2);
+                      const isPendingD2 = Boolean(
+                        tx.operation === 'sell' &&
+                        tx.reserve_id &&
+                        (linkedRt ? linkedRt.payment_status === 'pending' : settleDate > getTodayLocalDateStr())
+                      );
+                      return (
                       <tr key={tx.id} className="hover:bg-muted/20 transition-colors">
                         <td className="px-4 py-3 text-muted-foreground">
                           {new Date(tx.date + 'T12:00:00Z').toLocaleDateString('pt-BR', { timeZone: 'UTC' })}
@@ -2210,52 +2514,55 @@ export function Investments() {
                             }`}>
                               {tx.operation === 'buy' ? 'Compra' : 'Venda'}
                             </span>
-                            {tx.operation === 'sell' && tx.reserve_id && (() => {
-                              const linkedRt = (reserveTransactions || []).find(
-                                rt => rt.id === tx.transaction_id || rt.linked_investment_id === tx.id
-                              );
-                              const settleDate = linkedRt?.due_date || linkedRt?.date || addBusinessDays(tx.date, 2);
-                              const isPending = linkedRt ? linkedRt.payment_status === 'pending' : settleDate > getTodayLocalDateStr();
-                              return (
-                                <span
-                                  className={`text-[9.5px] font-bold px-1.5 py-0.5 rounded-md border ${
-                                    isPending
-                                      ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20'
-                                      : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20'
-                                  }`}
-                                  title={isPending ? 'Aguardando liquidação em 2 dias úteis (D+2)' : 'Liquidado na reserva'}
-                                >
-                                  {isPending ? `⏳ D+2: ${formatLocalDateBR(settleDate)}` : `✓ Liq. ${formatLocalDateBR(settleDate)}`}
-                                </span>
-                              );
-                            })()}
+                            {tx.operation === 'sell' && tx.reserve_id && (
+                              <span
+                                className={`text-[9.5px] font-bold px-1.5 py-0.5 rounded-md border ${
+                                  isPendingD2
+                                    ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20'
+                                    : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20'
+                                }`}
+                                title={isPendingD2 ? 'Aguardando liquidação automática em 2 dias úteis (D+2)' : 'Liquidado na reserva'}
+                              >
+                                {isPendingD2 ? `⏳ D+2: ${formatLocalDateBR(settleDate)}` : `✓ Liq. ${formatLocalDateBR(settleDate)}`}
+                              </span>
+                            )}
                           </div>
                         </td>
                         <td className="px-4 py-3 font-black text-foreground">{tx.ticker}</td>
                         <td className="px-4 py-3 text-right font-bold">{tx.quantity}</td>
                         <td className="px-4 py-3 text-right text-muted-foreground">{formatCurrency(tx.price)}</td>
                         <td className="px-4 py-3 text-right text-muted-foreground">{tx.costs ? formatCurrency(tx.costs) : '-'}</td>
-                        <td className={`px-4 py-3 text-right font-bold ${tx.operation === 'buy' ? 'text-foreground' : 'text-rose-500'}`}>
-                          {formatCurrency(tx.amount)}
+                        <td className={`px-4 py-3 text-right font-bold ${tx.operation === 'buy' ? 'text-foreground' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                          {formatCurrency(getInvestmentTransactionNetAmount(tx))}
                         </td>
                         <td className="px-4 py-3 text-center space-x-1">
+                          {isPendingD2 && linkedRt && (
+                            <button
+                              onClick={() => handleSettleSaleD2(tx, linkedRt)}
+                              className="p-1.5 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-500/10 rounded-lg transition-colors inline-flex cursor-pointer"
+                              title="Confirmar Recebimento D+2 e Creditar na Reserva"
+                            >
+                              <Check className="w-3.5 h-3.5 stroke-[3]" />
+                            </button>
+                          )}
                           <button 
                             onClick={() => openEditModal(tx)}
-                            className="p-1.5 text-muted-foreground hover:text-primary hover:bg-primary/10 rounded-lg transition-colors inline-flex"
+                            className="p-1.5 text-muted-foreground hover:text-primary hover:bg-primary/10 rounded-lg transition-colors inline-flex cursor-pointer"
                             title="Editar"
                           >
                             <Edit3 className="w-3.5 h-3.5" />
                           </button>
                           <button 
                             onClick={() => handleOpenDelete(tx)}
-                            className="p-1.5 text-muted-foreground hover:text-rose-500 hover:bg-rose-500/10 rounded-lg transition-colors inline-flex"
+                            className="p-1.5 text-muted-foreground hover:text-rose-500 hover:bg-rose-500/10 rounded-lg transition-colors inline-flex cursor-pointer"
                             title="Excluir"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
                         </td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -2310,7 +2617,7 @@ export function Investments() {
                   <button
                     type="button"
                     onClick={() => setOperation('buy')}
-                    className={`py-2 rounded-xl text-xs font-black border transition-all ${
+                    className={`py-2 rounded-xl text-xs font-black border transition-all cursor-pointer ${
                       operation === 'buy' 
                         ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30' 
                         : 'bg-muted/30 text-muted-foreground hover:bg-muted/60 border-transparent'
@@ -2321,7 +2628,7 @@ export function Investments() {
                   <button
                     type="button"
                     onClick={() => setOperation('sell')}
-                    className={`py-2 rounded-xl text-xs font-black border transition-all ${
+                    className={`py-2 rounded-xl text-xs font-black border transition-all cursor-pointer ${
                       operation === 'sell' 
                         ? 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/30' 
                         : 'bg-muted/30 text-muted-foreground hover:bg-muted/60 border-transparent'
@@ -2332,51 +2639,408 @@ export function Investments() {
                 </div>
               </div>
 
-              <div className="space-y-1.5">
+              {/* QUICK SELL CUSTODY SELECTOR (When operation === 'sell') */}
+              {operation === 'sell' && (
+                <div className="space-y-2 sm:col-span-2 p-3.5 rounded-2xl bg-rose-500/5 border border-rose-500/25 animate-in fade-in duration-200">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-black text-rose-600 dark:text-rose-400 flex items-center gap-1.5">
+                      <Briefcase className="w-3.5 h-3.5" />
+                      Selecione o ativo da sua carteira para vender:
+                    </span>
+                    <span className="text-[10px] text-muted-foreground font-bold">
+                      {positions.filter(p => p.totalQuantity > 0).length} ativos em custódia
+                    </span>
+                  </div>
+
+                  {positions.filter(p => p.totalQuantity > 0).length === 0 ? (
+                    <p className="text-xs text-muted-foreground py-1">
+                      Nenhum ativo com saldo em custódia disponível para venda.
+                    </p>
+                  ) : (
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-44 overflow-y-auto custom-scrollbar p-0.5">
+                      {positions
+                        .filter(p => p.totalQuantity > 0)
+                        .map(p => {
+                          const isSelected = ticker.toUpperCase() === p.ticker.toUpperCase();
+                          const liveOrAvgPrice = quotes[p.ticker] && quotes[p.ticker] > 0 ? quotes[p.ticker] : p.averagePrice;
+                          return (
+                            <button
+                              key={p.ticker}
+                              type="button"
+                              onClick={() => {
+                                setTicker(p.ticker);
+                                setType(p.type);
+                                hasManualTypeRef.current = true;
+                                const currentP = quotes[p.ticker] && quotes[p.ticker] > 0 ? quotes[p.ticker] : p.averagePrice;
+                                setPrice(currentP ? currentP.toString().replace('.', ',') : '');
+                                setQuantity(p.totalQuantity.toString().replace('.', ','));
+                                const isNoCnpj = p.type === 'Tesouro Direto' || p.type === 'Renda Fixa' || p.type === 'Cripto';
+                                const knownCnpj = !isNoCnpj ? getAssetCnpj(p.ticker, settings) : null;
+                                if (knownCnpj) setFormCnpj(knownCnpj);
+                                else if (isNoCnpj) setFormCnpj('');
+                                if (p.type === 'Tesouro Direto') setSelectedTesouroBond(p.ticker);
+                              }}
+                              className={`p-2 rounded-xl text-left border transition-all cursor-pointer flex flex-col justify-between ${
+                                isSelected
+                                  ? 'bg-rose-500 text-white border-rose-500 shadow-md shadow-rose-500/20 scale-[1.01]'
+                                  : 'bg-card hover:bg-rose-500/10 hover:border-rose-500/40 border-border/60'
+                              }`}
+                            >
+                              <div className="flex items-center justify-between gap-1">
+                                <span className="font-mono font-black text-xs">{p.ticker}</span>
+                                <span className={`text-[9px] px-1 py-0.2 rounded font-extrabold ${
+                                  isSelected ? 'bg-white/20 text-white' : 'bg-muted text-muted-foreground'
+                                }`}>
+                                  {p.type}
+                                </span>
+                              </div>
+                              <div className="mt-1 flex items-baseline justify-between text-[10px]">
+                                <span className={isSelected ? 'text-white/80' : 'text-muted-foreground'}>
+                                  {p.totalQuantity} {p.totalQuantity === 1 ? 'cota' : 'cotas'}
+                                </span>
+                                <span className={`font-bold ${isSelected ? 'text-white' : 'text-foreground'}`}>
+                                  {formatCurrency(liveOrAvgPrice)}
+                                </span>
+                              </div>
+                            </button>
+                          );
+                        })}
+                    </div>
+                  )}
+
+                  {/* Quick percentage sell chips */}
+                  {(() => {
+                    const matchingPos = positions.find(p => p.ticker.toUpperCase() === ticker.toUpperCase());
+                    if (!matchingPos || matchingPos.totalQuantity <= 0) return null;
+                    const numEnteredQ = parseNumericValue(quantity);
+                    const isOverCustody = numEnteredQ > matchingPos.totalQuantity + 0.000001;
+
+                    return (
+                      <div className="pt-2 border-t border-rose-500/15 space-y-1.5">
+                        <div className="flex items-center justify-between text-[11px] flex-wrap gap-1">
+                          <span className="text-muted-foreground font-semibold">
+                            Custódia de <strong>{matchingPos.ticker}</strong>: {matchingPos.totalQuantity} cotas
+                          </span>
+                          <div className="flex items-center gap-1">
+                            {[0.25, 0.50, 0.75, 1.0].map((frac) => {
+                              const fracQty = Math.round(matchingPos.totalQuantity * frac * 100000) / 100000;
+                              return (
+                                <button
+                                  key={frac}
+                                  type="button"
+                                  onClick={() => setQuantity(fracQty.toString().replace('.', ','))}
+                                  className="px-2 py-0.5 rounded-lg bg-card border border-border/60 hover:bg-rose-500 hover:text-white hover:border-rose-500 text-[10px] font-black transition-colors"
+                                >
+                                  {frac === 1 ? '100% (Tudo)' : `${frac * 100}%`}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                        {isOverCustody && (
+                          <div className="text-[11px] font-bold text-rose-600 dark:text-rose-400 flex items-center gap-1">
+                            <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                            <span>Atenção: A quantidade informada ({numEnteredQ}) excede o saldo em custódia ({matchingPos.totalQuantity}).</span>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
+
+              <div className="space-y-1.5 sm:col-span-2">
                 <label className="text-xs font-bold text-muted-foreground">Tipo de Ativo</label>
                 <select 
                   value={type} 
-                  onChange={e => setType(e.target.value)}
+                  onChange={e => {
+                    hasManualTypeRef.current = true;
+                    const newType = e.target.value;
+                    setType(newType);
+                    if (newType === 'Tesouro Direto' || newType === 'Renda Fixa' || newType === 'Cripto') {
+                      setFormCnpj('');
+                    }
+                    if (newType === 'Cripto' && ticker) {
+                      handleFetchQuoteForTicker(ticker, true, 'Cripto');
+                    }
+                  }}
                   className="w-full bg-muted/50 border border-border/50 rounded-xl px-3 py-2 text-xs font-bold focus:ring-2 focus:ring-primary/20 outline-none transition-all"
                 >
-                  <option value="Ação">Ação</option>
-                  <option value="FII">Fundo Imobiliário (FII)</option>
+                  {ASSET_CLASS_OPTIONS.map(opt => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
                 </select>
               </div>
-              
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-muted-foreground">Ticker do Ativo</label>
+
+              {/* DYNAMIC SUBSECTION: TESOURO DIRETO */}
+              {type === 'Tesouro Direto' && (
+                <div className="sm:col-span-2 space-y-2.5 p-3.5 rounded-2xl bg-sky-500/5 border border-sky-500/25 animate-in fade-in duration-200">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-black text-sky-600 dark:text-sky-400 flex items-center gap-1.5">
+                      <ShieldCheck className="w-4 h-4 text-sky-500" />
+                      Selecione o Título Oficial do Tesouro Nacional:
+                    </label>
+                  </div>
+                  
+                  <select
+                    value={selectedTesouroBond}
+                    onChange={e => {
+                      const val = e.target.value;
+                      setSelectedTesouroBond(val);
+                      if (val) setTicker(val);
+                    }}
+                    className="w-full bg-card border border-sky-500/30 rounded-xl px-3 py-2 text-xs font-bold focus:ring-2 focus:ring-sky-500/30 outline-none transition-all"
+                  >
+                    <option value="">Selecione na lista do Tesouro Direto...</option>
+                    {TESOURO_DIRETO_GROUPS.map(grp => (
+                      <optgroup key={grp.category} label={grp.category}>
+                        {grp.options.map(opt => (
+                          <option key={opt} value={opt}>{opt}</option>
+                        ))}
+                      </optgroup>
+                    ))}
+                  </select>
+
+                  <div className="space-y-1">
+                    <span className="text-[10px] font-extrabold text-muted-foreground uppercase tracking-wider">
+                      Títulos mais populares:
+                    </span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {['Tesouro Selic 2029', 'Tesouro IPCA+ 2035', 'Tesouro Prefixado 2027', 'Tesouro RendA+ 2035', 'Tesouro Educa+ 2030'].map(t => {
+                        const isSelected = ticker === t;
+                        return (
+                          <button
+                            key={t}
+                            type="button"
+                            onClick={() => {
+                              setSelectedTesouroBond(t);
+                              setTicker(t);
+                            }}
+                            className={`px-2.5 py-1 rounded-xl text-[11px] font-bold border transition-all cursor-pointer ${
+                              isSelected
+                                ? 'bg-sky-500 text-white border-sky-500 shadow-sm'
+                                : 'bg-card hover:bg-sky-500/10 border-border/60 text-muted-foreground'
+                            }`}
+                          >
+                            {t}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* DYNAMIC SUBSECTION: RENDA FIXA (CDB, RDB, LCI, LCA, ETC) */}
+              {type === 'Renda Fixa' && (
+                <div className="sm:col-span-2 space-y-3 p-3.5 rounded-2xl bg-amber-500/5 border border-amber-500/25 animate-in fade-in duration-200">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-black text-amber-600 dark:text-amber-400">
+                      Modalidade de Renda Fixa:
+                    </label>
+                    <div className="flex flex-wrap gap-1.5">
+                      {RENDA_FIXA_SUBTYPES.map(sub => {
+                        const isSelected = rfSubtype === sub.id;
+                        return (
+                          <button
+                            key={sub.id}
+                            type="button"
+                            onClick={() => {
+                              setRfSubtype(sub.id);
+                              const generated = `${sub.id} ${rfIssuer ? rfIssuer + ' ' : ''}${rfIndexer}`.trim();
+                              setTicker(generated);
+                            }}
+                            className={`px-2.5 py-1 rounded-xl text-xs font-black border transition-all cursor-pointer ${
+                              isSelected
+                                ? 'bg-amber-500 text-white border-amber-500 shadow-sm'
+                                : 'bg-card hover:bg-amber-500/10 border-border/60 text-muted-foreground'
+                            }`}
+                          >
+                            {sub.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-muted-foreground">
+                      Indexador / Rentabilidade Estimada:
+                    </label>
+                    <div className="flex flex-wrap gap-1.5">
+                      {RENDA_FIXA_INDEXER_PRESETS.map(idx => {
+                        const isSelected = rfIndexer === idx;
+                        return (
+                          <button
+                            key={idx}
+                            type="button"
+                            onClick={() => {
+                              setRfIndexer(idx);
+                              const generated = `${rfSubtype} ${rfIssuer ? rfIssuer + ' ' : ''}${idx}`.trim();
+                              setTicker(generated);
+                            }}
+                            className={`px-2 py-0.5 rounded-lg text-[10.5px] font-bold border transition-all cursor-pointer ${
+                              isSelected
+                                ? 'bg-amber-500/20 text-amber-700 dark:text-amber-300 border-amber-500/40 font-black'
+                                : 'bg-card hover:bg-muted border-border/60 text-muted-foreground'
+                            }`}
+                          >
+                            {idx}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-muted-foreground">
+                      Emissores / Bancos Frequentes:
+                    </label>
+                    <div className="flex flex-wrap gap-1.5">
+                      {RENDA_FIXA_ISSUER_PRESETS.slice(0, 8).map(iss => {
+                        const isSelected = rfIssuer === iss;
+                        return (
+                          <button
+                            key={iss}
+                            type="button"
+                            onClick={() => {
+                              setRfIssuer(iss);
+                              const generated = `${rfSubtype} ${iss} ${rfIndexer}`.trim();
+                              setTicker(generated);
+                            }}
+                            className={`px-2 py-0.5 rounded-lg text-[10.5px] font-bold border transition-all cursor-pointer ${
+                              isSelected
+                                ? 'bg-amber-500/20 text-amber-700 dark:text-amber-300 border-amber-500/40 font-black'
+                                : 'bg-card hover:bg-muted border-border/60 text-muted-foreground'
+                            }`}
+                          >
+                            {iss}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* DYNAMIC SUBSECTION: CRIPTO (AUTO QUOTE IN BRL) */}
+              {type === 'Cripto' && (
+                <div className="sm:col-span-2 space-y-2.5 p-3.5 rounded-2xl bg-indigo-500/5 border border-indigo-500/25 animate-in fade-in duration-200">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-black text-indigo-600 dark:text-indigo-400 flex items-center gap-1.5">
+                      <Zap className="w-3.5 h-3.5 text-amber-500" />
+                      Selecione a Cripto para buscar a cotação em R$ ao vivo:
+                    </label>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {POPULAR_CRYPTOS.map(c => {
+                      const isSelected = ticker.toUpperCase() === c.sym;
+                      return (
+                        <button
+                          key={c.sym}
+                          type="button"
+                          onClick={async () => {
+                            setTicker(c.sym);
+                            setType('Cripto');
+                            hasManualTypeRef.current = true;
+                            await handleFetchQuoteForTicker(c.sym, true, 'Cripto');
+                          }}
+                          className={`px-2.5 py-1 rounded-xl text-xs font-mono font-black border transition-all cursor-pointer flex items-center gap-1.5 ${
+                            isSelected
+                              ? 'bg-indigo-600 text-white border-indigo-600 shadow-md shadow-indigo-500/20'
+                              : 'bg-card hover:bg-indigo-500/10 border-border/60 text-foreground'
+                          }`}
+                        >
+                          <span>{c.sym}</span>
+                          <span className={`text-[9.5px] font-sans font-normal ${isSelected ? 'text-white/80' : 'text-muted-foreground'}`}>
+                            {c.name}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* TICKER / ASSET NAME INPUT */}
+              <div className="space-y-1.5 sm:col-span-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-muted-foreground">
+                    {type === 'Tesouro Direto'
+                      ? 'Título / Nome do Tesouro'
+                      : type === 'Renda Fixa'
+                      ? 'Nome / Descrição da Renda Fixa'
+                      : type === 'Cripto'
+                      ? 'Símbolo da Criptomoeda (Ex: BTC, ETH, SOL)'
+                      : type === 'Outros'
+                      ? 'Nome / Código do Ativo'
+                      : 'Ticker do Ativo'}
+                  </label>
+                  {type === 'Cripto' && (
+                    <button
+                      type="button"
+                      disabled={isLoadingQuote || !ticker}
+                      onClick={() => handleFetchQuoteForTicker(ticker, true, 'Cripto')}
+                      className="text-[10px] text-indigo-500 font-bold hover:underline flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                    >
+                      {isLoadingQuote ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Zap className="w-3 h-3 text-amber-500" />}
+                      <span>⚡ Buscar Cotação em R$</span>
+                    </button>
+                  )}
+                </div>
                 <input 
                   type="text" 
                   value={ticker} 
                   onChange={e => {
                     const newTk = e.target.value.toUpperCase();
                     setTicker(newTk);
-                    if (newTk.length >= 4) {
-                      const detected = getAssetTypeForTicker(newTk);
-                      setType(detected);
+                    let nextType = type;
+                    if (newTk.trim().length >= 3 && type !== 'Tesouro Direto' && type !== 'Renda Fixa' && type !== 'Cripto') {
+                      const detected = detectAssetClassFromTicker(newTk);
+                      if (!hasManualTypeRef.current || detected !== 'Ação') {
+                        nextType = detected;
+                        setType(detected);
+                      }
                     }
-                    const known = getAssetCnpj(newTk, settings);
-                    if (known) {
-                      setFormCnpj(known);
+                    if (nextType !== 'Tesouro Direto' && nextType !== 'Renda Fixa' && nextType !== 'Cripto') {
+                      const known = getAssetCnpj(newTk, settings);
+                      if (known) setFormCnpj(known);
                     }
                     if (quotes[newTk] && quotes[newTk] > 0) {
                       setPrice(quotes[newTk].toString().replace('.', ','));
-                    } else if (newTk.length >= 4) {
-                      handleFetchQuoteForTicker(newTk);
+                    } else if (nextType === 'Cripto' && newTk.trim().length >= 2) {
+                      handleFetchQuoteForTicker(newTk, false, 'Cripto');
+                    } else if (newTk.trim().length >= 4 && isMarketQuotedAsset(nextType, newTk)) {
+                      handleFetchQuoteForTicker(newTk, false, nextType);
                     }
                   }}
                   onBlur={async () => {
                     const clean = ticker.toUpperCase().trim();
-                    if (clean && !formCnpj) {
+                    if (!clean) return;
+                    if (type === 'Cripto') {
+                      if (!price || price === '0' || price === '0,00') {
+                        handleFetchQuoteForTicker(clean, true, 'Cripto');
+                      }
+                      return;
+                    }
+                    const quotedOnline = isMarketQuotedAsset(type, clean);
+                    if (quotedOnline && (type === 'Ação' || type === 'FII' || type === 'ETF' || type === 'BDR') && !formCnpj) {
                       const auto = await fetchCnpjOnline(clean);
                       if (auto) setFormCnpj(auto);
                     }
-                    if (clean && (!price || price === '0' || price === '0,00')) {
-                      handleFetchQuoteForTicker(clean, true);
+                    if (quotedOnline && (!price || price === '0' || price === '0,00')) {
+                      handleFetchQuoteForTicker(clean, true, type);
                     }
                   }}
-                  placeholder="Ex: PETR4, MXRF11, IVVB11"
+                  placeholder={
+                    type === 'Tesouro Direto'
+                      ? 'Ex: TESOURO SELIC 2029, TESOURO IPCA+ 2035'
+                      : type === 'Renda Fixa'
+                      ? 'Ex: CDB BANCO INTER 110% CDI'
+                      : type === 'Cripto'
+                      ? 'Ex: BTC, ETH, SOL'
+                      : 'Ex: PETR4, MXRF11, BOVA11, AAPL34'
+                  }
                   className="w-full bg-muted/50 border border-border/50 rounded-xl px-3 py-2 text-xs font-bold focus:ring-2 focus:ring-primary/20 outline-none transition-all uppercase"
                   list="ticker-suggestions"
                   required
@@ -2385,17 +3049,26 @@ export function Investments() {
                   <option value="PETR4" />
                   <option value="VALE3" />
                   <option value="ITUB4" />
-                  <option value="BBDC4" />
-                  <option value="ABEV3" />
-                  <option value="BBAS3" />
-                  <option value="ITSA4" />
                   <option value="WEGE3" />
+                  <option value="BBAS3" />
                   <option value="MXRF11" />
                   <option value="HGLG11" />
                   <option value="KNRI11" />
-                  <option value="XPLG11" />
+                  <option value="BOVA11" />
                   <option value="IVVB11" />
+                  <option value="SMAL11" />
+                  <option value="HASH11" />
+                  <option value="AAPL34" />
+                  <option value="MSFT34" />
+                  <option value="TESOURO SELIC 2029" />
+                  <option value="TESOURO IPCA+ 2035" />
+                  <option value="TESOURO PREFIXADO 2027" />
+                  <option value="CDB DI 100%" />
+                  <option value="LCI DI" />
+                  <option value="LCA DI" />
                   <option value="BTC" />
+                  <option value="ETH" />
+                  <option value="SOL" />
                 </datalist>
               </div>
 
@@ -2422,7 +3095,7 @@ export function Investments() {
                       </span>
                     </div>
                     <div className="flex justify-between text-[11px] text-muted-foreground font-medium">
-                      <span>Subtotal ({numQ} {numQ === 1 ? 'cota' : 'cotas'} x {formatCurrency(numP)}): {formatCurrency(subtotal)}</span>
+                      <span>Subtotal ({numQ} {numQ === 1 ? 'unidade/cota' : 'unidades/cotas'} x {formatCurrency(numP)}): {formatCurrency(subtotal)}</span>
                       {numC > 0 && <span>Taxas: {formatCurrency(numC)}</span>}
                     </div>
                     {!isBuy && reserveId && settlementStr && (
@@ -2439,62 +3112,78 @@ export function Investments() {
                 );
               })()}
 
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-bold text-muted-foreground">CNPJ do Ativo (CVM)</label>
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      if (!ticker) {
-                        toast.error('Informe o ticker primeiro.');
-                        return;
-                      }
-                      toast.info(`Buscando CNPJ de ${ticker}...`);
-                      const auto = await fetchCnpjOnline(ticker);
-                      if (auto) {
-                        setFormCnpj(auto);
-                        toast.success(`CNPJ localizado: ${auto}`);
-                      } else {
-                        toast.error('CNPJ não encontrado automaticamente. Digite manualmente.');
-                      }
-                    }}
-                    className="text-[10px] text-sky-500 font-bold hover:underline cursor-pointer"
-                  >
-                    ⚡ Busca Automática
-                  </button>
-                </div>
-                <input 
-                  type="text" 
-                  value={formCnpj} 
-                  onChange={e => setFormCnpj(formatCnpj(e.target.value))}
-                  placeholder="00.000.000/0001-00"
-                  maxLength={18}
-                  className="w-full bg-muted/50 border border-border/50 rounded-xl px-3 py-2 text-xs font-mono font-bold focus:ring-2 focus:ring-primary/20 outline-none transition-all"
-                />
-              </div>
-              
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-bold text-muted-foreground">Preço por Cota (R$)</label>
-                  <button
-                    type="button"
-                    disabled={isLoadingQuote || !ticker}
-                    onClick={() => {
-                      if (!ticker) {
-                        toast.error('Informe o ticker primeiro.');
-                        return;
-                      }
-                      handleFetchQuoteForTicker(ticker, true);
-                    }}
-                    className="text-[10px] text-primary font-bold hover:underline flex items-center gap-1 cursor-pointer disabled:opacity-50"
-                  >
-                    {isLoadingQuote ? (
-                      <RefreshCw className="w-3 h-3 animate-spin" />
-                    ) : (
-                      <Zap className="w-3 h-3 text-amber-500" />
+              {/* CNPJ (Hidden for Tesouro Direto, Renda Fixa, and Cripto) */}
+              {type !== 'Tesouro Direto' && type !== 'Renda Fixa' && type !== 'Cripto' && (
+                <div className="space-y-1.5 sm:col-span-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-muted-foreground">CNPJ do Ativo (Opcional)</label>
+                    {isMarketQuotedAsset(type, ticker) && (
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          if (!ticker) {
+                            toast.error('Informe o ticker primeiro.');
+                            return;
+                          }
+                          toast.info(`Buscando CNPJ de ${ticker}...`);
+                          const auto = await fetchCnpjOnline(ticker);
+                          if (auto) {
+                            setFormCnpj(auto);
+                            toast.success(`CNPJ localizado: ${auto}`);
+                          } else {
+                            toast.error('CNPJ não encontrado automaticamente. Digite manualmente.');
+                          }
+                        }}
+                        className="text-[10px] text-sky-500 font-bold hover:underline cursor-pointer"
+                      >
+                        ⚡ Busca Automática
+                      </button>
                     )}
-                    <span>Puxar Preço Atual</span>
-                  </button>
+                  </div>
+                  <input 
+                    type="text" 
+                    value={formCnpj} 
+                    onChange={e => setFormCnpj(formatCnpj(e.target.value))}
+                    placeholder="00.000.000/0001-00"
+                    maxLength={18}
+                    className="w-full bg-muted/50 border border-border/50 rounded-xl px-3 py-2 text-xs font-mono font-bold focus:ring-2 focus:ring-primary/20 outline-none transition-all"
+                  />
+                </div>
+              )}
+              
+              {/* PRICE INPUT */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-muted-foreground">
+                    {type === 'Tesouro Direto'
+                      ? 'Preço Unitário do Título (R$)'
+                      : type === 'Renda Fixa'
+                      ? 'Preço / Valor Unitário (R$)'
+                      : type === 'Cripto'
+                      ? 'Preço Unitário da Cripto (R$)'
+                      : 'Preço por Cota (R$)'}
+                  </label>
+                  {(isMarketQuotedAsset(type, ticker) || type === 'Cripto') && (
+                    <button
+                      type="button"
+                      disabled={isLoadingQuote || !ticker}
+                      onClick={() => {
+                        if (!ticker) {
+                          toast.error('Informe o ticker ou ativo primeiro.');
+                          return;
+                        }
+                        handleFetchQuoteForTicker(ticker, true, type);
+                      }}
+                      className="text-[10px] text-primary font-bold hover:underline flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                    >
+                      {isLoadingQuote ? (
+                        <RefreshCw className="w-3 h-3 animate-spin" />
+                      ) : (
+                        <Zap className="w-3 h-3 text-amber-500" />
+                      )}
+                      <span>Puxar Preço Atual</span>
+                    </button>
+                  )}
                 </div>
                 <CurrencyInput 
                   value={price} 
@@ -2505,19 +3194,33 @@ export function Investments() {
                 />
               </div>
               
+              {/* QUANTITY INPUT */}
               <div className="space-y-1.5">
-                <label className="text-xs font-bold text-muted-foreground">Quantidade de Cotas</label>
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-muted-foreground">
+                    {type === 'Tesouro Direto'
+                      ? 'Quantidade de Títulos (Fração)'
+                      : type === 'Renda Fixa'
+                      ? 'Quantidade / Total de Cotas'
+                      : type === 'Cripto'
+                      ? 'Quantidade / Fração da Cripto'
+                      : 'Quantidade de Cotas'}
+                  </label>
+                  {type === 'Tesouro Direto' && (
+                    <span className="text-[10px] text-muted-foreground font-medium">Mín. 0,01 título</span>
+                  )}
+                </div>
                 <input 
                   type="text" 
                   inputMode="decimal"
                   value={quantity} 
                   onChange={e => {
-                    const val = e.target.value.replace(/[^0-9,]/g, '');
+                    const val = e.target.value.replace(/[^0-9,.]/g, '').replace('.', ',');
                     const parts = val.split(',');
                     if (parts.length > 2) return;
                     setQuantity(val);
                   }}
-                  placeholder="100"
+                  placeholder={type === 'Cripto' ? '0,00500000' : type === 'Tesouro Direto' ? '0,10' : '100'}
                   className="w-full bg-muted/50 border border-border/50 rounded-xl px-3 py-2 text-xs font-bold focus:ring-2 focus:ring-primary/20 outline-none transition-all"
                   required
                 />
@@ -2618,17 +3321,7 @@ export function Investments() {
                           <button
                             key={p.ticker}
                             type="button"
-                            onClick={() => {
-                              setDivTicker(p.ticker);
-                              if (p.type === 'FII') {
-                                if (divType === 'JCP' && parseNumericValue(divGrossAmount) > 0) {
-                                  setDivAmount(divGrossAmount);
-                                }
-                                setDivType('Rendimento');
-                              } else if (p.type === 'Ação' && divType === 'Rendimento') {
-                                setDivType('Dividendo');
-                              }
-                            }}
+                            onClick={() => applyAutoFillForDividendTicker(p.ticker)}
                             className={`px-2.5 py-1 text-xs font-mono font-black rounded-xl border transition-all flex items-center gap-1.5 cursor-pointer ${
                               isSelected
                                 ? 'bg-emerald-500 text-white border-emerald-500 shadow-md shadow-emerald-500/20 scale-[1.02]'
@@ -2653,6 +3346,9 @@ export function Investments() {
                     type="text" 
                     value={divTicker} 
                     onChange={e => setDivTicker(e.target.value.toUpperCase())}
+                    onBlur={e => {
+                      if (e.target.value) applyAutoFillForDividendTicker(e.target.value);
+                    }}
                     placeholder={positions.length > 0 ? "Ou digite o ticker manualmente (Ex: PETR4)" : "Digite o ticker do ativo (Ex: PETR4, MXRF11)"}
                     list="portfolio-div-ticker-list"
                     className="w-full bg-muted/50 border border-border/50 rounded-xl px-3 py-2 text-xs font-bold focus:ring-2 focus:ring-emerald-500/30 outline-none transition-all uppercase"
@@ -2664,6 +3360,21 @@ export function Investments() {
                     ))}
                   </datalist>
                 </div>
+
+                {/* Auto-fill notification badge */}
+                {divAutoFillNotice && (
+                  <div className="p-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/25 flex items-start gap-2.5 text-xs animate-in fade-in duration-200">
+                    <Sparkles className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
+                    <div className="space-y-0.5">
+                      <p className="font-black text-emerald-700 dark:text-emerald-300">
+                        Preenchimento inteligente ativado ({divAutoFillNotice.ticker})
+                      </p>
+                      <p className="text-[11px] text-muted-foreground leading-relaxed">
+                        Valor por cota (R$ {divAutoFillNotice.unitAmount.toFixed(5).replace('.', ',')}) e datas estimados com base na última distribuição de {formatLocalDateBR(divAutoFillNotice.lastPaymentDate)} ({divAutoFillNotice.divType}). Você pode ajustar os valores livremente.
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="space-y-1.5 sm:col-span-2">

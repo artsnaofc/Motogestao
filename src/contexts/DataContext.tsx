@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback, useMemo, useRef } from 'react';
 import { supabase } from '../lib/supabase';
-import { Transaction, UserSettings, Reserve, ReserveTransaction, InvestmentTransaction, Dividend, DividendAnalysisMode, ValuationTarget, DividendSyncResult, DividendSyncStatus } from '../types';
+import { Transaction, UserSettings, Reserve, ReserveTransaction, InvestmentTransaction, Dividend, DividendAnalysisMode, ValuationTarget, DividendSyncResult, DividendSyncStatus, MonthlyPatrimonySnapshot } from '../types';
 import { QuoteProvider, QuoteFetchResult } from '../lib/quoteService';
 import { cacheManager } from '../lib/cacheManager';
 import { syncQueueManager } from '../lib/syncQueue';
@@ -87,6 +87,7 @@ export interface DataContextType {
     forceRefresh?: boolean
   ) => Promise<QuoteFetchResult | undefined>;
   getQuoteAgeMinutes: (ticker: string) => number | null;
+  saveMonthlyPatrimonySnapshot: (monthKey: string, snapshot: MonthlyPatrimonySnapshot) => Promise<void>;
 }
 
 export const DataContext = createContext<DataContextType | undefined>(undefined);
@@ -125,7 +126,13 @@ const getDefaultReserves = (userId: string): Reserve[] => [
 ];
 
 // Inner Consumer that stitches together segregated contexts into the unified useData interface
-function DataContextBridge({ children }: { children: ReactNode }) {
+function DataContextBridge({
+  children,
+  onSaveMonthlyPatrimonySnapshot
+}: {
+  children: ReactNode;
+  onSaveMonthlyPatrimonySnapshot: (monthKey: string, snapshot: MonthlyPatrimonySnapshot) => Promise<void>;
+}) {
   const transCtx = useTransactions();
   const resCtx = useReserves();
   const invCtx = useInvestments();
@@ -214,12 +221,14 @@ function DataContextBridge({ children }: { children: ReactNode }) {
     lastQuoteFetchResult: quotesCtx.lastQuoteFetchResult,
     fetchQuotes: handleFetchQuotes,
     getQuoteAgeMinutes: quotesCtx.getQuoteAgeMinutes,
+    saveMonthlyPatrimonySnapshot: onSaveMonthlyPatrimonySnapshot,
   }), [
     transCtx,
     resCtx,
     invCtx,
     quotesCtx,
-    handleFetchQuotes
+    handleFetchQuotes,
+    onSaveMonthlyPatrimonySnapshot
   ]);
 
   return (
@@ -400,6 +409,22 @@ export function DataProvider({ children, userId: propUserId }: { children: React
           const expCats = settingsData.expense_categories ? [...settingsData.expense_categories] : [];
           if (!expCats.includes('Manutenção')) expCats.push('Manutenção');
 
+          const rawAssetCnpjs = { ...(settingsData.asset_cnpjs || {}) } as Record<string, any>;
+          const fallbackCloudSnapshots = (rawAssetCnpjs.__monthly_patrimony_snapshots || {}) as Record<string, MonthlyPatrimonySnapshot>;
+          const cloudSnapshots = {
+            ...fallbackCloudSnapshots,
+            ...(settingsData.monthly_patrimony_snapshots || {}),
+          } as Record<string, MonthlyPatrimonySnapshot>;
+          const localSnapshots = cacheManager.get<Record<string, MonthlyPatrimonySnapshot>>(`monthly_patrimony_snapshots_${userId}`) || {};
+          const mergedSnapshots: Record<string, MonthlyPatrimonySnapshot> = { ...cloudSnapshots };
+          Object.entries(localSnapshots).forEach(([mKey, localSnap]) => {
+            const cloudSnap = mergedSnapshots[mKey];
+            if (!cloudSnap || (localSnap?.updatedAt && (!cloudSnap.updatedAt || localSnap.updatedAt > cloudSnap.updatedAt))) {
+              mergedSnapshots[mKey] = localSnap;
+            }
+          });
+          cacheManager.set(`monthly_patrimony_snapshots_${userId}`, mergedSnapshots, undefined, 'settings');
+
           const finalSettings: UserSettings = {
             ...settingsData,
             pizzaria_base_deliveries: Number(settingsData.pizzaria_base_deliveries) || 8,
@@ -417,10 +442,11 @@ export function DataProvider({ children, userId: propUserId }: { children: React
             quote_provider: settingsData.quote_provider || 'auto',
             operational_expense_categories: opCats,
             expense_categories: expCats,
-            asset_cnpjs: settingsData.asset_cnpjs || {},
+            asset_cnpjs: rawAssetCnpjs,
             rebalance_targets: settingsData.rebalance_targets || {},
             category_icons: settingsData.category_icons || {},
             cached_quotes: settingsData.cached_quotes || {},
+            monthly_patrimony_snapshots: mergedSnapshots,
             biometrics_enabled: settingsData.biometrics_enabled ?? false,
             biometrics_auto_lock_minutes: settingsData.biometrics_auto_lock_minutes ?? 0,
             biometrics_device_info: settingsData.biometrics_device_info || {},
@@ -686,6 +712,56 @@ export function DataProvider({ children, userId: propUserId }: { children: React
     }
   }, []);
 
+  const saveMonthlyPatrimonySnapshot = useCallback(async (monthKey: string, snapshot: MonthlyPatrimonySnapshot) => {
+    const userId = propUserId || (await getEffectiveUserId());
+    if (!userId) return;
+
+    const currentSettings = settingsRef.current;
+    const prevSnapshots = {
+      ...(cacheManager.get<Record<string, MonthlyPatrimonySnapshot>>(`monthly_patrimony_snapshots_${userId}`) || {}),
+      ...(currentSettings?.monthly_patrimony_snapshots || {}),
+    };
+    const nextSnapshots: Record<string, MonthlyPatrimonySnapshot> = {
+      ...prevSnapshots,
+      [monthKey]: snapshot,
+    };
+
+    cacheManager.set(`monthly_patrimony_snapshots_${userId}`, nextSnapshots, undefined, 'settings');
+
+    if (currentSettings) {
+      const nextSettings: UserSettings = {
+        ...currentSettings,
+        monthly_patrimony_snapshots: nextSnapshots,
+      };
+      setSettings(nextSettings);
+      settingsRef.current = nextSettings;
+      cacheManager.set(`user_settings_${userId}`, nextSettings, undefined, 'settings');
+    }
+
+    if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+
+    try {
+      const { error } = await supabase
+        .from('user_settings')
+        .update({ monthly_patrimony_snapshots: nextSnapshots })
+        .eq('user_id', userId);
+
+      if (error && (error.code === '42703' || error.code === 'PGRST204' || error.message?.includes('monthly_patrimony_snapshots'))) {
+        // Fallback when monthly_patrimony_snapshots column does not exist yet in Supabase: store inside existing JSONB column
+        const nextAssetCnpjs = {
+          ...(currentSettings?.asset_cnpjs || {}),
+          __monthly_patrimony_snapshots: nextSnapshots,
+        };
+        await supabase
+          .from('user_settings')
+          .update({ asset_cnpjs: nextAssetCnpjs })
+          .eq('user_id', userId);
+      }
+    } catch (err) {
+      console.warn('[DataContext] Erro ao persistir snapshot mensal patrimonial:', err);
+    }
+  }, [propUserId]);
+
   return (
     <TransactionsProvider
       initialTransactions={transactions}
@@ -712,7 +788,7 @@ export function DataProvider({ children, userId: propUserId }: { children: React
         >
           <QuotesProvider userId={propUserId} initialCachedQuotes={settings?.cached_quotes}>
             <VehiclesProvider userId={propUserId}>
-              <DataContextBridge>
+              <DataContextBridge onSaveMonthlyPatrimonySnapshot={saveMonthlyPatrimonySnapshot}>
                 {children}
               </DataContextBridge>
             </VehiclesProvider>

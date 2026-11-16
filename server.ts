@@ -28,19 +28,24 @@ async function startServer() {
 
     if (cleanTickers.length === 0) return { quotes, variations, timestamps, details };
 
-    // Build symbol mappings (handles fractional shares e.g. PETR4F -> PETR4.SA, Crypto, US stocks, B3)
+    // Build symbol mappings (handles fractional shares e.g. PETR4F -> PETR4.SA, US stocks, B3)
     const symbolToTickers = new Map<string, string[]>();
     const querySymbols: string[] = [];
+    const KNOWN_CRYPTOS = new Set([
+      'BTC', 'BITCOIN', 'ETH', 'ETHEREUM', 'SOL', 'SOLANA',
+      'BNB', 'XRP', 'ADA', 'DOGE', 'AVAX', 'DOT', 'MATIC',
+      'POL', 'LINK', 'LTC', 'USDT', 'USDC', 'SHIB', 'UNI', 'ATOM'
+    ]);
+    const isFixedIncomeSymbol = (sym: string) =>
+      sym.includes(' ') ||
+      /^(TESOURO|SELIC|IPCA|PREFIXADO|RENDA\+|EDUCA\+|NTN|LFT|LTN|CDB|LCI|LCA|RDB|DEB|CRI|CRA|LCD|POUPANCA|POUPANÇA|COE)/.test(sym);
 
     cleanTickers.forEach(raw => {
+      if (isFixedIncomeSymbol(raw) || KNOWN_CRYPTOS.has(raw)) return;
       let querySym = raw;
       // Handle Brazilian fractional shares (e.g. PETR4F -> PETR4.SA)
       if (raw.length === 6 && raw.endsWith('F') && /\dF$/.test(raw)) {
         querySym = `${raw.slice(0, 5)}.SA`;
-      } else if (raw === 'BTC' || raw === 'BITCOIN') {
-        querySym = 'BTC-USD';
-      } else if (raw === 'ETH' || raw === 'ETHEREUM') {
-        querySym = 'ETH-USD';
       } else if (!raw.includes('.') && !raw.includes('-')) {
         // Standard B3 ticker (e.g. PETR4, MXRF11, AAPL34, IVVB11)
         querySym = `${raw}.SA`;
@@ -103,7 +108,7 @@ async function startServer() {
     }
 
     // Secondary: Individual Yahoo v8 chart endpoint for any missing tickers
-    const missing = cleanTickers.filter(t => !quotes[t] || quotes[t] <= 0);
+    const missing = cleanTickers.filter(t => !isFixedIncomeSymbol(t) && !KNOWN_CRYPTOS.has(t) && (!quotes[t] || quotes[t] <= 0));
     if (missing.length > 0) {
       await Promise.all(
         missing.map(async (ticker) => {
@@ -284,6 +289,51 @@ async function startServer() {
           }
         } catch {
           // ignore batch failure
+        }
+      })
+    );
+
+    return { quotes, variations, timestamps, details };
+  }
+
+  // Helper function to fetch Crypto quotes in BRL (Coinbase Spot)
+  async function fetchCryptoServer(tickers: string[]): Promise<{
+    quotes: Record<string, number>;
+    variations: Record<string, number>;
+    timestamps: Record<string, string>;
+    details: any[];
+  }> {
+    const quotes: Record<string, number> = {};
+    const variations: Record<string, number> = {};
+    const timestamps: Record<string, string> = {};
+    const details: any[] = [];
+
+    await Promise.all(
+      tickers.map(async (raw) => {
+        const clean = raw.trim().toUpperCase().replace(/[-_/]?(BRL|USD|USDT)$/, '');
+        try {
+          const res = await fetch(`https://api.coinbase.com/v2/prices/${clean}-BRL/spot`, {
+            signal: AbortSignal.timeout(3500),
+          });
+          if (res.ok) {
+            const data = await res.json();
+            const val = parseFloat(data?.data?.amount);
+            if (!isNaN(val) && val > 0) {
+              const now = new Date().toISOString();
+              quotes[raw] = Number(val.toFixed(4));
+              variations[raw] = 0;
+              timestamps[raw] = now;
+              details.push({
+                ticker: raw,
+                price: quotes[raw],
+                change: 0,
+                provider: 'Coinbase Spot (BRL)',
+                updatedAt: now,
+              });
+            }
+          }
+        } catch {
+          // ignore error
         }
       })
     );
@@ -487,6 +537,20 @@ async function startServer() {
 
           for (const [sym, price] of Object.entries(brapiResult.quotes)) {
             setCachedQuote(sym, price, brapiResult.variations[sym] || 0, 'Brapi API', brapiResult.timestamps[sym] || new Date().toISOString());
+          }
+        }
+
+        // Stage 4. If still missing, check Crypto (Coinbase Spot in BRL)
+        const missing3 = missingTickers.filter(t => !finalQuotes[t] || finalQuotes[t] <= 0);
+        if (missing3.length > 0) {
+          const cryptoResult = await fetchCryptoServer(missing3);
+          Object.assign(finalQuotes, cryptoResult.quotes);
+          Object.assign(finalVariations, cryptoResult.variations);
+          Object.assign(finalTimestamps, cryptoResult.timestamps);
+          allDetails.push(...cryptoResult.details);
+
+          for (const [sym, price] of Object.entries(cryptoResult.quotes)) {
+            setCachedQuote(sym, price, cryptoResult.variations[sym] || 0, 'Coinbase Spot', cryptoResult.timestamps[sym] || new Date().toISOString());
           }
         }
       }

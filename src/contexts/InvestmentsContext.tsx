@@ -8,6 +8,7 @@ import { cacheManager } from '../lib/cacheManager';
 import { syncQueueManager } from '../lib/syncQueue';
 import { addBusinessDays, formatCurrency, formatLocalDateBR, getTodayLocalDateStr } from '../lib/utils';
 import { getEffectiveUserId, getEffectiveUser, getSyncEffectiveUserId } from '../lib/authUtils';
+import { getInvestmentTransactionNetAmount } from '../lib/investmentCalculations';
 
 export interface InvestmentsContextType {
   investmentTransactions: InvestmentTransaction[];
@@ -542,11 +543,36 @@ export function InvestmentsProvider({
       if (curRts.length === 0) return;
 
       const today = getTodayLocalDateStr();
+      const isSaleSettlementRt = (rt: ReserveTransaction) => {
+        if (rt.type !== 'aporte') return false;
+        const cat = (rt.category || '').toLowerCase().trim();
+        const desc = (rt.description || '').toLowerCase();
+        return Boolean(
+          rt.linked_investment_id ||
+          rt.source === 'investment' ||
+          cat === 'investimentos' ||
+          cat === 'venda de ativos' ||
+          desc.includes('liq. d+2') ||
+          desc.includes('venda de ativo')
+        );
+      };
+
       const pendingDueToSettle = curRts.filter(rt => {
-        if (!rt.linked_investment_id || rt.type !== 'aporte') return false;
+        if (!isSaleSettlementRt(rt)) return false;
         if (rt.payment_status !== 'pending') return false;
         const settleDate = (rt.due_date || rt.date || '').split('T')[0];
         return Boolean(settleDate && settleDate <= today);
+      });
+
+      // Heal any pending D+2 reserve transaction whose stored amount accidentally added sell costs instead of subtracting them
+      const pendingSellsToHeal = curRts.filter(rt => {
+        if (!isSaleSettlementRt(rt) || rt.payment_status !== 'pending') return false;
+        const linkedIt = (investmentTransactions || []).find(
+          it => it.operation === 'sell' && (it.id === rt.linked_investment_id || it.transaction_id === rt.id)
+        );
+        if (!linkedIt) return false;
+        const expectedAmount = Math.round(getInvestmentTransactionNetAmount(linkedIt) * 100) / 100;
+        return Math.abs(Number(rt.amount || 0) - expectedAmount) > 0.01;
       });
 
       const legacyRecentSalesToHold = (investmentTransactions || []).filter(it => {
@@ -565,13 +591,26 @@ export function InvestmentsProvider({
         );
       });
 
-      if (pendingDueToSettle.length === 0 && legacyRecentSalesToHold.length === 0) return;
+      if (pendingDueToSettle.length === 0 && legacyRecentSalesToHold.length === 0 && pendingSellsToHeal.length === 0) return;
 
       isProcessingSaleSettlementsRef.current = true;
       try {
         let updatedRts = [...curRts];
         let changed = false;
         const settledTickers: string[] = [];
+
+        for (const rt of pendingSellsToHeal) {
+          const linkedIt = (investmentTransactions || []).find(
+            it => it.operation === 'sell' && (it.id === rt.linked_investment_id || it.transaction_id === rt.id)
+          );
+          if (!linkedIt) continue;
+          const expectedAmount = Math.round(getInvestmentTransactionNetAmount(linkedIt) * 100) / 100;
+          updatedRts = updatedRts.map(item =>
+            item.id === rt.id ? { ...item, amount: expectedAmount } : item
+          );
+          syncQueueManager.enqueue('reserve_transactions', 'update', rt.id, { amount: expectedAmount });
+          changed = true;
+        }
 
         if (pendingDueToSettle.length > 0) {
           let cloudPendingSet: Set<string> | null = null;
@@ -687,12 +726,7 @@ export function InvestmentsProvider({
         itObj.transaction_id = rtId;
 
         const isBuy = itObj.operation === 'buy';
-        const subtotal = itObj.price * itObj.quantity;
-        const txCosts = itObj.costs || 0;
-        const isSubtotalOnly = Math.abs(itObj.amount - subtotal) < 0.01 && txCosts > 0;
-        const reserveAmount = isSubtotalOnly 
-          ? (isBuy ? itObj.amount + txCosts : Math.max(0, itObj.amount - txCosts))
-          : itObj.amount;
+        const reserveAmount = Math.round(getInvestmentTransactionNetAmount(itObj) * 100) / 100;
 
         const today = getTodayLocalDateStr();
         const settlementDate = isBuy ? itObj.date : addBusinessDays(itObj.date, 2);
@@ -855,12 +889,7 @@ export function InvestmentsProvider({
     // Sync linked reserve transaction
     if (merged.reserve_id && targetTx?.transaction_id) {
       const isBuy = merged.operation === 'buy';
-      const subtotal = Number(merged.price) * Number(merged.quantity);
-      const txCosts = Number(merged.costs || 0);
-      const isSubtotalOnly = Math.abs(Number(merged.amount) - subtotal) < 0.01 && txCosts > 0;
-      const rtAmount = isSubtotalOnly
-        ? (isBuy ? Number(merged.amount) + txCosts : Math.max(0, Number(merged.amount) - txCosts))
-        : Number(merged.amount);
+      const rtAmount = Math.round(getInvestmentTransactionNetAmount(merged) * 100) / 100;
 
       const today = getTodayLocalDateStr();
       const settlementDate = isBuy ? merged.date : addBusinessDays(merged.date, 2);

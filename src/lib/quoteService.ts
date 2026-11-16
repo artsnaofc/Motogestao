@@ -408,7 +408,16 @@ export async function executeQuoteFetch(
   options: FetchQuotesOptions = {}
 ): Promise<QuoteFetchResult> {
   const startTime = performance.now();
-  const cleanTickers = Array.from(new Set(tickers.map(t => t.trim().toUpperCase()))).filter(Boolean);
+  const isManualFixedIncomeSymbol = (sym: string) =>
+    sym.includes(' ') ||
+    /^(TESOURO|SELIC|IPCA|PREFIXADO|RENDA\+|EDUCA\+|NTN|LFT|LTN|CDB|LCI|LCA|RDB|DEB|CRI|CRA|LCD|POUPANCA|POUPANÇA|RENDA[\s_-]?FIXA|COE)/.test(sym) ||
+    sym.includes('TESOURO') ||
+    sym.includes('CDB') ||
+    sym.includes('LCI') ||
+    sym.includes('LCA');
+
+  const cleanTickers = Array.from(new Set(tickers.map(t => t.trim().toUpperCase())))
+    .filter(t => Boolean(t) && !isManualFixedIncomeSymbol(t));
 
   // CRITICAL FIX: Do NOT initialize finalQuotes with existingQuotes!
   // Doing so creates a poisoned cache bug where stale quotes trick the engine
@@ -423,7 +432,7 @@ export async function executeQuoteFetch(
       quotes: options.existingQuotes || {},
       variations: {},
       timestamps: {},
-      providerUsed: 'Nenhum Ativo',
+      providerUsed: 'Nenhum Ativo Cotado',
       durationMs: 0,
       successCount: 0,
       failedCount: 0,
@@ -431,7 +440,7 @@ export async function executeQuoteFetch(
     };
   }
 
-  console.log(`[QuoteService] Buscando cotações atualizadas para ${cleanTickers.length} ativos (Ações/FIIs/BDRs/Crypto)...`);
+  console.log(`[QuoteService] Buscando cotações atualizadas para ${cleanTickers.length} ativos (Ações/FIIs/ETFs/BDRs/Cripto)...`);
 
   // STEP 1: Attempt Server-Side Full-Stack API (Fastest, zero CORS, covers Yahoo Spark, mFinance, Brapi)
   const serverResult = await fetchServerQuotes(cleanTickers, options);
@@ -495,6 +504,29 @@ export async function executeQuoteFetch(
       Object.assign(freshTimestamps, yahooRes.timestamps);
       allDetails = [...allDetails.filter(d => !yahooRes.quotes[d.ticker]), ...yahooRes.details];
     }
+
+    // 2.4 Try Coinbase / CoinGecko in BRL for any remaining crypto assets
+    const remainingForCrypto = cleanTickers.filter(t => !freshQuotes[t] || freshQuotes[t] <= 0);
+    if (remainingForCrypto.length > 0) {
+      await Promise.all(
+        remainingForCrypto.map(async (t) => {
+          const cryptoRes = await fetchCryptoQuoteBRL(t);
+          if (cryptoRes && cryptoRes.price > 0) {
+            const now = new Date().toISOString();
+            freshQuotes[t] = cryptoRes.price;
+            freshVariations[t] = 0;
+            freshTimestamps[t] = now;
+            allDetails.push({
+              ticker: t,
+              price: cryptoRes.price,
+              change: 0,
+              provider: cryptoRes.provider,
+              updatedAt: now,
+            });
+          }
+        })
+      );
+    }
   }
 
   // STEP 3: Handle any tickers that truly could not be found anywhere
@@ -542,5 +574,68 @@ export async function fetchSingleQuote(ticker: string, token?: string): Promise<
     const detail = result.details.find(d => d.ticker === ticker.toUpperCase());
     return { price, provider: detail?.provider || result.providerUsed };
   }
+  return null;
+}
+
+/**
+ * Direct real-time Crypto Quote Fetcher in BRL (R$)
+ * Ultra-fast public Coinbase Spot API + CoinGecko fallback with zero auth
+ */
+export async function fetchCryptoQuoteBRL(symbol: string): Promise<{ price: number; provider: string } | null> {
+  const clean = symbol.trim().toUpperCase().replace(/[-_/]?(BRL|USD|USDT)$/, '');
+  if (!clean) return null;
+
+  // 1. Try Coinbase Spot (BRL)
+  try {
+    const res = await fetchWithTimeout(`https://api.coinbase.com/v2/prices/${clean}-BRL/spot`, 3500);
+    if (res.ok) {
+      const data = await res.json();
+      const val = parseFloat(data?.data?.amount);
+      if (!isNaN(val) && val > 0) {
+        return { price: Number(val.toFixed(4)), provider: 'Coinbase (BRL)' };
+      }
+    }
+  } catch {
+    // continue
+  }
+
+  // 2. Try CoinGecko Fallback in BRL
+  const geckoMap: Record<string, string> = {
+    BTC: 'bitcoin',
+    BITCOIN: 'bitcoin',
+    ETH: 'ethereum',
+    ETHEREUM: 'ethereum',
+    SOL: 'solana',
+    SOLANA: 'solana',
+    BNB: 'binancecoin',
+    XRP: 'ripple',
+    ADA: 'cardano',
+    DOGE: 'dogecoin',
+    USDT: 'tether',
+    USDC: 'usd-coin',
+    AVAX: 'avalanche-2',
+    LINK: 'chainlink',
+    DOT: 'polkadot',
+    POL: 'polygon-ecosystem-token',
+    MATIC: 'matic-network',
+    LTC: 'litecoin',
+    SHIB: 'shiba-inu',
+    UNI: 'uniswap',
+    ATOM: 'cosmos',
+  };
+  const geckoId = geckoMap[clean] || clean.toLowerCase();
+  try {
+    const res = await fetchWithTimeout(`https://api.coingecko.com/api/v3/simple/price?ids=${geckoId}&vs_currencies=brl`, 3500);
+    if (res.ok) {
+      const data = await res.json();
+      const val = data?.[geckoId]?.brl;
+      if (typeof val === 'number' && val > 0) {
+        return { price: Number(val.toFixed(4)), provider: 'CoinGecko (BRL)' };
+      }
+    }
+  } catch {
+    // continue
+  }
+
   return null;
 }

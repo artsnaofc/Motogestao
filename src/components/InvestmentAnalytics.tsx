@@ -6,6 +6,7 @@ import { supabase } from '../lib/supabase';
 import { fetchSingleQuote } from '../lib/quoteService';
 import { toast } from '@/lib/toast';
 import { getTodayLocalDateStr } from '../lib/utils';
+import { getInvestmentTransactionNetAmount } from '../lib/investmentCalculations';
 import { CvmDocumentButton } from './CvmDocumentButton';
 import { EditAssetMetadataModal } from './investments/EditAssetMetadataModal';
 import { 
@@ -428,15 +429,15 @@ export function InvestmentAnalytics({
       }
 
       const p = posMap[t];
-      const txCosts = tx.costs || 0;
+      const netAmount = getInvestmentTransactionNetAmount(tx);
 
       if (tx.operation === 'buy') {
-        const costBasis = tx.amount + txCosts;
+        const costBasis = netAmount;
         p.totalInvested += costBasis;
         p.quantity += tx.quantity;
         p.avgPrice = p.quantity > 0 ? p.totalInvested / p.quantity : 0;
       } else if (tx.operation === 'sell') {
-        const netProceeds = Math.max(0, tx.amount - txCosts);
+        const netProceeds = netAmount;
         const costBasisSold = tx.quantity * p.avgPrice;
         const gainOnSale = netProceeds - costBasisSold;
 
@@ -561,7 +562,7 @@ export function InvestmentAnalytics({
 
     // If we have saved data for this ticker, populate it!
     if (saved) {
-      if (saved.asset_type) setAssetType(saved.asset_type);
+      if (saved.asset_type) setAssetType(saved.asset_type === 'FII' ? 'FII' : 'Ação');
       setBazinDPA(saved.bazin_dpa ?? 0);
       setBazinTargetYield(saved.bazin_target_yield ?? (isFii ? 8.5 : 6.0));
       setGrahamLPA(saved.graham_lpa ?? 0);
@@ -725,11 +726,11 @@ export function InvestmentAnalytics({
 
     sortedTx.forEach(tx => {
       const txDate = new Date(tx.date + 'T12:00:00Z');
-      const costs = tx.costs || 0;
+      const netAmount = getInvestmentTransactionNetAmount(tx);
       if (tx.operation === 'buy') {
-        cashFlows.push({ date: txDate, amount: -(tx.amount + costs) });
+        cashFlows.push({ date: txDate, amount: -netAmount });
       } else {
-        cashFlows.push({ date: txDate, amount: +(tx.amount - costs) });
+        cashFlows.push({ date: txDate, amount: +netAmount });
       }
     });
 
@@ -859,10 +860,9 @@ export function InvestmentAnalytics({
           currentHoldings[tk] = { qty: 0, totalCost: 0, firstBuyDate: tx.date };
         }
         const h = currentHoldings[tk];
-        const costs = tx.costs || 0;
         if (tx.operation === 'buy') {
           h.qty += tx.quantity;
-          h.totalCost += (tx.amount + costs);
+          h.totalCost += getInvestmentTransactionNetAmount(tx);
         } else if (tx.operation === 'sell') {
           const avgP = h.qty > 0 ? h.totalCost / h.qty : 0;
           h.qty = Math.max(0, h.qty - tx.quantity);
@@ -921,7 +921,7 @@ export function InvestmentAnalytics({
       typeMap[type].count += 1;
 
       const meta = b3AssetsMetadata[p.ticker.toUpperCase().trim()];
-      let sectorName = 'Não Classificado';
+      let sectorName = type !== 'Ação' && type !== 'FII' ? type : 'Não Classificado';
       if (meta) {
         if (type === 'Ação' || type === 'BDR') {
           sectorName = meta.sector || meta.subsector || 'Outros Setores';
@@ -930,7 +930,7 @@ export function InvestmentAnalytics({
         } else {
           sectorName = type;
         }
-      } else {
+      } else if (type === 'Ação' || type === 'FII') {
         unclassifiedCount += 1;
       }
 
@@ -961,9 +961,12 @@ export function InvestmentAnalytics({
       'Ação': '#3b82f6',
       'FII': '#10b981',
       'Fundo Imobiliário': '#10b981',
-      'Cripto': '#f59e0b',
-      'Renda Fixa': '#8b5cf6',
       'ETF': '#ec4899',
+      'BDR': '#f59e0b',
+      'Tesouro Direto': '#14b8a6',
+      'Renda Fixa': '#8b5cf6',
+      'Cripto': '#f97316',
+      'Outros': '#64748b',
       'Outro': '#64748b'
     };
 
@@ -1006,9 +1009,9 @@ export function InvestmentAnalytics({
 
     const sortedPositions = [...activePositions].map(p => {
       const meta = b3AssetsMetadata[p.ticker.toUpperCase().trim()];
-      let sector = 'Não Classificado';
+      let sector = p.type && p.type !== 'Ação' && p.type !== 'FII' ? p.type : 'Não Classificado';
       if (meta) {
-        sector = (p.type === 'FII' || p.type === 'Fundo Imobiliário' || p.type === 'Fiagro') ? (meta.fii_segment || meta.fiiSegment || 'FII') : (meta.sector || meta.subsector || 'Ação');
+        sector = (p.type === 'FII' || p.type === 'Fundo Imobiliário' || p.type === 'Fiagro') ? (meta.fii_segment || meta.fiiSegment || 'FII') : (meta.sector || meta.subsector || p.type || 'Ação');
       }
       return {
         ...p,
@@ -1138,11 +1141,11 @@ export function InvestmentAnalytics({
 
     sortedTx.forEach(tx => {
       const d = tx.date;
-      const costs = tx.costs || 0;
+      const netAmount = getInvestmentTransactionNetAmount(tx);
       if (tx.operation === 'buy') {
-        cumInvested += tx.amount + costs;
+        cumInvested += netAmount;
       } else {
-        cumInvested -= (tx.amount - costs);
+        cumInvested -= netAmount;
       }
       mapByDate[d] = Math.max(0, cumInvested);
     });

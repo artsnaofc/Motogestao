@@ -72,6 +72,7 @@ export function TransactionDetailView({
   const isReserveTx = (t as any).isReserveTx;
   const isInvestmentTx = (t as any).isInvestmentTx;
   const isDividendTx = (t as any).isDividendTx;
+  const isSaleSettlement = Boolean((t as any).isSaleSettlement);
   
   const isAporte = isReserveTx ? ((t as any).reserveTxType === 'aporte') : false;
   const isRendimento = isReserveTx ? ((t as any).reserveTxType === 'rendimento') : false;
@@ -210,6 +211,77 @@ export function TransactionDetailView({
                 <span className="text-[9px] text-muted-foreground uppercase font-extrabold block">Data Pagamento</span>
                 <span className="font-mono font-bold text-xs text-foreground">{format(parseISO(t.date), "dd/MM/yyyy")}</span>
               </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // 1B. D+2 SALE SETTLEMENT (Liquidação de Venda de Ativo)
+    if (isSaleSettlement) {
+      const ticker = (t as any).ticker || 'ATIVO';
+      const isPending = t.payment_status === 'pending';
+      const settleDateStr = t.due_date || t.payment_date || t.date;
+      const tradeDateStr = (t as any).tradeDate;
+      const destLabel = (t as any).reserveName || matchedReserve?.name || 'Carteira / Caixa';
+
+      return (
+        <div className="space-y-2.5">
+          <div className="p-3 sm:p-3.5 rounded-xl bg-gradient-to-br from-emerald-500/10 via-amber-500/5 to-card border border-emerald-500/20 space-y-2.5">
+            <div className="flex items-center justify-between border-b border-emerald-500/20 pb-2">
+              <div className="flex items-center gap-2">
+                <div className="px-2 py-1 rounded-lg bg-emerald-600 text-white font-black text-[11px] shadow-xs">
+                  {ticker}
+                </div>
+                <div>
+                  <span className="text-[9px] font-black uppercase tracking-wider text-emerald-600 dark:text-emerald-400 block">
+                    Liquidação de Venda • D+2
+                  </span>
+                  <h4 className="font-extrabold text-xs sm:text-sm text-foreground">
+                    Crédito Automático ({ticker})
+                  </h4>
+                </div>
+              </div>
+              <span className={`px-2 py-0.5 rounded-full text-[10px] font-black border ${
+                isPending
+                  ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/25'
+                  : 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20'
+              }`}>
+                {isPending ? 'Aguardando D+2' : 'Liquidado'}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              <div className="p-2 rounded-lg bg-card border border-border/60">
+                <span className="text-[9px] text-muted-foreground uppercase font-extrabold block">Valor Líquido</span>
+                <span className="font-mono font-black text-xs sm:text-sm text-emerald-600 dark:text-emerald-400">
+                  +{formatCurrency(displayAmount)}
+                </span>
+              </div>
+              {tradeDateStr && (
+                <div className="p-2 rounded-lg bg-card border border-border/60">
+                  <span className="text-[9px] text-muted-foreground uppercase font-extrabold block">Data da Venda</span>
+                  <span className="font-mono font-bold text-xs text-foreground">
+                    {format(parseISO(tradeDateStr), "dd/MM/yyyy")}
+                  </span>
+                </div>
+              )}
+              <div className="p-2 rounded-lg bg-card border border-border/60">
+                <span className="text-[9px] text-muted-foreground uppercase font-extrabold block">
+                  {isPending ? 'Liquidação Prevista' : 'Data Liquidação'}
+                </span>
+                <span className="font-mono font-bold text-xs text-foreground">
+                  {format(parseISO(settleDateStr), "dd/MM/yyyy")}
+                </span>
+              </div>
+              <div className="p-2 rounded-lg bg-card border border-border/60">
+                <span className="text-[9px] text-muted-foreground uppercase font-extrabold block">Destino</span>
+                <span className="font-bold text-xs text-foreground truncate block">{destLabel}</span>
+              </div>
+            </div>
+
+            <div className="p-2 rounded-lg bg-muted/40 border border-border/50 text-[11px] text-muted-foreground leading-snug">
+              ⏳ Crédito automático em 2 dias úteis na data de liquidação. Gerenciável exclusivamente na página de <strong>Investimentos</strong>.
             </div>
           </div>
         </div>
@@ -694,8 +766,8 @@ export function TransactionDetailView({
       {/* Custom layout for specific transaction type */}
       {renderCustomTypeContent()}
 
-      {/* Payment Status & Recurrence Card (For Expenses & Reserves, except internal cash transfers) */}
-      {(t.type === 'expense' || isReserveTx) && !isTransferToCash && (
+      {/* Payment Status & Recurrence Card (For Expenses & Reserves, except internal cash transfers & D+2 settlements) */}
+      {(t.type === 'expense' || (isReserveTx && !isSaleSettlement)) && !isTransferToCash && (
         <div className="p-2.5 rounded-xl bg-card border border-border/60 space-y-2">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-1.5">
@@ -753,7 +825,7 @@ export function TransactionDetailView({
             )}
           </div>
 
-          {t.payment_status === 'pending' && (onSettlePending || onSettleSeries) && (
+          {t.payment_status === 'pending' && !isSaleSettlement && (onSettlePending || onSettleSeries) && (
             <div className="pt-1 flex flex-wrap justify-end gap-2">
               {t.recurrence_group_id && onSettleSeries && (
                 <Button
@@ -783,7 +855,7 @@ export function TransactionDetailView({
         </div>
       )}
 
-      {!isInvestmentTx && !isDividendTx && !(t as any).isTransferToCash && (!isReserveTx || (t as any).reserveTxType === 'utilizacao') && Boolean(t.ignore_in_charts) && (
+      {!isInvestmentTx && !isDividendTx && !isSaleSettlement && !(t as any).isTransferToCash && (!isReserveTx || (t as any).reserveTxType === 'utilizacao') && Boolean(t.ignore_in_charts) && (
         <div className="p-2.5 rounded-xl bg-slate-500/10 border border-slate-500/25 flex items-center justify-between gap-2 text-xs">
           <div className="flex items-center gap-2 min-w-0">
             <EyeOff className="w-3.5 h-3.5 text-slate-600 dark:text-slate-300 shrink-0" />
@@ -800,7 +872,7 @@ export function TransactionDetailView({
           ID: {t.id.slice(0, 8)}
         </span>
         <div className="flex flex-wrap items-center gap-1.5">
-          {!isInvestmentTx && !isDividendTx && !(t as any).isTransferToCash && (!isReserveTx || (t as any).reserveTxType === 'utilizacao') && onToggleIgnoreInCharts && (
+          {!isInvestmentTx && !isDividendTx && !isSaleSettlement && !(t as any).isTransferToCash && (!isReserveTx || (t as any).reserveTxType === 'utilizacao') && onToggleIgnoreInCharts && (
             <Button
               variant="outline"
               size="sm"
@@ -816,7 +888,7 @@ export function TransactionDetailView({
               {t.ignore_in_charts ? 'Mostrar nos gráficos' : 'Ignorar nos gráficos'}
             </Button>
           )}
-          {!isInvestmentTx && !isDividendTx ? (
+          {!isInvestmentTx && !isDividendTx && !isSaleSettlement ? (
             <Button 
               variant="outline" 
               size="sm" 
@@ -831,24 +903,22 @@ export function TransactionDetailView({
               Gerenciável em Investimentos
             </span>
           )}
-          <Button 
-            variant="ghost" 
-            size="sm" 
-            onClick={() => {
-              const deleteType = isInvestmentTx 
-                ? 'investment_transaction' 
-                : isDividendTx 
-                  ? 'dividend' 
-                  : isReserveTx 
-                    ? 'reserve_transaction' 
-                    : 'transaction';
-              askDelete(t.id, deleteType);
-            }} 
-            className="h-7 text-rose-500 font-bold px-2.5 text-[11px] flex items-center gap-1 hover:bg-rose-500/10 hover:text-rose-600 border border-transparent hover:border-rose-200 cursor-pointer"
-          >
-            <Trash className="w-3 h-3" />
-            Excluir
-          </Button>
+          {!isInvestmentTx && !isDividendTx && !isSaleSettlement && (
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              onClick={() => {
+                const deleteType = isReserveTx 
+                  ? 'reserve_transaction' 
+                  : 'transaction';
+                askDelete(t.id, deleteType);
+              }} 
+              className="h-7 text-rose-500 font-bold px-2.5 text-[11px] flex items-center gap-1 hover:bg-rose-500/10 hover:text-rose-600 border border-transparent hover:border-rose-200 cursor-pointer"
+            >
+              <Trash className="w-3 h-3" />
+              Excluir
+            </Button>
+          )}
         </div>
       </div>
     </div>

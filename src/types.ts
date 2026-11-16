@@ -95,6 +95,17 @@ export interface UserSettings {
   biometrics_enabled?: boolean;
   biometrics_auto_lock_minutes?: number;
   biometrics_device_info?: any;
+  monthly_patrimony_snapshots?: Record<string, MonthlyPatrimonySnapshot>;
+}
+
+export interface MonthlyPatrimonySnapshot {
+  monthKey: string; // 'YYYY-MM'
+  Investimentos: number;
+  Reservas: number;
+  Caixa: number;
+  PatrimonioTotal: number;
+  tickerPrices?: Record<string, number>;
+  updatedAt: string;
 }
 
 export interface DashboardSummary {
@@ -170,7 +181,16 @@ export interface ReserveTransaction {
   created_at?: string;
 }
 
-export type InvestmentType = 'Ação' | 'FII' | 'BDR' | 'ETF' | 'Renda Fixa' | 'Cripto' | string;
+export type InvestmentType =
+  | 'Ação'
+  | 'FII'
+  | 'ETF'
+  | 'BDR'
+  | 'Tesouro Direto'
+  | 'Renda Fixa'
+  | 'Cripto'
+  | 'Outros'
+  | string;
 
 export interface InvestmentTransaction {
   id: string;
@@ -280,7 +300,7 @@ export interface ValuationTarget {
   id?: string;
   user_id?: string;
   ticker: string;
-  asset_type?: 'Ação' | 'FII';
+  asset_type?: InvestmentType;
   cnpj?: string;
   calc_current_price?: number;
   targetPrice?: number;

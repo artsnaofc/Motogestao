@@ -338,7 +338,7 @@ export const ProfessionalRebalanceEngineView: React.FC<ProfessionalRebalanceEngi
 
   // Macro-Classes distribution (Current vs Projected vs Target)
   const macroClassesData = useMemo(() => {
-    const classes = ['Ação', 'FII', 'ETF', 'BDR', 'Outro'];
+    const classes = ['Ação', 'FII', 'ETF', 'BDR', 'Tesouro Direto', 'Renda Fixa', 'Cripto', 'Outros', 'Outro'];
     const result: Array<{
       type: string;
       currentValue: number;
@@ -1066,6 +1066,10 @@ export const ProfessionalRebalanceEngineView: React.FC<ProfessionalRebalanceEngi
             <option value="FII">FIIs</option>
             <option value="ETF">ETFs</option>
             <option value="BDR">BDRs</option>
+            <option value="Tesouro Direto">Tesouro Direto</option>
+            <option value="Renda Fixa">Renda Fixa</option>
+            <option value="Cripto">Cripto</option>
+            <option value="Outros">Outros</option>
           </select>
 
           {/* Filtro Status */}
@@ -1707,7 +1711,10 @@ export const ProfessionalRebalanceEngineView: React.FC<ProfessionalRebalanceEngi
                 <option value="FII">FIIs</option>
                 <option value="ETF">ETFs</option>
                 <option value="BDR">BDRs</option>
+                <option value="Tesouro Direto">Tesouro Direto</option>
                 <option value="Renda Fixa">Renda Fixa</option>
+                <option value="Cripto">Cripto</option>
+                <option value="Outros">Outros</option>
               </select>
             </div>
           </div>
@@ -2126,7 +2133,7 @@ export const ProfessionalRebalanceEngineView: React.FC<ProfessionalRebalanceEngi
           setEditableTargets(next);
           toast.success('Metas de macro-classes aplicadas com sucesso!');
         }}
-        availableClasses={['Ação', 'FII', 'ETF', 'BDR', 'Renda Fixa']}
+        availableClasses={['Ação', 'FII', 'ETF', 'BDR', 'Tesouro Direto', 'Renda Fixa', 'Cripto', 'Outros']}
         currentClassWeights={macroClassesData.reduce((acc, c) => ({ ...acc, [c.type]: c.targetPct }), {})}
       />
 

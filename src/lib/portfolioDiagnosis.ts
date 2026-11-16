@@ -31,6 +31,14 @@ export interface SmartAlert {
   ticker?: string;
 }
 
+export interface ClassBreakdownItem {
+  name: string;
+  value: number;
+  pct: number;
+  count: number;
+  color: string;
+}
+
 export interface PortfolioDiagnosisResult {
   totalValue: number;
   totalInvested: number;
@@ -44,6 +52,13 @@ export interface PortfolioDiagnosisResult {
   fiisValue: number;
   fiisPct: number;
   fiisCount: number;
+  fixedIncomeValue: number;
+  fixedIncomePct: number;
+  fixedIncomeCount: number;
+  otherClassesValue: number;
+  otherClassesPct: number;
+  otherClassesCount: number;
+  classBreakdown: ClassBreakdownItem[];
   
   // Diversification Index (0-100, where 100 is optimal multi-sector balanced distribution)
   diversificationScore: number;
@@ -70,6 +85,17 @@ export interface PortfolioDiagnosisResult {
   summaryText: string;
 }
 
+const CLASS_COLOR_MAP: Record<string, string> = {
+  'Ação': '#0284c7',
+  'FII': '#10b981',
+  'Tesouro Direto': '#14b8a6',
+  'Renda Fixa': '#8b5cf6',
+  'ETF': '#ec4899',
+  'BDR': '#f59e0b',
+  'Cripto': '#f97316',
+  'Outros': '#64748b',
+};
+
 export function runPortfolioDiagnosis(
   positions: PositionInput[],
   quotes: Record<string, number> = {},
@@ -82,8 +108,13 @@ export function runPortfolioDiagnosis(
   let totalInvested = 0;
   let stocksValue = 0;
   let fiisValue = 0;
+  let fixedIncomeValue = 0;
+  let otherClassesValue = 0;
   let stocksCount = 0;
   let fiisCount = 0;
+  let fixedIncomeCount = 0;
+  let otherClassesCount = 0;
+  const classBuckets: Record<string, { value: number; count: number }> = {};
 
   // Enriched positions with fundamentals
   const enriched = validPositions.map(pos => {
@@ -93,20 +124,34 @@ export function runPortfolioDiagnosis(
     const gain = curVal - invVal;
     const gainPct = invVal > 0 ? (gain / invVal) * 100 : 0;
     const fund = getB3AssetFundamental(pos.ticker, pos.type, quote);
+    const effectiveClass = pos.type || fund.assetClass || fund.type;
     
     totalValue += curVal;
     totalInvested += invVal;
 
-    if (fund.type === 'FII' || pos.type === 'FII') {
+    if (!classBuckets[effectiveClass]) {
+      classBuckets[effectiveClass] = { value: 0, count: 0 };
+    }
+    classBuckets[effectiveClass].value += curVal;
+    classBuckets[effectiveClass].count += 1;
+
+    if (effectiveClass === 'FII') {
       fiisValue += curVal;
       fiisCount += 1;
-    } else {
+    } else if (effectiveClass === 'Ação') {
       stocksValue += curVal;
       stocksCount += 1;
+    } else if (effectiveClass === 'Tesouro Direto' || effectiveClass === 'Renda Fixa') {
+      fixedIncomeValue += curVal;
+      fixedIncomeCount += 1;
+    } else {
+      otherClassesValue += curVal;
+      otherClassesCount += 1;
     }
 
     return {
       pos,
+      effectiveClass,
       quote,
       curVal,
       invVal,
@@ -120,6 +165,18 @@ export function runPortfolioDiagnosis(
   const totalGainPct = totalInvested > 0 ? (totalGain / totalInvested) * 100 : 0;
   const stocksPct = totalValue > 0 ? (stocksValue / totalValue) * 100 : 0;
   const fiisPct = totalValue > 0 ? (fiisValue / totalValue) * 100 : 0;
+  const fixedIncomePct = totalValue > 0 ? (fixedIncomeValue / totalValue) * 100 : 0;
+  const otherClassesPct = totalValue > 0 ? (otherClassesValue / totalValue) * 100 : 0;
+
+  const classBreakdown: ClassBreakdownItem[] = Object.entries(classBuckets)
+    .map(([name, bucket]) => ({
+      name,
+      value: bucket.value,
+      pct: totalValue > 0 ? (bucket.value / totalValue) * 100 : 0,
+      count: bucket.count,
+      color: CLASS_COLOR_MAP[name] || '#6366f1',
+    }))
+    .sort((a, b) => b.value - a.value);
 
   // 1. Asset Concentrations
   const assetConcentrations: ConcentrationItem[] = enriched
@@ -137,14 +194,16 @@ export function runPortfolioDiagnosis(
     })
     .sort((a, b) => b.value - a.value);
 
-  // 2. Sector Concentrations (Ações e FIIs macro)
+  // 2. Sector Concentrations (all asset classes)
   const sectorMap: Record<string, { value: number; tickers: string[] }> = {};
   enriched.forEach(item => {
     let sectorName = 'Outros';
-    if (item.fund.type === 'Ação') {
+    if (item.effectiveClass === 'FII' && item.fund.type === 'FII') {
+      sectorName = `FIIs - ${item.fund.fiiSegment || item.fund.fiiType || 'Geral'}`;
+    } else if (item.effectiveClass === 'Ação' && item.fund.type === 'Ação') {
       sectorName = item.fund.sector || 'Ações - Outros';
     } else {
-      sectorName = `FIIs - ${item.fund.fiiSegment || item.fund.fiiType || 'Geral'}`;
+      sectorName = item.effectiveClass;
     }
     if (!sectorMap[sectorName]) {
       sectorMap[sectorName] = { value: 0, tickers: [] };
@@ -171,8 +230,8 @@ export function runPortfolioDiagnosis(
   // 3. Segment Concentrations
   const segmentMap: Record<string, { value: number; tickers: string[] }> = {};
   enriched.forEach(item => {
-    const segName = item.fund.type === 'FII' ? item.fund.fiiSegment : item.fund.segment;
-    const finalSeg = segName || 'Geral';
+    const segName = item.fund.type === 'FII' ? item.fund.fiiSegment : (item.fund.segment || item.effectiveClass);
+    const finalSeg = segName || item.effectiveClass || 'Geral';
     if (!segmentMap[finalSeg]) {
       segmentMap[finalSeg] = { value: 0, tickers: [] };
     }
@@ -199,7 +258,13 @@ export function runPortfolioDiagnosis(
   const issuerMap: Record<string, { value: number; tickers: string[] }> = {};
   enriched.forEach(item => {
     let issuer = 'Diversos';
-    if (item.fund.type === 'Ação') {
+    if (item.effectiveClass === 'Tesouro Direto') {
+      issuer = 'Tesouro Nacional';
+    } else if (item.effectiveClass === 'Renda Fixa' || item.effectiveClass === 'Outros') {
+      issuer = item.pos.ticker;
+    } else if (item.effectiveClass === 'Cripto') {
+      issuer = 'Criptoativos Descentralizados';
+    } else if (item.fund.type === 'Ação') {
       // Group ITSA4 + ITUB4 under Itaú Unibanco Group
       if (item.pos.ticker.startsWith('ITSA') || item.pos.ticker.startsWith('ITUB')) {
         issuer = 'Grupo Itaú Unibanco / Itaúsa';
@@ -237,23 +302,17 @@ export function runPortfolioDiagnosis(
     .sort((a, b) => b.value - a.value);
 
   // 5. Herfindahl-Hirschman Index (HHI) calculation for true Diversification Score
-  // HHI = Sum of squares of percentage shares (0 to 10,000)
-  // Low HHI (< 1,500) = Unconcentrated/Diversified
-  // Moderate HHI (1,500 - 2,500) = Moderate
-  // High HHI (> 2,500) = Highly concentrated
   let hhi = 0;
   assetConcentrations.forEach(a => {
     hhi += Math.pow(a.percentage, 2);
   });
 
-  // Convert HHI to 0-100 Score where 100 is perfectly diversified
   let diversificationScore = 50;
   if (validPositions.length === 0) {
     diversificationScore = 0;
   } else if (validPositions.length === 1) {
     diversificationScore = 15;
   } else {
-    // Normalization curve: HHI of 800 or less = 100 pts; HHI of 3500+ = 25 pts
     const normalized = Math.max(0, Math.min(100, Math.round(100 - (hhi / 35))));
     diversificationScore = Math.max(20, normalized);
   }
@@ -322,27 +381,27 @@ export function runPortfolioDiagnosis(
       type: 'concentration_sector',
       severity: highestSector.percentage > (maxSectorLimitPct * 1.4) ? 'high' : 'medium',
       title: `Concentração Setorial em ${highestSector.name}`,
-      message: `O setor ${highestSector.name} concentra ${highestSector.percentage.toFixed(1)}% do seu patrimônio (composto por: ${highestSector.tickers.join(', ')}).`,
-      actionRecommendation: `Considere explorar setores complementares (ex: Utilidade Pública, Saúde ou FIIs de Tijolo) para aumentar a resiliência a ciclos econômicos.`
+      message: `O segmento ${highestSector.name} concentra ${highestSector.percentage.toFixed(1)}% do seu patrimônio (composto por: ${highestSector.tickers.join(', ')}).`,
+      actionRecommendation: `Considere explorar classes ou setores complementares para aumentar a resiliência a ciclos econômicos.`
     });
   }
 
   // Issuer Concentration Alert
   const highestIssuer = issuerConcentrations[0];
-  if (highestIssuer && highestIssuer.percentage > 25.0 && highestIssuer.count > 1) {
+  if (highestIssuer && highestIssuer.percentage > 25.0 && highestIssuer.count > 1 && highestIssuer.name !== 'Tesouro Nacional') {
     alerts.push({
       id: 'alert_issuer_conc',
       type: 'concentration_issuer',
       severity: 'medium',
       title: `Exposição Combinada ao ${highestIssuer.name}`,
       message: `Os ativos (${highestIssuer.tickers.join(', ')}) pertencem ao mesmo grupo controlador ou gestora e somam ${highestIssuer.percentage.toFixed(1)}% da carteira.`,
-      actionRecommendation: `Acompanhe os resultados corporativos consolidados do grupo para mitigar riscos de governança compartilhada.`
+      actionRecommendation: `Acompanhe os resultados corporativos consolidados do grupo para mitigar riscos compartilhados.`
     });
   }
 
-  // Fundamental Risk Alerts
+  // Fundamental Risk Alerts (only for Ação and FII)
   enriched.forEach(item => {
-    if (item.fund.type === 'Ação') {
+    if (item.effectiveClass === 'Ação' && item.fund.type === 'Ação') {
       if (item.fund.sector !== 'Financeiro' && item.fund.netDebtOverEbitda > 3.5) {
         alerts.push({
           id: `debt_${item.pos.ticker}`,
@@ -354,7 +413,7 @@ export function runPortfolioDiagnosis(
           ticker: item.pos.ticker
         });
       }
-    } else if (item.fund.type === 'FII') {
+    } else if (item.effectiveClass === 'FII' && item.fund.type === 'FII') {
       if (item.fund.physicalVacancy > 15.0) {
         alerts.push({
           id: `vac_${item.pos.ticker}`,
@@ -371,7 +430,7 @@ export function runPortfolioDiagnosis(
 
   // Valuation Opportunity Alert
   enriched.forEach(item => {
-    if (item.fund.type === 'FII' && item.fund.pvp < 0.92 && item.fund.pvp > 0.75 && item.fund.dividendYield >= 9.0) {
+    if (item.effectiveClass === 'FII' && item.fund.type === 'FII' && item.fund.pvp < 0.92 && item.fund.pvp > 0.75 && item.fund.dividendYield >= 9.0) {
       alerts.push({
         id: `opp_${item.pos.ticker}`,
         type: 'valuation_opportunity',
@@ -387,9 +446,13 @@ export function runPortfolioDiagnosis(
   // Summary message in clear Portuguese
   let summaryText = '';
   if (validPositions.length === 0) {
-    summaryText = 'Nenhum ativo em custódia no momento. Adicione suas compras de Ações e FIIs para iniciar o diagnóstico.';
+    summaryText = 'Nenhum ativo em custódia no momento. Adicione suas compras de Ações, FIIs, Tesouro Direto, Renda Fixa ou ETFs para iniciar o diagnóstico.';
   } else {
-    summaryText = `Sua carteira possui ${validPositions.length} ativos (${stocksCount} Ações e ${fiisCount} FIIs), totalizando ${stocksPct.toFixed(0)}% em Ações e ${fiisPct.toFixed(0)}% em FIIs. A diversificação geral está em nível ${diversificationLevel} (Score ${diversificationScore}/100), com maior ativo representando ${highestAsset?.percentage.toFixed(1)}% do patrimônio.`;
+    const classParts = classBreakdown
+      .slice(0, 4)
+      .map(c => `${c.pct.toFixed(0)}% ${c.name} (${c.count})`)
+      .join(', ');
+    summaryText = `Sua carteira possui ${validPositions.length} ativos distribuídos em ${classParts}. A diversificação geral está em nível ${diversificationLevel} (Score ${diversificationScore}/100), com maior ativo representando ${highestAsset?.percentage.toFixed(1)}% do patrimônio.`;
   }
 
   return {
@@ -403,6 +466,13 @@ export function runPortfolioDiagnosis(
     fiisValue,
     fiisPct,
     fiisCount,
+    fixedIncomeValue,
+    fixedIncomePct,
+    fixedIncomeCount,
+    otherClassesValue,
+    otherClassesPct,
+    otherClassesCount,
+    classBreakdown,
     diversificationScore,
     diversificationLevel,
     herfindahlIndex: Math.round(hhi),

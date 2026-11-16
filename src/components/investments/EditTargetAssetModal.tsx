@@ -16,6 +16,7 @@ import {
   Layers
 } from 'lucide-react';
 import { AssetAllocationTarget } from '../../lib/rebalanceEngine';
+import { isMarketQuotedAsset } from '../../lib/b3Fundamentals';
 import { fetchSingleQuote } from '../../lib/quoteService';
 import { toast } from '@/lib/toast';
 
@@ -46,9 +47,10 @@ const COMMON_ASSET_TYPES = [
   'FII',
   'ETF',
   'BDR',
+  'Tesouro Direto',
   'Renda Fixa',
   'Cripto',
-  'Outro'
+  'Outros'
 ];
 
 export const EditTargetAssetModal: React.FC<EditTargetAssetModalProps> = ({
@@ -104,6 +106,10 @@ export const EditTargetAssetModal: React.FC<EditTargetAssetModalProps> = ({
   };
 
   const handleFetchLiveQuote = async () => {
+    if (!isMarketQuotedAsset(type, ticker)) {
+      toast.info(`Ativos do tipo "${type}" utilizam preço/valor informado manualmente.`);
+      return;
+    }
     setIsFetchingQuote(true);
     try {
       const res = await fetchSingleQuote(ticker, brapiToken);
@@ -230,13 +236,13 @@ export const EditTargetAssetModal: React.FC<EditTargetAssetModalProps> = ({
               <Layers className="w-3.5 h-3.5 text-indigo-500" />
               Classe / Tipo do Ativo
             </label>
-            <div className="grid grid-cols-4 sm:grid-cols-7 gap-1.5">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
               {COMMON_ASSET_TYPES.map(t => (
                 <button
                   key={t}
                   type="button"
                   onClick={() => setType(t)}
-                  className={`py-1.5 px-1 text-center rounded-xl text-[11px] font-bold border transition-all cursor-pointer ${
+                  className={`py-1.5 px-2 text-center rounded-xl text-[11px] font-bold border transition-all cursor-pointer truncate ${
                     type === t
                       ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm'
                       : 'bg-muted/40 border-border text-muted-foreground hover:bg-muted hover:text-foreground'

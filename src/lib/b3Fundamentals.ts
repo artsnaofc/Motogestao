@@ -1,11 +1,33 @@
 /**
- * Dynamic B3 Fundamentals Data Models & Utilities
+ * Dynamic B3 & Multi-Class Fundamentals Data Models & Utilities
  * 100% User-driven architecture (No hardcoded asset base)
  */
+
+export type AssetClass =
+  | 'Ação'
+  | 'FII'
+  | 'ETF'
+  | 'BDR'
+  | 'Tesouro Direto'
+  | 'Renda Fixa'
+  | 'Cripto'
+  | 'Outros';
+
+export const ASSET_CLASS_OPTIONS: Array<{ value: AssetClass; label: string; shortLabel: string }> = [
+  { value: 'Ação', label: 'Ação (Bolsa B3)', shortLabel: 'Ações' },
+  { value: 'FII', label: 'Fundo Imobiliário (FII)', shortLabel: 'FIIs' },
+  { value: 'ETF', label: 'ETF (Fundo de Índice)', shortLabel: 'ETFs' },
+  { value: 'BDR', label: 'BDR (Ação Internacional)', shortLabel: 'BDRs' },
+  { value: 'Tesouro Direto', label: 'Tesouro Direto (Selic / IPCA+ / Pré)', shortLabel: 'Tesouro Direto' },
+  { value: 'Renda Fixa', label: 'Renda Fixa (CDB / LCI / LCA / Debêntures / Outros)', shortLabel: 'Renda Fixa' },
+  { value: 'Cripto', label: 'Criptomoeda', shortLabel: 'Cripto' },
+  { value: 'Outros', label: 'Outros Ativos', shortLabel: 'Outros' },
+];
 
 export interface B3StockFundamental {
   ticker: string;
   name: string;
+  assetClass?: AssetClass;
   cnpj?: string;
   sector: string;
   subsector?: string;
@@ -49,6 +71,7 @@ export interface B3StockFundamental {
 export interface B3FiiFundamental {
   ticker: string;
   name: string;
+  assetClass?: AssetClass;
   cnpj?: string;
   fiiType: 'Tijolo' | 'Papel' | 'FOF' | 'Híbrido' | 'Fiagro' | 'Infra' | 'Outros';
   fiiSegment: string;
@@ -100,19 +123,127 @@ export interface B3AssetHistoryRecord {
   metricsJson?: Record<string, any>;
 }
 
+const KNOWN_ETFS_11 = new Set([
+  'BOVA11', 'IVVB11', 'SMAL11', 'HASH11', 'DIVO11', 'FIND11', 'MATB11', 'NASD11',
+  'SPXI11', 'QBTC11', 'BETH11', 'BOVV11', 'BOVX11', 'BOVB11', 'ECOO11', 'GOVE11',
+  'ISUS11', 'PIBB11', 'XFIX11', 'IRFM11', 'IMAB11', 'B5P211', 'TECK11', 'GOLD11',
+  'URET11', 'XINA11', 'EURP11', 'ACWI11', 'WRLD11', 'SPYI11', 'CHIP11', 'DEFI11',
+  'ETHE11', 'SOLH11', 'NDIV11', 'SMAC11', 'USTK11', 'USAL11', 'LFTB11', 'LFTS11',
+  'NTNS11', 'IB5M11', 'FIXA11', 'DEBB11', 'QQQM11', 'JOGO11', 'MILL11', 'DNAI11'
+]);
+
+const KNOWN_STOCK_UNITS_11 = new Set([
+  'TAEE11', 'SANB11', 'ALUP11', 'SAPR11', 'KLBN11', 'BPAC11', 'CPLE11', 'SULA11',
+  'ENGI11', 'IGTI11', 'PPLA11'
+]);
+
+const KNOWN_CRYPTO_SYMBOLS = new Set([
+  'BTC', 'ETH', 'SOL', 'USDT', 'USDC', 'BNB', 'XRP', 'ADA', 'DOGE', 'MATIC',
+  'POL', 'AVAX', 'LINK', 'DOT', 'LTC', 'BITCOIN', 'ETHEREUM', 'SOLANA', 'UNI', 'ATOM'
+]);
+
 /**
- * Automatically infers asset class from ticker
+ * Checks if an asset type or ticker is manual fixed income (no B3 live quote lookup needed)
  */
-export function getAssetTypeForTicker(ticker: string): 'Ação' | 'FII' {
+export function isFixedIncomeAssetType(typeOrTicker?: string, ticker?: string): boolean {
+  const tNorm = (typeOrTicker || '').toLowerCase().trim();
+  if (
+    tNorm === 'tesouro direto' ||
+    tNorm === 'renda fixa' ||
+    tNorm === 'outros' ||
+    tNorm === 'outro'
+  ) {
+    return true;
+  }
+  const tk = (ticker || typeOrTicker || '').toUpperCase().trim();
+  if (!tk) return false;
+  return /^(TESOURO|SELIC|IPCA|PREFIXADO|RENDA\+|EDUCA\+|NTN|LFT|LTN|CDB|LCI|LCA|RDB|DEB|CRI|CRA|LCD|POUPANCA|POUPANÇA|RENDA[\s_-]?FIXA|COE|PGBL|VGBL)/.test(tk) ||
+    tk.includes('TESOURO') ||
+    tk.includes('CDB') ||
+    tk.includes('LCI') ||
+    tk.includes('LCA');
+}
+
+/**
+ * Checks if an asset supports live market quote fetching (B3, BDR, ETF, Crypto)
+ */
+export function isMarketQuotedAsset(type?: string, ticker?: string): boolean {
+  if (isFixedIncomeAssetType(type, ticker)) return false;
+  const clean = (ticker || '').trim().toUpperCase();
+  if (clean && clean.includes(' ')) return false;
+  return true;
+}
+
+/**
+ * Automatically infers asset class from ticker / label
+ */
+export function getAssetTypeForTicker(ticker: string): AssetClass {
   if (!ticker) return 'Ação';
   const clean = ticker.toUpperCase().trim();
-  // Standard B3 heuristic: 11 is usually FII (or ETF/BDR/Unit), check common FII prefixes or 11 suffix
+
+  // 1. Tesouro Direto
+  if (
+    clean.includes('TESOURO') ||
+    clean.includes('SELIC') ||
+    clean.includes('IPCA') ||
+    clean.includes('PREFIXADO') ||
+    clean.includes('RENDA+') ||
+    clean.includes('EDUCA+') ||
+    /^(NTN|LFT|LTN)/.test(clean)
+  ) {
+    return 'Tesouro Direto';
+  }
+
+  // 2. Renda Fixa (CDB, LCI, LCA, Debêntures, CRI/CRA, Poupança)
+  if (
+    /^(CDB|LCI|LCA|RDB|DEB|CRI|CRA|LCD|POUPANCA|POUPANÇA|RENDA[\s_-]?FIXA|COE)/.test(clean) ||
+    clean.includes('CDB') ||
+    clean.includes('LCI') ||
+    clean.includes('LCA') ||
+    clean.includes('DEBENTURE') ||
+    clean.includes('DEBÊNTURE')
+  ) {
+    return 'Renda Fixa';
+  }
+
+  // 3. Cripto
+  const baseSym = clean.replace(/-(USD|BRL|USDT)$/, '');
+  if (KNOWN_CRYPTO_SYMBOLS.has(clean) || KNOWN_CRYPTO_SYMBOLS.has(baseSym) || clean.endsWith('-USD') || clean.endsWith('-BRL')) {
+    return 'Cripto';
+  }
+
+  // 4. BDR (suffix 32, 33, 34, 35)
+  if (/^[A-Z]{4}(32|33|34|35)$/.test(clean)) {
+    return 'BDR';
+  }
+
+  // 5. ETFs ending in 11
+  if (KNOWN_ETFS_11.has(clean)) {
+    return 'ETF';
+  }
+
+  // 6. Stock Units ending in 11
+  if (KNOWN_STOCK_UNITS_11.has(clean)) {
+    return 'Ação';
+  }
+
+  // 7. FIIs ending in 11, 11B, 12
   if (clean.endsWith('11') || clean.endsWith('11B') || clean.endsWith('12')) {
-    // If it's a known stock unit (e.g. TAEE11, SANB11, ALUP11, SAPR11, KLBN11, BPAC11), handle as Ação
-    const knownUnits = ['TAEE11', 'SANB11', 'ALUP11', 'SAPR11', 'KLBN11', 'BPAC11', 'CPLE11', 'SULA11'];
-    if (knownUnits.includes(clean)) return 'Ação';
     return 'FII';
   }
+
+  // 8. Outros ativos descritivos
+  if (
+    clean.includes('FUNDO') ||
+    clean.includes('PREVID') ||
+    clean.includes('MULTIMERCADO') ||
+    clean.includes('OURO') ||
+    clean.includes('CAMBIO') ||
+    clean.includes('DOLAR')
+  ) {
+    return 'Outros';
+  }
+
   return 'Ação';
 }
 
@@ -121,14 +252,18 @@ export function getAssetTypeForTicker(ticker: string): 'Ação' | 'FII' {
  */
 export function getB3AssetFundamental(
   ticker: string, 
-  typeHint?: 'Ação' | 'FII' | string,
+  typeHint?: AssetClass | string,
   liveQuote?: number,
   customMetadata?: Record<string, any>
 ): B3AssetFundamental {
   const clean = (ticker || '').toUpperCase().trim();
-  const detectedType = (typeHint === 'Ação' || typeHint === 'FII') 
-    ? typeHint 
+  const validClasses: Set<string> = new Set([
+    'Ação', 'FII', 'ETF', 'BDR', 'Tesouro Direto', 'Renda Fixa', 'Cripto', 'Outros'
+  ]);
+  const resolvedClass: AssetClass = (typeHint && validClasses.has(typeHint))
+    ? (typeHint as AssetClass)
     : getAssetTypeForTicker(clean);
+  const detectedType: 'Ação' | 'FII' = resolvedClass === 'FII' ? 'FII' : 'Ação';
 
   // 1. If custom metadata is provided for this ticker in database / state
   const custom = customMetadata ? customMetadata[clean] : null;
@@ -140,6 +275,7 @@ export function getB3AssetFundamental(
     if (isFii) {
       return {
         type: 'FII',
+        assetClass: 'FII',
         ticker: clean,
         name: custom.name || `${clean} - FII`,
         cnpj: custom.cnpj || undefined,
@@ -171,13 +307,14 @@ export function getB3AssetFundamental(
     } else {
       return {
         type: 'Ação',
+        assetClass: resolvedClass,
         ticker: clean,
-        name: custom.name || `${clean} S.A.`,
+        name: custom.name || `${clean} ${resolvedClass === 'Ação' ? 'S.A.' : `(${resolvedClass})`}`,
         cnpj: custom.cnpj || undefined,
-        sector: custom.sector || 'Outros',
-        subsector: custom.subsector || 'Diversos',
-        segment: custom.segment || 'Ações B3',
-        issuer: custom.issuer || `${clean} S.A.`,
+        sector: custom.sector || (resolvedClass === 'Ação' ? 'Outros' : resolvedClass),
+        subsector: custom.subsector || resolvedClass,
+        segment: custom.segment || resolvedClass,
+        issuer: custom.issuer || `${clean}`,
         marketCap: Number(custom.market_cap ?? custom.marketCap ?? 1000),
         dailyLiquidity: Number(custom.daily_liquidity ?? custom.dailyLiquidity ?? 5000000),
         pl: Number(custom.pl ?? 10.0),
@@ -205,7 +342,7 @@ export function getB3AssetFundamental(
         payout: Number(custom.payout ?? 50.0),
         lpa: Number(custom.lpa ?? (quote > 0 ? Number((quote / 10).toFixed(2)) : 2.5)),
         vpa: Number(custom.vpa ?? (quote > 0 ? Number((quote / 1.2).toFixed(2)) : 20.0)),
-        description: custom.description || 'Empresa listada na B3.',
+        description: custom.description || 'Ativo da carteira.',
         lastPrice: quote > 0 ? quote : undefined,
         source: custom.source || 'Usuário',
         updatedAt: custom.updated_at || custom.updatedAt
@@ -213,11 +350,12 @@ export function getB3AssetFundamental(
     }
   }
 
-  // 2. Dynamic Default Construction based purely on clean ticker and live price
+  // 2. Dynamic Default Construction based purely on clean ticker, class and live price
   if (detectedType === 'FII') {
     const isPapel = clean.startsWith('KN') || clean.startsWith('MX') || clean.startsWith('CP') || clean.startsWith('RECR');
     return {
       type: 'FII',
+      assetClass: 'FII',
       ticker: clean,
       name: `${clean} - Fundo Imobiliário`,
       fiiType: isPapel ? 'Papel' : 'Tijolo',
@@ -240,8 +378,76 @@ export function getB3AssetFundamental(
     };
   }
 
+  if (resolvedClass === 'Tesouro Direto' || resolvedClass === 'Renda Fixa' || resolvedClass === 'Outros') {
+    const isTesouro = resolvedClass === 'Tesouro Direto';
+    return {
+      type: 'Ação',
+      assetClass: resolvedClass,
+      ticker: clean,
+      name: clean,
+      sector: resolvedClass,
+      subsector: isTesouro ? 'Títulos Públicos Federais' : resolvedClass,
+      segment: isTesouro ? 'Tesouro Nacional' : resolvedClass,
+      issuer: isTesouro ? 'Tesouro Nacional (Governo Federal)' : resolvedClass,
+      marketCap: 50000,
+      dailyLiquidity: 50000000,
+      pl: 10.0,
+      pvp: 1.0,
+      roe: 12.0,
+      roic: 12.0,
+      netMargin: 100.0,
+      ebitdaMargin: 100.0,
+      revenueCagr5y: 10.0,
+      profitCagr5y: 10.0,
+      netDebtOverEbitda: 0,
+      dividendYield: isTesouro ? 11.0 : 10.5,
+      payout: 0,
+      lpa: 1,
+      vpa: 1,
+      description: isTesouro ? 'Título Público do Tesouro Direto.' : 'Título de Renda Fixa / Outros Ativos.',
+      lastPrice: liveQuote && liveQuote > 0 ? liveQuote : undefined,
+      source: 'Auto'
+    };
+  }
+
+  if (resolvedClass === 'ETF' || resolvedClass === 'BDR' || resolvedClass === 'Cripto') {
+    const sectorLabel =
+      resolvedClass === 'ETF' ? 'ETFs & Índices' :
+      resolvedClass === 'BDR' ? 'Internacional (BDR)' :
+      'Criptoativos';
+    return {
+      type: 'Ação',
+      assetClass: resolvedClass,
+      ticker: clean,
+      name: `${clean} (${resolvedClass})`,
+      sector: sectorLabel,
+      subsector: resolvedClass,
+      segment: resolvedClass,
+      issuer: resolvedClass === 'Cripto' ? 'Rede Descentralizada' : resolvedClass,
+      marketCap: 20000,
+      dailyLiquidity: 25000000,
+      pl: 15.0,
+      pvp: 1.5,
+      roe: 15.0,
+      roic: 14.0,
+      netMargin: 15.0,
+      ebitdaMargin: 25.0,
+      revenueCagr5y: 12.0,
+      profitCagr5y: 12.0,
+      netDebtOverEbitda: 0.5,
+      dividendYield: resolvedClass === 'Cripto' ? 0 : 2.5,
+      payout: 20,
+      lpa: liveQuote && liveQuote > 0 ? Number((liveQuote / 15).toFixed(2)) : 2.0,
+      vpa: liveQuote && liveQuote > 0 ? Number((liveQuote / 1.5).toFixed(2)) : 15.0,
+      description: `Ativo da classe ${resolvedClass}.`,
+      lastPrice: liveQuote && liveQuote > 0 ? liveQuote : undefined,
+      source: 'Auto'
+    };
+  }
+
   return {
     type: 'Ação',
+    assetClass: 'Ação',
     ticker: clean,
     name: `${clean} S.A.`,
     sector: 'Outros',

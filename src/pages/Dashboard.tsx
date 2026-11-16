@@ -99,6 +99,7 @@ import { getEffectiveUserId } from '../lib/authUtils';
 import { syncQueueManager } from '../lib/syncQueue';
 import { planningStorage } from '../lib/planningStorage';
 import { useData } from '../contexts/DataContext';
+import { getInvestmentTransactionNetAmount } from '../lib/investmentCalculations';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { ExecutiveReportModal } from '../components/ExecutiveReportModal';
@@ -503,7 +504,8 @@ export function Dashboard() {
     updateReserveTransaction,
     investmentTransactions,
     dividends,
-    quotes
+    quotes,
+    saveMonthlyPatrimonySnapshot
   } = useData();
 
   const handleSaveWeeklyGoal = async () => {
@@ -1059,7 +1061,7 @@ export function Dashboard() {
     return (investmentTransactions || [])
       .map(it => {
         const isBuy = it.operation === 'buy';
-        const totalAmount = (Number(it.price) * Number(it.quantity)) + Number(it.costs || 0);
+        const totalAmount = getInvestmentTransactionNetAmount(it);
         return {
           id: it.id,
           user_id: it.user_id,
@@ -1778,7 +1780,7 @@ export function Dashboard() {
     investmentTransactions.forEach(tx => {
       if (tx.reserve_id) return; // Handled by reserve_transactions
       if ((tx as any).payment_status === 'pending') return;
-      const amount = (Number(tx.price) * Number(tx.quantity)) + Number(tx.costs || 0);
+      const amount = getInvestmentTransactionNetAmount(tx);
       if (tx.operation === 'buy') {
         rawNet -= amount;
       } else {
@@ -3478,7 +3480,7 @@ export function Dashboard() {
         const txDate = parseLocalDate(tx.date);
         if (txDate > endOfMonthDate) return;
         
-        const amount = (Number(tx.price) * Number(tx.quantity)) + Number(tx.costs || 0);
+        const amount = getInvestmentTransactionNetAmount(tx);
         if (tx.operation === 'buy') {
           rawNet -= amount;
         } else {
@@ -4352,6 +4354,7 @@ export function Dashboard() {
         dividends={dividends}
         hideValues={hideValues}
         formatCurrency={formatCurrency}
+        onSaveMonthlySnapshot={saveMonthlyPatrimonySnapshot}
       />
 
       {/* Monthly Trend (Evolução Mensal) */}

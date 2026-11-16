@@ -27,18 +27,18 @@ const PRESET_STRATEGIES: Array<{ name: string; desc: string; targets: Record<str
   },
   {
     name: 'Foco em Proventos & Renda',
-    desc: '60% FIIs + Renda Fixa, 40% Ações & Dividendos.',
-    targets: { 'FII': 60, 'Ação': 30, 'Renda Fixa': 10, 'ETF': 0, 'BDR': 0 }
+    desc: '50% FIIs, 30% Ações de Dividendos, 20% Tesouro Direto / Renda Fixa.',
+    targets: { 'FII': 50, 'Ação': 30, 'Tesouro Direto': 10, 'Renda Fixa': 10, 'ETF': 0, 'BDR': 0 }
   },
   {
     name: 'Crescimento & Global',
-    desc: '50% Ações Brasil, 30% ETFs/BDRs Internacionais, 20% FIIs.',
-    targets: { 'Ação': 50, 'ETF': 20, 'BDR': 10, 'FII': 20 }
+    desc: '45% Ações Brasil, 30% ETFs/BDRs Internacionais, 20% FIIs, 5% Cripto.',
+    targets: { 'Ação': 45, 'ETF': 20, 'BDR': 10, 'FII': 20, 'Cripto': 5 }
   },
   {
     name: 'Conservadora / Defensiva',
-    desc: '40% Renda Fixa, 40% FIIs Tijolo, 20% Ações Blue Chips.',
-    targets: { 'Renda Fixa': 40, 'FII': 40, 'Ação': 20 }
+    desc: '50% Tesouro Direto & Renda Fixa, 30% FIIs Tijolo, 20% Ações Blue Chips.',
+    targets: { 'Tesouro Direto': 25, 'Renda Fixa': 25, 'FII': 30, 'Ação': 20 }
   }
 ];
 

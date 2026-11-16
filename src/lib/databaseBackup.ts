@@ -110,7 +110,7 @@ export const ALLOWED_TABLE_COLUMNS: Record<string, string[]> = {
     'vehicle_km_per_liter', 'fuel_price', 'initial_balance', 'weekly_goal',
     'weekly_net_goal', 'default_driver_labor', 'default_investment_reserve_id',
     'cached_quotes', 'quote_provider', 'brapi_token', 'asset_cnpjs',
-    'rebalance_targets', 'biometrics_enabled', 'biometrics_auto_lock_minutes',
+    'rebalance_targets', 'monthly_patrimony_snapshots', 'biometrics_enabled', 'biometrics_auto_lock_minutes',
     'biometrics_device_info', 'created_at', 'updated_at'
   ],
   transactions: [
@@ -714,6 +714,7 @@ CREATE TABLE IF NOT EXISTS public.user_settings (
     brapi_token TEXT,
     asset_cnpjs JSONB DEFAULT '{}'::jsonb,
     rebalance_targets JSONB DEFAULT '{}'::jsonb,
+    monthly_patrimony_snapshots JSONB DEFAULT '{}'::jsonb,
 
     -- Biometria e Segurança de Sessão
     biometrics_enabled BOOLEAN DEFAULT FALSE,
