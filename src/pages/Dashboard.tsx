@@ -86,7 +86,8 @@ import {
   RotateCw,
   RotateCcw,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  Flame
 } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
@@ -102,6 +103,8 @@ import { PatrimonyEvolution } from '../components/PatrimonyEvolution';
 import { DailyProductivityHeatmap } from '../components/dashboard/DailyProductivityHeatmap';
 import { PassiveIncomeEvolutionChart } from '../components/dashboard/PassiveIncomeEvolutionChart';
 import { PersonalExpenseBarConfigDialog } from '../components/dashboard/PersonalExpenseBarConfigDialog';
+import { VacationSimulatorCard } from '../components/dashboard/VacationSimulatorCard';
+import { iconOptions } from '../components/reserves/reserveUtils';
 import { IndicatorHistoryModal, IndicatorType, MonthHistoryItem, formatIndicatorValue } from '../components/IndicatorHistoryModal';
 import {
   BarChart,
@@ -442,8 +445,12 @@ export function Dashboard() {
   const [tempWeeklyGoal, setTempWeeklyGoal] = useState<string>('');
   const [tempWeeklyNetGoal, setTempWeeklyNetGoal] = useState<string>('');
 
+  const [showIgnoredInCharts, setShowIgnoredInCharts] = useState<boolean>(false);
+  const [showIgnoredModal, setShowIgnoredModal] = useState<boolean>(false);
+
   const { 
     transactions, 
+    updateTransaction,
     settings, 
     loading,
     refreshData,
@@ -455,6 +462,7 @@ export function Dashboard() {
     setHideValues, 
     reserves, 
     reserveTransactions,
+    updateReserveTransaction,
     investmentTransactions,
     dividends,
     quotes
@@ -978,6 +986,7 @@ export function Dashboard() {
           installment_total: rt.installment_total,
           installment_index: rt.installment_index,
           total_installments: rt.total_installments,
+          ignore_in_charts: Boolean(rt.ignore_in_charts),
         } as unknown as Transaction;
       });
   }, [reserveTransactions, reserves, dividends]);
@@ -1054,10 +1063,67 @@ export function Dashboard() {
     });
   }, [allTransactions, settings]);
 
+  // Resumo dos lançamentos e despesas marcados como "ignorar nos gráficos"
+  const ignoredSummary = useMemo(() => {
+    const allItems = (allTransactionsAdjusted || [])
+      .filter(t => Boolean(t.ignore_in_charts))
+      .sort((a: any, b: any) => (b._ts || 0) - (a._ts || 0));
+
+    const periodItems = globalPeriod === 'all'
+      ? allItems
+      : allItems.filter((t: any) => t._ts >= currentStartTime && t._ts <= currentEndTime);
+
+    const periodIncomeItems = periodItems.filter(t => t.type === 'income');
+    const periodExpenseItems = periodItems.filter(t => t.type === 'expense');
+    const allIncomeItems = allItems.filter(t => t.type === 'income');
+    const allExpenseItems = allItems.filter(t => t.type === 'expense');
+
+    const sumAmt = (arr: any[]) => arr.reduce((acc, item) => acc + Number(item.amount || 0), 0);
+
+    return {
+      allItems,
+      periodItems,
+      periodIncomeItems,
+      periodExpenseItems,
+      allIncomeItems,
+      allExpenseItems,
+      periodCount: periodItems.length,
+      allCount: allItems.length,
+      periodIncomeTotal: sumAmt(periodIncomeItems),
+      periodExpenseTotal: sumAmt(periodExpenseItems),
+      allIncomeTotal: sumAmt(allIncomeItems),
+      allExpenseTotal: sumAmt(allExpenseItems),
+    };
+  }, [allTransactionsAdjusted, globalPeriod, currentStartTime, currentEndTime]);
+
+  const handleRestoreIgnoredItem = useCallback(async (item: any) => {
+    try {
+      if (item.isReserveTx) {
+        await updateReserveTransaction(item.id, { ignore_in_charts: false });
+      } else {
+        await updateTransaction(item.id, { ignore_in_charts: false }, { silent: true });
+        if (item.is_reserve_use || item.description?.startsWith('[Reserva]')) {
+          const matchRt = (reserveTransactions || []).find(
+            rt => rt.type === 'utilizacao' &&
+                  rt.date === (item.date || '').split('T')[0] &&
+                  Math.abs(Number(rt.amount) - Number(item.amount)) < 0.01
+          );
+          if (matchRt) {
+            await updateReserveTransaction(matchRt.id, { ignore_in_charts: false });
+          }
+        }
+      }
+      toast.success('Lançamento restaurado nos gráficos e médias!');
+    } catch (err) {
+      toast.error('Erro ao restaurar lançamento.');
+    }
+  }, [updateTransaction, updateReserveTransaction, reserveTransactions]);
+
   // Lançamentos filtrados para gráficos, médias, KPIs, recordes e relatórios (preservando o saldo real intacto)
   const chartTransactionsAdjusted = useMemo(() => {
+    if (showIgnoredInCharts) return allTransactionsAdjusted || [];
     return (allTransactionsAdjusted || []).filter(t => !t.ignore_in_charts);
-  }, [allTransactionsAdjusted]);
+  }, [allTransactionsAdjusted, showIgnoredInCharts]);
 
   const currentPeriodTx = useMemo(() => {
     if (globalPeriod === 'all') return chartTransactionsAdjusted;
@@ -2062,12 +2128,14 @@ export function Dashboard() {
         avgMonthlyPersonal: 0,
         avgMonthlyOpExp: 0,
         avgMonthlyTotal: 0,
+        avgMonthlyIncome: 0,
         monthsCount: 0
       };
     }
 
     let totalPersonal = 0;
     let totalOpExp = 0;
+    let totalIncome = 0;
     let validMonthsCount = 0;
 
     pastMonths.forEach(mStr => {
@@ -2080,6 +2148,7 @@ export function Dashboard() {
       if (inc > 0 || per > 0 || op > 0) {
         totalPersonal += per;
         totalOpExp += op;
+        totalIncome += inc;
         validMonthsCount++;
       }
     });
@@ -2088,12 +2157,14 @@ export function Dashboard() {
     const avgMonthlyPersonal = totalPersonal / count;
     const avgMonthlyOpExp = totalOpExp / count;
     const avgMonthlyTotal = avgMonthlyPersonal + avgMonthlyOpExp;
+    const avgMonthlyIncome = totalIncome / count;
 
     return {
       hasPastData: validMonthsCount > 0,
       avgMonthlyPersonal,
       avgMonthlyOpExp,
       avgMonthlyTotal,
+      avgMonthlyIncome,
       monthsCount: validMonthsCount
     };
   }, [chartTransactionsAdjusted, calcTotals]);
@@ -3521,46 +3592,106 @@ export function Dashboard() {
   return (
     <div className="flex-1 w-full max-w-7xl mx-auto p-4 md:p-8 space-y-8 animate-fade-in">
       {/* Header Premium */}
-      <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-border/40 pb-5">
-        <div>
-          <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-foreground">
-            Painel Geral
-          </h1>
-          <p className="text-muted-foreground text-xs sm:text-sm font-medium mt-0.5">
-            Analise seu faturamento, metas financeiras e rentabilidade por quilômetro.
-          </p>
-        </div>
-        <div className="flex items-center justify-between sm:justify-end gap-2 w-full sm:w-auto shrink-0">
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="icon"
-              onClick={() => setHideValues(!hideValues)}
-              className="rounded-full h-9 w-9 shrink-0 bg-muted/20 border-border/50 hover:bg-muted/40 text-muted-foreground hover:text-foreground active:scale-95 transition-all"
-              title={hideValues ? "Mostrar valores" : "Ocultar valores"}
-            >
-              {hideValues ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-            </Button>
+      <header className="flex flex-col gap-3 border-b border-border/40 pb-5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-foreground">
+              Painel Geral
+            </h1>
+            <p className="text-muted-foreground text-xs sm:text-sm font-medium mt-0.5">
+              Analise seu faturamento, metas financeiras e rentabilidade por quilômetro.
+            </p>
+          </div>
+          <div className="flex items-center justify-between sm:justify-end gap-2 w-full sm:w-auto shrink-0">
+            <div className="flex items-center gap-2">
+              {ignoredSummary.allCount > 0 && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowIgnoredInCharts(prev => !prev)}
+                  className={`rounded-full h-9 px-3 shrink-0 font-bold text-xs active:scale-95 transition-all cursor-pointer ${
+                    showIgnoredInCharts
+                      ? 'bg-amber-500/15 border-amber-500/40 text-amber-600 dark:text-amber-400 hover:bg-amber-500/25'
+                      : 'bg-muted/20 border-border/50 hover:bg-muted/40 text-muted-foreground hover:text-foreground'
+                  }`}
+                  title={showIgnoredInCharts ? 'Ocultar lançamentos/despesas ignorados dos gráficos' : 'Mostrar lançamentos/despesas ignorados nos gráficos'}
+                >
+                  {showIgnoredInCharts ? <Eye className="w-3.5 h-3.5 mr-1.5" /> : <EyeOff className="w-3.5 h-3.5 mr-1.5" />}
+                  <span className="hidden md:inline">{showIgnoredInCharts ? 'Mostrando ignorados' : 'Ignorados'}</span>
+                  <span className="ml-1 px-1.5 py-0.2 rounded-full bg-background/80 text-[10px] font-mono font-black border border-border/50">
+                    {ignoredSummary.allCount}
+                  </span>
+                </Button>
+              )}
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={() => setHideValues(!hideValues)}
+                className="rounded-full h-9 w-9 shrink-0 bg-muted/20 border-border/50 hover:bg-muted/40 text-muted-foreground hover:text-foreground active:scale-95 transition-all"
+                title={hideValues ? "Mostrar valores" : "Ocultar valores"}
+              >
+                {hideValues ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowMonthlyReport(true)}
+                className="rounded-full h-9 px-3.5 shrink-0 bg-muted/20 border-border/50 hover:bg-muted/40 font-bold text-xs active:scale-95 transition-all"
+              >
+                <BarChart className="w-3.5 h-3.5 mr-1.5 text-primary" />
+                Relatório
+              </Button>
+            </div>
             <Button
               variant="outline"
               size="sm"
-              onClick={() => setShowMonthlyReport(true)}
-              className="rounded-full h-9 px-3.5 shrink-0 bg-muted/20 border-border/50 hover:bg-muted/40 font-bold text-xs active:scale-95 transition-all"
+              onClick={handleLogout}
+              className="rounded-full h-9 px-3 shrink-0 bg-rose-500/10 border-rose-500/30 text-rose-500 hover:bg-rose-500/20 font-bold text-xs active:scale-95 transition-all"
+              title="Sair da Conta (Logout Temporário)"
             >
-              <BarChart className="w-3.5 h-3.5 mr-1.5 text-primary" />
-              Relatório
+              <LogOut className="w-3.5 h-3.5 mr-1.5" />
+              Sair
             </Button>
           </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleLogout}
-            className="rounded-full h-9 px-3 shrink-0 bg-rose-500/10 border-rose-500/30 text-rose-500 hover:bg-rose-500/20 font-bold text-xs active:scale-95 transition-all"
-            title="Sair da Conta (Logout Temporário)"
-          >
-            <LogOut className="w-3.5 h-3.5 mr-1.5" />
-            Sair
-          </Button>
+        </div>
+
+        {/* Filtros Rápidos de Período na Tela Inicial */}
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+          <div className="flex items-center gap-1 p-1 bg-muted/30 border border-border/50 rounded-xl overflow-x-auto scrollbar-none max-w-full">
+            {[
+              { id: 'today', label: 'Hoje' },
+              { id: 'last7Days', label: '7 dias' },
+              { id: 'last30Days', label: '30 dias' },
+              { id: 'month', label: 'Mês Atual' },
+              { id: 'lastMonth', label: 'Mês Passado' },
+              { id: 'thisYear', label: 'Ano Corrente' },
+            ].map(p => {
+              const active = globalPeriod === p.id;
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => setGlobalPeriod(p.id)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap shrink-0 cursor-pointer ${
+                    active
+                      ? 'bg-background text-foreground shadow-2xs border border-border/70 font-black'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  {p.label}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="flex items-center gap-2 text-xs text-muted-foreground font-medium">
+            <Calendar className="w-3.5 h-3.5 text-primary shrink-0" />
+            <span>{getPeriodLabel()}</span>
+            <span aria-hidden="true">·</span>
+            <span className="font-mono tabular-nums">
+              {format(currentStart, 'dd/MM')} — {format(currentEnd, 'dd/MM/yyyy')}
+            </span>
+          </div>
         </div>
       </header>
 
@@ -3665,6 +3796,90 @@ export function Dashboard() {
                 </CardContent>
               </Card>
             </div>
+
+            {/* Burn Rate / Velocidade de Consumo do Caixa (Autonomia) */}
+            {(() => {
+              const periodDaysSpan = Math.max(1, (dayList || []).length);
+              const fallbackDailyBurn = periodDaysSpan > 0
+                ? ((summary.perExpense || 0) + (summary.opExpensePuro || 0)) / periodDaysSpan
+                : 0;
+              const dailyBurnRate = pastMonthsStats.hasPastData && pastMonthsStats.avgMonthlyTotal > 0
+                ? pastMonthsStats.avgMonthlyTotal / 30
+                : fallbackDailyBurn;
+
+              const cashDays = dailyBurnRate > 0.5 ? Math.max(0, Math.floor(bancaLivre / dailyBurnRate)) : null;
+              const totalDays = dailyBurnRate > 0.5 ? Math.max(0, Math.floor((bancaLivre + totalInResv) / dailyBurnRate)) : null;
+
+              const formatAutonomy = (days: number | null) => {
+                if (days === null) return 'Sem histórico';
+                if (days <= 0) return '0 dias';
+                if (days < 60) return `${days} ${days === 1 ? 'dia' : 'dias'}`;
+                const months = (days / 30).toFixed(1).replace('.0', '').replace('.', ',');
+                return `${months} meses (${days}d)`;
+              };
+
+              const statusInfo = cashDays === null
+                ? { label: 'Aguardando base', tone: 'text-muted-foreground border-border/60 bg-muted/20' }
+                : cashDays < 15
+                  ? { label: 'Crítico (< 15d)', tone: 'text-rose-600 dark:text-rose-400 border-rose-500/30 bg-rose-500/10' }
+                  : cashDays < 30
+                    ? { label: 'Atenção (< 30d)', tone: 'text-amber-600 dark:text-amber-400 border-amber-500/30 bg-amber-500/10' }
+                    : { label: 'Saudável (≥ 30d)', tone: 'text-emerald-600 dark:text-emerald-400 border-emerald-500/30 bg-emerald-500/10' };
+
+              return (
+                <Card className="border border-border/70 shadow-2xs rounded-2xl bg-card/95">
+                  <CardContent className="p-3.5 sm:p-4 flex flex-col md:flex-row md:items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <div className="h-9 w-9 rounded-xl bg-orange-500/10 border border-orange-500/20 flex items-center justify-center shrink-0">
+                        <Flame className="w-4 h-4 text-orange-500" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-xs sm:text-sm font-black text-foreground tracking-tight">
+                            Burn Rate &amp; Autonomia do Caixa
+                          </span>
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${statusInfo.tone}`}>
+                            {statusInfo.label}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-muted-foreground font-medium mt-0.5">
+                          Se você ficasse sem faturar hoje, no ritmo de consumo de{' '}
+                          <strong className="font-mono text-foreground tabular-nums">
+                            {hideValues ? 'R$ •••' : formatCurrency(dailyBurnRate)}/dia
+                          </strong>
+                          {pastMonthsStats.hasPastData ? ` (média de ${pastMonthsStats.monthsCount} meses anteriores)` : ' (período atual)'}.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3 sm:gap-4 shrink-0 border-t md:border-t-0 pt-2.5 md:pt-0 border-border/40">
+                      <div className="text-left md:text-right">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block">
+                          Só Caixa Livre
+                        </span>
+                        <span className={`text-sm sm:text-base font-black font-mono tabular-nums ${
+                          cashDays !== null && cashDays < 15
+                            ? 'text-rose-500'
+                            : cashDays !== null && cashDays < 30
+                              ? 'text-amber-500'
+                              : 'text-emerald-600 dark:text-emerald-400'
+                        }`}>
+                          {hideValues ? '•• dias' : formatAutonomy(cashDays)}
+                        </span>
+                      </div>
+                      <div className="text-left md:text-right border-l border-border/50 pl-3 sm:pl-4">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block">
+                          Caixa + Reservas
+                        </span>
+                        <span className="text-sm sm:text-base font-black font-mono tabular-nums text-indigo-600 dark:text-indigo-400">
+                          {hideValues ? '•• dias' : formatAutonomy(totalDays)}
+                        </span>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })()}
           </div>
         );
       })()}
@@ -3878,40 +4093,58 @@ export function Dashboard() {
               </CardDescription>
             </div>
 
-            <div className="flex items-center gap-1 bg-muted/60 p-1 rounded-xl border border-border/60 shrink-0 self-start sm:self-auto">
-              <button
-                type="button"
-                onClick={() => handleSetMonthlyTrendPeriod('6m')}
-                className={`px-2.5 py-1 text-[11px] font-black rounded-lg transition-all cursor-pointer ${
-                  monthlyTrendPeriod === '6m'
-                    ? 'bg-background text-foreground shadow-xs ring-1 ring-border/50'
-                    : 'text-muted-foreground hover:text-foreground'
-                }`}
-              >
-                6 Meses
-              </button>
-              <button
-                type="button"
-                onClick={() => handleSetMonthlyTrendPeriod('12m')}
-                className={`px-2.5 py-1 text-[11px] font-black rounded-lg transition-all cursor-pointer ${
-                  monthlyTrendPeriod === '12m'
-                    ? 'bg-background text-foreground shadow-xs ring-1 ring-border/50'
-                    : 'text-muted-foreground hover:text-foreground'
-                }`}
-              >
-                12 Meses
-              </button>
-              <button
-                type="button"
-                onClick={() => handleSetMonthlyTrendPeriod('all')}
-                className={`px-2.5 py-1 text-[11px] font-black rounded-lg transition-all cursor-pointer ${
-                  monthlyTrendPeriod === 'all'
-                    ? 'bg-background text-foreground shadow-xs ring-1 ring-border/50'
-                    : 'text-muted-foreground hover:text-foreground'
-                }`}
-              >
-                Desde o Início
-              </button>
+            <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+              {ignoredSummary.allCount > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setShowIgnoredInCharts(prev => !prev)}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-[11px] font-bold transition-all cursor-pointer ${
+                    showIgnoredInCharts
+                      ? 'bg-amber-500/15 border-amber-500/40 text-amber-600 dark:text-amber-400 hover:bg-amber-500/25'
+                      : 'bg-muted/40 border-border/60 text-muted-foreground hover:text-foreground hover:bg-muted/70'
+                  }`}
+                  title={showIgnoredInCharts ? 'Ocultar lançamentos/despesas ignorados deste gráfico' : 'Incluir lançamentos/despesas ignorados neste gráfico'}
+                >
+                  {showIgnoredInCharts ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+                  <span>{showIgnoredInCharts ? `Com ignorados (${ignoredSummary.allCount})` : `Ignorados (${ignoredSummary.allCount})`}</span>
+                </button>
+              )}
+
+              <div className="flex items-center gap-1 bg-muted/60 p-1 rounded-xl border border-border/60 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => handleSetMonthlyTrendPeriod('6m')}
+                  className={`px-2.5 py-1 text-[11px] font-black rounded-lg transition-all cursor-pointer ${
+                    monthlyTrendPeriod === '6m'
+                      ? 'bg-background text-foreground shadow-xs ring-1 ring-border/50'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  6 Meses
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSetMonthlyTrendPeriod('12m')}
+                  className={`px-2.5 py-1 text-[11px] font-black rounded-lg transition-all cursor-pointer ${
+                    monthlyTrendPeriod === '12m'
+                      ? 'bg-background text-foreground shadow-xs ring-1 ring-border/50'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  12 Meses
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSetMonthlyTrendPeriod('all')}
+                  className={`px-2.5 py-1 text-[11px] font-black rounded-lg transition-all cursor-pointer ${
+                    monthlyTrendPeriod === 'all'
+                      ? 'bg-background text-foreground shadow-xs ring-1 ring-border/50'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  Desde o Início
+                </button>
+              </div>
             </div>
           </div>
         </CardHeader>
@@ -4011,17 +4244,7 @@ export function Dashboard() {
           {/* Individual Reserves Cards */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
             {sortedReservesByLastTransaction.slice(0, 4).map(r => {
-              const iconMap = {
-                PiggyBank,
-                Wrench,
-                ShieldAlert,
-                Car,
-                Coins,
-                Sparkles,
-                Heart,
-                Briefcase
-              };
-              const TargetComponent = iconMap[r.icon as keyof typeof iconMap] || PiggyBank;
+              const TargetComponent = iconOptions[r.icon] || PiggyBank;
 
               // Calculate period aportes and utilizacaos for this specific reserve
               const periodAportes = (reserveTransactions || [])
@@ -4098,6 +4321,19 @@ export function Dashboard() {
           </div>
         </Card>
       )}
+
+      {/* Simulador de Férias e Ausências (Oculto por padrão, expansível) */}
+      <div>
+        <VacationSimulatorCard
+          pastMonthsStats={pastMonthsStats}
+          fallbackMonthlyPersonal={summary.perExpense || 0}
+          fallbackMonthlyOpExp={summary.opExpensePuro || 0}
+          bancaLivre={bancaLivre}
+          totalInReserves={totalInReserves}
+          hideValues={hideValues}
+          formatCurrency={formatCurrency}
+        />
+      </div>
 
       {/* Barra de Períodos & Navegação (acima dos quadrados informativos de Faturamento, Lucro, Despesas, etc.) */}
       <div className="bg-card border border-border/70 p-3.5 sm:p-4 rounded-2xl shadow-xs space-y-3">
@@ -4213,6 +4449,75 @@ export function Dashboard() {
             />
           </div>
         )}
+
+        {/* Faixa Estratégica: Lançamentos e Despesas Ignorados */}
+        <div className={`flex flex-wrap items-center justify-between gap-2 pt-2.5 border-t border-border/40 ${
+          showIgnoredInCharts ? 'text-amber-700 dark:text-amber-300' : 'text-muted-foreground'
+        }`}>
+          <div className="flex items-center gap-2 text-xs min-w-0">
+            {showIgnoredInCharts ? (
+              <Eye className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+            ) : (
+              <EyeOff className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+            )}
+            <span className="font-semibold leading-snug">
+              {ignoredSummary.allCount === 0 ? (
+                'Nenhum lançamento ou despesa ignorado nos gráficos no momento.'
+              ) : showIgnoredInCharts ? (
+                <>
+                  <strong>Incluindo itens ignorados</strong> nos gráficos e indicadores
+                  {ignoredSummary.periodCount > 0 && (
+                    <span className="text-muted-foreground font-medium ml-1">
+                      ({ignoredSummary.periodIncomeItems.length > 0 ? `+${formatCurrency(ignoredSummary.periodIncomeTotal)} ganhos` : ''}
+                      {ignoredSummary.periodIncomeItems.length > 0 && ignoredSummary.periodExpenseItems.length > 0 ? ' · ' : ''}
+                      {ignoredSummary.periodExpenseItems.length > 0 ? `${formatCurrency(ignoredSummary.periodExpenseTotal)} despesas` : ''} neste período)
+                    </span>
+                  )}
+                </>
+              ) : (
+                <>
+                  {ignoredSummary.periodCount > 0 ? (
+                    <>
+                      <strong>{ignoredSummary.periodCount}</strong> {ignoredSummary.periodCount === 1 ? 'item ignorado' : 'itens ignorados'} neste período
+                      {' '}
+                      ({ignoredSummary.periodIncomeItems.length > 0 ? `+${formatCurrency(ignoredSummary.periodIncomeTotal)} ganhos` : ''}
+                      {ignoredSummary.periodIncomeItems.length > 0 && ignoredSummary.periodExpenseItems.length > 0 ? ' · ' : ''}
+                      {ignoredSummary.periodExpenseItems.length > 0 ? `-${formatCurrency(ignoredSummary.periodExpenseTotal)} despesas` : ''})
+                    </>
+                  ) : (
+                    <>
+                      <strong>{ignoredSummary.allCount}</strong> {ignoredSummary.allCount === 1 ? 'item ignorado' : 'itens ignorados'} em outros períodos
+                    </>
+                  )}
+                </>
+              )}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-1.5 shrink-0">
+            {ignoredSummary.allCount > 0 && (
+              <button
+                type="button"
+                onClick={() => setShowIgnoredModal(true)}
+                className="h-7 px-2.5 rounded-lg border border-border/70 bg-muted/30 hover:bg-muted text-[11px] font-bold text-foreground transition-colors cursor-pointer"
+              >
+                Ver lista ({ignoredSummary.allCount})
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setShowIgnoredInCharts(prev => !prev)}
+              className={`h-7 px-2.5 rounded-lg border text-[11px] font-extrabold inline-flex items-center gap-1.5 transition-all cursor-pointer ${
+                showIgnoredInCharts
+                  ? 'bg-amber-500 text-white border-amber-500 shadow-2xs hover:bg-amber-600'
+                  : 'bg-card border-border/70 text-foreground hover:bg-muted/50'
+              }`}
+            >
+              {showIgnoredInCharts ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+              <span>{showIgnoredInCharts ? 'Ocultar ignorados' : 'Mostrar ignorados nos gráficos'}</span>
+            </button>
+          </div>
+        </div>
       </div>
 
 
@@ -4952,22 +5257,43 @@ export function Dashboard() {
       {/* Daily/Weekly Trend (Evolução Diária) */}
       <Card className="border border-border/80 shadow-xs rounded-2xl overflow-hidden">
         <CardHeader className="pb-2">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <div className="w-2.5 h-2.5 rounded-full bg-violet-500 shrink-0" />
               <CardTitle className="text-xs sm:text-sm font-extrabold uppercase tracking-wider text-muted-foreground">
                 Evolução {chartDataResult.scaleLabel === 'Semanal' ? 'Semanal' : 'Diária'}
               </CardTitle>
             </div>
-            <button
-              type="button"
-              onClick={cyclePeriod}
-              title="Clique para alternar período (30 dias ➔ 90 dias ➔ Este Ano)"
-              className="group inline-flex items-center gap-1.5 px-3 py-1 bg-violet-400/10 hover:bg-violet-400/20 border border-violet-400/30 hover:border-violet-400/60 text-violet-400 text-[10px] sm:text-xs font-black rounded-full transition-all duration-200 cursor-pointer shadow-2xs hover:shadow-xs active:scale-95 select-none"
-            >
-              <span>{getPeriodLabel()} • {chartDataResult.scaleLabel}</span>
-              <RotateCw className="w-2.5 h-2.5 opacity-70 group-hover:rotate-180 transition-transform duration-500" />
-            </button>
+            <div className="flex flex-wrap items-center gap-1.5">
+              {(ignoredSummary.periodCount > 0 || (showIgnoredInCharts && ignoredSummary.allCount > 0)) && (
+                <button
+                  type="button"
+                  onClick={() => setShowIgnoredInCharts(prev => !prev)}
+                  className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full border text-[10px] sm:text-[11px] font-bold transition-all cursor-pointer ${
+                    showIgnoredInCharts
+                      ? 'bg-amber-500/15 border-amber-500/40 text-amber-600 dark:text-amber-400 hover:bg-amber-500/25'
+                      : 'bg-muted/40 border-border/60 text-muted-foreground hover:text-foreground hover:bg-muted/70'
+                  }`}
+                  title={showIgnoredInCharts ? 'Ocultar lançamentos/despesas ignorados deste gráfico' : 'Mostrar lançamentos/despesas ignorados neste gráfico'}
+                >
+                  {showIgnoredInCharts ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
+                  <span>
+                    {showIgnoredInCharts
+                      ? `Com ignorados (${ignoredSummary.periodCount || ignoredSummary.allCount})`
+                      : `Mostrar ignorados (${ignoredSummary.periodCount})`}
+                  </span>
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={cyclePeriod}
+                title="Clique para alternar período (30 dias ➔ 90 dias ➔ Este Ano)"
+                className="group inline-flex items-center gap-1.5 px-3 py-1 bg-violet-400/10 hover:bg-violet-400/20 border border-violet-400/30 hover:border-violet-400/60 text-violet-400 text-[10px] sm:text-xs font-black rounded-full transition-all duration-200 cursor-pointer shadow-2xs hover:shadow-xs active:scale-95 select-none"
+              >
+                <span>{getPeriodLabel()} • {chartDataResult.scaleLabel}</span>
+                <RotateCw className="w-2.5 h-2.5 opacity-70 group-hover:rotate-180 transition-transform duration-500" />
+              </button>
+            </div>
           </div>
           <CardDescription className="text-xs">Métricas de Faturamento, Despesas e Lucro Líquido. Clique no nome da linha na legenda para ativar ou desativar.</CardDescription>
         </CardHeader>
@@ -6286,11 +6612,32 @@ export function Dashboard() {
         {/* Income Circle */}
         <Card className="border border-border/80 shadow-xs">
           <CardHeader className="pb-2">
-            <div className="flex items-center gap-2">
-              <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 shrink-0" />
-              <CardTitle className="text-xs sm:text-sm font-extrabold uppercase tracking-wider text-muted-foreground">
-                Distribuição de Ganhos
-              </CardTitle>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 shrink-0" />
+                <CardTitle className="text-xs sm:text-sm font-extrabold uppercase tracking-wider text-muted-foreground">
+                  Distribuição de Ganhos
+                </CardTitle>
+              </div>
+              {ignoredSummary.periodIncomeItems.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setShowIgnoredInCharts(prev => !prev)}
+                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[10px] font-bold transition-all cursor-pointer ${
+                    showIgnoredInCharts
+                      ? 'bg-amber-500/15 border-amber-500/40 text-amber-600 dark:text-amber-400'
+                      : 'bg-muted/40 border-border/60 text-muted-foreground hover:text-foreground'
+                  }`}
+                  title="Alternar inclusão dos ganhos ignorados neste gráfico"
+                >
+                  {showIgnoredInCharts ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
+                  <span>
+                    {showIgnoredInCharts
+                      ? `Incluindo +${formatCurrency(ignoredSummary.periodIncomeTotal)}`
+                      : `+${formatCurrency(ignoredSummary.periodIncomeTotal)} ignorados (${ignoredSummary.periodIncomeItems.length})`}
+                  </span>
+                </button>
+              )}
             </div>
             <CardDescription className="text-xs">Composição das receitas por categoria no período filtrado.</CardDescription>
           </CardHeader>
@@ -6365,11 +6712,32 @@ export function Dashboard() {
         {/* Expenses Circle */}
         <Card className="border border-border/80 shadow-xs">
           <CardHeader className="pb-2">
-            <div className="flex items-center gap-2">
-              <div className="w-2.5 h-2.5 rounded-full bg-rose-500 shrink-0" />
-              <CardTitle className="text-xs sm:text-sm font-extrabold uppercase tracking-wider text-muted-foreground">
-                Distribuição de Saídas
-              </CardTitle>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <div className="w-2.5 h-2.5 rounded-full bg-rose-500 shrink-0" />
+                <CardTitle className="text-xs sm:text-sm font-extrabold uppercase tracking-wider text-muted-foreground">
+                  Distribuição de Saídas
+                </CardTitle>
+              </div>
+              {ignoredSummary.periodExpenseItems.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setShowIgnoredInCharts(prev => !prev)}
+                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[10px] font-bold transition-all cursor-pointer ${
+                    showIgnoredInCharts
+                      ? 'bg-amber-500/15 border-amber-500/40 text-amber-600 dark:text-amber-400'
+                      : 'bg-muted/40 border-border/60 text-muted-foreground hover:text-foreground'
+                  }`}
+                  title="Alternar inclusão das despesas ignoradas neste gráfico"
+                >
+                  {showIgnoredInCharts ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
+                  <span>
+                    {showIgnoredInCharts
+                      ? `Incluindo ${formatCurrency(ignoredSummary.periodExpenseTotal)}`
+                      : `${formatCurrency(ignoredSummary.periodExpenseTotal)} ignoradas (${ignoredSummary.periodExpenseItems.length})`}
+                  </span>
+                </button>
+              )}
             </div>
             <CardDescription className="text-xs">Concentração de despesas por categoria no período filtrado.</CardDescription>
           </CardHeader>
@@ -7633,6 +8001,118 @@ export function Dashboard() {
                 </div>
               );
             })()}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal de Inspeção: Lançamentos e Despesas Ignorados nos Gráficos */}
+      <Dialog open={showIgnoredModal} onOpenChange={setShowIgnoredModal}>
+        <DialogContent className="max-w-2xl p-5 sm:p-6 bg-card border border-border/80 rounded-2xl shadow-2xl max-h-[85vh] flex flex-col">
+          <DialogHeader className="space-y-1.5 pb-3 border-b border-border/50">
+            <div className="flex items-center justify-between gap-3">
+              <DialogTitle className="text-base sm:text-lg font-black text-foreground flex items-center gap-2">
+                <div className="p-1.5 rounded-xl bg-amber-500/15 text-amber-600 dark:text-amber-400">
+                  <EyeOff className="w-4 h-4" />
+                </div>
+                Lançamentos e Despesas Ignorados
+              </DialogTitle>
+              <button
+                type="button"
+                onClick={() => setShowIgnoredInCharts(prev => !prev)}
+                className={`px-2.5 py-1 rounded-xl border text-xs font-extrabold inline-flex items-center gap-1.5 transition-all cursor-pointer shrink-0 ${
+                  showIgnoredInCharts
+                    ? 'bg-amber-500 text-white border-amber-500'
+                    : 'bg-muted/40 border-border text-foreground hover:bg-muted'
+                }`}
+              >
+                {showIgnoredInCharts ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                <span>{showIgnoredInCharts ? 'Ocultar nos gráficos' : 'Mostrar nos gráficos'}</span>
+              </button>
+            </div>
+            <DialogDescription className="text-xs text-muted-foreground">
+              Estes registros entram normalmente no seu saldo real, mas ficam ocultos das médias e gráficos até você ativar a exibição temporária ou restaurá-los.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="grid grid-cols-2 gap-2.5 py-3">
+            <div className="p-3 rounded-xl bg-emerald-500/5 border border-emerald-500/20">
+              <span className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-600 dark:text-emerald-400 block">
+                Ganhos Ignorados ({ignoredSummary.allIncomeItems.length})
+              </span>
+              <span className="text-sm sm:text-base font-black font-mono text-emerald-600 dark:text-emerald-400">
+                +{formatCurrency(ignoredSummary.allIncomeTotal)}
+              </span>
+            </div>
+            <div className="p-3 rounded-xl bg-rose-500/5 border border-rose-500/20">
+              <span className="text-[10px] font-extrabold uppercase tracking-wider text-rose-600 dark:text-rose-400 block">
+                Despesas Ignoradas ({ignoredSummary.allExpenseItems.length})
+              </span>
+              <span className="text-sm sm:text-base font-black font-mono text-rose-600 dark:text-rose-400">
+                -{formatCurrency(ignoredSummary.allExpenseTotal)}
+              </span>
+            </div>
+          </div>
+
+          <div className="flex-1 overflow-y-auto pr-1 custom-scrollbar space-y-2">
+            {ignoredSummary.allItems.length === 0 ? (
+              <div className="py-10 text-center text-xs text-muted-foreground">
+                Nenhum lançamento ou despesa marcado como ignorado nos gráficos.
+              </div>
+            ) : (
+              ignoredSummary.allItems.map((item: any) => {
+                const isInPeriod = globalPeriod === 'all' || (item._ts >= currentStartTime && item._ts <= currentEndTime);
+                const isInc = item.type === 'income';
+                return (
+                  <div
+                    key={`${item.isReserveTx ? 'rt' : 'tx'}_${item.id}`}
+                    className="p-3 rounded-xl border border-border/70 bg-muted/15 hover:bg-muted/30 transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-2.5"
+                  >
+                    <div className="min-w-0 space-y-0.5">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className={`text-[10px] font-black uppercase px-1.5 py-0.5 rounded border ${
+                          isInc
+                            ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/25'
+                            : 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/25'
+                        }`}>
+                          {item.category}
+                        </span>
+                        {item.isReserveTx && (
+                          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-pink-500/10 text-pink-600 dark:text-pink-400 border border-pink-500/20">
+                            Reserva: {item.reserveName}
+                          </span>
+                        )}
+                        {isInPeriod && (
+                          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-primary/10 text-primary border border-primary/20">
+                            No período
+                          </span>
+                        )}
+                        <span className="text-[10px] text-muted-foreground font-mono">
+                          {format(parseLocalDate(item._dateStr || item.date), 'dd/MM/yyyy')}
+                        </span>
+                      </div>
+                      <p className="text-xs font-semibold text-foreground truncate">
+                        {item.description || 'Sem descrição'}
+                      </p>
+                    </div>
+
+                    <div className="flex items-center justify-between sm:justify-end gap-2.5 shrink-0">
+                      <span className={`text-sm font-black font-mono ${isInc ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+                        {isInc ? '+' : '-'}{formatCurrency(item.amount)}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleRestoreIgnoredItem(item)}
+                        className="h-7 px-2.5 rounded-lg border border-border bg-card hover:bg-muted text-[11px] font-bold text-foreground inline-flex items-center gap-1 cursor-pointer"
+                        title="Voltar a incluir permanentemente nos gráficos"
+                      >
+                        <Eye className="w-3 h-3 text-primary" />
+                        <span>Restaurar</span>
+                      </button>
+                    </div>
+                  </div>
+                );
+              })
+            )}
           </div>
         </DialogContent>
       </Dialog>

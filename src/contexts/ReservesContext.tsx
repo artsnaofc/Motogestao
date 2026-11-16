@@ -160,6 +160,7 @@ export function ReservesProvider({
     if (rtObj.recurrence_group_id) supabasePayload.recurrence_group_id = rtObj.recurrence_group_id;
     if (rtObj.installment_number !== undefined) supabasePayload.installment_number = rtObj.installment_number;
     if (rtObj.installment_total !== undefined) supabasePayload.installment_total = rtObj.installment_total;
+    if (rtObj.ignore_in_charts !== undefined) supabasePayload.ignore_in_charts = rtObj.ignore_in_charts;
 
     setReserveTransactions(prev => {
       const filtered = prev.filter(item => item.id !== rtObj.id);

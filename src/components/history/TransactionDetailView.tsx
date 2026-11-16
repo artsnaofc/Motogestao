@@ -4,33 +4,6 @@ import { ptBR } from 'date-fns/locale';
 import { Transaction, UserSettings, Reserve, ReserveTransaction, Dividend } from '../../types';
 import { Button } from '@/components/ui/button';
 import { 
-  PiggyBank, 
-  Wrench, 
-  Shield, 
-  Car, 
-  Coins, 
-  Fuel, 
-  Gauge, 
-  Sparkles, 
-  Heart, 
-  TrendingUp, 
-  TrendingDown, 
-  Briefcase, 
-  Bike, 
-  Package, 
-  ShoppingBag, 
-  Coffee, 
-  Wifi, 
-  Utensils, 
-  Gift, 
-  Plane, 
-  GraduationCap, 
-  Laptop, 
-  Stethoscope, 
-  Hammer, 
-  Home, 
-  Award, 
-  FileText, 
   Edit2, 
   Trash, 
   CheckCircle2, 
@@ -51,38 +24,17 @@ import {
   AlertCircle,
   Landmark,
   Eye,
-  EyeOff
+  EyeOff,
+  PiggyBank,
+  Wrench,
+  Fuel,
+  Car,
+  TrendingUp,
+  Bike,
+  Heart
 } from 'lucide-react';
 import { getPaymentStatusMeta, formatRecurrenceFrequency } from '../../lib/recurrenceUtils';
-
-const iconOptions = {
-  PiggyBank,
-  Landmark,
-  Wrench,
-  Shield,
-  Car,
-  Coins,
-  Fuel,
-  Gauge,
-  Sparkles,
-  Heart,
-  TrendingUp,
-  Briefcase,
-  Bike,
-  Package,
-  ShoppingBag,
-  Coffee,
-  Wifi,
-  Utensils,
-  Gift,
-  Plane,
-  GraduationCap,
-  Laptop,
-  Stethoscope,
-  Hammer,
-  Home,
-  Award,
-};
+import { iconOptions } from '../reserves/reserveUtils';
 
 interface TransactionDetailViewProps {
   transaction: Transaction;
@@ -97,6 +49,7 @@ interface TransactionDetailViewProps {
   calculateFuel: (start: string | number | null, end: string | number | null) => number;
   getTransactionReserveContributions: (t: Transaction) => { reserve: Reserve; amount: number }[];
   onSettlePending?: (t: Transaction) => void;
+  onSettleSeries?: (t: Transaction) => void;
   onToggleIgnoreInCharts?: (t: Transaction) => void;
 }
 
@@ -113,6 +66,7 @@ export function TransactionDetailView({
   calculateFuel,
   getTransactionReserveContributions,
   onSettlePending,
+  onSettleSeries,
   onToggleIgnoreInCharts,
 }: TransactionDetailViewProps) {
   const isReserveTx = (t as any).isReserveTx;
@@ -799,23 +753,37 @@ export function TransactionDetailView({
             )}
           </div>
 
-          {t.payment_status === 'pending' && onSettlePending && (
-            <div className="pt-1 flex justify-end">
-              <Button
-                type="button"
-                size="sm"
-                onClick={() => onSettlePending(t)}
-                className="h-7 px-3 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg flex items-center gap-1.5 shadow-xs cursor-pointer"
-              >
-                <CheckCircle2 className="w-3.5 h-3.5" />
-                <span>Quitar / Marcar como Pago</span>
-              </Button>
+          {t.payment_status === 'pending' && (onSettlePending || onSettleSeries) && (
+            <div className="pt-1 flex flex-wrap justify-end gap-2">
+              {t.recurrence_group_id && onSettleSeries && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => onSettleSeries(t)}
+                  className="h-7 px-3 text-xs font-bold border-indigo-500/30 bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-500/20 rounded-lg flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Layers className="w-3.5 h-3.5" />
+                  <span>Quitar Série / Parcelas</span>
+                </Button>
+              )}
+              {onSettlePending && (
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => onSettlePending(t)}
+                  className="h-7 px-3 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg flex items-center gap-1.5 shadow-xs cursor-pointer"
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span>Quitar / Marcar como Pago</span>
+                </Button>
+              )}
             </div>
           )}
         </div>
       )}
 
-      {!isReserveTx && !isInvestmentTx && !isDividendTx && Boolean(t.ignore_in_charts) && (
+      {!isInvestmentTx && !isDividendTx && !(t as any).isTransferToCash && (!isReserveTx || (t as any).reserveTxType === 'utilizacao') && Boolean(t.ignore_in_charts) && (
         <div className="p-2.5 rounded-xl bg-slate-500/10 border border-slate-500/25 flex items-center justify-between gap-2 text-xs">
           <div className="flex items-center gap-2 min-w-0">
             <EyeOff className="w-3.5 h-3.5 text-slate-600 dark:text-slate-300 shrink-0" />
@@ -832,7 +800,7 @@ export function TransactionDetailView({
           ID: {t.id.slice(0, 8)}
         </span>
         <div className="flex flex-wrap items-center gap-1.5">
-          {!isReserveTx && !isInvestmentTx && !isDividendTx && onToggleIgnoreInCharts && (
+          {!isInvestmentTx && !isDividendTx && !(t as any).isTransferToCash && (!isReserveTx || (t as any).reserveTxType === 'utilizacao') && onToggleIgnoreInCharts && (
             <Button
               variant="outline"
               size="sm"

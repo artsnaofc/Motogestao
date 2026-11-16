@@ -72,7 +72,7 @@ import {
 } from 'lucide-react';
 import { ExecutiveReportModal } from '../components/ExecutiveReportModal';
 import { TransactionDetailView } from '../components/history/TransactionDetailView';
-import { isOperationalCategory, getActiveRuleForDate } from '../components/reserves/reserveUtils';
+import { isOperationalCategory, getActiveRuleForDate, iconOptions } from '../components/reserves/reserveUtils';
 import { 
   getPaymentStatusMeta, 
   formatRecurrenceFrequency, 
@@ -100,36 +100,6 @@ const normalizeSearchText = (str: string | number | undefined | null): string =>
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
     .trim();
-};
-
-const iconOptions = {
-  PiggyBank,
-  Wrench,
-  Shield,
-  ShieldAlert,
-  ShieldCheck,
-  Car,
-  Coins,
-  Fuel,
-  Gauge,
-  Sparkles,
-  Heart,
-  TrendingUp,
-  Briefcase,
-  Bike,
-  Package,
-  ShoppingBag,
-  Coffee,
-  Wifi,
-  Utensils,
-  Gift,
-  Plane,
-  GraduationCap,
-  Laptop,
-  Stethoscope,
-  Hammer,
-  Home,
-  Award,
 };
 
 const getCategoryMeta = (category: string, type: 'income' | 'expense') => {
@@ -472,10 +442,17 @@ export function History() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [activeQuickChip, setActiveQuickChip] = useState(savedFilters?.activeQuickChip || 'all');
 
-  // Quick Settle Modal State
+  // Quick Settle & Agenda / Series Reconciliation States
   const [settleItem, setSettleItem] = useState<Transaction | null>(null);
   const [settlePaymentDate, setSettlePaymentDate] = useState<string>(getTodayLocalDateStr());
   const [isSettling, setIsSettling] = useState(false);
+  const [instantSettlingId, setInstantSettlingId] = useState<string | null>(null);
+  const [showBillsAgenda, setShowBillsAgenda] = useState(false);
+  const [agendaFilterBucket, setAgendaFilterBucket] = useState<'all' | 'overdue' | 'next7' | 'next30' | 'later'>('all');
+  const [settleSeriesItem, setSettleSeriesItem] = useState<Transaction | null>(null);
+  const [settleSeriesCount, setSettleSeriesCount] = useState<number>(2);
+  const [settleSeriesDate, setSettleSeriesDate] = useState<string>(getTodayLocalDateStr());
+  const [isSettlingSeries, setIsSettlingSeries] = useState(false);
 
   const handleOpenSettle = (t: Transaction) => {
     setSettleItem(t);
@@ -510,14 +487,48 @@ export function History() {
     }
   };
 
-  // Sync category parameter from URL search params
+  const handleInstantSettle = async (t: Transaction) => {
+    if (instantSettlingId) return;
+    setInstantSettlingId(t.id);
+    try {
+      const isReserveTx = (t as any).isReserveTx;
+      const todayStr = getTodayLocalDateStr();
+      if (isReserveTx) {
+        await updateReserveTransaction(t.id, {
+          payment_status: 'paid',
+          payment_date: todayStr,
+        });
+      } else {
+        await updateTransaction(t.id, {
+          payment_status: 'paid',
+          payment_date: todayStr,
+        });
+      }
+      toast.success('Conta quitada com 1 clique!');
+      await refreshData(true);
+    } catch {
+      toast.error('Erro ao quitar conta.');
+    } finally {
+      setInstantSettlingId(null);
+    }
+  };
+
+  // Sync category or pending filter parameter from URL search params
   React.useEffect(() => {
     const urlCategory = searchParams.get('category');
-    if (urlCategory) {
-      setFilterCategory(urlCategory);
-      // Clean up the parameter to allow free state changes later in browser session
+    const urlFilter = searchParams.get('filter');
+    if (urlCategory || urlFilter) {
       const newParams = new URLSearchParams(searchParams.toString());
-      newParams.delete('category');
+      if (urlCategory) {
+        setFilterCategory(urlCategory);
+        newParams.delete('category');
+      }
+      if (urlFilter === 'pending') {
+        setFilterPaymentStatus('pending');
+        setActiveQuickChip('pending_expenses');
+        setShowBillsAgenda(true);
+        newParams.delete('filter');
+      }
       setSearchParams(newParams, { replace: true });
     }
   }, [searchParams, setSearchParams]);
@@ -697,6 +708,9 @@ export function History() {
         setEditRecurrenceInstallments(String(matchRt.recurrence_installments || t.recurrence_installments || (t as any).total_installments || (t as any).installment_total || 12));
         setEditGenerateFuture(!isRec);
         setEditApplyToFuture(true);
+        setEditIgnoreInCharts(Boolean(matchRt.ignore_in_charts ?? t.ignore_in_charts));
+      } else {
+        setEditIgnoreInCharts(Boolean(t.ignore_in_charts));
       }
     } else if (isReserveUse) {
       const matchRt = (reserveTransactions || []).find(
@@ -737,6 +751,7 @@ export function History() {
         setEditRecurrenceInstallments(String(matchRt.recurrence_installments || t.recurrence_installments || (t as any).total_installments || (t as any).installment_total || 12));
         setEditGenerateFuture(!isRec);
         setEditApplyToFuture(true);
+        setEditIgnoreInCharts(Boolean(matchRt.ignore_in_charts ?? t.ignore_in_charts));
       } else {
         // Fallback to normal transaction edit if no matching reserve transaction was found
         setEditIsReserve(false);
@@ -843,6 +858,7 @@ export function History() {
                 installment_total: numInstallments,
                 installment_index: 1,
                 total_installments: numInstallments,
+                ignore_in_charts: editIgnoreInCharts,
               });
 
               if (editGenerateFuture && numInstallments > 1) {
@@ -878,6 +894,7 @@ export function History() {
                     installment_total: numInstallments,
                     installment_index: i,
                     total_installments: numInstallments,
+                    ignore_in_charts: editIgnoreInCharts,
                     created_at: new Date().toISOString()
                   };
 
@@ -919,6 +936,7 @@ export function History() {
                 installment_total: numInstallments,
                 installment_index: currentInstNumber,
                 total_installments: numInstallments,
+                ignore_in_charts: editIgnoreInCharts,
               });
 
               if (editApplyToFuture && currentGroup) {
@@ -962,6 +980,7 @@ export function History() {
                       recurrence_frequency: editRecurrenceFrequency,
                       recurrence_installments: numInstallments,
                       installment_total: numInstallments,
+                      ignore_in_charts: editIgnoreInCharts,
                     });
                   });
                   toast.success(`Alterações aplicadas a esta e a mais ${futureSeries.length} parcelas futuras!`);
@@ -993,6 +1012,7 @@ export function History() {
               installment_total: undefined,
               installment_index: undefined,
               total_installments: undefined,
+              ignore_in_charts: editIgnoreInCharts,
             });
             toast.success('Resgate atualizado (recorrência desativada).');
           }
@@ -1253,6 +1273,7 @@ export function History() {
           payment_date: effectivePaymentDate,
           due_date: effectiveDueDate,
           vehicle_id: finalVehicleId || undefined,
+          ignore_in_charts: editIgnoreInCharts,
         });
       }
     }
@@ -1269,7 +1290,21 @@ export function History() {
 
   const handleToggleIgnoreInCharts = async (t: Transaction) => {
     const nextVal = !t.ignore_in_charts;
-    await updateTransaction(t.id, { ignore_in_charts: nextVal }, { silent: true });
+    if ((t as any).isReserveTx) {
+      await updateReserveTransaction(t.id, { ignore_in_charts: nextVal });
+    } else {
+      await updateTransaction(t.id, { ignore_in_charts: nextVal }, { silent: true });
+      if (t.is_reserve_use || t.description?.startsWith('[Reserva]')) {
+        const matchRt = (reserveTransactions || []).find(
+          rt => rt.type === 'utilizacao' &&
+                rt.date === (t as any).originalDate &&
+                Math.abs(Number(rt.amount) - Number(t.amount)) < 0.01
+        );
+        if (matchRt) {
+          await updateReserveTransaction(matchRt.id, { ignore_in_charts: nextVal });
+        }
+      }
+    }
     toast.success(
       nextVal
         ? 'Lançamento ocultado dos gráficos e médias (balanço preservado).'
@@ -1502,6 +1537,7 @@ export function History() {
           installment_total: rt.installment_total,
           installment_index: rt.installment_index,
           total_installments: rt.total_installments,
+          ignore_in_charts: Boolean(rt.ignore_in_charts),
         } as unknown as Transaction;
       });
 
@@ -2750,6 +2786,141 @@ export function History() {
     };
   }, [allTransactionsAdjusted]);
 
+  // Agrupamento completo de Contas a Pagar por Vencimento + Séries Recorrentes pendentes
+  const pendingSeriesMap = useMemo(() => {
+    const map: Record<string, Transaction[]> = {};
+    allTransactionsAdjusted.forEach(t => {
+      if (t.payment_status !== 'pending' || !t.recurrence_group_id) return;
+      if (!map[t.recurrence_group_id]) map[t.recurrence_group_id] = [];
+      map[t.recurrence_group_id].push(t);
+    });
+    Object.keys(map).forEach(gid => {
+      map[gid].sort((a, b) => {
+        const dA = (a.due_date || a.date || '').split('T')[0];
+        const dB = (b.due_date || b.date || '').split('T')[0];
+        return dA.localeCompare(dB);
+      });
+    });
+    return map;
+  }, [allTransactionsAdjusted]);
+
+  const billsAgendaData = useMemo(() => {
+    const today = startOfDay(new Date());
+    const todayStr = format(today, 'yyyy-MM-dd');
+    const in7Str = format(addDays(today, 7), 'yyyy-MM-dd');
+    const in30Str = format(addDays(today, 30), 'yyyy-MM-dd');
+
+    const pendingBills = allTransactionsAdjusted
+      .filter(t => t.payment_status === 'pending' && t.type === 'expense')
+      .sort((a, b) => {
+        const dA = (a.due_date || a.date || '').split('T')[0];
+        const dB = (b.due_date || b.date || '').split('T')[0];
+        return dA.localeCompare(dB);
+      });
+
+    const overdue: Transaction[] = [];
+    const next7: Transaction[] = [];
+    const next30: Transaction[] = [];
+    const later: Transaction[] = [];
+
+    let totalAmount = 0;
+    let overdueAmount = 0;
+    let next7Amount = 0;
+    let next30Amount = 0;
+    let laterAmount = 0;
+
+    pendingBills.forEach(t => {
+      const dueStr = (t.due_date || t.date || '').split('T')[0];
+      const amt = Number((t as any).rawAmount !== undefined ? (t as any).rawAmount : t.amount) || 0;
+      totalAmount += amt;
+
+      if (dueStr < todayStr) {
+        overdue.push(t);
+        overdueAmount += amt;
+      } else if (dueStr <= in7Str) {
+        next7.push(t);
+        next7Amount += amt;
+      } else if (dueStr <= in30Str) {
+        next30.push(t);
+        next30Amount += amt;
+      } else {
+        later.push(t);
+        laterAmount += amt;
+      }
+    });
+
+    const visibleItems =
+      agendaFilterBucket === 'overdue'
+        ? overdue
+        : agendaFilterBucket === 'next7'
+          ? next7
+          : agendaFilterBucket === 'next30'
+            ? next30
+            : agendaFilterBucket === 'later'
+              ? later
+              : pendingBills;
+
+    return {
+      all: pendingBills,
+      visibleItems,
+      totalCount: pendingBills.length,
+      totalAmount: Math.round(totalAmount * 100) / 100,
+      overdue,
+      overdueAmount: Math.round(overdueAmount * 100) / 100,
+      next7,
+      next7Amount: Math.round(next7Amount * 100) / 100,
+      next30,
+      next30Amount: Math.round(next30Amount * 100) / 100,
+      later,
+      laterAmount: Math.round(laterAmount * 100) / 100,
+    };
+  }, [allTransactionsAdjusted, agendaFilterBucket]);
+
+  const handleOpenSettleSeries = (t: Transaction) => {
+    if (!t.recurrence_group_id) return;
+    const siblings = pendingSeriesMap[t.recurrence_group_id] || [];
+    setSettleSeriesItem(t);
+    setSettleSeriesCount(Math.min(3, Math.max(1, siblings.length)));
+    setSettleSeriesDate(getTodayLocalDateStr());
+  };
+
+  const handleConfirmSettleSeries = async () => {
+    if (!settleSeriesItem?.recurrence_group_id || isSettlingSeries) return;
+    const siblings = pendingSeriesMap[settleSeriesItem.recurrence_group_id] || [];
+    const targetItems = siblings.slice(0, Math.max(1, Math.min(settleSeriesCount, siblings.length)));
+    if (targetItems.length === 0) return;
+
+    setIsSettlingSeries(true);
+    try {
+      const payDate = settleSeriesDate || getTodayLocalDateStr();
+      for (const item of targetItems) {
+        const isRes = (item as any).isReserveTx;
+        if (isRes) {
+          await updateReserveTransaction(item.id, {
+            payment_status: 'paid',
+            payment_date: payDate,
+          });
+        } else {
+          await updateTransaction(
+            item.id,
+            {
+              payment_status: 'paid',
+              payment_date: payDate,
+            },
+            { silent: true }
+          );
+        }
+      }
+      toast.success(`${targetItems.length} parcela(s) quitada(s) com sucesso!`);
+      setSettleSeriesItem(null);
+      await refreshData(true);
+    } catch {
+      toast.error('Erro ao quitar parcelas da série.');
+    } finally {
+      setIsSettlingSeries(false);
+    }
+  };
+
   const groupedTransactions = useMemo(() => {
     const groups: Record<string, { 
       date: Date; 
@@ -3427,7 +3598,7 @@ export function History() {
                   </span>
                 )}
 
-                {Boolean(t.ignore_in_charts) && !isReserveTx && !(t as any).isInvestmentTx && !isProventoTx && (
+                {Boolean(t.ignore_in_charts) && !(t as any).isInvestmentTx && !isProventoTx && !((t as any).isTransferToCash) && (!isReserveTx || (t as any).reserveTxType === 'utilizacao') && (
                   <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-md bg-slate-500/10 text-slate-600 dark:text-slate-300 border border-slate-500/25 flex items-center gap-1">
                     <EyeOff className="w-2.5 h-2.5" />
                     <span>Ignorado nos gráficos</span>
@@ -3512,6 +3683,7 @@ export function History() {
               calculateFuel={calculateFuel}
               getTransactionReserveContributions={getTransactionReserveContributions}
               onSettlePending={handleOpenSettle}
+              onSettleSeries={handleOpenSettleSeries}
               onToggleIgnoreInCharts={handleToggleIgnoreInCharts}
             />
           </div>
@@ -3538,6 +3710,29 @@ export function History() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2 shrink-0">
+          <Button
+            variant={showBillsAgenda ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setShowBillsAgenda(prev => !prev)}
+            className={`h-9 px-3 text-xs font-bold rounded-xl flex items-center gap-1.5 cursor-pointer ${
+              showBillsAgenda
+                ? 'bg-amber-600 hover:bg-amber-700 text-white shadow-xs'
+                : billsAgendaData.overdue.length > 0
+                  ? 'border-rose-500/40 bg-rose-500/10 text-rose-600 dark:text-rose-400 hover:bg-rose-500/20'
+                  : 'border-amber-500/30 bg-amber-500/5 text-amber-700 dark:text-amber-300 hover:bg-amber-500/10'
+            }`}
+          >
+            <CalendarClock className="w-3.5 h-3.5" />
+            <span>Agenda a Pagar</span>
+            {billsAgendaData.totalCount > 0 && (
+              <span className={`px-1.5 py-0.2 rounded-md text-[10px] font-black font-mono ${
+                showBillsAgenda ? 'bg-white/20 text-white' : 'bg-amber-500/20 text-current'
+              }`}>
+                {billsAgendaData.totalCount}
+              </span>
+            )}
+          </Button>
+
           <Button
             variant="outline"
             size="sm"
@@ -4491,6 +4686,16 @@ export function History() {
             <Button
               type="button"
               size="sm"
+              variant="outline"
+              onClick={() => setShowBillsAgenda(prev => !prev)}
+              className="h-8 px-3 text-xs font-bold rounded-xl border-border/80 bg-background/80 hover:bg-background cursor-pointer"
+            >
+              <CalendarClock className="w-3.5 h-3.5 mr-1" />
+              {showBillsAgenda ? 'Fechar Agenda' : 'Abrir Agenda'}
+            </Button>
+            <Button
+              type="button"
+              size="sm"
               onClick={() => handleQuickChipClick('pending_expenses')}
               className={`h-8 px-3 text-xs font-extrabold rounded-xl shadow-xs cursor-pointer ${
                 pendingSummary.overdueCount > 0
@@ -4502,6 +4707,165 @@ export function History() {
               Ver Pendentes
             </Button>
           </div>
+        </motion.div>
+      )}
+
+      {/* Agenda de Contas a Pagar por Vencimento */}
+      {showBillsAgenda && (
+        <motion.div
+          initial={{ opacity: 0, y: -6 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-card border border-border/80 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4"
+        >
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-border/50">
+            <div className="flex items-center gap-2.5">
+              <div className="p-2 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-600 dark:text-amber-400 shrink-0">
+                <CalendarClock className="w-4 h-4" />
+              </div>
+              <div>
+                <h3 className="text-sm font-black text-foreground tracking-tight">
+                  Agenda de Contas a Pagar por Vencimento
+                </h3>
+                <p className="text-xs text-muted-foreground">
+                  Ordenado do vencimento mais próximo ao mais distante · Total em aberto:{' '}
+                  <strong className="font-mono text-foreground">{formatCurrency(billsAgendaData.totalAmount)}</strong>
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setShowBillsAgenda(false)}
+              className="self-end sm:self-auto px-2.5 py-1 rounded-lg text-xs font-bold text-muted-foreground hover:text-foreground hover:bg-muted cursor-pointer"
+            >
+              Fechar
+            </button>
+          </div>
+
+          {/* Urgency Bucket Tabs */}
+          <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none pb-1">
+            {[
+              { id: 'all' as const, label: `Todas (${billsAgendaData.totalCount})`, amt: billsAgendaData.totalAmount },
+              { id: 'overdue' as const, label: `Vencidas (${billsAgendaData.overdue.length})`, amt: billsAgendaData.overdueAmount, danger: billsAgendaData.overdue.length > 0 },
+              { id: 'next7' as const, label: `Próx. 7 dias (${billsAgendaData.next7.length})`, amt: billsAgendaData.next7Amount },
+              { id: 'next30' as const, label: `8 a 30 dias (${billsAgendaData.next30.length})`, amt: billsAgendaData.next30Amount },
+              { id: 'later' as const, label: `+30 dias (${billsAgendaData.later.length})`, amt: billsAgendaData.laterAmount },
+            ].map(tab => {
+              const active = agendaFilterBucket === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setAgendaFilterBucket(tab.id)}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all shrink-0 whitespace-nowrap cursor-pointer flex items-center gap-1.5 ${
+                    active
+                      ? 'bg-foreground text-background border-foreground shadow-2xs'
+                      : tab.danger
+                        ? 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/30 hover:bg-rose-500/20'
+                        : 'bg-muted/30 text-muted-foreground border-border/60 hover:text-foreground'
+                  }`}
+                >
+                  <span>{tab.label}</span>
+                  <span className="font-mono text-[10.5px] opacity-80">{formatCurrency(tab.amt)}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          {billsAgendaData.visibleItems.length === 0 ? (
+            <div className="p-6 text-center rounded-xl bg-muted/20 border border-dashed border-border text-xs text-muted-foreground">
+              Nenhuma conta pendente nesta faixa de vencimento.
+            </div>
+          ) : (
+            <div className="divide-y divide-border/50 border border-border/70 rounded-xl overflow-hidden max-h-[380px] overflow-y-auto">
+              {billsAgendaData.visibleItems.map(bill => {
+                const dueStr = (bill.due_date || bill.date || '').split('T')[0];
+                const dueDateObj = parseLocalDate(dueStr);
+                const diffDays = differenceInCalendarDays(dueDateObj, startOfDay(new Date()));
+                const amt = Number((bill as any).rawAmount !== undefined ? (bill as any).rawAmount : bill.amount) || 0;
+                const seriesCount = bill.recurrence_group_id ? (pendingSeriesMap[bill.recurrence_group_id]?.length || 0) : 0;
+                const isInstantBusy = instantSettlingId === bill.id;
+
+                const urgencyTone = diffDays < 0
+                  ? 'text-rose-600 dark:text-rose-400'
+                  : diffDays === 0
+                    ? 'text-amber-600 dark:text-amber-400'
+                    : diffDays <= 7
+                      ? 'text-amber-600 dark:text-amber-400'
+                      : 'text-muted-foreground';
+
+                const urgencyText = diffDays < 0
+                  ? `${Math.abs(diffDays)}d em atraso`
+                  : diffDays === 0
+                    ? 'Vence hoje'
+                    : `Em ${diffDays}d`;
+
+                return (
+                  <div key={bill.id} className="p-3 bg-card hover:bg-muted/25 transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                    <div className="min-w-0 flex-1 space-y-0.5">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className={`text-xs font-mono font-black tabular-nums ${urgencyTone}`}>
+                          {format(dueDateObj, 'dd/MM/yyyy')}
+                        </span>
+                        <span className="text-[11px] text-muted-foreground font-medium">
+                          · {urgencyText}
+                        </span>
+                        <span className="text-xs font-extrabold text-foreground truncate">
+                          {bill.category}
+                        </span>
+                        {bill.installment_index && bill.total_installments && (
+                          <span className="text-[11px] font-mono text-indigo-600 dark:text-indigo-400 font-bold">
+                            · Parcela {bill.installment_index}/{bill.total_installments}
+                          </span>
+                        )}
+                      </div>
+                      {bill.description && (
+                        <p className="text-xs text-muted-foreground truncate">
+                          {bill.description}
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="flex items-center justify-between sm:justify-end gap-2 shrink-0">
+                      <span className="text-sm font-black font-mono tabular-nums text-rose-600 dark:text-rose-400 mr-1">
+                        {formatCurrency(amt)}
+                      </span>
+
+                      {seriesCount > 1 && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleOpenSettleSeries(bill)}
+                          className="h-7 px-2.5 text-[11px] font-bold rounded-lg border-indigo-500/30 bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-500/20 cursor-pointer"
+                          title={`Quitar múltiplas parcelas (${seriesCount} pendentes nesta série)`}
+                        >
+                          <Layers className="w-3 h-3 mr-1" />
+                          Série ({seriesCount})
+                        </Button>
+                      )}
+
+                      <Button
+                        type="button"
+                        size="sm"
+                        disabled={!!instantSettlingId}
+                        onClick={() => handleInstantSettle(bill)}
+                        className="h-7 px-2.5 text-[11px] font-extrabold rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer"
+                        title="Quitar hoje com 1 clique"
+                      >
+                        {isInstantBusy ? (
+                          <Loader2 className="w-3 h-3 animate-spin mr-1" />
+                        ) : (
+                          <Check className="w-3 h-3 mr-1 stroke-[3]" />
+                        )}
+                        Quitar
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </motion.div>
       )}
 
@@ -5173,7 +5537,7 @@ export function History() {
                                     {t.deliveries} entregas
                                   </span>
                                 )}
-                                {Boolean(t.ignore_in_charts) && !isReserveTx && !(t as any).isInvestmentTx && !(t as any).isDividendTx && (
+                                {Boolean(t.ignore_in_charts) && !(t as any).isInvestmentTx && !(t as any).isDividendTx && !(t as any).isTransferToCash && (!isReserveTx || (t as any).reserveTxType === 'utilizacao') && (
                                   <span className="text-[9px] font-bold bg-slate-500/10 text-slate-600 dark:text-slate-300 border border-slate-500/25 rounded px-1 flex items-center gap-0.5">
                                     <EyeOff className="w-2.5 h-2.5" /> Ignorado nos gráficos
                                   </span>
@@ -5887,6 +6251,26 @@ export function History() {
                 </div>
               )}
 
+              {editReserveTxType === 'utilizacao' && (
+                <label className="flex items-start gap-2.5 p-3 rounded-xl border border-border/70 bg-muted/20 hover:bg-muted/35 transition-colors cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={editIgnoreInCharts}
+                    onChange={(e) => setEditIgnoreInCharts(e.target.checked)}
+                    className="h-4 w-4 mt-0.5 rounded border-border text-primary focus:ring-primary cursor-pointer accent-primary"
+                  />
+                  <div className="space-y-0.5">
+                    <span className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                      <EyeOff className="w-3.5 h-3.5 text-muted-foreground" />
+                      Ignorar nos gráficos e médias
+                    </span>
+                    <p className="text-[10px] text-muted-foreground leading-snug">
+                      Mantém o lançamento no seu balanço e extrato, mas desconsidera dos gráficos, recordes e indicadores.
+                    </p>
+                  </div>
+                </label>
+              )}
+
               <Button type="submit" className="w-full h-12 mt-4 font-bold rounded-xl" disabled={saving}>
                 {saving ? <Loader2 className="w-5 h-5 animate-spin mr-2" /> : null}
                 {saving ? 'Guardando alterações...' : 'Salvar Alterações'}
@@ -6368,6 +6752,139 @@ export function History() {
             >
               {isSettling ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4 stroke-[3]" />}
               {isSettling ? 'Quitando...' : 'Confirmar Pagamento'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Conciliação Rápida de Parcelas Recorrentes Modal */}
+      <Dialog open={!!settleSeriesItem} onOpenChange={(open) => !open && setSettleSeriesItem(null)}>
+        <DialogContent className="max-w-md p-6 bg-card border border-border/80 rounded-2xl shadow-2xl">
+          <DialogHeader className="space-y-2">
+            <DialogTitle className="text-lg font-extrabold text-foreground tracking-tight flex items-center gap-2">
+              <div className="p-2 rounded-xl bg-indigo-500/10 text-indigo-600 dark:text-indigo-400">
+                <Layers className="w-5 h-5" />
+              </div>
+              Conciliação Rápida de Parcelas
+            </DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground">
+              Antecipe ou quite em lote as próximas parcelas pendentes desta recorrência.
+            </DialogDescription>
+          </DialogHeader>
+
+          {settleSeriesItem?.recurrence_group_id && (() => {
+            const siblings = pendingSeriesMap[settleSeriesItem.recurrence_group_id] || [];
+            const maxCount = siblings.length;
+            const effectiveCount = Math.max(1, Math.min(settleSeriesCount, maxCount));
+            const selectedSlice = siblings.slice(0, effectiveCount);
+            const totalSliceAmount = selectedSlice.reduce(
+              (sum, it) => sum + (Number((it as any).rawAmount !== undefined ? (it as any).rawAmount : it.amount) || 0),
+              0
+            );
+
+            return (
+              <div className="my-3 space-y-3">
+                <div className="p-3.5 bg-muted/20 border border-border/70 rounded-xl space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-extrabold text-foreground">{settleSeriesItem.category}</span>
+                    <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400">
+                      {maxCount} pendente(s) na série
+                    </span>
+                  </div>
+                  {settleSeriesItem.description && (
+                    <p className="text-xs text-muted-foreground line-clamp-1">{settleSeriesItem.description}</p>
+                  )}
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-[11px] font-bold text-muted-foreground block">
+                    Quantas próximas parcelas quitar agora?
+                  </label>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {[1, 2, 3, 6].filter(n => n < maxCount).map(n => (
+                      <button
+                        key={n}
+                        type="button"
+                        onClick={() => setSettleSeriesCount(n)}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                          effectiveCount === n
+                            ? 'bg-indigo-600 text-white border-indigo-600 shadow-2xs'
+                            : 'bg-muted/30 text-muted-foreground border-border/60 hover:text-foreground'
+                        }`}
+                      >
+                        Próximas {n}
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => setSettleSeriesCount(maxCount)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                        effectiveCount === maxCount
+                          ? 'bg-emerald-600 text-white border-emerald-600 shadow-2xs'
+                          : 'bg-muted/30 text-muted-foreground border-border/60 hover:text-foreground'
+                      }`}
+                    >
+                      Todas ({maxCount})
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2.5">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground block">
+                      Quantidade
+                    </label>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={maxCount}
+                      value={effectiveCount}
+                      onChange={(e) => setSettleSeriesCount(Math.max(1, Math.min(maxCount, parseInt(e.target.value || '1', 10) || 1)))}
+                      className="h-9 rounded-xl font-mono text-xs"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground block">
+                      Data da Quitação
+                    </label>
+                    <Input
+                      type="date"
+                      value={settleSeriesDate}
+                      onChange={(e) => setSettleSeriesDate(e.target.value)}
+                      className="h-9 rounded-xl font-mono text-xs"
+                    />
+                  </div>
+                </div>
+
+                <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/25 flex items-center justify-between text-xs">
+                  <span className="font-bold text-foreground">
+                    Total a liquidar ({effectiveCount}x):
+                  </span>
+                  <span className="text-sm font-black font-mono tabular-nums text-emerald-600 dark:text-emerald-400">
+                    {formatCurrency(totalSliceAmount)}
+                  </span>
+                </div>
+              </div>
+            );
+          })()}
+
+          <DialogFooter className="flex flex-col-reverse sm:flex-row gap-2 mt-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setSettleSeriesItem(null)}
+              className="h-10 rounded-xl text-xs font-bold border-border"
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              onClick={handleConfirmSettleSeries}
+              disabled={isSettlingSeries}
+              className="h-10 rounded-xl text-xs font-extrabold bg-indigo-600 hover:bg-indigo-700 text-white shadow-xs flex items-center gap-1.5"
+            >
+              {isSettlingSeries ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4 stroke-[3]" />}
+              {isSettlingSeries ? 'Quitando...' : `Quitar ${settleSeriesCount} Parcela(s)`}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -124,7 +124,7 @@ export const ALLOWED_TABLE_COLUMNS: Record<string, string[]> = {
   ],
   reserves: [
     'id', 'user_id', 'name', 'description', 'color', 'icon', 'saldo_inicial',
-    'saldo_atual', 'meta_objetivo', 'status', 'regra_tipo', 'regra_valor',
+    'saldo_atual', 'meta_objetivo', 'target_date', 'status', 'regra_tipo', 'regra_valor',
     'regra_categorias', 'regra_base', 'regra_ativa', 'require_category_on_use',
     'default_use_category', 'rule_history', 'is_paused', 'regra_inicio_validade',
     'created_at', 'updated_at'
@@ -135,7 +135,7 @@ export const ALLOWED_TABLE_COLUMNS: Record<string, string[]> = {
     'payment_status', 'payment_date', 'due_date', 'is_recurring', 'recurrence_frequency',
     'recurrence_installments', 'recurrence_group_id', 'installment_number',
     'installment_total', 'installment_index', 'total_installments', 'vehicle_id',
-    'created_at'
+    'ignore_in_charts', 'created_at'
   ],
   investment_transactions: [
     'id', 'user_id', 'operation', 'type', 'ticker', 'cnpj', 'amount', 'price',
@@ -797,6 +797,7 @@ CREATE TABLE IF NOT EXISTS public.reserves (
     saldo_atual NUMERIC DEFAULT 0,
     suggested_balance NUMERIC DEFAULT 0,
     meta_objetivo NUMERIC,
+    target_date TEXT,
     status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
     
     -- Automações de Aporte
@@ -817,6 +818,7 @@ CREATE TABLE IF NOT EXISTS public.reserves (
 
 -- Garantir adição de coluna se a tabela já existir no Supabase
 ALTER TABLE public.reserves ADD COLUMN IF NOT EXISTS suggested_balance NUMERIC DEFAULT 0;
+ALTER TABLE public.reserves ADD COLUMN IF NOT EXISTS target_date TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_reserves_user_status ON public.reserves(user_id, status);
 
@@ -851,8 +853,11 @@ CREATE TABLE IF NOT EXISTS public.reserve_transactions (
     total_installments INTEGER,
 
     vehicle_id TEXT,
+    ignore_in_charts BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE public.reserve_transactions ADD COLUMN IF NOT EXISTS ignore_in_charts BOOLEAN DEFAULT FALSE;
 
 CREATE INDEX IF NOT EXISTS idx_reserve_tx_user_reserve ON public.reserve_transactions(user_id, reserve_id, date DESC);
 CREATE INDEX IF NOT EXISTS idx_reserve_tx_payment_status ON public.reserve_transactions(payment_status);

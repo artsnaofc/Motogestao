@@ -21,6 +21,8 @@ interface ReservesHeaderProps {
   totalGoal: number;
   totalPendingSuggestion: number;
   totalYield: number;
+  yieldPct?: number;
+  topYieldReserve?: { name: string; yieldAmount: number; yieldPct: number } | null;
   activeCount: number;
   activeTab: 'cards' | 'history';
   setActiveTab: (tab: 'cards' | 'history') => void;
@@ -35,6 +37,8 @@ export function ReservesHeader({
   totalGoal,
   totalPendingSuggestion,
   totalYield,
+  yieldPct = 0,
+  topYieldReserve = null,
   activeCount,
   activeTab,
   setActiveTab,
@@ -198,23 +202,36 @@ export function ReservesHeader({
           </div>
         </Card>
 
-        {/* Rendimentos Totais */}
+        {/* Rendimentos & Yield */}
         <Card className="relative overflow-hidden border-border/80 bg-gradient-to-br from-card to-muted/20 shadow-2xs p-2.5 sm:p-3.5 text-left flex flex-col justify-between">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-1">
             <span className="text-[10px] sm:text-[11px] font-bold text-muted-foreground uppercase tracking-wider truncate">
-              Rendimentos
+              Rendimentos & Yield
             </span>
             <div className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-blue-500/10 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0">
               <TrendingUp className="w-3.5 h-3.5" />
             </div>
           </div>
           <div className="mt-1">
-            <h3 className="text-base sm:text-xl font-black text-blue-600 dark:text-blue-400 tracking-tight font-mono">
-              {hideValues ? 'R$ •••••' : `+${formatCurrency(totalYield)}`}
-            </h3>
+            <div className="flex items-baseline justify-between gap-1">
+              <h3 className="text-base sm:text-xl font-black text-blue-600 dark:text-blue-400 tracking-tight font-mono truncate">
+                {hideValues ? 'R$ •••••' : `+${formatCurrency(totalYield)}`}
+              </h3>
+              {yieldPct > 0 && (
+                <span className="px-1.5 py-0.2 text-[10px] font-black rounded-md bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 font-mono shrink-0">
+                  +{yieldPct.toFixed(1)}%
+                </span>
+              )}
+            </div>
             <p className="text-[10px] text-muted-foreground font-medium mt-0.5 truncate flex items-center gap-0.5">
               <ArrowUpRight className="w-3 h-3 text-blue-600 shrink-0" />
-              Proventos & Lucros
+              {topYieldReserve ? (
+                <span className="truncate">
+                  Top: <strong className="text-foreground">{topYieldReserve.name}</strong> ({hideValues ? '••' : `+${formatCurrency(topYieldReserve.yieldAmount)}`})
+                </span>
+              ) : (
+                <span>Proventos & Lucros</span>
+              )}
             </p>
           </div>
         </Card>

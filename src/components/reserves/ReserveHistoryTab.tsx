@@ -32,9 +32,22 @@ import {
   Check,
   Sliders,
   RefreshCw,
-  Landmark
+  Landmark,
+  BarChart3,
+  ChevronUp,
+  EyeOff
 } from 'lucide-react';
-import { subDays } from 'date-fns';
+import { subDays, format } from 'date-fns';
+import { ptBR } from 'date-fns/locale';
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip as RechartsTooltip,
+  ResponsiveContainer
+} from 'recharts';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -118,6 +131,7 @@ export function ReserveHistoryTab({
   
   // Advanced Filter Drawer Toggle
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
+  const [showMonthlyYieldChart, setShowMonthlyYieldChart] = useState(true);
 
   // Modal States
   const [txToDelete, setTxToDelete] = useState<ReserveTransaction | null>(null);
@@ -151,6 +165,7 @@ export function ReserveHistoryTab({
   const [editDescription, setEditDescription] = useState<string>('');
   const [editCategory, setEditCategory] = useState<string>('');
   const [editReserveId, setEditReserveId] = useState<string>('');
+  const [editIgnoreInCharts, setEditIgnoreInCharts] = useState<boolean>(false);
 
   // Period filter states - Defaults to 'all' so users immediately see all history
   const [historyPeriod, setHistoryPeriod] = useState<string>('all');
@@ -780,6 +795,57 @@ export function ReserveHistoryTab({
     };
   }, [filteredItems]);
 
+  // Consolidated Monthly Yield Evolution (respects reserve & period filters, excludes pending)
+  const monthlyYieldStats = useMemo(() => {
+    const monthMap: Record<string, { monthKey: string; label: string; fullLabel: string; total: number; count: number }> = {};
+
+    (reserveTransactions || []).forEach(rt => {
+      if (rt.type !== 'rendimento') return;
+      if (rt.payment_status === 'pending' || (rt as any).status === 'pending') return;
+      if (selectedReserveId !== 'all' && rt.reserve_id !== selectedReserveId) return;
+      if (historyPeriod !== 'all' && !isTxInPeriod(rt.date, historyPeriod, customDateRange)) return;
+
+      const cleanDate = toDateInputString(rt.date) || (rt.date || '').split('T')[0];
+      if (!cleanDate || cleanDate.length < 7) return;
+      const monthKey = cleanDate.slice(0, 7);
+      const parsed = parseLocalDate(`${monthKey}-01`);
+
+      if (!monthMap[monthKey]) {
+        monthMap[monthKey] = {
+          monthKey,
+          label: format(parsed, 'MMM/yy', { locale: ptBR }),
+          fullLabel: format(parsed, "MMMM 'de' yyyy", { locale: ptBR }),
+          total: 0,
+          count: 0,
+        };
+      }
+      monthMap[monthKey].total += Number(rt.amount || 0);
+      monthMap[monthKey].count += 1;
+    });
+
+    const series = Object.values(monthMap)
+      .sort((a, b) => a.monthKey.localeCompare(b.monthKey))
+      .slice(-12)
+      .map(item => ({
+        ...item,
+        total: Math.round(item.total * 100) / 100
+      }));
+
+    const totalPeriod = series.reduce((s, m) => s + m.total, 0);
+    const avgMonthly = series.length > 0 ? totalPeriod / series.length : 0;
+    const bestMonth = series.reduce<typeof series[number] | null>(
+      (best, cur) => (!best || cur.total > best.total ? cur : best),
+      null
+    );
+
+    return {
+      series,
+      totalPeriod: Math.round(totalPeriod * 100) / 100,
+      avgMonthly: Math.round(avgMonthly * 100) / 100,
+      bestMonth,
+    };
+  }, [reserveTransactions, selectedReserveId, historyPeriod, customDateRange]);
+
   // Total Rule count in system for badges
   const totalSystemRuleUpdates = allRuleEvents.length;
 
@@ -906,6 +972,7 @@ export function ReserveHistoryTab({
     setEditDescription(tx.description || '');
     setEditCategory(tx.category || '');
     setEditReserveId(tx.reserve_id || '');
+    setEditIgnoreInCharts(Boolean(tx.ignore_in_charts));
   };
 
   // Save edited transaction
@@ -924,7 +991,8 @@ export function ReserveHistoryTab({
         date: editDate,
         description: editDescription.trim(),
         category: editCategory.trim() || undefined,
-        reserve_id: editReserveId || txToEdit.reserve_id
+        reserve_id: editReserveId || txToEdit.reserve_id,
+        ignore_in_charts: txToEdit.type === 'utilizacao' ? editIgnoreInCharts : txToEdit.ignore_in_charts
       });
       toast.success('Movimentação atualizada com sucesso!');
       setTxToEdit(null);
@@ -1386,6 +1454,108 @@ export function ReserveHistoryTab({
           </div>
         </div>
       </div>
+
+      {/* 2B. Histórico Consolidado de Rendimentos por Mês */}
+      {(monthlyYieldStats.series.length > 0 || selectedType === 'rendimento') && (
+        <div className="bg-card border border-border/80 rounded-2xl p-3.5 sm:p-4 shadow-2xs space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center shrink-0">
+                <BarChart3 className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+              </div>
+              <div>
+                <h3 className="text-xs sm:text-sm font-black text-foreground tracking-tight">
+                  Histórico Consolidado de Rendimentos por Mês
+                </h3>
+                <p className="text-[10.5px] text-muted-foreground font-medium">
+                  {selectedReserveId !== 'all'
+                    ? `Filtrado: ${reserveMap[selectedReserveId]?.name || 'Reserva selecionada'}`
+                    : 'Soma mensal de rendimentos e CDI em todas as reservas'}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 self-end sm:self-auto">
+              {monthlyYieldStats.series.length > 0 && (
+                <div className="flex items-center gap-3 text-[11px] font-medium text-muted-foreground mr-1">
+                  <span>
+                    Média/mês:{' '}
+                    <strong className="font-mono font-black text-blue-600 dark:text-blue-400 tabular-nums">
+                      {hideValues ? 'R$ •••' : formatCurrency(monthlyYieldStats.avgMonthly)}
+                    </strong>
+                  </span>
+                  {monthlyYieldStats.bestMonth && (
+                    <span className="hidden md:inline">
+                      Melhor ({monthlyYieldStats.bestMonth.label}):{' '}
+                      <strong className="font-mono font-black text-emerald-600 dark:text-emerald-400 tabular-nums">
+                        {hideValues ? 'R$ •••' : formatCurrency(monthlyYieldStats.bestMonth.total)}
+                      </strong>
+                    </span>
+                  )}
+                </div>
+              )}
+
+              <button
+                type="button"
+                onClick={() => setShowMonthlyYieldChart(prev => !prev)}
+                className="px-2.5 py-1 rounded-xl border border-border/70 bg-muted/30 hover:bg-muted text-[11px] font-bold text-foreground flex items-center gap-1 cursor-pointer transition-colors"
+              >
+                <span>{showMonthlyYieldChart ? 'Ocultar' : 'Exibir'}</span>
+                {showMonthlyYieldChart ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+              </button>
+            </div>
+          </div>
+
+          {showMonthlyYieldChart && (
+            monthlyYieldStats.series.length === 0 ? (
+              <div className="p-4 rounded-xl bg-muted/20 border border-dashed border-border text-center text-xs text-muted-foreground">
+                Nenhum rendimento quitado registrado para os filtros atuais.
+              </div>
+            ) : (
+              <div className="h-[190px] w-full pt-1">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={monthlyYieldStats.series} margin={{ top: 8, right: 10, left: -12, bottom: 2 }}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(148, 163, 184, 0.2)" />
+                    <XAxis
+                      dataKey="label"
+                      axisLine={false}
+                      tickLine={false}
+                      tick={{ fontSize: 10.5, fill: '#71717a', fontWeight: 700 }}
+                    />
+                    <YAxis
+                      axisLine={false}
+                      tickLine={false}
+                      tick={{ fontSize: 10, fill: '#71717a', fontWeight: 600 }}
+                      tickFormatter={(val) => (hideValues ? '•••' : `R$ ${Math.round(val)}`)}
+                    />
+                    <RechartsTooltip
+                      cursor={{ fill: 'rgba(59, 130, 246, 0.08)' }}
+                      contentStyle={{
+                        backgroundColor: 'hsl(var(--card))',
+                        borderColor: 'hsl(var(--border))',
+                        borderRadius: '12px',
+                        fontSize: '12px'
+                      }}
+                      labelFormatter={(_label, payload) => payload?.[0]?.payload?.fullLabel || _label}
+                      formatter={(val: any) => [
+                        hideValues ? 'R$ •••••' : formatCurrency(Number(val)),
+                        'Rendimento no mês'
+                      ]}
+                    />
+                    <Bar
+                      dataKey="total"
+                      name="Rendimento"
+                      fill="#3b82f6"
+                      radius={[6, 6, 0, 0]}
+                      maxBarSize={44}
+                    />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )
+          )}
+        </div>
+      )}
 
       {/* 3. Search & Main Filter Controls */}
       <div className="bg-card p-3 sm:p-4 rounded-2xl border border-border/80 shadow-xs space-y-3">
@@ -2638,6 +2808,26 @@ export function ReserveHistoryTab({
                   className="h-10 text-xs rounded-xl"
                 />
               </div>
+
+              {txToEdit.type === 'utilizacao' && (
+                <label className="flex items-start gap-2.5 p-3 rounded-xl border border-border/70 bg-muted/20 hover:bg-muted/35 transition-colors cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={editIgnoreInCharts}
+                    onChange={e => setEditIgnoreInCharts(e.target.checked)}
+                    className="h-4 w-4 mt-0.5 rounded border-border text-primary focus:ring-primary cursor-pointer accent-primary"
+                  />
+                  <div className="space-y-0.5">
+                    <span className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                      <EyeOff className="w-3.5 h-3.5 text-muted-foreground" />
+                      Ignorar nos gráficos e médias
+                    </span>
+                    <p className="text-[10px] text-muted-foreground leading-snug">
+                      Mantém o abatimento na reserva e extrato, mas desconsidera dos gráficos e indicadores do painel.
+                    </p>
+                  </div>
+                </label>
+              )}
             </div>
 
             <div className="flex items-center justify-end gap-2 pt-2 border-t border-border/60">

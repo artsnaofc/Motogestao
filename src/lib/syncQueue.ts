@@ -244,7 +244,7 @@ class SyncQueueManager {
 
           // If still failing and table is reserves, strip newer non-core columns
           if (error && task.table === 'reserves') {
-            const optionalReserveKeys = ['rule_history', 'regra_inicio_validade', 'require_category_on_use', 'default_use_category', 'regra_base'];
+            const optionalReserveKeys = ['rule_history', 'regra_inicio_validade', 'require_category_on_use', 'default_use_category', 'regra_base', 'target_date'];
             const safeReserveUpdate: Record<string, any> = {};
             for (const k of Object.keys(task.payload || {})) {
               if (!optionalReserveKeys.includes(k)) {
@@ -277,6 +277,26 @@ class SyncQueueManager {
                 .update(safeTxUpdate)
                 .eq('id', task.targetId);
               if (!coreTxRetryErr) {
+                error = null;
+              }
+            }
+          }
+
+          // If still failing and table is reserve_transactions, strip newer optional columns
+          if (error && task.table === 'reserve_transactions') {
+            const optionalRtKeys = ['ignore_in_charts'];
+            const safeRtUpdate: Record<string, any> = {};
+            for (const k of Object.keys(task.payload || {})) {
+              if (!optionalRtKeys.includes(k)) {
+                safeRtUpdate[k] = task.payload[k];
+              }
+            }
+            if (Object.keys(safeRtUpdate).length > 0) {
+              const { error: coreRtRetryErr } = await supabase
+                .from(task.table)
+                .update(safeRtUpdate)
+                .eq('id', task.targetId);
+              if (!coreRtRetryErr) {
                 error = null;
               }
             }

@@ -110,6 +110,7 @@ export interface Reserve {
   saldo_inicial: number;
   saldo_atual?: number;
   meta_objetivo?: number | null;
+  target_date?: string | null;
   status: 'active' | 'inactive';
   regra_tipo?: 'km' | 'bruto' | 'liquido' | 'fixo' | 'personalizado' | null;
   regra_valor?: number;
@@ -158,6 +159,7 @@ export interface ReserveTransaction {
 
   // Vínculo com Garagem / Veículo
   vehicle_id?: string;
+  ignore_in_charts?: boolean;
 
   created_at?: string;
 }

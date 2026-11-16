@@ -28,7 +28,41 @@ import {
   Key,
   Umbrella,
   Smartphone,
-  BookOpen
+  BookOpen,
+  Bike,
+  Truck,
+  Bus,
+  Navigation,
+  Compass,
+  MapPin,
+  Banknote,
+  CreditCard,
+  Landmark,
+  Gem,
+  Crown,
+  Trophy,
+  Target,
+  Rocket,
+  Flame,
+  Sun,
+  Moon,
+  Star,
+  Music,
+  Camera,
+  Headphones,
+  Gamepad2,
+  Dumbbell,
+  Utensils,
+  ShoppingCart,
+  Watch,
+  Glasses,
+  Pill,
+  Baby,
+  Dog,
+  Globe,
+  Anchor,
+  Clock,
+  Calendar
 } from 'lucide-react';
 import { Reserve, ReserveTransaction, Transaction } from '../../types';
 import { 
@@ -44,57 +78,116 @@ import {
   subYears, 
   startOfWeek, 
   endOfWeek,
+  addDays,
+  differenceInCalendarDays,
   format
 } from 'date-fns';
 
 export const iconOptions: Record<string, any> = {
   PiggyBank,
-  Wrench,
-  ShieldAlert,
-  Car,
+  Wallet,
+  Banknote,
   Coins,
-  Sparkles,
-  Heart,
+  Landmark,
+  CreditCard,
   TrendingUp,
-  Briefcase,
+  Target,
+  Gem,
+  Crown,
+  Trophy,
+  Award,
+  Sparkles,
+  Rocket,
+  Zap,
+  Flame,
   Shield,
   ShieldCheck,
-  Fuel,
-  ShoppingBag,
-  Gift,
-  Plane,
-  Coffee,
-  GraduationCap,
-  Laptop,
-  Stethoscope,
+  ShieldAlert,
+  Umbrella,
+  Wrench,
   Hammer,
+  Fuel,
+  Bike,
+  Car,
+  Truck,
+  Bus,
+  Plane,
+  Navigation,
+  Compass,
+  MapPin,
+  Globe,
+  Anchor,
   Home,
-  Award,
-  Wallet,
-  Zap,
-  Tag,
   Building,
   Key,
-  Umbrella,
+  Briefcase,
+  Laptop,
   Smartphone,
-  BookOpen
+  Watch,
+  Camera,
+  Headphones,
+  Music,
+  Gamepad2,
+  GraduationCap,
+  BookOpen,
+  Heart,
+  Stethoscope,
+  Pill,
+  Dumbbell,
+  ShoppingBag,
+  ShoppingCart,
+  Gift,
+  Coffee,
+  Utensils,
+  Tag,
+  Glasses,
+  Baby,
+  Dog,
+  Sun,
+  Moon,
+  Star,
+  Clock,
+  Calendar
 };
 
 export const COLOR_PALETTE = [
+  // Azuis & Índigos
   '#6366f1', // Indigo
-  '#3b82f6', // Blue
-  '#06b6d4', // Cyan
-  '#10b981', // Emerald
-  '#84cc16', // Lime
-  '#eab308', // Yellow
-  '#f97316', // Orange
-  '#ef4444', // Red
+  '#4f46e5', // Indigo Profundo
+  '#3b82f6', // Azul Royal
+  '#2563eb', // Azul Cobalto
+  '#0ea5e9', // Azul Céu
+  '#06b6d4', // Ciano
+  '#0891b2', // Ciano Escuro
+  // Verdes & Turquesas
+  '#14b8a6', // Turquesa (Teal)
+  '#0d9488', // Verde Petróleo
+  '#10b981', // Esmeralda
+  '#059669', // Esmeralda Profundo
+  '#22c55e', // Verde Vibrante
+  '#84cc16', // Verde Lima
+  '#65a30d', // Oliva Vivo
+  // Amarelos, Laranjas & Dourados
+  '#eab308', // Amarelo Ouro
+  '#ca8a04', // Mostarda
+  '#f59e0b', // Âmbar
+  '#f97316', // Laranja
+  '#ea580c', // Laranja Queimado
+  '#b45309', // Cobre / Bronze
+  // Vermelhos & Rosas
+  '#ef4444', // Vermelho
+  '#dc2626', // Carmesim
+  '#f43f5e', // Coral / Rose
+  '#e11d48', // Rubi
   '#ec4899', // Pink
-  '#8b5cf6', // Violet
-  '#a855f7', // Purple
-  '#64748b', // Slate
-  '#14b8a6', // Teal
-  '#f43f5e', // Rose
+  '#db2777', // Magenta
+  // Roxos & Neutros Elegantes
+  '#d946ef', // Fúcsia
+  '#a855f7', // Roxo
+  '#8b5cf6', // Violeta
+  '#7c3aed', // Violeta Intenso
+  '#64748b', // Ardósia (Slate)
+  '#334155', // Grafite
 ];
 
 export const parseLocalDate = (dateStr: string | Date | undefined | null): Date => {
@@ -851,3 +944,370 @@ export const calculateNextOccurrence = (baseDateStr: string, frequency: Recurren
 };
 
 export { getTodayLocalDateStr } from '../../lib/utils';
+
+export interface ReserveGoalProjection {
+  hasGoal: boolean;
+  isReached: boolean;
+  remaining: number;
+  dailyPace: number;
+  monthlyPace: number;
+  estimatedDays: number | null;
+  estimatedDateStr: string | null;
+  timelineLabel: string;
+  paceSource: 'rule' | 'history' | 'none';
+  targetDateStr: string | null;
+  targetDateDisplay: string | null;
+  daysUntilTarget: number | null;
+  requiredDailyForDeadline: number | null;
+  requiredWeeklyForDeadline: number | null;
+  isDeadlineExpired: boolean;
+  isOnTrackForDeadline: boolean | null;
+}
+
+export const formatEstimatedTimeline = (days: number): string => {
+  if (days <= 0) return 'Meta atingida';
+  if (days === 1) return '~1 dia';
+  if (days < 7) return `~${days} dias`;
+  if (days <= 45) {
+    const weeks = Math.max(1, Math.round(days / 7));
+    return `~${weeks} ${weeks === 1 ? 'semana' : 'semanas'}`;
+  }
+  if (days < 365) {
+    const months = Number((days / 30).toFixed(1));
+    const formatted = String(months).replace('.0', '').replace('.', ',');
+    return `~${formatted} ${months === 1 ? 'mês' : 'meses'}`;
+  }
+  const years = Number((days / 365).toFixed(1));
+  const formatted = String(years).replace('.0', '').replace('.', ',');
+  return `~${formatted} ${years === 1 ? 'ano' : 'anos'}`;
+};
+
+/**
+ * Calcula projeção preditiva de conclusão da meta baseada no ritmo dos últimos 30 dias
+ * da regra ativa ou no histórico recente de aportes da reserva, além de cruzar com
+ * o prazo limite opcional (`target_date`).
+ */
+export const calculateReserveGoalProjection = (
+  res: Reserve,
+  transactions: Transaction[],
+  reserveTransactions: ReserveTransaction[]
+): ReserveGoalProjection => {
+  const balance = Math.round((res.saldo_atual || 0) * 100) / 100;
+  const goal = Math.round((res.meta_objetivo || 0) * 100) / 100;
+  const hasGoal = goal > 0;
+  const remaining = hasGoal ? Math.max(0, Math.round((goal - balance) * 100) / 100) : 0;
+  const isReached = hasGoal && remaining <= 0;
+
+  const cleanTargetDate = toDateInputString(res.target_date);
+  const hasValidTargetDate = Boolean(cleanTargetDate && /^\d{4}-\d{2}-\d{2}$/.test(cleanTargetDate));
+  const now = new Date();
+  const daysUntilTarget = hasValidTargetDate
+    ? differenceInCalendarDays(startOfDay(parseLocalDate(cleanTargetDate)), startOfDay(now))
+    : null;
+  const targetDateDisplay = hasValidTargetDate ? formatDateDisplay(cleanTargetDate) : null;
+  const isDeadlineExpired = Boolean(daysUntilTarget !== null && daysUntilTarget <= 0 && !isReached);
+
+  if (!hasGoal) {
+    return {
+      hasGoal: false,
+      isReached: false,
+      remaining: 0,
+      dailyPace: 0,
+      monthlyPace: 0,
+      estimatedDays: null,
+      estimatedDateStr: null,
+      timelineLabel: '',
+      paceSource: 'none',
+      targetDateStr: hasValidTargetDate ? cleanTargetDate : null,
+      targetDateDisplay,
+      daysUntilTarget,
+      requiredDailyForDeadline: null,
+      requiredWeeklyForDeadline: null,
+      isDeadlineExpired: false,
+      isOnTrackForDeadline: null,
+    };
+  }
+
+  if (isReached) {
+    return {
+      hasGoal: true,
+      isReached: true,
+      remaining: 0,
+      dailyPace: 0,
+      monthlyPace: 0,
+      estimatedDays: 0,
+      estimatedDateStr: null,
+      timelineLabel: 'Meta atingida',
+      paceSource: 'none',
+      targetDateStr: hasValidTargetDate ? cleanTargetDate : null,
+      targetDateDisplay,
+      daysUntilTarget,
+      requiredDailyForDeadline: 0,
+      requiredWeeklyForDeadline: 0,
+      isDeadlineExpired: false,
+      isOnTrackForDeadline: true,
+    };
+  }
+
+  const requiredDailyForDeadline =
+    daysUntilTarget !== null
+      ? daysUntilTarget > 0
+        ? Math.round((remaining / daysUntilTarget) * 100) / 100
+        : remaining
+      : null;
+  const requiredWeeklyForDeadline =
+    daysUntilTarget !== null
+      ? daysUntilTarget > 0
+        ? Math.round(((remaining / daysUntilTarget) * Math.min(7, daysUntilTarget)) * 100) / 100
+        : remaining
+      : null;
+
+  const windowStart = startOfDay(subDays(now, 29));
+  const windowEnd = endOfDay(now);
+
+  let ruleDailyPace = 0;
+  if (res.regra_ativa && res.regra_tipo && Number(res.regra_valor || 0) > 0) {
+    const recentTxs = (transactions || []).filter(t => {
+      if (!t || t.ignore_in_charts) return false;
+      if (t.payment_status === 'pending' || (t as any).status === 'pending') return false;
+      const d = parseLocalDate(t.date);
+      return isWithinInterval(d, { start: windowStart, end: windowEnd });
+    });
+
+    const ruleCats = res.regra_categorias || [];
+    const ruleVal = Number(res.regra_valor || 0);
+    const ruleType = res.regra_tipo as string;
+    let total30d = 0;
+
+    if (ruleType === 'km') {
+      let km30 = 0;
+      recentTxs.forEach(t => {
+        const matchesCat = ruleCats.length === 0 || ruleCats.includes(t.category);
+        if (t.type === 'income' && matchesCat) {
+          const dist = (Number(t.end_km) || 0) - (Number(t.start_km) || 0);
+          if (dist > 0) km30 += dist;
+        }
+      });
+      total30d = km30 * ruleVal;
+    } else if (ruleType === 'bruto') {
+      let gross30 = 0;
+      recentTxs.forEach(t => {
+        const matchesCat = ruleCats.length === 0 || ruleCats.includes(t.category);
+        if (t.type === 'income' && matchesCat) {
+          gross30 += Number(t.amount || 0);
+        }
+      });
+      total30d = gross30 * (ruleVal / 100);
+    } else if (ruleType === 'liquido') {
+      let inc30 = 0;
+      let exp30 = 0;
+      recentTxs.forEach(t => {
+        const matchesCat = ruleCats.length === 0 || ruleCats.includes(t.category);
+        if (t.type === 'income' && matchesCat) {
+          inc30 += Number(t.amount || 0);
+        } else if (t.type === 'expense') {
+          const isReserveUse = (t as any).isReserveTx === true || t.category === 'Aporte Reserva';
+          if (!isReserveUse) exp30 += Number(t.amount || 0);
+        }
+      });
+      total30d = Math.max(0, inc30 - exp30) * (ruleVal / 100);
+    } else if (ruleType === 'fixo' || ruleType === 'fixo_diario') {
+      const workedDays = new Set<string>();
+      recentTxs.forEach(t => {
+        const matchesCat = ruleCats.length === 0 || ruleCats.includes(t.category);
+        if (t.type === 'income' && matchesCat) {
+          workedDays.add(toDateInputString(t.date) || t.date);
+        }
+      });
+      total30d = workedDays.size * ruleVal;
+    }
+
+    if (total30d > 0) {
+      ruleDailyPace = total30d / 30;
+    }
+  }
+
+  let historyDailyPace = 0;
+  const recentAportes = (reserveTransactions || []).filter(rt => {
+    if (rt.reserve_id !== res.id) return false;
+    if (rt.type !== 'aporte' && rt.type !== 'rendimento') return false;
+    if (rt.payment_status === 'pending' || (rt as any).status === 'pending') return false;
+    const d = parseLocalDate(rt.date);
+    return isWithinInterval(d, { start: startOfDay(subDays(now, 59)), end: windowEnd });
+  });
+
+  if (recentAportes.length > 0) {
+    const sumAportes = recentAportes.reduce((s, rt) => s + Number(rt.amount || 0), 0);
+    // Calculate span from earliest recent aporte (min 7 days, max 60 days)
+    const dates = recentAportes.map(rt => parseLocalDate(rt.date).getTime());
+    const minTs = Math.min(...dates);
+    const spanDays = Math.max(7, Math.min(60, Math.ceil((now.getTime() - minTs) / (1000 * 60 * 60 * 24)) + 1));
+    historyDailyPace = sumAportes / spanDays;
+  }
+
+  const dailyPace = ruleDailyPace > 0 ? ruleDailyPace : historyDailyPace;
+  const paceSource: 'rule' | 'history' | 'none' =
+    ruleDailyPace > 0 ? 'rule' : historyDailyPace > 0 ? 'history' : 'none';
+
+  if (dailyPace <= 0.01) {
+    return {
+      hasGoal: true,
+      isReached: false,
+      remaining,
+      dailyPace: 0,
+      monthlyPace: 0,
+      estimatedDays: null,
+      estimatedDateStr: null,
+      timelineLabel: '',
+      paceSource: 'none',
+      targetDateStr: hasValidTargetDate ? cleanTargetDate : null,
+      targetDateDisplay,
+      daysUntilTarget,
+      requiredDailyForDeadline,
+      requiredWeeklyForDeadline,
+      isDeadlineExpired,
+      isOnTrackForDeadline: hasValidTargetDate ? false : null,
+    };
+  }
+
+  const estimatedDays = Math.ceil(remaining / dailyPace);
+  const projectedDate = addDays(now, estimatedDays);
+  const isOnTrackForDeadline =
+    daysUntilTarget !== null
+      ? !isDeadlineExpired && estimatedDays <= daysUntilTarget
+      : null;
+
+  return {
+    hasGoal: true,
+    isReached: false,
+    remaining,
+    dailyPace: Math.round(dailyPace * 100) / 100,
+    monthlyPace: Math.round(dailyPace * 30 * 100) / 100,
+    estimatedDays,
+    estimatedDateStr: format(projectedDate, 'dd/MM/yyyy'),
+    timelineLabel: formatEstimatedTimeline(estimatedDays),
+    paceSource,
+    targetDateStr: hasValidTargetDate ? cleanTargetDate : null,
+    targetDateDisplay,
+    daysUntilTarget,
+    requiredDailyForDeadline,
+    requiredWeeklyForDeadline,
+    isDeadlineExpired,
+    isOnTrackForDeadline,
+  };
+};
+
+export interface ReserveYieldStats {
+  yieldAmount: number;
+  depositedBase: number;
+  yieldPct: number;
+}
+
+export const calculateReserveYieldStats = (
+  res: Reserve,
+  reserveTransactions: ReserveTransaction[]
+): ReserveYieldStats => {
+  const rts = (reserveTransactions || []).filter(rt => rt.reserve_id === res.id);
+  const yieldAmount = Math.round(
+    rts
+      .filter(rt => rt.type === 'rendimento' && rt.payment_status !== 'pending' && (rt as any).status !== 'pending')
+      .reduce((sum, rt) => sum + Number(rt.amount || 0), 0) * 100
+  ) / 100;
+
+  const totalAportes = rts
+    .filter(rt => rt.type === 'aporte' && rt.payment_status !== 'pending' && (rt as any).status !== 'pending')
+    .reduce((sum, rt) => sum + Number(rt.amount || 0), 0);
+
+  const initialBal = Number(res.saldo_inicial || 0);
+  const netCapital = Math.max(0, Number(res.saldo_atual || 0) - yieldAmount);
+  const depositedBase = Math.max(initialBal + totalAportes, netCapital);
+  const yieldPct = depositedBase > 0 && yieldAmount > 0
+    ? Math.round((yieldAmount / depositedBase) * 1000) / 10
+    : 0;
+
+  return {
+    yieldAmount,
+    depositedBase: Math.round(depositedBase * 100) / 100,
+    yieldPct,
+  };
+};
+
+/**
+ * Sugere automaticamente uma reserva compatível quando o usuário cadastra uma despesa
+ * por categoria (ex: Manutenção -> Reserva de Manutenção, Emergência -> Reserva de Emergência).
+ */
+export const findMatchingReserveForExpense = (
+  category: string,
+  reserves: Reserve[]
+): Reserve | null => {
+  if (!category || !reserves || reserves.length === 0) return null;
+
+  const normalize = (s: string) =>
+    s
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .trim();
+
+  const normCat = normalize(category);
+  const activeReserves = reserves.filter(r => r.status !== 'inactive');
+  if (activeReserves.length === 0) return null;
+
+  // 1. Exact default_use_category match
+  const byDefaultCat = activeReserves.find(
+    r => r.default_use_category && normalize(r.default_use_category) === normCat
+  );
+  if (byDefaultCat) return byDefaultCat;
+
+  // 2. Semantic / keyword mapping to reserve name
+  const maintenanceKeywords = ['manutencao', 'troca de oleo', 'pneu', 'pneus', 'mecanico', 'mecanica', 'oficina', 'peca', 'pecas', 'revisao', 'equipamento'];
+  const emergencyKeywords = ['emergencia', 'saude', 'medico', 'remedio', 'hospital', 'imprevisto'];
+  const taxInsuranceKeywords = ['ipva', 'seguro', 'licenciamento', 'imposto', 'documentacao', 'multa'];
+  const fuelKeywords = ['combustivel', 'gasolina', 'etanol', 'abastecimento', 'pedagio'];
+
+  const scoreReserve = (r: Reserve): number => {
+    const rName = normalize(r.name || '');
+    const rDesc = normalize(r.description || '');
+    let score = 0;
+
+    if (rName.includes(normCat) || normCat.includes(rName)) score += 10;
+    if (rDesc.includes(normCat)) score += 4;
+
+    if (maintenanceKeywords.some(k => normCat.includes(k))) {
+      if (rName.includes('manutencao') || rName.includes('veiculo') || rName.includes('moto') || r.icon === 'Wrench') {
+        score += 8;
+      }
+    }
+    if (emergencyKeywords.some(k => normCat.includes(k))) {
+      if (rName.includes('emergencia') || r.icon === 'ShieldAlert' || r.icon === 'ShieldCheck') {
+        score += 8;
+      }
+    }
+    if (taxInsuranceKeywords.some(k => normCat.includes(k))) {
+      if (rName.includes('ipva') || rName.includes('seguro') || rName.includes('imposto') || rName.includes('documento')) {
+        score += 8;
+      }
+    }
+    if (fuelKeywords.some(k => normCat.includes(k))) {
+      if (rName.includes('combustivel') || rName.includes('gasolina') || r.icon === 'Fuel') {
+        score += 8;
+      }
+    }
+
+    if (score > 0 && (r.saldo_atual || 0) > 0) score += 1;
+    return score;
+  };
+
+  let best: Reserve | null = null;
+  let bestScore = 0;
+  for (const r of activeReserves) {
+    const s = scoreReserve(r);
+    if (s > bestScore) {
+      bestScore = s;
+      best = r;
+    }
+  }
+
+  return bestScore > 0 ? best : null;
+};
+

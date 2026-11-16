@@ -83,6 +83,7 @@ import { getTodayLocalDateStr } from '../lib/utils';
 import { getEffectiveUserId } from '../lib/authUtils';
 import { RefreshCw, CalendarClock, CalendarRange, CheckCircle2, AlertCircle, EyeOff } from 'lucide-react';
 import { isVehicleRelatedCategory, shouldDefaultToNoVehicle } from '../lib/vehicleUtils';
+import { findMatchingReserveForExpense } from '../components/reserves/reserveUtils';
 
 export function AddTransaction() {
   const navigate = useNavigate();
@@ -104,7 +105,7 @@ export function AddTransaction() {
   const paramQuoteId = searchParams.get('quote_id') || '';
   const paramDistanceKm = searchParams.get('distance_km') || '';
 
-  const { transactions, setTransactions, settings, refreshData, globalPeriod, reserves, addReserveTransaction, hideValues } = useData();
+  const { transactions, setTransactions, settings, refreshData, globalPeriod, reserves, addReserveTransaction, updateReserve, hideValues } = useData();
   const { activeVehicle, vehicles } = useVehicles();
 
   const [selectedVehicleId, setSelectedVehicleId] = useState<string>(
@@ -159,9 +160,37 @@ export function AddTransaction() {
   const [paymentDate, setPaymentDate] = useState<string>('');
   const [dueDate, setDueDate] = useState<string>('');
   const [ignoreInCharts, setIgnoreInCharts] = useState<boolean>(false);
+  const [deductFromReserve, setDeductFromReserve] = useState<boolean>(false);
+  const [deductReserveId, setDeductReserveId] = useState<string>('');
   const [isRecurring, setIsRecurring] = useState<boolean>(false);
   const [recurrenceFrequency, setRecurrenceFrequency] = useState<RecurrenceFrequency>('monthly');
   const [recurrenceInstallments, setRecurrenceInstallments] = useState<string>('12');
+
+  const activeReservesList = useMemo(() => {
+    return (reserves || []).filter(r => r.status !== 'inactive');
+  }, [reserves]);
+
+  const suggestedExpenseReserve = useMemo(() => {
+    if (activeTab !== 'despesa' || !category) return null;
+    return findMatchingReserveForExpense(category, activeReservesList);
+  }, [activeTab, category, activeReservesList]);
+
+  useEffect(() => {
+    if (activeTab === 'despesa' && suggestedExpenseReserve) {
+      setDeductReserveId(suggestedExpenseReserve.id);
+    } else if (activeTab !== 'despesa') {
+      setDeductFromReserve(false);
+      setDeductReserveId('');
+    } else if (!suggestedExpenseReserve) {
+      setDeductFromReserve(false);
+      setDeductReserveId('');
+    }
+  }, [activeTab, suggestedExpenseReserve?.id]);
+
+  const selectedDeductReserve = useMemo(() => {
+    if (!deductReserveId) return suggestedExpenseReserve;
+    return activeReservesList.find(r => r.id === deductReserveId) || suggestedExpenseReserve;
+  }, [deductReserveId, activeReservesList, suggestedExpenseReserve]);
 
   const selectedReserveObj = useMemo(() => {
     return reserves.find(r => r.id === reserveId);
@@ -315,6 +344,8 @@ export function AddTransaction() {
     setRecurrenceFrequency('monthly');
     setRecurrenceInstallments('12');
     setIgnoreInCharts(false);
+    setDeductFromReserve(false);
+    setDeductReserveId('');
   };
 
 
@@ -489,6 +520,7 @@ export function AddTransaction() {
               installment_number: i,
               installment_total: numInstallments,
               vehicle_id: reserveVehicleId,
+              ignore_in_charts: ignoreInCharts,
             }, { silent: true });
 
             if (isFirst) {
@@ -514,11 +546,12 @@ export function AddTransaction() {
             category: rtType === 'utilizacao' ? finalRtCategory : 'Aporte Extra',
             description: description || (rtType === 'aporte' ? `Aporte para ${selectedRes?.name}` : `Uso da reserva ${selectedRes?.name}`),
             payment_status: effectivePaymentStatus,
-            payment_date: effectivePaymentDate,
-            due_date: effectiveDueDate,
-            is_recurring: false,
-            vehicle_id: reserveVehicleId,
-          }, { silent: true });
+              payment_date: effectivePaymentDate,
+              due_date: effectiveDueDate,
+              is_recurring: false,
+              vehicle_id: reserveVehicleId,
+              ignore_in_charts: ignoreInCharts,
+            }, { silent: true });
 
           targetHighlightId = rtId;
           toast.success(
@@ -558,6 +591,90 @@ export function AddTransaction() {
       if (activeTab !== 'pizzaria' && finalAmount <= 0) {
         toast.error('Informe um valor válido.', { id: 'add-tx' });
         setLoading(false);
+        return;
+      }
+
+      // Smart Expense-to-Reserve Deduction: route expense as a reserve utilization when opted-in
+      if (activeTab === 'despesa' && deductFromReserve && selectedDeductReserve) {
+        const effectivePaymentStatus = paymentStatus;
+        const effectivePaymentDate = effectivePaymentStatus === 'paid'
+          ? (paymentDate.trim() || date || getTodayLocalDateStr())
+          : null;
+        const effectiveDueDate = dueDate.trim() || date;
+        const reserveVehicleId = getEffectiveVehicleId();
+        let targetHighlightId = '';
+
+        if (isRecurring) {
+          const numInstallments = Math.max(2, Math.min(60, Number(recurrenceInstallments) || 12));
+          const recurrenceGroupId = generateUUID();
+
+          for (let i = 1; i <= numInstallments; i++) {
+            const isFirst = i === 1;
+            const instDate = isFirst ? date : calculateNextOccurrence(date, recurrenceFrequency, i - 1);
+            const instDueDate = isFirst ? effectiveDueDate : instDate;
+            const instPaymentStatus: PaymentStatus = isFirst ? effectivePaymentStatus : 'pending';
+            const instPaymentDate = isFirst && effectivePaymentStatus === 'paid' ? effectivePaymentDate : null;
+            const baseDesc = description || finalCategory || `Uso da reserva ${selectedDeductReserve.name}`;
+            const instDesc = `${baseDesc} (${i}/${numInstallments})`;
+
+            const rtId = await addReserveTransaction({
+              reserve_id: selectedDeductReserve.id,
+              type: 'utilizacao',
+              amount: finalAmount,
+              date: instDate,
+              category: finalCategory,
+              description: instDesc,
+              payment_status: instPaymentStatus,
+              payment_date: instPaymentDate,
+              due_date: instDueDate,
+              is_recurring: true,
+              recurrence_frequency: recurrenceFrequency,
+              recurrence_installments: numInstallments,
+              recurrence_group_id: recurrenceGroupId,
+              installment_number: i,
+              installment_total: numInstallments,
+              vehicle_id: reserveVehicleId,
+              ignore_in_charts: ignoreInCharts,
+            }, { silent: true });
+
+            if (isFirst && rtId) targetHighlightId = rtId;
+          }
+
+          if (effectivePaymentStatus === 'paid') {
+            const newBal = Math.max(0, Math.round(((selectedDeductReserve.saldo_atual || 0) - finalAmount) * 100) / 100);
+            await updateReserve(selectedDeductReserve.id, { saldo_atual: newBal });
+          }
+
+          toast.success(`Despesa recorrente (${numInstallments}x) abatida da reserva "${selectedDeductReserve.name}"!`, { id: 'add-tx' });
+        } else {
+          const rtId = await addReserveTransaction({
+            reserve_id: selectedDeductReserve.id,
+            type: 'utilizacao',
+            amount: finalAmount,
+            date: date,
+            category: finalCategory,
+            description: description || `${finalCategory} (Reserva ${selectedDeductReserve.name})`,
+            payment_status: effectivePaymentStatus,
+            payment_date: effectivePaymentDate,
+            due_date: effectiveDueDate,
+            is_recurring: false,
+            vehicle_id: reserveVehicleId,
+            ignore_in_charts: ignoreInCharts,
+          }, { silent: true });
+
+          if (rtId) targetHighlightId = rtId;
+
+          if (effectivePaymentStatus === 'paid') {
+            const newBal = Math.max(0, Math.round(((selectedDeductReserve.saldo_atual || 0) - finalAmount) * 100) / 100);
+            await updateReserve(selectedDeductReserve.id, { saldo_atual: newBal });
+          }
+
+          toast.success(`Despesa de ${formatCurrency(finalAmount)} abatida da reserva "${selectedDeductReserve.name}"!`, { id: 'add-tx' });
+        }
+
+        resetForm();
+        await refreshData(true);
+        navigate(targetHighlightId ? `/history?highlight=${targetHighlightId}` : '/history');
         return;
       }
 
@@ -1112,6 +1229,61 @@ export function AddTransaction() {
                     })}
                   </div>
                 </div>
+
+                {/* Alocação Inteligente por Categoria (Match Automático de Reserva) */}
+                {activeTab === 'despesa' && suggestedExpenseReserve && selectedDeductReserve && (
+                  <div className="p-3.5 rounded-xl border border-indigo-500/30 bg-indigo-500/[0.06] space-y-2.5 animate-fade-in">
+                    <label className="flex items-start gap-2.5 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={deductFromReserve}
+                        onChange={(e) => setDeductFromReserve(e.target.checked)}
+                        className="h-4 w-4 mt-0.5 rounded border-border text-indigo-600 accent-indigo-600 cursor-pointer"
+                      />
+                      <div className="flex-1 space-y-0.5">
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <span className="text-xs font-extrabold text-foreground flex items-center gap-1.5">
+                            <PiggyBank className="w-3.5 h-3.5 text-indigo-500" />
+                            Abater diretamente da reserva <strong className="text-indigo-600 dark:text-indigo-400">{selectedDeductReserve.name}</strong>?
+                          </span>
+                          <span className="text-[10px] font-bold font-mono px-1.5 py-0.5 rounded bg-card border border-border/70 text-foreground">
+                            Saldo: {formatCurrency(selectedDeductReserve.saldo_atual || 0)}
+                          </span>
+                        </div>
+                        <p className="text-[10.5px] text-muted-foreground leading-snug">
+                          Detectamos uma reserva compatível com <strong>{category}</strong>. Ao marcar, o gasto usa o saldo guardado da reserva sem descontar do seu caixa livre.
+                        </p>
+                      </div>
+                    </label>
+
+                    {deductFromReserve && activeReservesList.length > 1 && (
+                      <div className="pt-2 border-t border-indigo-500/20 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+                          Reserva selecionada:
+                        </span>
+                        <Select value={selectedDeductReserve.id} onValueChange={setDeductReserveId}>
+                          <SelectTrigger className="h-8 text-xs font-bold rounded-lg bg-card sm:w-[240px]">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent className="text-xs">
+                            {activeReservesList.map(r => (
+                              <SelectItem key={r.id} value={r.id}>
+                                {r.name} ({formatCurrency(r.saldo_atual || 0)})
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    )}
+
+                    {deductFromReserve && Number(amount) > Number(selectedDeductReserve.saldo_atual || 0) && (
+                      <p className="text-[10px] font-bold text-amber-600 dark:text-amber-400 flex items-center gap-1">
+                        <AlertCircle className="w-3 h-3 shrink-0" />
+                        <span>Atenção: o valor informado excede o saldo disponível da reserva (o saldo ficará zerado).</span>
+                      </p>
+                    )}
+                  </div>
+                )}
               </>
             )}
 
@@ -1401,7 +1573,7 @@ export function AddTransaction() {
               />
             </div>
 
-            {activeTab !== 'reserva' && (
+            {(activeTab !== 'reserva' || rtType === 'utilizacao') && (
               <label className="flex items-start gap-3 p-3.5 rounded-xl border border-border/80 bg-muted/20 hover:bg-muted/35 transition-colors cursor-pointer select-none">
                 <input
                   type="checkbox"
@@ -1417,7 +1589,7 @@ export function AddTransaction() {
                     </span>
                   </div>
                   <p className="text-[10.5px] text-muted-foreground leading-snug">
-                    Útil para venda de veículo ou movimentações atípicas: o valor entra normalmente no seu balanço e caixa, mas é desconsiderado dos gráficos e indicadores.
+                    Útil para venda/compra de veículo ou ganhos e despesas atípicas: o valor entra normalmente no seu balanço e caixa, mas é desconsiderado dos gráficos e indicadores.
                   </p>
                 </div>
               </label>

@@ -23,7 +23,8 @@ import {
   ChevronRight,
   Calculator,
   Info,
-  Landmark
+  Landmark,
+  Calendar
 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -33,6 +34,8 @@ import {
   formatCurrency, 
   calculateSuggestion, 
   getEffectiveAportesInPeriod,
+  calculateReserveGoalProjection,
+  calculateReserveYieldStats,
   parseLocalDate 
 } from './reserveUtils';
 
@@ -109,13 +112,10 @@ export function ReserveCard({
   const effectiveAportes = getEffectiveAportesInPeriod(reserve, reserveTransactions, globalPeriod, customDateRange);
   const pendingSuggestion = Math.round(Math.max(0, suggested - effectiveAportes) * 100) / 100;
 
-  // Recent transactions count
-  const recentTxs = (reserveTransactions || []).filter(rt => rt.reserve_id === reserve.id);
-  const totalYield = Math.round(
-    recentTxs
-      .filter(rt => rt.type === 'rendimento')
-      .reduce((sum, rt) => sum + Number(rt.amount || 0), 0) * 100
-  ) / 100;
+  // Recent transactions count & Yield stats
+  const yieldStats = calculateReserveYieldStats(reserve, reserveTransactions);
+  const totalYield = yieldStats.yieldAmount;
+  const projection = calculateReserveGoalProjection(reserve, transactions, reserveTransactions);
 
   // Rule label format
   const getRuleBadge = () => {
@@ -343,18 +343,68 @@ export function ReserveCard({
 
           {/* Goal Progress Bar */}
           {hasGoal && (
-            <div className="w-full bg-muted/60 h-1.5 rounded-full overflow-hidden">
-              <motion.div
-                initial={{ width: 0 }}
-                animate={{ width: `${goalProgress}%` }}
-                transition={{ duration: 0.6, ease: 'easeOut' }}
-                className="h-full rounded-full transition-all"
-                style={{ 
-                  background: isGoalReached 
-                    ? '#10b981' 
-                    : `linear-gradient(to right, ${reserve.color || '#6366f1'}, #a855f7)` 
-                }}
-              />
+            <div className="space-y-1.5">
+              <div className="w-full bg-muted/60 h-1.5 rounded-full overflow-hidden">
+                <motion.div
+                  initial={{ width: 0 }}
+                  animate={{ width: `${goalProgress}%` }}
+                  transition={{ duration: 0.6, ease: 'easeOut' }}
+                  className="h-full rounded-full transition-all"
+                  style={{ 
+                    background: isGoalReached 
+                      ? '#10b981' 
+                      : `linear-gradient(to right, ${reserve.color || '#6366f1'}, #a855f7)` 
+                  }}
+                />
+              </div>
+
+              {!isGoalReached && !isInactive && projection.hasGoal && (
+                <div
+                  className="flex items-center justify-between gap-2 text-[10px] text-muted-foreground font-medium"
+                  title={
+                    projection.estimatedDateStr
+                      ? `Previsão de conclusão: ${projection.estimatedDateStr} (ritmo de ${formatCurrency(projection.dailyPace)}/dia)`
+                      : 'Sem histórico suficiente nos últimos 30 dias para estimar prazo'
+                  }
+                >
+                  <span className="truncate font-mono">
+                    Faltam <strong className="text-foreground">{hideValues ? 'R$ •••' : formatCurrency(projection.remaining)}</strong>
+                  </span>
+                  {projection.estimatedDays !== null ? (
+                    <span className="inline-flex items-center gap-1 text-indigo-600 dark:text-indigo-400 font-bold shrink-0">
+                      <Clock className="w-2.5 h-2.5" />
+                      <span>{projection.timelineLabel}</span>
+                    </span>
+                  ) : (
+                    <span className="text-[9.5px] opacity-70 shrink-0">Sem ritmo p/ prazo</span>
+                  )}
+                </div>
+              )}
+
+              {!isGoalReached && !isInactive && projection.targetDateDisplay && projection.requiredDailyForDeadline !== null && (
+                <div
+                  className={`flex items-center justify-between gap-2 px-2 py-1 rounded-lg border text-[10px] font-semibold ${
+                    projection.isDeadlineExpired
+                      ? 'bg-rose-500/10 border-rose-500/25 text-rose-700 dark:text-rose-300'
+                      : projection.isOnTrackForDeadline
+                        ? 'bg-emerald-500/10 border-emerald-500/25 text-emerald-700 dark:text-emerald-300'
+                        : 'bg-amber-500/10 border-amber-500/25 text-amber-700 dark:text-amber-300'
+                  }`}
+                >
+                  <span className="inline-flex items-center gap-1 truncate">
+                    <Calendar className="w-2.5 h-2.5 shrink-0" />
+                    <span className="truncate">
+                      Até {projection.targetDateDisplay}
+                      {projection.daysUntilTarget !== null && projection.daysUntilTarget > 0
+                        ? ` (${projection.daysUntilTarget}d)`
+                        : ' (vencido)'}
+                    </span>
+                  </span>
+                  <span className="font-mono font-black shrink-0">
+                    {hideValues ? 'R$ ••/dia' : `${formatCurrency(projection.requiredDailyForDeadline)}/dia`}
+                  </span>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -382,8 +432,14 @@ export function ReserveCard({
           )}
 
           {totalYield > 0 && (
-            <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-0.5 font-mono">
-              <TrendingUp className="w-2.5 h-2.5" /> {hideValues ? '+R$ •••••' : `+${formatCurrency(totalYield)}`}
+            <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-1 font-mono">
+              <TrendingUp className="w-2.5 h-2.5" />
+              <span>{hideValues ? '+R$ •••••' : `+${formatCurrency(totalYield)}`}</span>
+              {yieldStats.yieldPct > 0 && (
+                <span className="px-1 py-0.2 rounded bg-emerald-500/10 border border-emerald-500/20 text-[9px]">
+                  +{yieldStats.yieldPct.toFixed(1)}%
+                </span>
+              )}
             </span>
           )}
         </div>

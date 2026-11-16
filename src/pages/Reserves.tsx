@@ -10,7 +10,9 @@ import {
   RefreshCw,
   Zap,
   Tag,
-  Archive
+  Archive,
+  ArrowUpDown,
+  PauseCircle
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -19,6 +21,8 @@ import {
   formatCurrency, 
   calculateSuggestion, 
   getEffectiveAportesInPeriod,
+  calculateReserveGoalProjection,
+  calculateReserveYieldStats,
   parseLocalDate,
   generateUUID,
   calculateNextOccurrence,
@@ -107,9 +111,10 @@ export function Reserves() {
     }, { replace: true });
   };
 
-  // Search & Filter in Cards
+  // Search, Filter & Sort in Cards
   const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'with_pending' | 'reached' | 'inactive'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'with_pending' | 'reached' | 'paused' | 'inactive'>('all');
+  const [sortBy, setSortBy] = useState<'pending' | 'urgency' | 'proximity' | 'balance' | 'alpha'>('pending');
 
   // Modals state
   const [showMassAporteModal, setShowMassAporteModal] = useState(false);
@@ -144,6 +149,11 @@ export function Reserves() {
   const FIXED_SUGGESTION_PERIOD = 'month';
   const FIXED_CUSTOM_RANGE = { start: '', end: '' };
 
+  // Paused reserves count (active status, paused automation)
+  const pausedReservesCount = useMemo(() => {
+    return activeReserves.filter(r => r.is_paused).length;
+  }, [activeReserves]);
+
   // Overall consolidated metrics
   const totals = useMemo(() => {
     let totalBalance = 0;
@@ -173,20 +183,42 @@ export function Reserves() {
       totalPendingSuggestion += pending;
     });
 
-    const totalYield = (reserveTransactions || [])
-      .filter(rt => rt.type === 'rendimento')
-      .reduce((sum, rt) => sum + Number(rt.amount || 0), 0);
+    const totalYield = Math.round(
+      (reserveTransactions || [])
+        .filter(rt => rt.type === 'rendimento' && rt.payment_status !== 'pending' && (rt as any).status !== 'pending')
+        .reduce((sum, rt) => sum + Number(rt.amount || 0), 0) * 100
+    ) / 100;
+
+    let totalDepositedBase = 0;
+    let topYieldReserve: { name: string; yieldAmount: number; yieldPct: number } | null = null;
+    (reserves || []).forEach(r => {
+      const stats = calculateReserveYieldStats(r, reserveTransactions);
+      totalDepositedBase += stats.depositedBase;
+      if (stats.yieldAmount > 0 && (!topYieldReserve || stats.yieldAmount > topYieldReserve.yieldAmount)) {
+        topYieldReserve = {
+          name: r.name,
+          yieldAmount: stats.yieldAmount,
+          yieldPct: stats.yieldPct,
+        };
+      }
+    });
+
+    const yieldPct = totalDepositedBase > 0 && totalYield > 0
+      ? Math.round((totalYield / totalDepositedBase) * 1000) / 10
+      : 0;
 
     return {
       totalBalance,
       totalGoal,
       totalPendingSuggestion,
       totalYield,
+      yieldPct,
+      topYieldReserve,
       activeCount: activeReserves.filter(r => !r.is_paused).length
     };
-  }, [activeReserves, transactions, reserveTransactions]);
+  }, [activeReserves, reserves, transactions, reserveTransactions]);
 
-  // Filtered reserves list for cards with suggested amounts first
+  // Filtered reserves list for cards with configurable sorting
   const filteredCards = useMemo(() => {
     const baseList = statusFilter === 'inactive' ? inactiveReserves : activeReserves;
     const list = baseList.filter(r => {
@@ -198,6 +230,9 @@ export function Reserves() {
       // Status
       if (statusFilter === 'active') {
         return !r.is_paused && r.status !== 'inactive';
+      }
+      if (statusFilter === 'paused') {
+        return Boolean(r.is_paused) && r.status !== 'inactive';
       }
       if (statusFilter === 'with_pending') {
         const sugg = calculateSuggestion(
@@ -227,7 +262,6 @@ export function Reserves() {
       return true;
     });
 
-    // Helper to get pending suggestion for sorting
     const getPendingAmount = (r: Reserve) => {
       const sugg = calculateSuggestion(
         r,
@@ -245,8 +279,49 @@ export function Reserves() {
       return Math.max(0, Math.round((sugg - eff) * 100) / 100);
     };
 
-    // Sort: reserves with suggestions first (descending by suggestion amount), then alphabetical
-    return list.sort((a, b) => {
+    const getGoalProgress = (r: Reserve) => {
+      const goal = Number(r.meta_objetivo || 0);
+      const bal = Number(r.saldo_atual || 0);
+      if (goal <= 0) return -1;
+      return bal / goal;
+    };
+
+    return [...list].sort((a, b) => {
+      if (sortBy === 'urgency') {
+        const projA = calculateReserveGoalProjection(a, transactions, reserveTransactions);
+        const projB = calculateReserveGoalProjection(b, transactions, reserveTransactions);
+        const daysA = projA.hasGoal && !projA.isReached && projA.estimatedDays !== null ? projA.estimatedDays : Number.MAX_SAFE_INTEGER;
+        const daysB = projB.hasGoal && !projB.isReached && projB.estimatedDays !== null ? projB.estimatedDays : Number.MAX_SAFE_INTEGER;
+        if (daysA !== daysB) return daysA - daysB;
+        const progA = getGoalProgress(a);
+        const progB = getGoalProgress(b);
+        if (progA !== progB) return progB - progA;
+        return a.name.localeCompare(b.name);
+      }
+
+      if (sortBy === 'proximity') {
+        const progA = getGoalProgress(a);
+        const progB = getGoalProgress(b);
+        const aUnreached = progA >= 0 && progA < 1;
+        const bUnreached = progB >= 0 && progB < 1;
+        if (aUnreached && !bUnreached) return -1;
+        if (bUnreached && !aUnreached) return 1;
+        if (aUnreached && bUnreached && progB !== progA) return progB - progA;
+        if (progB !== progA) return progB - progA;
+        return a.name.localeCompare(b.name);
+      }
+
+      if (sortBy === 'balance') {
+        const balDiff = Number(b.saldo_atual || 0) - Number(a.saldo_atual || 0);
+        if (Math.abs(balDiff) > 0.009) return balDiff;
+        return a.name.localeCompare(b.name);
+      }
+
+      if (sortBy === 'alpha') {
+        return a.name.localeCompare(b.name);
+      }
+
+      // Default 'pending': reserves with suggestions first (descending), then alphabetical
       const pendA = getPendingAmount(a);
       const pendB = getPendingAmount(b);
 
@@ -258,7 +333,7 @@ export function Reserves() {
 
       return a.name.localeCompare(b.name);
     });
-  }, [activeReserves, searchTerm, statusFilter, transactions, reserveTransactions]);
+  }, [activeReserves, inactiveReserves, searchTerm, statusFilter, sortBy, transactions, reserveTransactions]);
 
   // ----------------------------------------------------
   // HANDLERS
@@ -365,6 +440,7 @@ export function Reserves() {
     recurrence_frequency?: RecurrenceFrequency;
     recurrence_installments?: number;
     generate_future?: boolean;
+    ignore_in_charts?: boolean;
   }) => {
     if (!selectedReserveForAction) return;
     const res = selectedReserveForAction;
@@ -374,6 +450,7 @@ export function Reserves() {
     const frequency = data.recurrence_frequency || 'monthly';
     const totalInstallments = Math.max(2, Math.min(60, Number(data.recurrence_installments) || 12));
     const shouldGenerateFuture = isRecurring && Boolean(data.generate_future);
+    const ignoreInCharts = Boolean(data.ignore_in_charts);
 
     const userId = await getEffectiveUserId();
 
@@ -402,6 +479,7 @@ export function Reserves() {
         installment_total: totalInstallments,
         installment_index: 1,
         total_installments: totalInstallments,
+        ignore_in_charts: ignoreInCharts,
         created_at: new Date().toISOString(),
       };
 
@@ -428,6 +506,7 @@ export function Reserves() {
           installment_total: totalInstallments,
           installment_index: i,
           total_installments: totalInstallments,
+          ignore_in_charts: ignoreInCharts,
           created_at: new Date().toISOString(),
         };
         futureTxs.push(futureRt);
@@ -462,6 +541,7 @@ export function Reserves() {
           recurrence_group_id: rt.recurrence_group_id,
           installment_number: rt.installment_number,
           installment_total: rt.installment_total,
+          ignore_in_charts: rt.ignore_in_charts,
           created_at: rt.created_at,
         });
       });
@@ -487,6 +567,7 @@ export function Reserves() {
         is_recurring: isRecurring,
         recurrence_frequency: isRecurring ? frequency : undefined,
         recurrence_installments: isRecurring ? totalInstallments : undefined,
+        ignore_in_charts: ignoreInCharts,
       });
 
       if (isPaid) {
@@ -774,6 +855,8 @@ export function Reserves() {
         totalGoal={totals.totalGoal}
         totalPendingSuggestion={totals.totalPendingSuggestion}
         totalYield={totals.totalYield}
+        yieldPct={totals.yieldPct}
+        topYieldReserve={totals.topYieldReserve}
         activeCount={totals.activeCount}
         activeTab={activeTab}
         setActiveTab={handleTabChange}
@@ -789,56 +872,100 @@ export function Reserves() {
       {/* Main Tab Content */}
       {activeTab === 'cards' ? (
         <div className="space-y-4 text-left">
-          {/* Sub-header Filter & Search bar */}
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-card p-3 rounded-2xl border border-border/80 shadow-xs">
-            <div className="relative flex-1">
-              <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                placeholder="Buscar reserva..."
-                value={searchTerm}
-                onChange={e => setSearchTerm(e.target.value)}
-                className="pl-8 h-8 text-xs rounded-xl"
-              />
+          {/* Sub-header Filter, Sort & Search bar */}
+          <div className="flex flex-col gap-2.5 bg-card p-3 rounded-2xl border border-border/80 shadow-xs">
+            <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-2.5">
+              <div className="relative flex-1">
+                <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  placeholder="Buscar reserva..."
+                  value={searchTerm}
+                  onChange={e => setSearchTerm(e.target.value)}
+                  className="pl-8 h-8 text-xs rounded-xl"
+                />
+              </div>
+
+              <div className="flex items-center gap-1 shrink-0 bg-muted/40 p-1 rounded-xl border border-border/80 text-[11px] font-bold overflow-x-auto">
+                <button
+                  type="button"
+                  onClick={() => setStatusFilter('all')}
+                  className={`px-3 py-1 rounded-lg transition-all cursor-pointer shrink-0 ${
+                    statusFilter === 'all' ? 'bg-card text-foreground shadow-xs' : 'text-muted-foreground'
+                  }`}
+                >
+                  Todas ({activeReserves.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setStatusFilter('with_pending')}
+                  className={`px-3 py-1 rounded-lg transition-all cursor-pointer shrink-0 ${
+                    statusFilter === 'with_pending' ? 'bg-card text-amber-600 dark:text-amber-400 shadow-xs' : 'text-muted-foreground'
+                  }`}
+                >
+                  C/ Pendência
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setStatusFilter('reached')}
+                  className={`px-3 py-1 rounded-lg transition-all cursor-pointer shrink-0 ${
+                    statusFilter === 'reached' ? 'bg-card text-emerald-600 dark:text-emerald-400 shadow-xs' : 'text-muted-foreground'
+                  }`}
+                >
+                  Meta Batida
+                </button>
+                {pausedReservesCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setStatusFilter('paused')}
+                    className={`px-3 py-1 rounded-lg transition-all cursor-pointer shrink-0 flex items-center gap-1 ${
+                      statusFilter === 'paused' ? 'bg-card text-amber-600 dark:text-amber-400 shadow-xs' : 'text-muted-foreground'
+                    }`}
+                  >
+                    <PauseCircle className="w-3 h-3" />
+                    <span>Pausadas ({pausedReservesCount})</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setStatusFilter('inactive')}
+                  className={`px-3 py-1 rounded-lg transition-all cursor-pointer shrink-0 flex items-center gap-1 ${
+                    statusFilter === 'inactive' ? 'bg-card text-foreground shadow-xs font-black' : 'text-muted-foreground'
+                  }`}
+                >
+                  <Archive className="w-3 h-3" />
+                  <span>Inativas ({inactiveReserves.length})</span>
+                </button>
+              </div>
             </div>
 
-            <div className="flex items-center gap-1 shrink-0 bg-muted/40 p-1 rounded-xl border border-border/80 text-[11px] font-bold overflow-x-auto">
-              <button
-                type="button"
-                onClick={() => setStatusFilter('all')}
-                className={`px-3 py-1 rounded-lg transition-all cursor-pointer shrink-0 ${
-                  statusFilter === 'all' ? 'bg-card text-foreground shadow-xs' : 'text-muted-foreground'
-                }`}
-              >
-                Todas ({activeReserves.length})
-              </button>
-              <button
-                type="button"
-                onClick={() => setStatusFilter('with_pending')}
-                className={`px-3 py-1 rounded-lg transition-all cursor-pointer shrink-0 ${
-                  statusFilter === 'with_pending' ? 'bg-card text-amber-600 dark:text-amber-400 shadow-xs' : 'text-muted-foreground'
-                }`}
-              >
-                C/ Pendência
-              </button>
-              <button
-                type="button"
-                onClick={() => setStatusFilter('reached')}
-                className={`px-3 py-1 rounded-lg transition-all cursor-pointer shrink-0 ${
-                  statusFilter === 'reached' ? 'bg-card text-emerald-600 dark:text-emerald-400 shadow-xs' : 'text-muted-foreground'
-                }`}
-              >
-                Meta Batida
-              </button>
-              <button
-                type="button"
-                onClick={() => setStatusFilter('inactive')}
-                className={`px-3 py-1 rounded-lg transition-all cursor-pointer shrink-0 flex items-center gap-1 ${
-                  statusFilter === 'inactive' ? 'bg-card text-foreground shadow-xs font-black' : 'text-muted-foreground'
-                }`}
-              >
-                <Archive className="w-3 h-3" />
-                <span>Inativas ({inactiveReserves.length})</span>
-              </button>
+            {/* Priority Sort Controls */}
+            <div className="flex items-center justify-between gap-2 pt-2 border-t border-border/50 flex-wrap">
+              <div className="flex items-center gap-1.5 text-[10px] font-bold text-muted-foreground uppercase tracking-wider shrink-0">
+                <ArrowUpDown className="w-3 h-3 text-indigo-500" />
+                <span>Ordenar por:</span>
+              </div>
+              <div className="flex items-center gap-1 flex-wrap text-[10.5px] font-bold">
+                {[
+                  { id: 'pending' as const, label: 'Sugestões Primeiro' },
+                  { id: 'urgency' as const, label: 'Urgência de Meta' },
+                  { id: 'proximity' as const, label: 'Mais Próximas (100%)' },
+                  { id: 'balance' as const, label: 'Maior Saldo' },
+                  { id: 'alpha' as const, label: 'A-Z' },
+                ].map(opt => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => setSortBy(opt.id)}
+                    className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer border ${
+                      sortBy === opt.id
+                        ? 'bg-indigo-600 text-white border-indigo-600 shadow-2xs'
+                        : 'bg-muted/30 text-muted-foreground border-border/60 hover:text-foreground hover:bg-muted/60'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
 
@@ -986,6 +1113,7 @@ export function Reserves() {
         }}
         reserveToEdit={reserveToEdit}
         transactions={transactions}
+        reserveTransactions={reserveTransactions}
         settings={settings}
         onSave={handleSaveReserve}
       />

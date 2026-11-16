@@ -19,7 +19,8 @@ import {
   Info,
   Landmark,
   ArrowDownLeft,
-  Wallet
+  Wallet,
+  EyeOff
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -311,6 +312,7 @@ interface WithdrawModalProps {
     recurrence_frequency?: 'daily' | 'weekly' | 'biweekly' | 'monthly' | 'bimonthly' | 'quarterly' | 'semiannual' | 'yearly';
     recurrence_installments?: number;
     generate_future?: boolean;
+    ignore_in_charts?: boolean;
   }) => Promise<void>;
 }
 
@@ -336,6 +338,7 @@ export function WithdrawModal({
   const [recurrenceFrequency, setRecurrenceFrequency] = useState<'daily' | 'weekly' | 'biweekly' | 'monthly' | 'bimonthly' | 'quarterly' | 'semiannual' | 'yearly'>('monthly');
   const [recurrenceInstallments, setRecurrenceInstallments] = useState('12');
   const [generateFuture, setGenerateFuture] = useState(true);
+  const [ignoreInCharts, setIgnoreInCharts] = useState(false);
 
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -367,6 +370,7 @@ export function WithdrawModal({
       setRecurrenceFrequency('monthly');
       setRecurrenceInstallments('12');
       setGenerateFuture(true);
+      setIgnoreInCharts(false);
 
       if (mode === 'transfer_to_cash') {
         setDescription(`Transferência para o Caixa: ${reserve.name}`);
@@ -429,6 +433,7 @@ export function WithdrawModal({
         recurrence_frequency: !isTransfer && isRecurring ? recurrenceFrequency : undefined,
         recurrence_installments: numInstallments,
         generate_future: !isTransfer && isRecurring ? generateFuture : false,
+        ignore_in_charts: !isTransfer ? ignoreInCharts : false,
       });
       onClose();
     } catch (err) {
@@ -828,6 +833,24 @@ export function WithdrawModal({
                   </div>
                 )}
               </div>
+
+              <label className="flex items-start gap-2.5 p-3 rounded-2xl border border-border/80 bg-muted/20 hover:bg-muted/35 transition-colors cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={ignoreInCharts}
+                  onChange={e => setIgnoreInCharts(e.target.checked)}
+                  className="h-4 w-4 mt-0.5 rounded border-border text-primary focus:ring-primary cursor-pointer accent-primary"
+                />
+                <div className="space-y-0.5">
+                  <span className="text-xs font-extrabold text-foreground flex items-center gap-1.5">
+                    <EyeOff className="w-3.5 h-3.5 text-muted-foreground" />
+                    Ignorar nos gráficos e médias
+                  </span>
+                  <p className="text-[10px] text-muted-foreground leading-snug">
+                    Abate o saldo da reserva normalmente, mas desconsidera esta despesa dos gráficos e indicadores do painel.
+                  </p>
+                </div>
+              </label>
             </>
           )}
 

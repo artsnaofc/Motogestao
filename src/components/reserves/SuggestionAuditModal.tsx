@@ -17,7 +17,7 @@ import {
   Receipt
 } from 'lucide-react';
 import { Reserve, Transaction, ReserveTransaction } from '../../types';
-import { getSuggestionAudit, SuggestionAuditResult, formatCurrency } from './reserveUtils';
+import { getSuggestionAudit, SuggestionAuditResult, formatCurrency, calculateReserveGoalProjection } from './reserveUtils';
 import { Button } from '@/components/ui/button';
 
 interface SuggestionAuditModalProps {
@@ -140,6 +140,31 @@ export function SuggestionAuditModal({
               </div>
             </div>
           )}
+
+          {!audit.isGoalReached && reserve.target_date && (() => {
+            const proj = calculateReserveGoalProjection(reserve, transactions, reserveTransactions);
+            if (!proj.targetDateDisplay || proj.requiredDailyForDeadline === null) return null;
+            return (
+              <div className={`p-3 rounded-xl border flex items-center justify-between gap-2 text-xs ${
+                proj.isDeadlineExpired
+                  ? 'bg-rose-500/10 border-rose-500/25 text-rose-700 dark:text-rose-300'
+                  : proj.isOnTrackForDeadline
+                    ? 'bg-emerald-500/10 border-emerald-500/25 text-emerald-700 dark:text-emerald-300'
+                    : 'bg-amber-500/10 border-amber-500/25 text-amber-800 dark:text-amber-300'
+              }`}>
+                <div className="flex items-center gap-2 min-w-0">
+                  <Calendar className="w-4 h-4 shrink-0" />
+                  <span className="font-semibold">
+                    Meta com prazo fixo até <strong>{proj.targetDateDisplay}</strong>
+                    {proj.daysUntilTarget !== null && proj.daysUntilTarget > 0 ? ` (${proj.daysUntilTarget} dias restantes)` : ' (prazo expirado)'}
+                  </span>
+                </div>
+                <span className="font-mono font-black shrink-0">
+                  {formatCurrency(proj.requiredDailyForDeadline)}/dia
+                </span>
+              </div>
+            );
+          })()}
 
           {/* Key Metric Cards */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
