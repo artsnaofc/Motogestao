@@ -184,6 +184,14 @@ export function PlanningCalendar() {
   // Delete Parcel Group Confirmation Dialog
   const [deleteTargetItem, setDeleteTargetItem] = useState<NormalizedPlannedItem | null>(null);
 
+  // Confirm Shift to Next Invoice / Next Month Dialog
+  const [shiftConfirmTarget, setShiftConfirmTarget] = useState<
+    | { mode: 'single'; item: NormalizedPlannedItem; deltaMonths: number }
+    | { mode: 'batch'; items: NormalizedPlannedItem[]; deltaMonths: number }
+    | null
+  >(null);
+  const [confirmingShift, setConfirmingShift] = useState(false);
+
   // Category Budget Quick Modal
   const [budgetModalCategory, setBudgetModalCategory] = useState<string | null>(null);
   const [budgetModalLimit, setBudgetModalLimit] = useState<string>('');
@@ -768,6 +776,48 @@ export function PlanningCalendar() {
     [selectedDayItems]
   );
 
+  const selectedDaySummary = useMemo(() => {
+    let totalExpenses = 0;
+    let paidExpenses = 0;
+    let pendingExpenses = 0;
+    let totalIncomes = 0;
+    let paidIncomes = 0;
+    let pendingIncomes = 0;
+    let overdueCount = 0;
+
+    selectedDayItems.forEach(item => {
+      if (item.kind === 'income') {
+        totalIncomes += item.amount;
+        if (item.paymentStatus === 'paid') paidIncomes += item.amount;
+        else pendingIncomes += item.amount;
+      } else {
+        totalExpenses += item.amount;
+        if (item.paymentStatus === 'paid') paidExpenses += item.amount;
+        else {
+          pendingExpenses += item.amount;
+          if (item.dateStr < todayStr) overdueCount += 1;
+        }
+      }
+    });
+
+    const pendingCount = selectedDayItems.filter(i => i.paymentStatus === 'pending').length;
+    const allSettled = selectedDayItems.length > 0 && pendingCount === 0;
+    const netDay = totalIncomes - totalExpenses;
+
+    return {
+      totalExpenses,
+      paidExpenses,
+      pendingExpenses,
+      totalIncomes,
+      paidIncomes,
+      pendingIncomes,
+      overdueCount,
+      pendingCount,
+      allSettled,
+      netDay,
+    };
+  }, [selectedDayItems, todayStr]);
+
   // Card Manager handlers
   const handleOpenNewCard = (fromEntryModal = false) => {
     setReopenEntryAfterCard(fromEntryModal);
@@ -1180,9 +1230,39 @@ export function PlanningCalendar() {
         );
       }
       const label = format(new Date(nextDate + 'T12:00:00'), 'dd/MM/yyyy');
-      toast.success(`Vencimento alterado para ${label}!`);
+      toast.success(
+        item.isCard
+          ? `Enviado para a fatura de ${format(new Date(nextDate + 'T12:00:00'), 'MMM/yyyy', { locale: ptBR })} (${label})!`
+          : `Vencimento alterado para ${label}!`
+      );
     } catch {
       toast.error('Erro ao reagendar lançamento.');
+    }
+  };
+
+  const handleConfirmShiftTarget = async () => {
+    if (!shiftConfirmTarget || confirmingShift) return;
+    setConfirmingShift(true);
+    try {
+      if (shiftConfirmTarget.mode === 'single') {
+        await handleShiftItemMonth(shiftConfirmTarget.item, shiftConfirmTarget.deltaMonths);
+      } else {
+        for (const item of shiftConfirmTarget.items) {
+          const nextDate = calculateNextOccurrence(item.dateStr, 'monthly', shiftConfirmTarget.deltaMonths);
+          if (item.isReserveTx) {
+            await updateReserveTransaction(item.id, { date: nextDate, due_date: nextDate });
+          } else {
+            await updateTransaction(item.id, { date: nextDate, due_date: nextDate }, { silent: true });
+          }
+        }
+        setSelectedBatchIds([]);
+        toast.success(`${shiftConfirmTarget.items.length} lançamento(s) enviado(s) para o próximo mês!`);
+      }
+      setShiftConfirmTarget(null);
+    } catch {
+      toast.error('Erro ao transferir lançamento(s).');
+    } finally {
+      setConfirmingShift(false);
     }
   };
 
@@ -1318,23 +1398,10 @@ export function PlanningCalendar() {
     }
   };
 
-  const handleBatchShiftNextMonth = async () => {
+  const handleRequestBatchShiftNextMonth = () => {
     const targets = monthItems.filter(i => selectedBatchIds.includes(i.id));
     if (targets.length === 0) return;
-    try {
-      for (const item of targets) {
-        const nextDate = calculateNextOccurrence(item.dateStr, 'monthly', 1);
-        if (item.isReserveTx) {
-          await updateReserveTransaction(item.id, { date: nextDate, due_date: nextDate });
-        } else {
-          await updateTransaction(item.id, { date: nextDate, due_date: nextDate }, { silent: true });
-        }
-      }
-      setSelectedBatchIds([]);
-      toast.success(`${targets.length} lançamento(s) adiado(s) em +1 mês!`);
-    } catch {
-      toast.error('Erro ao adiar itens selecionados.');
-    }
+    setShiftConfirmTarget({ mode: 'batch', items: targets, deltaMonths: 1 });
   };
 
   const handleSettleCardInvoice = async (card: CreditCardConfig) => {
@@ -2336,10 +2403,10 @@ export function PlanningCalendar() {
                         type="button"
                         size="sm"
                         variant="outline"
-                        onClick={handleBatchShiftNextMonth}
+                        onClick={handleRequestBatchShiftNextMonth}
                         className="h-7 rounded-lg text-[11px] font-bold cursor-pointer"
                       >
-                        <CalendarPlus className="w-3.5 h-3.5 mr-1" /> Adiar +1 Mês
+                        <CalendarPlus className="w-3.5 h-3.5 mr-1" /> Mandar p/ Próx. Mês
                       </Button>
                       <Button
                         type="button"
@@ -2823,7 +2890,95 @@ export function PlanningCalendar() {
                     </div>
                   </div>
                 ) : (
-                  <div className="space-y-2.5 max-h-[430px] overflow-y-auto pr-1 custom-scrollbar">
+                  <div className="space-y-3">
+                    {/* Resumo Financeiro do Dia Selecionado */}
+                    <div
+                      className={`rounded-xl border p-3 space-y-2 ${
+                        selectedDaySummary.allSettled
+                          ? 'border-emerald-500/35 bg-emerald-500/[0.06]'
+                          : selectedDaySummary.overdueCount > 0
+                            ? 'border-rose-500/35 bg-rose-500/[0.05]'
+                            : 'border-border/70 bg-muted/20'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span
+                          className={`inline-flex items-center gap-1.5 text-[10.5px] font-extrabold uppercase tracking-wider ${
+                            selectedDaySummary.allSettled
+                              ? 'text-emerald-600 dark:text-emerald-400'
+                              : selectedDaySummary.overdueCount > 0
+                                ? 'text-rose-600 dark:text-rose-400'
+                                : 'text-amber-600 dark:text-amber-400'
+                          }`}
+                        >
+                          {selectedDaySummary.allSettled ? (
+                            <>
+                              <CheckCircle2 className="w-3.5 h-3.5" /> Tudo quitado no dia
+                            </>
+                          ) : selectedDaySummary.overdueCount > 0 ? (
+                            <>
+                              <AlertTriangle className="w-3.5 h-3.5" /> {selectedDaySummary.pendingCount} pendência(s) em atraso
+                            </>
+                          ) : (
+                            <>
+                              <Clock className="w-3.5 h-3.5" /> {selectedDaySummary.pendingCount} de {selectedDayItems.length} pendente(s)
+                            </>
+                          )}
+                        </span>
+                        <span className="text-[10px] font-bold text-muted-foreground tabular-nums">
+                          {selectedDayItems.length} {selectedDayItems.length === 1 ? 'lançamento' : 'lançamentos'}
+                        </span>
+                      </div>
+
+                      <div className="flex flex-wrap items-end justify-between gap-3 pt-1 border-t border-border/40">
+                        {selectedDaySummary.totalExpenses > 0 && (
+                          <div>
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block">
+                              Total Saídas do Dia
+                            </span>
+                            <span className="text-base font-black font-mono tabular-nums text-foreground">
+                              {formatCurrency(selectedDaySummary.totalExpenses)}
+                            </span>
+                          </div>
+                        )}
+
+                        {selectedDaySummary.totalIncomes > 0 && (
+                          <div>
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block">
+                              Total Entradas
+                            </span>
+                            <span className="text-base font-black font-mono tabular-nums text-emerald-600 dark:text-emerald-400">
+                              +{formatCurrency(selectedDaySummary.totalIncomes)}
+                            </span>
+                          </div>
+                        )}
+
+                        <div className="text-right ml-auto space-y-0.5 text-[10.5px] font-bold tabular-nums">
+                          {selectedDaySummary.paidExpenses > 0 && (
+                            <p className="text-emerald-600 dark:text-emerald-400 font-mono">
+                              Quitado: {formatCurrency(selectedDaySummary.paidExpenses)}
+                            </p>
+                          )}
+                          {selectedDaySummary.pendingExpenses > 0 && (
+                            <p className="text-amber-600 dark:text-amber-400 font-mono">
+                              A pagar: {formatCurrency(selectedDaySummary.pendingExpenses)}
+                            </p>
+                          )}
+                          {selectedDaySummary.totalIncomes > 0 && selectedDaySummary.totalExpenses > 0 && (
+                            <p
+                              className={`font-mono font-black ${
+                                selectedDaySummary.netDay >= 0
+                                  ? 'text-emerald-600 dark:text-emerald-400'
+                                  : 'text-rose-600 dark:text-rose-400'
+                              }`}
+                            >
+                              Saldo: {formatCurrency(selectedDaySummary.netDay)}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
                     {selectedDayPendingExpenses.length > 1 && (
                       <Button
                         type="button"
@@ -2837,152 +2992,189 @@ export function PlanningCalendar() {
                       </Button>
                     )}
 
-                    {selectedDayItems.map(item => {
-                      const cardObj = getCardById(item.cardId);
-                      const isOverdue =
-                        item.kind === 'expense' &&
-                        item.paymentStatus === 'pending' &&
-                        item.dateStr < todayStr;
-                      return (
-                        <div
-                          key={item.id}
-                          className={`rounded-xl border p-3 space-y-2 ${
-                            item.paymentStatus === 'paid'
-                              ? 'border-emerald-500/30 bg-emerald-500/[0.04]'
-                              : item.kind === 'income'
-                                ? 'border-emerald-500/35 bg-emerald-500/[0.06]'
-                                : isOverdue
-                                  ? 'border-rose-500/45 bg-rose-500/10'
-                                  : 'border-border/70 bg-muted/15'
-                          }`}
-                        >
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="min-w-0">
-                              <div className="flex items-center gap-1.5 flex-wrap">
-                                {cardObj && (
-                                  <span
-                                    className="text-[9px] font-black text-white px-1.5 py-0.5 rounded"
-                                    style={{ backgroundColor: cardObj.color }}
-                                  >
-                                    {cardObj.name}
+                    {/* Lista Refinada dos Lançamentos do Dia */}
+                    <div className="rounded-xl border border-border/70 bg-card divide-y divide-border/50 max-h-[390px] overflow-y-auto custom-scrollbar">
+                      {selectedDayItems.map(item => {
+                        const cardObj = getCardById(item.cardId);
+                        const isOverdue =
+                          item.kind === 'expense' &&
+                          item.paymentStatus === 'pending' &&
+                          item.dateStr < todayStr;
+                        const isPaid = item.paymentStatus === 'paid';
+                        const stripeClass =
+                          item.kind === 'income'
+                            ? 'border-l-emerald-500'
+                            : isPaid
+                              ? 'border-l-emerald-500/70'
+                              : isOverdue
+                                ? 'border-l-rose-500'
+                                : 'border-l-amber-500';
+
+                        return (
+                          <div
+                            key={item.id}
+                            className={`p-3 border-l-[3px] transition-colors hover:bg-muted/20 ${stripeClass}`}
+                          >
+                            <div className="flex items-start justify-between gap-2.5">
+                              <div className="min-w-0 flex-1 space-y-0.5">
+                                <div className="flex items-center gap-1.5 flex-wrap text-[10px]">
+                                  {cardObj && (
+                                    <span className="inline-flex items-center gap-1 font-extrabold text-foreground">
+                                      <span
+                                        className="w-2 h-2 rounded-full shrink-0"
+                                        style={{ backgroundColor: cardObj.color }}
+                                      />
+                                      <span>{cardObj.name}</span>
+                                      <span className="text-muted-foreground/50">•</span>
+                                    </span>
+                                  )}
+                                  {item.kind === 'income' && (
+                                    <span className="font-extrabold text-emerald-600 dark:text-emerald-400">
+                                      Receita •
+                                    </span>
+                                  )}
+                                  <span className="font-semibold text-muted-foreground truncate">
+                                    {item.category}
                                   </span>
-                                )}
-                                {item.kind === 'income' && (
-                                  <span className="text-[9px] font-black text-emerald-700 dark:text-emerald-400 bg-emerald-500/15 px-1.5 py-0.5 rounded">
-                                    Receita
-                                  </span>
-                                )}
-                                <span className="text-[10px] font-bold text-muted-foreground">
-                                  {item.category}
+                                  {item.installmentNumber && item.installmentTotal && (
+                                    <span className="font-mono tabular-nums text-[9.5px] font-bold text-muted-foreground bg-muted/60 px-1 rounded">
+                                      {item.installmentNumber}/{item.installmentTotal}
+                                    </span>
+                                  )}
+                                </div>
+
+                                <p className="text-xs font-black text-foreground leading-snug break-words">
+                                  {item.description}
+                                </p>
+                              </div>
+
+                              <div className="text-right shrink-0 space-y-0.5">
+                                <span
+                                  className={`block text-sm font-black font-mono tabular-nums ${
+                                    item.kind === 'income' || isPaid
+                                      ? 'text-emerald-600 dark:text-emerald-400'
+                                      : isOverdue
+                                        ? 'text-rose-600 dark:text-rose-400'
+                                        : 'text-foreground'
+                                  }`}
+                                >
+                                  {item.kind === 'income' ? '+' : ''}
+                                  {formatCurrency(item.amount)}
+                                </span>
+                                <span
+                                  className={`inline-flex items-center gap-1 text-[9.5px] font-extrabold ${
+                                    isPaid
+                                      ? 'text-emerald-600 dark:text-emerald-400'
+                                      : isOverdue
+                                        ? 'text-rose-600 dark:text-rose-400'
+                                        : item.kind === 'income'
+                                          ? 'text-emerald-600 dark:text-emerald-400'
+                                          : 'text-amber-600 dark:text-amber-400'
+                                  }`}
+                                >
+                                  {isPaid ? (
+                                    <>
+                                      <CheckCircle2 className="w-2.5 h-2.5" />
+                                      {item.kind === 'income' ? 'Recebida' : 'Quitado'}
+                                    </>
+                                  ) : isOverdue ? (
+                                    <>
+                                      <AlertTriangle className="w-2.5 h-2.5" /> Vencida
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Clock className="w-2.5 h-2.5" />
+                                      {item.kind === 'income' ? 'A receber' : 'A pagar'}
+                                    </>
+                                  )}
                                 </span>
                               </div>
-                              <p className="text-xs font-black text-foreground mt-0.5 break-words">
-                                {item.description}
-                              </p>
                             </div>
 
-                            <span
-                              className={`text-sm font-black font-mono tabular-nums shrink-0 ${
-                                item.kind === 'income' || item.paymentStatus === 'paid'
-                                  ? 'text-emerald-600 dark:text-emerald-400'
-                                  : 'text-rose-600 dark:text-rose-400'
-                              }`}
-                            >
-                              {item.kind === 'income' ? '+' : ''}
-                              {formatCurrency(item.amount)}
-                            </span>
-                          </div>
-
-                          <div className="flex flex-wrap items-center justify-between gap-1.5 pt-1.5 border-t border-border/40">
-                            <span
-                              className={`text-[10px] font-extrabold ${
-                                item.paymentStatus === 'paid'
-                                  ? 'text-emerald-600 dark:text-emerald-400'
-                                  : isOverdue
-                                    ? 'text-rose-600 dark:text-rose-400'
-                                    : item.kind === 'income'
-                                      ? 'text-emerald-600 dark:text-emerald-400'
-                                      : 'text-amber-600 dark:text-amber-400'
-                              }`}
-                            >
-                              {item.paymentStatus === 'paid'
-                                ? item.kind === 'income'
-                                  ? '✓ Recebida'
-                                  : '✓ Quitado'
-                                : isOverdue
-                                  ? '⚠️ Vencida'
-                                  : item.kind === 'income'
-                                    ? '⏳ A receber'
-                                    : '⏳ A pagar'}
-                            </span>
-
-                            <div className="flex items-center gap-1">
+                            <div className="flex items-center justify-between gap-2 pt-2 mt-2 border-t border-border/35">
                               <Button
                                 type="button"
                                 size="sm"
                                 variant="outline"
                                 onClick={() => handleTogglePayItem(item)}
-                                className={`h-7 px-2 rounded-lg text-[10px] font-extrabold cursor-pointer ${
+                                className={`h-7 px-2.5 rounded-lg text-[10.5px] font-extrabold cursor-pointer ${
                                   item.paymentStatus === 'pending'
                                     ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20'
-                                    : 'text-muted-foreground'
+                                    : 'text-muted-foreground hover:text-foreground'
                                 }`}
                               >
                                 {item.paymentStatus === 'pending'
                                   ? item.kind === 'income'
-                                    ? 'Receber'
+                                    ? 'Confirmar Entrada'
                                     : 'Quitar'
                                   : 'Reabrir'}
                               </Button>
-                              <button
-                                type="button"
-                                onClick={() => handleShiftItemMonth(item, 1)}
-                                className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer"
-                                title="Adiar +1 mês"
-                              >
-                                <CalendarPlus className="w-3.5 h-3.5" />
-                              </button>
-                              {!item.isReserveTx && (
+
+                              <div className="flex items-center gap-0.5">
                                 <button
                                   type="button"
-                                  onClick={() => handleDuplicateItemNextMonth(item)}
+                                  onClick={() =>
+                                    setShiftConfirmTarget({ mode: 'single', item, deltaMonths: 1 })
+                                  }
+                                  className="p-1.5 rounded-lg text-muted-foreground hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-500/10 transition-colors cursor-pointer"
+                                  title={
+                                    item.isCard
+                                      ? 'Mandar para próxima fatura (+1 mês)'
+                                      : 'Adiar para próximo mês (+1 mês)'
+                                  }
+                                >
+                                  <CalendarPlus className="w-3.5 h-3.5" />
+                                </button>
+                                {!item.isReserveTx && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDuplicateItemNextMonth(item)}
+                                    className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer"
+                                    title="Duplicar para o próximo mês"
+                                  >
+                                    <Copy className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenEditItem(item)}
                                   className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer"
-                                  title="Duplicar para o próximo mês"
+                                  title="Editar"
                                 >
-                                  <Copy className="w-3.5 h-3.5" />
+                                  <Edit2 className="w-3.5 h-3.5" />
                                 </button>
-                              )}
-                              <button
-                                type="button"
-                                onClick={() => handleOpenEditItem(item)}
-                                className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer"
-                                title="Editar"
-                              >
-                                <Edit2 className="w-3.5 h-3.5" />
-                              </button>
-                              {!item.isReserveTx && (
-                                <button
-                                  type="button"
-                                  onClick={() => handleRequestDeleteItem(item)}
-                                  className="p-1.5 rounded-lg text-muted-foreground hover:text-rose-500 hover:bg-rose-500/10 transition-colors cursor-pointer"
-                                  title="Excluir"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                              )}
+                                {!item.isReserveTx && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRequestDeleteItem(item)}
+                                    className="p-1.5 rounded-lg text-muted-foreground hover:text-rose-500 hover:bg-rose-500/10 transition-colors cursor-pointer"
+                                    title="Excluir"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                              </div>
                             </div>
                           </div>
-                        </div>
-                      );
-                    })}
+                        );
+                      })}
+                    </div>
                   </div>
                 )}
 
                 <div className="pt-3 border-t border-border/40 space-y-1 text-[11px] text-muted-foreground font-semibold tabular-nums">
+                  {selectedDayItems.length > 0 && (
+                    <div className="flex items-center justify-between text-foreground">
+                      <span>Total do dia ({selectedDayItems.length} itens):</span>
+                      <span className="font-mono font-black">
+                        {formatCurrency(selectedDaySummary.totalExpenses > 0 ? selectedDaySummary.totalExpenses : selectedDaySummary.totalIncomes)}
+                      </span>
+                    </div>
+                  )}
                   <div className="flex items-center justify-between">
-                    <span>Lançamentos no mês: {monthItems.length}</span>
-                    <span className="font-mono font-black text-foreground">
-                      Despesas mês: {formatCurrency(monthItems.filter(i => i.kind === 'expense').reduce((s, i) => s + i.amount, 0))}
+                    <span>Despesas no mês ({viewedMonthLabel}):</span>
+                    <span className="font-mono font-bold text-foreground">
+                      {formatCurrency(monthItems.filter(i => i.kind === 'expense').reduce((s, i) => s + i.amount, 0))}
                     </span>
                   </div>
                   <div className="flex items-center justify-between text-[10.5px]">
@@ -4006,6 +4198,124 @@ export function PlanningCalendar() {
               className="rounded-xl text-xs font-bold cursor-pointer"
             >
               Cancelar
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal: Confirmação de Envio para Próxima Fatura / Próximo Mês */}
+      <Dialog open={shiftConfirmTarget !== null} onOpenChange={open => !open && !confirmingShift && setShiftConfirmTarget(null)}>
+        <DialogContent className="max-w-md rounded-3xl">
+          <DialogHeader>
+            <DialogTitle className="text-base font-black flex items-center gap-2 text-indigo-600 dark:text-indigo-400">
+              <CalendarPlus className="w-5 h-5" />
+              {shiftConfirmTarget?.mode === 'batch'
+                ? `Enviar ${shiftConfirmTarget.items.length} Lançamento(s) para o Próximo Mês?`
+                : shiftConfirmTarget?.item.isCard
+                  ? 'Mandar para Próxima Fatura?'
+                  : 'Adiar para o Próximo Mês?'}
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              {shiftConfirmTarget?.mode === 'single'
+                ? shiftConfirmTarget.item.isCard
+                  ? 'Este lançamento será removido da fatura atual e transferido para a fatura do próximo mês.'
+                  : 'O vencimento deste lançamento será alterado em +1 mês.'
+                : 'Todos os lançamentos selecionados terão seu vencimento transferido em +1 mês.'}
+            </DialogDescription>
+          </DialogHeader>
+
+          {shiftConfirmTarget?.mode === 'single' && (() => {
+            const target = shiftConfirmTarget.item;
+            const nextDateStr = calculateNextOccurrence(target.dateStr, 'monthly', shiftConfirmTarget.deltaMonths);
+            const cardObj = getCardById(target.cardId);
+            return (
+              <div className="rounded-xl border border-border/70 bg-muted/20 p-3.5 space-y-2.5 text-xs">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    {cardObj && (
+                      <span
+                        className="inline-block text-[9px] font-black text-white px-1.5 py-0.5 rounded mb-1"
+                        style={{ backgroundColor: cardObj.color }}
+                      >
+                        {cardObj.name}
+                      </span>
+                    )}
+                    <p className="font-black text-foreground break-words">{target.description}</p>
+                    <p className="text-[11px] text-muted-foreground font-semibold">{target.category}</p>
+                  </div>
+                  <span className="font-mono tabular-nums font-black text-sm text-foreground shrink-0">
+                    {formatCurrency(target.amount)}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between gap-2 pt-2 border-t border-border/50 text-[11px] font-bold">
+                  <div>
+                    <span className="text-[9.5px] uppercase text-muted-foreground block">Atual</span>
+                    <span className="font-mono tabular-nums text-foreground">
+                      {format(new Date(target.dateStr + 'T12:00:00'), "dd/MM/yyyy (MMM)", { locale: ptBR })}
+                    </span>
+                  </div>
+                  <ArrowRight className="w-4 h-4 text-indigo-500 shrink-0" />
+                  <div className="text-right">
+                    <span className="text-[9.5px] uppercase text-indigo-600 dark:text-indigo-400 block">
+                      {target.isCard ? 'Próxima Fatura' : 'Novo Vencimento'}
+                    </span>
+                    <span className="font-mono tabular-nums text-indigo-600 dark:text-indigo-400 font-black">
+                      {format(new Date(nextDateStr + 'T12:00:00'), "dd/MM/yyyy (MMM)", { locale: ptBR })}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
+          {shiftConfirmTarget?.mode === 'batch' && (
+            <div className="rounded-xl border border-border/70 bg-muted/20 p-3 space-y-2 text-xs">
+              <div className="flex items-center justify-between font-bold">
+                <span className="text-muted-foreground">Itens selecionados:</span>
+                <span className="font-mono tabular-nums font-black text-foreground">
+                  {shiftConfirmTarget.items.length} ({formatCurrency(shiftConfirmTarget.items.reduce((s, i) => s + i.amount, 0))})
+                </span>
+              </div>
+              <div className="max-h-36 overflow-y-auto divide-y divide-border/40 border-t border-border/40 pt-1">
+                {shiftConfirmTarget.items.slice(0, 6).map(item => (
+                  <div key={item.id} className="py-1.5 flex items-center justify-between gap-2 text-[11px]">
+                    <span className="truncate font-semibold text-foreground">{item.description}</span>
+                    <span className="font-mono tabular-nums font-bold text-muted-foreground shrink-0">
+                      {formatCurrency(item.amount)}
+                    </span>
+                  </div>
+                ))}
+                {shiftConfirmTarget.items.length > 6 && (
+                  <p className="pt-1.5 text-[10.5px] font-bold text-muted-foreground">
+                    + {shiftConfirmTarget.items.length - 6} outro(s) item(ns)
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+
+          <div className="flex justify-end gap-2 pt-2">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={confirmingShift}
+              onClick={() => setShiftConfirmTarget(null)}
+              className="rounded-xl text-xs font-bold cursor-pointer"
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              disabled={confirmingShift}
+              onClick={handleConfirmShiftTarget}
+              className="rounded-xl text-xs font-black bg-indigo-600 hover:bg-indigo-700 text-white cursor-pointer"
+            >
+              {confirmingShift
+                ? 'Transferindo...'
+                : shiftConfirmTarget?.mode === 'single' && shiftConfirmTarget.item.isCard
+                  ? 'Confirmar Envio p/ Próxima Fatura'
+                  : 'Confirmar Transferência'}
             </Button>
           </div>
         </DialogContent>
