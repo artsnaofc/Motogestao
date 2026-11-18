@@ -192,6 +192,10 @@ export function PlanningCalendar() {
   >(null);
   const [confirmingShift, setConfirmingShift] = useState(false);
 
+  // Confirm Duplicate to Next Month Dialog
+  const [duplicateConfirmItem, setDuplicateConfirmItem] = useState<NormalizedPlannedItem | null>(null);
+  const [confirmingDuplicate, setConfirmingDuplicate] = useState(false);
+
   // Category Budget Quick Modal
   const [budgetModalCategory, setBudgetModalCategory] = useState<string | null>(null);
   const [budgetModalLimit, setBudgetModalLimit] = useState<string>('');
@@ -1328,6 +1332,19 @@ export function PlanningCalendar() {
       return next;
     });
     toast.success(`Duplicado para ${format(new Date(nextDate + 'T12:00:00'), 'dd/MM/yyyy')}!`);
+  };
+
+  const handleConfirmDuplicateNextMonth = async () => {
+    if (!duplicateConfirmItem || confirmingDuplicate) return;
+    setConfirmingDuplicate(true);
+    try {
+      await handleDuplicateItemNextMonth(duplicateConfirmItem);
+      setDuplicateConfirmItem(null);
+    } catch {
+      toast.error('Erro ao copiar lançamento para o próximo mês.');
+    } finally {
+      setConfirmingDuplicate(false);
+    }
   };
 
   const handleSettleDayPending = async () => {
@@ -3149,7 +3166,7 @@ export function PlanningCalendar() {
                                 {!item.isReserveTx && (
                                   <button
                                     type="button"
-                                    onClick={() => handleDuplicateItemNextMonth(item)}
+                                    onClick={() => setDuplicateConfirmItem(item)}
                                     className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer"
                                     title="Duplicar para o próximo mês"
                                   >
@@ -4345,6 +4362,107 @@ export function PlanningCalendar() {
                 : shiftConfirmTarget?.mode === 'single' && shiftConfirmTarget.item.isCard
                   ? 'Confirmar Envio p/ Próxima Fatura'
                   : 'Confirmar Transferência'}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal: Confirmação de Cópia para o Próximo Mês */}
+      <Dialog
+        open={duplicateConfirmItem !== null}
+        onOpenChange={open => !open && !confirmingDuplicate && setDuplicateConfirmItem(null)}
+      >
+        <DialogContent className="max-w-md rounded-3xl">
+          <DialogHeader>
+            <DialogTitle className="text-base font-black flex items-center gap-2 text-primary">
+              <Copy className="w-5 h-5" />
+              Copiar Lançamento para o Próximo Mês?
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              Será criada uma nova cópia pendente no próximo mês, mantendo este lançamento original intacto.
+            </DialogDescription>
+          </DialogHeader>
+
+          {duplicateConfirmItem && (() => {
+            const target = duplicateConfirmItem;
+            const nextDateStr = calculateNextOccurrence(target.dateStr, 'monthly', 1);
+            const cardObj = getCardById(target.cardId);
+            return (
+              <div className="rounded-xl border border-border/70 bg-muted/20 p-3.5 space-y-2.5 text-xs">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap mb-1">
+                      <span
+                        className={`inline-flex items-center px-1.5 py-0.5 rounded font-extrabold text-[9.5px] ${
+                          target.kind === 'income'
+                            ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
+                            : 'bg-rose-500/12 text-rose-700 dark:text-rose-300'
+                        }`}
+                      >
+                        {target.kind === 'income' ? '↑ Receita' : '↓ Despesa'}
+                      </span>
+                      {cardObj && (
+                        <span
+                          className="inline-block text-[9px] font-black text-white px-1.5 py-0.5 rounded"
+                          style={{ backgroundColor: cardObj.color }}
+                        >
+                          {cardObj.name}
+                        </span>
+                      )}
+                    </div>
+                    <p className="font-black text-foreground break-words">
+                      {target.description.replace(/\s*\(\d+\/\d+\)\s*$/, '')}
+                    </p>
+                    <p className="text-[11px] text-muted-foreground font-semibold">{target.category}</p>
+                  </div>
+                  <span
+                    className={`font-mono tabular-nums font-black text-sm shrink-0 ${
+                      target.kind === 'income'
+                        ? 'text-emerald-600 dark:text-emerald-400'
+                        : 'text-rose-600 dark:text-rose-400'
+                    }`}
+                  >
+                    {target.kind === 'income' ? '+' : '-'}
+                    {formatCurrency(target.amount)}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between gap-2 pt-2 border-t border-border/50 text-[11px] font-bold">
+                  <div>
+                    <span className="text-[9.5px] uppercase text-muted-foreground block">Original</span>
+                    <span className="font-mono tabular-nums text-foreground">
+                      {format(new Date(target.dateStr + 'T12:00:00'), "dd/MM/yyyy (MMM)", { locale: ptBR })}
+                    </span>
+                  </div>
+                  <ArrowRight className="w-4 h-4 text-primary shrink-0" />
+                  <div className="text-right">
+                    <span className="text-[9.5px] uppercase text-primary block">Nova Cópia (Pendente)</span>
+                    <span className="font-mono tabular-nums text-primary font-black">
+                      {format(new Date(nextDateStr + 'T12:00:00'), "dd/MM/yyyy (MMM)", { locale: ptBR })}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
+          <div className="flex justify-end gap-2 pt-2">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={confirmingDuplicate}
+              onClick={() => setDuplicateConfirmItem(null)}
+              className="rounded-xl text-xs font-bold cursor-pointer"
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              disabled={confirmingDuplicate}
+              onClick={handleConfirmDuplicateNextMonth}
+              className="rounded-xl text-xs font-black bg-primary hover:bg-primary/90 text-primary-foreground cursor-pointer"
+            >
+              {confirmingDuplicate ? 'Copiando...' : 'Confirmar Cópia'}
             </Button>
           </div>
         </DialogContent>

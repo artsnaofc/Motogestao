@@ -190,7 +190,7 @@ export function MainLayout({ children }: { children?: React.ReactNode }) {
 
   return (
     <MaintenanceGuard>
-      <div className="flex flex-col h-dvh overflow-hidden md:h-auto md:min-h-screen md:overflow-visible bg-background text-foreground font-sans">
+      <div className="fixed inset-0 md:static flex flex-col overflow-hidden md:h-auto md:min-h-screen md:overflow-visible bg-background text-foreground font-sans">
         {/* Desktop & Tablet Sidebar (Hidden on Mobile) */}
         <aside className="hidden md:flex flex-col fixed inset-y-0 left-0 w-64 lg:w-72 border-r border-border/70 bg-card/75 backdrop-blur-xl z-40 p-5 justify-between">
           <div className="space-y-6">
@@ -367,7 +367,7 @@ export function MainLayout({ children }: { children?: React.ReactNode }) {
         {/* REFINED MOBILE BOTTOM NAVIGATION (5 Primary Touch Targets - Locked at Viewport Bottom) */}
         <nav 
           aria-label="Navegação inferior móvel"
-          className="md:hidden shrink-0 relative border-t border-border/80 bg-background/95 backdrop-blur-xl z-40 pb-[max(0.45rem,env(safe-area-inset-bottom))] px-3 pt-1.5 shadow-lg select-none touch-manipulation"
+          className="md:hidden shrink-0 relative border-t border-border/80 bg-background/95 backdrop-blur-xl z-40 px-2 pt-1 pb-[calc(0.25rem+min(env(safe-area-inset-bottom,0px),12px))] shadow-lg select-none touch-manipulation"
         >
           <div className="flex items-center justify-around max-w-md mx-auto">
             {/* Slot 1 */}
@@ -381,13 +381,13 @@ export function MainLayout({ children }: { children?: React.ReactNode }) {
                     setIsMobileMenuOpen(false);
                     handleSlotTripleClick('slot1', e);
                   }}
-                  className={`flex-1 flex flex-col items-center justify-center py-1 rounded-xl transition-all active:scale-95 min-h-[48px] touch-manipulation ${
+                  className={`flex-1 flex flex-col items-center justify-center py-0.5 rounded-xl transition-all active:scale-95 min-h-[42px] touch-manipulation ${
                     isActive ? 'text-primary font-bold' : 'text-muted-foreground hover:text-foreground'
                   }`}
                   title={`${conf.label} (Clique 3x para escolher o botão padrão deste slot)`}
                 >
                   <div className={`transition-transform ${isActive ? 'scale-110' : ''}`}>
-                    {renderSlotIcon(conf.iconName, "w-5 h-5")}
+                    {renderSlotIcon(conf.iconName, "w-4.5 h-4.5")}
                   </div>
                   <span className="text-[10px] font-semibold mt-0.5 leading-none">{conf.shortLabel}</span>
                 </Link>
@@ -405,13 +405,13 @@ export function MainLayout({ children }: { children?: React.ReactNode }) {
                     setIsMobileMenuOpen(false);
                     handleSlotTripleClick('slot2', e);
                   }}
-                  className={`flex-1 flex flex-col items-center justify-center py-1 rounded-xl transition-all active:scale-95 min-h-[48px] touch-manipulation ${
+                  className={`flex-1 flex flex-col items-center justify-center py-0.5 rounded-xl transition-all active:scale-95 min-h-[42px] touch-manipulation ${
                     isActive ? 'text-primary font-bold' : 'text-muted-foreground hover:text-foreground'
                   }`}
                   title={`${conf.label} (Clique 3x para escolher o botão padrão deste slot)`}
                 >
                   <div className={`transition-transform ${isActive ? 'scale-110' : ''}`}>
-                    {renderSlotIcon(conf.iconName, "w-5 h-5")}
+                    {renderSlotIcon(conf.iconName, "w-4.5 h-4.5")}
                   </div>
                   <span className="text-[10px] font-semibold mt-0.5 leading-none">{conf.shortLabel}</span>
                 </Link>
@@ -419,14 +419,14 @@ export function MainLayout({ children }: { children?: React.ReactNode }) {
             })()}
 
             {/* Slot 3 (Central CTA: Lançar) */}
-            <div className="flex-1 flex flex-col items-center justify-center -mt-4">
+            <div className="flex-1 flex flex-col items-center justify-center -mt-3">
               <Link
                 to="/add"
                 onClick={() => setIsMobileMenuOpen(false)}
-                className="h-12 w-12 rounded-full bg-gradient-to-tr from-primary via-indigo-600 to-indigo-700 text-primary-foreground flex items-center justify-center shadow-lg shadow-primary/30 active:scale-90 transition-transform ring-4 ring-background touch-manipulation"
+                className="h-10.5 w-10.5 rounded-full bg-gradient-to-tr from-primary via-indigo-600 to-indigo-700 text-primary-foreground flex items-center justify-center shadow-lg shadow-primary/30 active:scale-90 transition-transform ring-4 ring-background touch-manipulation"
                 title="Novo Lançamento"
               >
-                <Plus className="w-6 h-6 stroke-[2.5]" />
+                <Plus className="w-5 h-5 stroke-[2.5]" />
               </Link>
               <span className="text-[9.5px] font-extrabold text-foreground mt-0.5 leading-none">
                 Lançar
@@ -444,13 +444,13 @@ export function MainLayout({ children }: { children?: React.ReactNode }) {
                     setIsMobileMenuOpen(false);
                     handleSlotTripleClick('slot4', e);
                   }}
-                  className={`flex-1 flex flex-col items-center justify-center py-1 rounded-xl transition-all active:scale-95 min-h-[48px] touch-manipulation ${
+                  className={`flex-1 flex flex-col items-center justify-center py-0.5 rounded-xl transition-all active:scale-95 min-h-[42px] touch-manipulation ${
                     isActive ? 'text-primary font-bold' : 'text-muted-foreground hover:text-foreground'
                   }`}
                   title={`${conf.label} (Clique 3x para escolher o botão padrão deste slot)`}
                 >
                   <div className={`transition-transform ${isActive ? 'scale-110' : ''}`}>
-                    {renderSlotIcon(conf.iconName, "w-5 h-5")}
+                    {renderSlotIcon(conf.iconName, "w-4.5 h-4.5")}
                   </div>
                   <span className="text-[10px] font-semibold mt-0.5 leading-none">{conf.shortLabel}</span>
                 </Link>
@@ -461,14 +461,14 @@ export function MainLayout({ children }: { children?: React.ReactNode }) {
             <button
               type="button"
               onClick={() => setIsMobileMenuOpen(prev => !prev)}
-              className={`flex-1 flex flex-col items-center justify-center py-1 rounded-xl transition-all active:scale-95 min-h-[48px] cursor-pointer relative touch-manipulation ${
+              className={`flex-1 flex flex-col items-center justify-center py-0.5 rounded-xl transition-all active:scale-95 min-h-[42px] cursor-pointer relative touch-manipulation ${
                 isMoreMenuActive 
                   ? 'text-primary font-bold' 
                   : 'text-muted-foreground hover:text-foreground'
               }`}
             >
               <div className="relative">
-                <Menu className={`w-5 h-5 transition-transform ${isMoreMenuActive ? 'scale-110' : ''}`} />
+                <Menu className={`w-4.5 h-4.5 transition-transform ${isMoreMenuActive ? 'scale-110' : ''}`} />
                 {isMoreMenuActive && (
                   <span className="absolute -top-0.5 -right-1 h-2 w-2 rounded-full bg-primary ring-2 ring-background animate-pulse" />
                 )}
