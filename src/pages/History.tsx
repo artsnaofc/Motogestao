@@ -4005,8 +4005,8 @@ export function History() {
   };
 
   return (
-    <div className="flex-1 w-full max-w-5xl mx-auto p-4 md:p-8 space-y-6">
-      <header className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-border/60 pb-5">
+    <div className="flex-1 w-full max-w-5xl mx-auto p-3 sm:p-4 md:p-8 space-y-5 sm:space-y-6">
+      <header className="flex flex-col md:flex-row md:items-center justify-between gap-3 sm:gap-4 border-b border-border/60 pb-4 sm:pb-5">
         <div>
           <div className="flex items-center gap-2">
             <h1 className="text-2xl font-extrabold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text text-transparent">
@@ -7352,7 +7352,7 @@ export function History() {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: 20 }}
-          className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 w-[92%] max-w-lg bg-foreground text-background dark:bg-card dark:text-foreground border border-border/80 shadow-2xl rounded-2xl p-3 flex items-center justify-between gap-3"
+          className="fixed bottom-18 md:bottom-6 left-1/2 -translate-x-1/2 z-50 w-[94%] max-w-lg bg-foreground text-background dark:bg-card dark:text-foreground border border-border/80 shadow-2xl rounded-2xl p-3 flex items-center justify-between gap-3"
         >
           <div className="flex items-center gap-2.5">
             <button

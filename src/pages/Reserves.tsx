@@ -848,7 +848,7 @@ export function Reserves() {
   };
 
   return (
-    <div className="space-y-6 pb-12 max-w-7xl mx-auto px-2 sm:px-4">
+    <div className="space-y-5 sm:space-y-6 pb-12 max-w-7xl mx-auto p-3 sm:p-4 md:p-6">
       {/* Top Header with Global KPIs and Main Controls */}
       <ReservesHeader
         totalBalance={totals.totalBalance}

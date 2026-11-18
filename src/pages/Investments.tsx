@@ -1196,16 +1196,16 @@ export function Investments() {
   };
 
   return (
-    <div className="flex-1 w-full max-w-5xl mx-auto p-4 md:p-8 space-y-6 animate-fade-in pb-28">
+    <div className="flex-1 w-full max-w-5xl mx-auto p-3 sm:p-4 md:p-8 space-y-5 sm:space-y-6 animate-fade-in pb-24 sm:pb-28">
       {/* PAGE HEADER */}
-      <header className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-border/50 pb-5">
+      <header className="flex flex-col md:flex-row md:items-center justify-between gap-3 sm:gap-4 border-b border-border/50 pb-4 sm:pb-5">
         <div>
           <div className="flex items-center gap-2.5">
-            <div className="p-2.5 rounded-2xl bg-emerald-500/10 text-emerald-500">
-              <TrendingUp className="w-6 h-6 stroke-[2.5]" />
+            <div className="p-2 sm:p-2.5 rounded-2xl bg-emerald-500/10 text-emerald-500 shrink-0">
+              <TrendingUp className="w-5 h-5 sm:w-6 sm:h-6 stroke-[2.5]" />
             </div>
-            <div>
-              <h1 className="text-2xl md:text-3xl font-black tracking-tight bg-gradient-to-r from-foreground via-foreground/90 to-muted-foreground bg-clip-text text-transparent flex items-center gap-2">
+            <div className="min-w-0">
+              <h1 className="text-xl sm:text-2xl md:text-3xl font-black tracking-tight bg-gradient-to-r from-foreground via-foreground/90 to-muted-foreground bg-clip-text text-transparent flex items-center gap-2">
                 Investimentos & Carteira
               </h1>
               <p className="text-muted-foreground text-xs sm:text-sm font-medium mt-0.5">

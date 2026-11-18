@@ -3829,19 +3829,19 @@ export function Dashboard() {
   }
 
   return (
-    <div className="flex-1 w-full max-w-7xl mx-auto p-4 md:p-8 space-y-8 animate-fade-in">
+    <div className="flex-1 w-full max-w-7xl mx-auto p-3 sm:p-4 md:p-8 space-y-5 sm:space-y-8 animate-fade-in">
       {/* Header Premium */}
-      <header className="flex flex-col gap-3 border-b border-border/40 pb-5">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div>
-            <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-foreground">
+      <header className="flex flex-col gap-3 border-b border-border/40 pb-4 sm:pb-5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
+          <div className="min-w-0">
+            <h1 className="text-xl sm:text-3xl font-black tracking-tight text-foreground">
               Painel Geral
             </h1>
             <p className="text-muted-foreground text-xs sm:text-sm font-medium mt-0.5">
               Analise seu faturamento, metas financeiras e rentabilidade por quilômetro.
             </p>
           </div>
-          <div className="flex items-center justify-between sm:justify-end gap-2 w-full sm:w-auto shrink-0">
+          <div className="flex flex-wrap items-center justify-between sm:justify-end gap-2 w-full sm:w-auto shrink-0">
             <div className="flex items-center gap-2">
               {ignoredSummary.allCount > 0 && (
                 <Button

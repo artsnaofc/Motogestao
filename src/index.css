@@ -125,12 +125,22 @@
   body {
     @apply bg-background text-foreground;
     overflow-x: clip;
+    overscroll-behavior-x: none;
     touch-action: manipulation;
   }
   html {
     @apply font-sans;
     overflow-x: clip;
+    overscroll-behavior-x: none;
     touch-action: manipulation;
+    -webkit-text-size-adjust: 100%;
+  }
+  @media (max-width: 639px) {
+    input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+    select,
+    textarea {
+      font-size: 16px !important;
+    }
   }
 }
 

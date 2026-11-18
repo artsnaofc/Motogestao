@@ -1125,9 +1125,9 @@ export function AddTransaction() {
   };
 
   return (
-    <div className="flex-1 w-full max-w-2xl mx-auto p-4 md:p-8 space-y-6 animate-fade-in">
-      <header className="border-b border-border/55 pb-5">
-        <h1 className="text-2xl font-black tracking-tight bg-gradient-to-r from-foreground via-foreground/90 to-muted-foreground bg-clip-text text-transparent">
+    <div className="flex-1 w-full max-w-2xl mx-auto p-3 sm:p-4 md:p-8 space-y-5 sm:space-y-6 animate-fade-in">
+      <header className="border-b border-border/55 pb-4 sm:pb-5">
+        <h1 className="text-xl sm:text-2xl font-black tracking-tight bg-gradient-to-r from-foreground via-foreground/90 to-muted-foreground bg-clip-text text-transparent">
           Registrar Atividade
         </h1>
         <p className="text-muted-foreground text-xs sm:text-sm font-medium mt-0.5">
@@ -1140,37 +1140,37 @@ export function AddTransaction() {
         <button
           type="button"
           onClick={() => { setActiveTab('pizzaria'); resetForm(); }}
-          className={`py-3 flex flex-col items-center justify-center rounded-xl text-[10px] sm:text-xs font-bold transition-all duration-200 cursor-pointer ${activeTab === 'pizzaria' ? 'bg-indigo-500/10 text-indigo-500 ring-1 ring-indigo-500/35 border border-indigo-500/15 shadow-xs' : 'bg-muted/30 text-muted-foreground/80 hover:bg-muted/60 hover:text-foreground border border-transparent'}`}
+          className={`py-2.5 sm:py-3 px-1 flex flex-col items-center justify-center rounded-xl text-[9.5px] sm:text-xs font-bold transition-all duration-200 cursor-pointer truncate ${activeTab === 'pizzaria' ? 'bg-indigo-500/10 text-indigo-500 ring-1 ring-indigo-500/35 border border-indigo-500/15 shadow-xs' : 'bg-muted/30 text-muted-foreground/80 hover:bg-muted/60 hover:text-foreground border border-transparent'}`}
         >
-          <Bike className="w-4 h-4 sm:w-5 sm:h-5 mb-1.5 transition-transform duration-200 hover:scale-105" /> Pizzaria
+          <Bike className="w-4 h-4 sm:w-5 sm:h-5 mb-1 sm:mb-1.5 transition-transform duration-200 hover:scale-105 shrink-0" /> Pizzaria
         </button>
         <button
           type="button"
           onClick={() => { setActiveTab('frete'); resetForm(); }}
-          className={`py-3 flex flex-col items-center justify-center rounded-xl text-[10px] sm:text-xs font-bold transition-all duration-200 cursor-pointer ${activeTab === 'frete' ? 'bg-blue-500/10 text-blue-500 ring-1 ring-blue-500/35 border border-blue-500/15 shadow-xs' : 'bg-muted/30 text-muted-foreground/80 hover:bg-muted/60 hover:text-foreground border border-transparent'}`}
+          className={`py-2.5 sm:py-3 px-1 flex flex-col items-center justify-center rounded-xl text-[9.5px] sm:text-xs font-bold transition-all duration-200 cursor-pointer truncate ${activeTab === 'frete' ? 'bg-blue-500/10 text-blue-500 ring-1 ring-blue-500/35 border border-blue-500/15 shadow-xs' : 'bg-muted/30 text-muted-foreground/80 hover:bg-muted/60 hover:text-foreground border border-transparent'}`}
         >
-          <Package className="w-4 h-4 sm:w-5 sm:h-5 mb-1.5 transition-transform duration-200 hover:scale-105" /> Frete
+          <Package className="w-4 h-4 sm:w-5 sm:h-5 mb-1 sm:mb-1.5 transition-transform duration-200 hover:scale-105 shrink-0" /> Frete
         </button>
         <button
           type="button"
           onClick={() => { setActiveTab('avulso'); resetForm(); }}
-          className={`py-3 flex flex-col items-center justify-center rounded-xl text-[10px] sm:text-xs font-bold transition-all duration-200 cursor-pointer ${activeTab === 'avulso' ? 'bg-emerald-500/10 text-emerald-500 ring-1 ring-emerald-500/35 border border-emerald-500/15 shadow-xs' : 'bg-muted/30 text-muted-foreground/80 hover:bg-muted/60 hover:text-foreground border border-transparent'}`}
+          className={`py-2.5 sm:py-3 px-1 flex flex-col items-center justify-center rounded-xl text-[9.5px] sm:text-xs font-bold transition-all duration-200 cursor-pointer truncate ${activeTab === 'avulso' ? 'bg-emerald-500/10 text-emerald-500 ring-1 ring-emerald-500/35 border border-emerald-500/15 shadow-xs' : 'bg-muted/30 text-muted-foreground/80 hover:bg-muted/60 hover:text-foreground border border-transparent'}`}
         >
-          <TrendingUp className="w-4 h-4 sm:w-5 sm:h-5 mb-1.5 transition-transform duration-200 hover:scale-105" /> Ganho
+          <TrendingUp className="w-4 h-4 sm:w-5 sm:h-5 mb-1 sm:mb-1.5 transition-transform duration-200 hover:scale-105 shrink-0" /> Ganho
         </button>
         <button
           type="button"
           onClick={() => { setActiveTab('despesa'); resetForm(); }}
-          className={`py-3 flex flex-col items-center justify-center rounded-xl text-[10px] sm:text-xs font-bold transition-all duration-200 cursor-pointer ${activeTab === 'despesa' ? 'bg-rose-500/10 text-rose-500 ring-1 ring-rose-500/35 border border-rose-500/15 shadow-xs' : 'bg-muted/30 text-muted-foreground/80 hover:bg-muted/60 hover:text-foreground border border-transparent'}`}
+          className={`py-2.5 sm:py-3 px-1 flex flex-col items-center justify-center rounded-xl text-[9.5px] sm:text-xs font-bold transition-all duration-200 cursor-pointer truncate ${activeTab === 'despesa' ? 'bg-rose-500/10 text-rose-500 ring-1 ring-rose-500/35 border border-rose-500/15 shadow-xs' : 'bg-muted/30 text-muted-foreground/80 hover:bg-muted/60 hover:text-foreground border border-transparent'}`}
         >
-          <TrendingDown className="w-4 h-4 sm:w-5 sm:h-5 mb-1.5 transition-transform duration-200 hover:scale-105" /> Despesa
+          <TrendingDown className="w-4 h-4 sm:w-5 sm:h-5 mb-1 sm:mb-1.5 transition-transform duration-200 hover:scale-105 shrink-0" /> Despesa
         </button>
         <button
           type="button"
           onClick={() => { setActiveTab('reserva'); resetForm(); }}
-          className={`py-3 flex flex-col items-center justify-center rounded-xl text-[10px] sm:text-xs font-bold transition-all duration-200 cursor-pointer ${activeTab === 'reserva' ? 'bg-pink-500/10 text-pink-500 ring-1 ring-pink-500/35 border border-pink-500/15 shadow-xs' : 'bg-muted/30 text-muted-foreground/80 hover:bg-muted/60 hover:text-foreground border border-transparent'}`}
+          className={`py-2.5 sm:py-3 px-1 flex flex-col items-center justify-center rounded-xl text-[9.5px] sm:text-xs font-bold transition-all duration-200 cursor-pointer truncate ${activeTab === 'reserva' ? 'bg-pink-500/10 text-pink-500 ring-1 ring-pink-500/35 border border-pink-500/15 shadow-xs' : 'bg-muted/30 text-muted-foreground/80 hover:bg-muted/60 hover:text-foreground border border-transparent'}`}
         >
-          <PiggyBank className="w-4 h-4 sm:w-5 sm:h-5 mb-1.5 transition-transform duration-200 hover:scale-105" /> Reserva
+          <PiggyBank className="w-4 h-4 sm:w-5 sm:h-5 mb-1 sm:mb-1.5 transition-transform duration-200 hover:scale-105 shrink-0" /> Reserva
         </button>
       </div>
 

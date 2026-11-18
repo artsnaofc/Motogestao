@@ -1630,15 +1630,15 @@ export function PlanningCalendar() {
   }, [bancaLivre, monthSummary.incomesPending, monthSummary.totalPending]);
 
   return (
-    <div className="flex-1 w-full max-w-7xl mx-auto p-4 md:p-8 space-y-5 animate-fade-in">
+    <div className="flex-1 w-full max-w-7xl mx-auto p-3 sm:p-4 md:p-8 space-y-4 sm:space-y-5 animate-fade-in">
       {/* Header */}
-      <header className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-border/60 pb-5">
+      <header className="flex flex-col lg:flex-row lg:items-center justify-between gap-3.5 sm:gap-4 border-b border-border/60 pb-4 sm:pb-5">
         <div className="flex items-start gap-3">
-          <div className="h-11 w-11 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-600 dark:text-indigo-400 shrink-0">
+          <div className="h-10 w-10 sm:h-11 sm:w-11 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-600 dark:text-indigo-400 shrink-0">
             <CalendarRange className="w-5 h-5" />
           </div>
-          <div>
-            <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-foreground">
+          <div className="min-w-0">
+            <h1 className="text-xl sm:text-3xl font-black tracking-tight text-foreground leading-tight">
               Calendário de Contas &amp; Cartões
             </h1>
             <p className="text-xs sm:text-sm text-muted-foreground font-medium mt-0.5">
@@ -1647,41 +1647,41 @@ export function PlanningCalendar() {
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 shrink-0">
+        <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2 w-full lg:w-auto shrink-0">
           <Button
             type="button"
             variant="outline"
             onClick={() => handleOpenNewCard(false)}
-            className="h-10 rounded-xl text-xs font-extrabold gap-1.5 cursor-pointer whitespace-nowrap shrink-0"
+            className="h-9 sm:h-10 px-2.5 sm:px-3 rounded-xl text-[11px] sm:text-xs font-extrabold gap-1.5 cursor-pointer whitespace-nowrap"
           >
-            <CreditCard className="w-4 h-4 text-purple-500" />
-            <span>Novo Cartão</span>
+            <CreditCard className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-purple-500 shrink-0" />
+            <span className="truncate">Novo Cartão</span>
           </Button>
           <Button
             type="button"
             variant="outline"
             onClick={() => handleOpenNewEntry('income')}
-            className="h-10 rounded-xl text-xs font-extrabold gap-1.5 border-emerald-500/35 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 cursor-pointer whitespace-nowrap shrink-0"
+            className="h-9 sm:h-10 px-2.5 sm:px-3 rounded-xl text-[11px] sm:text-xs font-extrabold gap-1.5 border-emerald-500/35 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 cursor-pointer whitespace-nowrap"
           >
-            <ArrowUpRight className="w-4 h-4" />
-            <span>+ Receita Prevista</span>
+            <ArrowUpRight className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
+            <span className="truncate">+ Receita Prevista</span>
           </Button>
           <Button
             type="button"
             variant="outline"
             onClick={() => handleOpenNewEntry('bill')}
-            className="h-10 rounded-xl text-xs font-extrabold gap-1.5 border-amber-500/35 bg-amber-500/10 text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 cursor-pointer whitespace-nowrap shrink-0"
+            className="h-9 sm:h-10 px-2.5 sm:px-3 rounded-xl text-[11px] sm:text-xs font-extrabold gap-1.5 border-amber-500/35 bg-amber-500/10 text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 cursor-pointer whitespace-nowrap"
           >
-            <ReceiptText className="w-4 h-4" />
-            <span>+ Conta Planejada</span>
+            <ReceiptText className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
+            <span className="truncate">+ Conta Planejada</span>
           </Button>
           <Button
             type="button"
             onClick={() => handleOpenNewEntry('card')}
-            className="h-10 rounded-xl text-xs font-black bg-indigo-600 hover:bg-indigo-700 text-white gap-1.5 cursor-pointer whitespace-nowrap shrink-0"
+            className="h-9 sm:h-10 px-2.5 sm:px-3 rounded-xl text-[11px] sm:text-xs font-black bg-indigo-600 hover:bg-indigo-700 text-white gap-1.5 cursor-pointer whitespace-nowrap"
           >
-            <Plus className="w-4 h-4" />
-            <span>+ Compra no Cartão</span>
+            <Plus className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
+            <span className="truncate">+ Compra Cartão</span>
           </Button>
         </div>
       </header>
@@ -2072,9 +2072,9 @@ export function PlanningCalendar() {
       </Card>
 
       {/* Filter & View Controls Bar */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 p-3 rounded-2xl border border-border/80 bg-card">
-        <div className="flex flex-wrap items-center gap-2 flex-1">
-          <div className="relative flex-1 min-w-[200px] max-w-xs">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-2.5 sm:gap-3 p-2.5 sm:p-3 rounded-2xl border border-border/80 bg-card">
+        <div className="flex flex-wrap items-center gap-2 flex-1 min-w-0">
+          <div className="relative w-full sm:flex-1 sm:min-w-[200px] sm:max-w-xs">
             <Search className="w-3.5 h-3.5 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
             <Input
               value={searchQuery}
@@ -2094,7 +2094,7 @@ export function PlanningCalendar() {
           </div>
 
           <Select value={kindFilter} onValueChange={(v: KindFilter) => setKindFilter(v)}>
-            <SelectTrigger className="h-9 w-[145px] rounded-xl text-xs font-bold">
+            <SelectTrigger className="h-9 flex-1 sm:flex-none sm:w-[145px] rounded-xl text-xs font-bold">
               <SelectValue>
                 {v => {
                   switch (v) {
@@ -2115,7 +2115,7 @@ export function PlanningCalendar() {
           </Select>
 
           <Select value={statusFilter} onValueChange={(v: StatusFilter) => setStatusFilter(v)}>
-            <SelectTrigger className="h-9 w-[140px] rounded-xl text-xs font-bold">
+            <SelectTrigger className="h-9 flex-1 sm:flex-none sm:w-[140px] rounded-xl text-xs font-bold">
               <SelectValue>
                 {v => {
                   switch (v) {
@@ -2137,41 +2137,41 @@ export function PlanningCalendar() {
         </div>
 
         {/* Main View Mode Switcher */}
-        <div className="grid grid-cols-3 gap-1 p-1 bg-muted/50 rounded-xl border border-border/50 shrink-0">
+        <div className="grid grid-cols-3 gap-1 p-1 bg-muted/50 rounded-xl border border-border/50 w-full md:w-auto shrink-0">
           <button
             type="button"
             onClick={() => setMainView('calendar')}
-            className={`h-7 px-3 rounded-lg text-[11px] font-black inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap ${
+            className={`h-7 px-1.5 sm:px-3 rounded-lg text-[10.5px] sm:text-[11px] font-black inline-flex items-center justify-center gap-1 sm:gap-1.5 transition-colors cursor-pointer whitespace-nowrap ${
               mainView === 'calendar'
                 ? 'bg-card text-foreground border border-border/60'
                 : 'text-muted-foreground hover:text-foreground'
             }`}
           >
-            <LayoutGrid className="w-3.5 h-3.5" />
+            <LayoutGrid className="w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
             <span>Calendário</span>
           </button>
           <button
             type="button"
             onClick={() => setMainView('list')}
-            className={`h-7 px-3 rounded-lg text-[11px] font-black inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap ${
+            className={`h-7 px-1.5 sm:px-3 rounded-lg text-[10.5px] sm:text-[11px] font-black inline-flex items-center justify-center gap-1 sm:gap-1.5 transition-colors cursor-pointer whitespace-nowrap ${
               mainView === 'list'
                 ? 'bg-card text-foreground border border-border/60'
                 : 'text-muted-foreground hover:text-foreground'
             }`}
           >
-            <ListChecks className="w-3.5 h-3.5" />
+            <ListChecks className="w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
             <span>Lista ({monthItems.length})</span>
           </button>
           <button
             type="button"
             onClick={() => setMainView('installments')}
-            className={`h-7 px-3 rounded-lg text-[11px] font-black inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap ${
+            className={`h-7 px-1.5 sm:px-3 rounded-lg text-[10.5px] sm:text-[11px] font-black inline-flex items-center justify-center gap-1 sm:gap-1.5 transition-colors cursor-pointer whitespace-nowrap ${
               mainView === 'installments'
                 ? 'bg-card text-foreground border border-border/60'
                 : 'text-muted-foreground hover:text-foreground'
             }`}
           >
-            <Repeat className="w-3.5 h-3.5" />
+            <Repeat className="w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
             <span>Parcelas ({installmentGroups.length})</span>
           </button>
         </div>
@@ -2292,7 +2292,7 @@ export function PlanningCalendar() {
                           }
                           setRightPanelTab('day');
                         }}
-                        className={`group relative min-h-[76px] sm:min-h-[90px] rounded-xl border p-1.5 flex flex-col justify-between text-left transition-colors cursor-pointer ${
+                        className={`group relative min-h-[64px] sm:min-h-[90px] rounded-lg sm:rounded-xl border p-1 sm:p-1.5 flex flex-col justify-between text-left transition-colors cursor-pointer overflow-hidden ${
                           isSelected
                             ? 'border-indigo-500 bg-indigo-500/10 ring-1 ring-indigo-500/40'
                             : isToday
