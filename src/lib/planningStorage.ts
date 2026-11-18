@@ -475,6 +475,11 @@ function clampDayToMonth(year: number, monthIndex: number, day: number): number 
   return Math.max(1, Math.min(day, daysInMonth));
 }
 
+export interface CardStatementOptions {
+  /** Optional explicit YYYY-MM month key for the 1st installment (overrides closing-day cycle calculation) */
+  forceFirstStatementMonthKey?: string | null;
+}
+
 /**
  * Calculates the exact invoice due date (YYYY-MM-DD) for a credit card purchase.
  * Standard Brazilian card rule:
@@ -486,31 +491,128 @@ export function computeCardStatementDueDate(
   purchaseDateStr: string,
   closingDay: number,
   dueDay: number,
-  installmentIndex: number = 1
-): { statementDueDate: string; statementMonthKey: string } {
+  installmentIndex: number = 1,
+  options?: CardStatementOptions
+): { statementDueDate: string; statementMonthKey: string; closingDateStr: string } {
   const [yStr, mStr, dStr] = (purchaseDateStr || '').split('-');
   const now = new Date();
   const baseYear = Number(yStr) || now.getFullYear();
-  const baseMonthIdx = (Number(mStr) ? Number(mStr) - 1 : now.getMonth());
+  const baseMonthIdx = Number(mStr) ? Number(mStr) - 1 : now.getMonth();
   const purchaseDay = Number(dStr) || now.getDate();
 
-  const safeClosing = Math.max(1, Math.min(31, Number(closingDay) || 1));
+  const safeClosing = Math.max(1, Math.min(31, Math.round(Number(closingDay)) || 1));
+  const safeDue = Math.max(1, Math.min(31, Math.round(Number(dueDay)) || safeClosing));
+  const installmentOffset = Math.max(0, installmentIndex - 1);
+
+  if (
+    options?.forceFirstStatementMonthKey &&
+    /^\d{4}-\d{2}$/.test(options.forceFirstStatementMonthKey)
+  ) {
+    const [fy, fm] = options.forceFirstStatementMonthKey.split('-').map(Number);
+    const targetAnchor = new Date(fy, (fm - 1) + installmentOffset, 1, 12, 0, 0);
+    const targetYear = targetAnchor.getFullYear();
+    const targetMonthIdx = targetAnchor.getMonth();
+    const targetDay = clampDayToMonth(targetYear, targetMonthIdx, safeDue);
+    const mm = String(targetMonthIdx + 1).padStart(2, '0');
+    const dd = String(targetDay).padStart(2, '0');
+
+    const dueMonthBackOffset = safeDue < safeClosing ? -1 : 0;
+    const closingAnchor = new Date(targetYear, targetMonthIdx + dueMonthBackOffset, 1, 12, 0, 0);
+    const cYear = closingAnchor.getFullYear();
+    const cMonthIdx = closingAnchor.getMonth();
+    const cDay = clampDayToMonth(cYear, cMonthIdx, safeClosing);
+    const cMm = String(cMonthIdx + 1).padStart(2, '0');
+    const cDd = String(cDay).padStart(2, '0');
+
+    return {
+      statementDueDate: `${targetYear}-${mm}-${dd}`,
+      statementMonthKey: `${targetYear}-${mm}`,
+      closingDateStr: `${cYear}-${cMm}-${cDd}`,
+    };
+  }
 
   const clampedClosingInPurchaseMonth = clampDayToMonth(baseYear, baseMonthIdx, safeClosing);
   const entersNextClosingCycle = purchaseDay >= clampedClosingInPurchaseMonth ? 1 : 0;
+  const dueMonthOffsetFromClosing = safeDue < safeClosing ? 1 : 0;
 
-  const totalMonthShift = entersNextClosingCycle + Math.max(0, installmentIndex - 1);
+  const closingAnchor = new Date(
+    baseYear,
+    baseMonthIdx + entersNextClosingCycle + installmentOffset,
+    1,
+    12,
+    0,
+    0
+  );
+  const cYear = closingAnchor.getFullYear();
+  const cMonthIdx = closingAnchor.getMonth();
+  const cDay = clampDayToMonth(cYear, cMonthIdx, safeClosing);
 
-  const targetAnchor = new Date(baseYear, baseMonthIdx + totalMonthShift, 1, 12, 0, 0);
+  const targetAnchor = new Date(
+    cYear,
+    cMonthIdx + dueMonthOffsetFromClosing,
+    1,
+    12,
+    0,
+    0
+  );
   const targetYear = targetAnchor.getFullYear();
   const targetMonthIdx = targetAnchor.getMonth();
-  const targetDay = clampDayToMonth(targetYear, targetMonthIdx, safeClosing);
+  const targetDay = clampDayToMonth(targetYear, targetMonthIdx, safeDue);
 
   const mm = String(targetMonthIdx + 1).padStart(2, '0');
   const dd = String(targetDay).padStart(2, '0');
+  const cMm = String(cMonthIdx + 1).padStart(2, '0');
+  const cDd = String(cDay).padStart(2, '0');
+
   return {
     statementDueDate: `${targetYear}-${mm}-${dd}`,
     statementMonthKey: `${targetYear}-${mm}`,
+    closingDateStr: `${cYear}-${cMm}-${cDd}`,
+  };
+}
+
+/**
+ * Returns cycle helper metadata for a credit card relative to a reference YYYY-MM-DD date.
+ */
+export function getCardCycleStatus(card: CreditCardConfig, refDateStr: string): {
+  isBestPurchaseWindow: boolean;
+  daysUntilClosing: number;
+  closingDayInRefMonth: number;
+  nextPurchaseDueInfo: { statementDueDate: string; statementMonthKey: string; closingDateStr: string };
+} {
+  const [yStr, mStr, dStr] = (refDateStr || '').split('-');
+  const now = new Date();
+  const y = Number(yStr) || now.getFullYear();
+  const mIdx = Number(mStr) ? Number(mStr) - 1 : now.getMonth();
+  const day = Number(dStr) || now.getDate();
+
+  const closingDayInRefMonth = clampDayToMonth(y, mIdx, card.closingDay);
+  const isBestPurchaseWindow = day >= closingDayInRefMonth;
+  let daysUntilClosing = closingDayInRefMonth - day;
+  if (daysUntilClosing < 0) {
+    const nextMonthClosingAnchor = new Date(y, mIdx + 1, 1, 12, 0, 0);
+    const nextMonthClosingDay = clampDayToMonth(
+      nextMonthClosingAnchor.getFullYear(),
+      nextMonthClosingAnchor.getMonth(),
+      card.closingDay
+    );
+    const refMs = new Date(y, mIdx, day, 12, 0, 0).getTime();
+    const nextMs = new Date(
+      nextMonthClosingAnchor.getFullYear(),
+      nextMonthClosingAnchor.getMonth(),
+      nextMonthClosingDay,
+      12,
+      0,
+      0
+    ).getTime();
+    daysUntilClosing = Math.max(0, Math.round((nextMs - refMs) / (1000 * 60 * 60 * 24)));
+  }
+
+  return {
+    isBestPurchaseWindow,
+    daysUntilClosing,
+    closingDayInRefMonth,
+    nextPurchaseDueInfo: computeCardStatementDueDate(refDateStr, card.closingDay, card.dueDay, 1),
   };
 }
 

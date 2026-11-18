@@ -26,7 +26,12 @@ import {
   CARD_BRAND_PRESETS,
   computeCardStatementDueDate,
   extractCardTagFromTransaction,
+  getCardCycleStatus,
 } from '../lib/planningStorage';
+import {
+  getInvestmentTransactionNetAmount,
+  isInvestmentSaleReserveAporte,
+} from '../lib/investmentCalculations';
 import { calculateNextOccurrence, generateUUID } from '../lib/recurrenceUtils';
 import { getTodayLocalDateStr } from '../lib/utils';
 import { getEffectiveUserId } from '../lib/authUtils';
@@ -64,10 +69,26 @@ import {
   Layers,
   Eye,
   EyeOff,
+  Search,
+  ListChecks,
+  LayoutGrid,
+  Repeat,
+  ArrowUpRight,
+  ArrowDownRight,
+  CalendarPlus,
+  Copy,
+  TrendingUp,
+  PieChart,
+  CheckSquare,
+  Square,
+  SlidersHorizontal,
+  ArrowRight,
+  X,
 } from 'lucide-react';
 
 interface NormalizedPlannedItem {
   id: string;
+  kind: 'expense' | 'income';
   dateStr: string;
   monthKey: string;
   amount: number;
@@ -83,6 +104,13 @@ interface NormalizedPlannedItem {
   rawTx: any;
 }
 
+type MainViewMode = 'calendar' | 'list' | 'installments';
+type RightPanelTab = 'day' | 'pending' | 'categories';
+type KindFilter = 'all' | 'cards' | 'bills' | 'incomes';
+type StatusFilter = 'all' | 'pending' | 'overdue' | 'paid';
+type PendingScopeFilter = 'all' | 'overdue' | 'current_month' | 'future';
+type CardInvoiceTarget = 'auto' | 'viewed_month' | 'next_month';
+
 export function PlanningCalendar() {
   const {
     transactions,
@@ -91,6 +119,8 @@ export function PlanningCalendar() {
     deleteTransaction,
     reserveTransactions,
     updateReserveTransaction,
+    investmentTransactions,
+    reserves,
     settings,
     hideValues,
   } = useData();
@@ -98,10 +128,21 @@ export function PlanningCalendar() {
   const [userId, setUserId] = useState<string>('');
   const [cards, setCards] = useState<CreditCardConfig[]>([]);
   const [txCardMap, setTxCardMap] = useState<Record<string, string>>({});
+  const [categoryBudgets, setCategoryBudgets] = useState<Record<string, number>>({});
+
   const [currentMonth, setCurrentMonth] = useState<Date>(() => startOfMonth(new Date()));
   const [selectedDayStr, setSelectedDayStr] = useState<string>(() => getTodayLocalDateStr());
-  const [rightPanelTab, setRightPanelTab] = useState<'day' | 'pending'>('day');
+  const [mainView, setMainView] = useState<MainViewMode>('calendar');
+  const [rightPanelTab, setRightPanelTab] = useState<RightPanelTab>('day');
   const [showSpotPaidExpenses, setShowSpotPaidExpenses] = useState<boolean>(false);
+
+  // Filters & Search
+  const [filterCardId, setFilterCardId] = useState<string>('all');
+  const [kindFilter, setKindFilter] = useState<KindFilter>('all');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [pendingScopeFilter, setPendingScopeFilter] = useState<PendingScopeFilter>('all');
+  const [selectedBatchIds, setSelectedBatchIds] = useState<string[]>([]);
 
   // Card Manager Dialog
   const [showCardModal, setShowCardModal] = useState(false);
@@ -114,10 +155,11 @@ export function PlanningCalendar() {
   const [cardDueDay, setCardDueDay] = useState('12');
   const [cardLimit, setCardLimit] = useState('');
 
-  // Purchase / Planned Bill Dialog
+  // Purchase / Planned Bill / Planned Income Dialog
   const [showEntryModal, setShowEntryModal] = useState(false);
-  const [entryMode, setEntryMode] = useState<'card' | 'bill'>('card');
+  const [entryMode, setEntryMode] = useState<'card' | 'bill' | 'income'>('card');
   const [selectedCardId, setSelectedCardId] = useState<string>('');
+  const [cardInvoiceTarget, setCardInvoiceTarget] = useState<CardInvoiceTarget>('auto');
   const [entryDate, setEntryDate] = useState<string>(getTodayLocalDateStr());
   const [entryAmount, setEntryAmount] = useState<string>('');
   const [amountInputType, setAmountInputType] = useState<'total' | 'installment'>('total');
@@ -142,8 +184,9 @@ export function PlanningCalendar() {
   // Delete Parcel Group Confirmation Dialog
   const [deleteTargetItem, setDeleteTargetItem] = useState<NormalizedPlannedItem | null>(null);
 
-  // Filter / Card Detail Inspector
-  const [filterCardId, setFilterCardId] = useState<string>('all');
+  // Category Budget Quick Modal
+  const [budgetModalCategory, setBudgetModalCategory] = useState<string | null>(null);
+  const [budgetModalLimit, setBudgetModalLimit] = useState<string>('');
 
   useEffect(() => {
     let activeUid = '';
@@ -151,6 +194,7 @@ export function PlanningCalendar() {
       const loadedCards = planningStorage.getCards(uid);
       setCards(loadedCards);
       setTxCardMap(planningStorage.getTxCardMap(uid));
+      setCategoryBudgets(planningStorage.getCategoryBudgets(uid));
       if (loadedCards.length > 0) {
         setSelectedCardId(prev => prev || loadedCards[0].id);
       }
@@ -191,6 +235,22 @@ export function PlanningCalendar() {
     );
   }, [settings]);
 
+  const incomeCategories = useMemo(() => {
+    return (
+      settings?.income_categories || [
+        'iFood',
+        'Uber',
+        '99Moto',
+        'Pizzaria',
+        'Frete do Dia',
+        'Particular',
+        'Gorjeta',
+        'Outras Receitas',
+        'Outros',
+      ]
+    );
+  }, [settings]);
+
   const formatCurrency = (val: number) => {
     if (hideValues) return 'R$ •••••';
     return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val);
@@ -201,12 +261,76 @@ export function PlanningCalendar() {
   const currentMonthKey = format(currentMonth, 'yyyy-MM');
   const nextMonthKey = format(addMonths(currentMonth, 1), 'yyyy-MM');
 
-  // Normalize planned/expense bills (transactions + reserve utilizations) with due dates
-  const plannedExpenseItems = useMemo(() => {
+  // Helper to navigate month while ALWAYS keeping selectedDayStr inside the newly viewed month
+  const navigateToMonth = (targetMonth: Date, preferredDayStr?: string) => {
+    const mStart = startOfMonth(targetMonth);
+    const mKey = format(mStart, 'yyyy-MM');
+    setCurrentMonth(mStart);
+    setSelectedBatchIds([]);
+    if (preferredDayStr && preferredDayStr.slice(0, 7) === mKey) {
+      setSelectedDayStr(preferredDayStr);
+    } else if (mKey === todayMonthKey) {
+      setSelectedDayStr(todayStr);
+    } else {
+      setSelectedDayStr(`${mKey}-01`);
+    }
+  };
+
+  // Real current Caixa Livre (bancaLivre), aligned 100% with Dashboard & History
+  const bancaLivre = useMemo(() => {
+    let rawNet = 0;
+    (transactions || []).forEach(t => {
+      if (t.payment_status === 'pending') return;
+      const amount = Number(t.amount) || 0;
+      if (
+        t.category === 'Aporte Reserva' ||
+        t.category === 'Resgate Reserva' ||
+        t.category === 'Resgate de Reserva' ||
+        (t as any).isReserveTx ||
+        (t as any).isReserveAporte
+      ) {
+        return;
+      }
+      if (t.type === 'income') rawNet += amount;
+      else rawNet -= amount;
+    });
+
+    (investmentTransactions || []).forEach(tx => {
+      if (tx.reserve_id) return;
+      if ((tx as any).payment_status === 'pending') return;
+      const amount = getInvestmentTransactionNetAmount(tx);
+      if (tx.operation === 'buy') rawNet -= amount;
+      else rawNet += amount;
+    });
+
+    (reserveTransactions || []).forEach(rt => {
+      if (rt.payment_status === 'pending') return;
+      if (rt.type === 'rendimento') {
+        rawNet += Number(rt.amount) || 0;
+      } else if (rt.type === 'utilizacao') {
+        const cat = (rt.category || '').toLowerCase().trim();
+        const isPureResgateToCash =
+          !rt.linked_investment_id &&
+          (!cat || cat === 'resgate' || cat === 'resgate reserva' || cat === 'resgate de reserva' || cat === 'outros');
+        if (!isPureResgateToCash) {
+          rawNet -= Number(rt.amount) || 0;
+        }
+      } else if (rt.type === 'aporte') {
+        if (isInvestmentSaleReserveAporte(rt)) {
+          rawNet += Number(rt.amount) || 0;
+        }
+      }
+    });
+
+    const totalInReserves = (reserves || []).reduce((sum, r) => sum + (r.saldo_atual || 0), 0);
+    return (settings?.initial_balance || 0) + rawNet - totalInReserves;
+  }, [transactions, investmentTransactions, reserveTransactions, reserves, settings?.initial_balance]);
+
+  // Normalize ALL planned expenses, credit card items, reserve utilizations, AND planned incomes
+  const plannedItems = useMemo(() => {
     const items: NormalizedPlannedItem[] = [];
 
     (transactions || []).forEach(t => {
-      if (t.type !== 'expense') return;
       if (
         t.category === 'Aporte Reserva' ||
         t.category === 'Resgate Reserva' ||
@@ -217,13 +341,49 @@ export function PlanningCalendar() {
       const dueStr = (t.due_date || t.date || '').split('T')[0];
       if (!dueStr) return;
 
+      const status: 'paid' | 'pending' = t.payment_status === 'pending' ? 'pending' : 'paid';
+
+      if (t.type === 'income') {
+        const isPlannedIncome =
+          status === 'pending' ||
+          Boolean(t.is_recurring) ||
+          Boolean(t.recurrence_group_id) ||
+          Boolean(t.due_date && t.date && t.due_date !== t.date);
+
+        if (!isPlannedIncome) {
+          if (!showSpotPaidExpenses || dueStr.slice(0, 7) !== currentMonthKey) {
+            return;
+          }
+        }
+
+        items.push({
+          id: t.id,
+          kind: 'income',
+          dateStr: dueStr,
+          monthKey: dueStr.slice(0, 7),
+          amount: Number(t.amount) || 0,
+          category: t.category || 'Receita',
+          description: t.description || t.category || 'Receita Prevista',
+          paymentStatus: status,
+          isCard: false,
+          cardId: null,
+          isReserveTx: false,
+          recurrenceGroupId: t.recurrence_group_id,
+          installmentNumber: t.installment_number,
+          installmentTotal: t.installment_total,
+          rawTx: t,
+        });
+        return;
+      }
+
+      if (t.type !== 'expense') return;
+
       const cardId = extractCardTagFromTransaction(t, txCardMap, cards);
       const isCard = Boolean(
         cardId ||
           t.description?.toLowerCase().includes('[cartão') ||
           t.description?.toLowerCase().includes('[cartao')
       );
-      const status: 'paid' | 'pending' = t.payment_status === 'pending' ? 'pending' : 'paid';
 
       const isPlannedOrCard =
         status === 'pending' ||
@@ -241,6 +401,7 @@ export function PlanningCalendar() {
 
       items.push({
         id: t.id,
+        kind: 'expense',
         dateStr: dueStr,
         monthKey: dueStr.slice(0, 7),
         amount: Number(t.amount) || 0,
@@ -276,6 +437,7 @@ export function PlanningCalendar() {
 
       items.push({
         id: rt.id,
+        kind: 'expense',
         dateStr: dueStr,
         monthKey: dueStr.slice(0, 7),
         amount: Number(rt.amount) || 0,
@@ -295,13 +457,41 @@ export function PlanningCalendar() {
     return items.sort((a, b) => a.dateStr.localeCompare(b.dateStr));
   }, [transactions, reserveTransactions, cards, txCardMap, currentMonthKey, showSpotPaidExpenses]);
 
-  const filteredItems = useMemo(() => {
-    return plannedExpenseItems.filter(item => {
-      if (filterCardId === 'all') return true;
-      if (filterCardId === 'no_card') return !item.isCard;
-      return item.cardId === filterCardId;
+  const cardLookup = useMemo(() => {
+    const map: Record<string, CreditCardConfig> = {};
+    cards.forEach(c => {
+      map[c.id] = c;
     });
-  }, [plannedExpenseItems, filterCardId]);
+    return map;
+  }, [cards]);
+
+  const filteredItems = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return plannedItems.filter(item => {
+      if (filterCardId === 'no_card' && item.isCard) return false;
+      if (filterCardId !== 'all' && filterCardId !== 'no_card' && item.cardId !== filterCardId) {
+        return false;
+      }
+
+      if (kindFilter === 'cards' && !item.isCard) return false;
+      if (kindFilter === 'bills' && (item.isCard || item.kind !== 'expense')) return false;
+      if (kindFilter === 'incomes' && item.kind !== 'income') return false;
+
+      if (statusFilter === 'pending' && item.paymentStatus !== 'pending') return false;
+      if (statusFilter === 'paid' && item.paymentStatus !== 'paid') return false;
+      if (statusFilter === 'overdue' && !(item.paymentStatus === 'pending' && item.dateStr < todayStr)) {
+        return false;
+      }
+
+      if (q) {
+        const cName = item.cardId ? (cardLookup[item.cardId]?.name || '') : '';
+        const haystack = `${item.description} ${item.category} ${cName}`.toLowerCase();
+        if (!haystack.includes(q)) return false;
+      }
+
+      return true;
+    });
+  }, [plannedItems, filterCardId, kindFilter, statusFilter, searchQuery, todayStr, cardLookup]);
 
   const monthItems = useMemo(() => {
     return filteredItems.filter(item => item.monthKey === currentMonthKey);
@@ -312,40 +502,82 @@ export function PlanningCalendar() {
     let cardsPaid = 0;
     let billsPending = 0;
     let billsPaid = 0;
+    let incomesPending = 0;
+    let incomesPaid = 0;
 
-    monthItems.forEach(item => {
-      if (item.isCard) {
-        if (item.paymentStatus === 'pending') cardsPending += item.amount;
-        else cardsPaid += item.amount;
-      } else {
-        if (item.paymentStatus === 'pending') billsPending += item.amount;
-        else billsPaid += item.amount;
-      }
-    });
+    // Use items filtered by card/search but keep month totals accurate even if statusFilter is used
+    plannedItems
+      .filter(item => {
+        if (item.monthKey !== currentMonthKey) return false;
+        if (filterCardId === 'no_card') return !item.isCard;
+        if (filterCardId !== 'all') return item.cardId === filterCardId;
+        return true;
+      })
+      .forEach(item => {
+        if (item.kind === 'income') {
+          if (item.paymentStatus === 'pending') incomesPending += item.amount;
+          else incomesPaid += item.amount;
+        } else if (item.isCard) {
+          if (item.paymentStatus === 'pending') cardsPending += item.amount;
+          else cardsPaid += item.amount;
+        } else {
+          if (item.paymentStatus === 'pending') billsPending += item.amount;
+          else billsPaid += item.amount;
+        }
+      });
+
+    const totalPending = cardsPending + billsPending;
+    const totalPaid = cardsPaid + billsPaid;
+    const projectedBalanceAfterMonth = bancaLivre + incomesPending - totalPending;
 
     return {
       cardsTotal: cardsPending + cardsPaid,
       cardsPending,
       billsPending,
-      totalPending: cardsPending + billsPending,
-      totalPaid: cardsPaid + billsPaid,
+      totalPending,
+      totalPaid,
+      incomesPending,
+      incomesPaid,
+      projectedBalanceAfterMonth,
     };
-  }, [monthItems]);
+  }, [plannedItems, currentMonthKey, filterCardId, bancaLivre]);
 
-  // Global Pending Summary (ALL overdue + current + future months)
-  const globalPendingItems = useMemo(() => {
+  // Global Pending Summary (Expenses & Overdue across all months)
+  const globalPendingExpenseItems = useMemo(() => {
+    return filteredItems.filter(item => item.kind === 'expense' && item.paymentStatus === 'pending');
+  }, [filteredItems]);
+
+  const globalPendingItemsAllKinds = useMemo(() => {
     return filteredItems.filter(item => item.paymentStatus === 'pending');
   }, [filteredItems]);
+
+  const scopedPendingList = useMemo(() => {
+    return globalPendingItemsAllKinds.filter(item => {
+      if (pendingScopeFilter === 'overdue') return item.dateStr < todayStr;
+      if (pendingScopeFilter === 'current_month') return item.monthKey === currentMonthKey;
+      if (pendingScopeFilter === 'future') return item.monthKey > currentMonthKey;
+      return true;
+    });
+  }, [globalPendingItemsAllKinds, pendingScopeFilter, todayStr, currentMonthKey]);
 
   const globalPendingSummary = useMemo(() => {
     let totalPendingAll = 0;
     let totalPendingCardsAll = 0;
     let totalPendingBillsAll = 0;
+    let totalPendingIncomesAll = 0;
     let overdueAllAmount = 0;
     let overdueAllCount = 0;
-    let futureMonthsPendingAmount = 0;
 
-    globalPendingItems.forEach(item => {
+    plannedItems.forEach(item => {
+      if (item.paymentStatus !== 'pending') return;
+      if (filterCardId === 'no_card' && item.isCard) return;
+      if (filterCardId !== 'all' && filterCardId !== 'no_card' && item.cardId !== filterCardId) return;
+
+      if (item.kind === 'income') {
+        totalPendingIncomesAll += item.amount;
+        return;
+      }
+
       totalPendingAll += item.amount;
       if (item.isCard) totalPendingCardsAll += item.amount;
       else totalPendingBillsAll += item.amount;
@@ -353,8 +585,6 @@ export function PlanningCalendar() {
       if (item.dateStr < todayStr) {
         overdueAllAmount += item.amount;
         overdueAllCount += 1;
-      } else if (item.monthKey > todayMonthKey) {
-        futureMonthsPendingAmount += item.amount;
       }
     });
 
@@ -362,20 +592,21 @@ export function PlanningCalendar() {
       totalPendingAll,
       totalPendingCardsAll,
       totalPendingBillsAll,
+      totalPendingIncomesAll,
       overdueAllAmount,
       overdueAllCount,
-      futureMonthsPendingAmount,
-      pendingCount: globalPendingItems.length,
+      pendingCount: globalPendingExpenseItems.length,
     };
-  }, [globalPendingItems, todayStr, todayMonthKey]);
+  }, [plannedItems, filterCardId, todayStr, globalPendingExpenseItems.length]);
 
-  // Per-card invoice summaries for current, next month & all open commitments
+  // Per-card invoice summaries
   const cardInvoices = useMemo(() => {
     const map: Record<
       string,
       {
         currentMonthTotal: number;
         currentMonthPending: number;
+        currentMonthPaid: number;
         currentMonthPendingIds: string[];
         nextMonthTotal: number;
         nextMonthPending: number;
@@ -387,6 +618,7 @@ export function PlanningCalendar() {
       map[c.id] = {
         currentMonthTotal: 0,
         currentMonthPending: 0,
+        currentMonthPaid: 0,
         currentMonthPendingIds: [],
         nextMonthTotal: 0,
         nextMonthPending: 0,
@@ -394,14 +626,16 @@ export function PlanningCalendar() {
       };
     });
 
-    plannedExpenseItems.forEach(item => {
-      if (!item.cardId || !map[item.cardId]) return;
+    plannedItems.forEach(item => {
+      if (item.kind !== 'expense' || !item.cardId || !map[item.cardId]) return;
       const bucket = map[item.cardId];
       if (item.monthKey === currentMonthKey) {
         bucket.currentMonthTotal += item.amount;
         if (item.paymentStatus === 'pending') {
           bucket.currentMonthPending += item.amount;
           bucket.currentMonthPendingIds.push(item.id);
+        } else {
+          bucket.currentMonthPaid += item.amount;
         }
       }
       if (item.monthKey === nextMonthKey) {
@@ -416,7 +650,99 @@ export function PlanningCalendar() {
     });
 
     return map;
-  }, [cards, plannedExpenseItems, currentMonthKey, nextMonthKey]);
+  }, [cards, plannedItems, currentMonthKey, nextMonthKey]);
+
+  // Installment & Recurrence Groups Summary
+  const installmentGroups = useMemo(() => {
+    const groups: Record<
+      string,
+      {
+        groupId: string;
+        title: string;
+        category: string;
+        kind: 'expense' | 'income';
+        cardId: string | null;
+        items: NormalizedPlannedItem[];
+        totalAmount: number;
+        paidCount: number;
+        pendingCount: number;
+        remainingAmount: number;
+        nextPendingItem: NormalizedPlannedItem | null;
+      }
+    > = {};
+
+    plannedItems.forEach(item => {
+      if (!item.recurrenceGroupId) return;
+      if (filterCardId === 'no_card' && item.isCard) return;
+      if (filterCardId !== 'all' && filterCardId !== 'no_card' && item.cardId !== filterCardId) return;
+
+      const gid = item.recurrenceGroupId;
+      if (!groups[gid]) {
+        const cleanTitle = item.description
+          .replace(/^\[Cart[ãa]o [^\]]+\]\s*/i, '')
+          .replace(/\s*\(\d+\/\d+\)\s*$/, '')
+          .trim();
+        groups[gid] = {
+          groupId: gid,
+          title: cleanTitle || item.category,
+          category: item.category,
+          kind: item.kind,
+          cardId: item.cardId,
+          items: [],
+          totalAmount: 0,
+          paidCount: 0,
+          pendingCount: 0,
+          remainingAmount: 0,
+          nextPendingItem: null,
+        };
+      }
+      const g = groups[gid];
+      g.items.push(item);
+      g.totalAmount += item.amount;
+      if (item.paymentStatus === 'paid') {
+        g.paidCount += 1;
+      } else {
+        g.pendingCount += 1;
+        g.remainingAmount += item.amount;
+        if (!g.nextPendingItem || item.dateStr < g.nextPendingItem.dateStr) {
+          g.nextPendingItem = item;
+        }
+      }
+    });
+
+    return Object.values(groups)
+      .filter(g => g.items.length > 1)
+      .sort((a, b) => {
+        if (a.pendingCount > 0 && b.pendingCount === 0) return -1;
+        if (a.pendingCount === 0 && b.pendingCount > 0) return 1;
+        const da = a.nextPendingItem?.dateStr || a.items[0]?.dateStr || '';
+        const db = b.nextPendingItem?.dateStr || b.items[0]?.dateStr || '';
+        return da.localeCompare(db);
+      });
+  }, [plannedItems, filterCardId]);
+
+  // Month Expense Breakdown by Category (vs Budgets)
+  const monthCategoryBreakdown = useMemo(() => {
+    const map: Record<string, { category: string; total: number; pending: number; paid: number; count: number }> = {};
+    let grandTotal = 0;
+
+    monthItems
+      .filter(i => i.kind === 'expense')
+      .forEach(item => {
+        const cat = item.category || 'Outros';
+        if (!map[cat]) map[cat] = { category: cat, total: 0, pending: 0, paid: 0, count: 0 };
+        map[cat].total += item.amount;
+        map[cat].count += 1;
+        if (item.paymentStatus === 'pending') map[cat].pending += item.amount;
+        else map[cat].paid += item.amount;
+        grandTotal += item.amount;
+      });
+
+    return {
+      grandTotal,
+      rows: Object.values(map).sort((a, b) => b.total - a.total),
+    };
+  }, [monthItems]);
 
   // Calendar grid days
   const calendarDays = useMemo(() => {
@@ -437,8 +763,8 @@ export function PlanningCalendar() {
   }, [filteredItems]);
 
   const selectedDayItems = itemsByDay[selectedDayStr] || [];
-  const selectedDayPendingItems = useMemo(
-    () => selectedDayItems.filter(i => i.paymentStatus === 'pending'),
+  const selectedDayPendingExpenses = useMemo(
+    () => selectedDayItems.filter(i => i.kind === 'expense' && i.paymentStatus === 'pending'),
     [selectedDayItems]
   );
 
@@ -539,6 +865,12 @@ export function PlanningCalendar() {
     [cards, selectedCardId]
   );
 
+  const forcedMonthKeyForCard = useMemo(() => {
+    if (cardInvoiceTarget === 'viewed_month') return currentMonthKey;
+    if (cardInvoiceTarget === 'next_month') return nextMonthKey;
+    return null;
+  }, [cardInvoiceTarget, currentMonthKey, nextMonthKey]);
+
   const cardPreview = useMemo(() => {
     if (entryMode !== 'card' || !selectedCardObj) return null;
     const nInst = Math.max(1, Math.min(24, Number(installments) || 1));
@@ -548,41 +880,103 @@ export function PlanningCalendar() {
     const totalPurchase =
       amountInputType === 'total' ? rawVal : Math.round(rawVal * nInst * 100) / 100;
 
-    const first = computeCardStatementDueDate(
+    const autoFirst = computeCardStatementDueDate(
       entryDate,
       selectedCardObj.closingDay,
       selectedCardObj.dueDay,
       1
     );
+
+    const opts = forcedMonthKeyForCard
+      ? { forceFirstStatementMonthKey: forcedMonthKeyForCard }
+      : undefined;
+
+    const first = computeCardStatementDueDate(
+      entryDate,
+      selectedCardObj.closingDay,
+      selectedCardObj.dueDay,
+      1,
+      opts
+    );
     const last = computeCardStatementDueDate(
       entryDate,
       selectedCardObj.closingDay,
       selectedCardObj.dueDay,
-      nInst
+      nInst,
+      opts
     );
 
-    return { nInst, perInstallment, totalPurchase, first, last };
-  }, [entryMode, selectedCardObj, installments, entryAmount, amountInputType, entryDate]);
+    return {
+      nInst,
+      perInstallment,
+      totalPurchase,
+      first,
+      last,
+      autoFirst,
+      isAutoInDifferentMonthThanViewed: autoFirst.statementMonthKey !== currentMonthKey,
+    };
+  }, [
+    entryMode,
+    selectedCardObj,
+    installments,
+    entryAmount,
+    amountInputType,
+    entryDate,
+    forcedMonthKeyForCard,
+    currentMonthKey,
+  ]);
 
-  const handleOpenNewEntry = (mode: 'card' | 'bill', presetDateStr?: string) => {
+  // Smart default date when opening entry modal (never inherits stale selectedDayStr from another month)
+  const handleOpenNewEntry = (
+    mode: 'card' | 'bill' | 'income',
+    presetDateStr?: string,
+    presetCardId?: string
+  ) => {
     setEntryMode(mode);
-    setEntryDate(presetDateStr || selectedDayStr || getTodayLocalDateStr());
+
+    let resolvedDate = presetDateStr;
+    if (!resolvedDate) {
+      if (selectedDayStr && selectedDayStr.slice(0, 7) === currentMonthKey) {
+        resolvedDate = selectedDayStr;
+      } else if (currentMonthKey === todayMonthKey) {
+        resolvedDate = todayStr;
+      } else {
+        resolvedDate = `${currentMonthKey}-01`;
+      }
+    }
+    setEntryDate(resolvedDate);
+
+    // If user clicked directly on a day inside the viewed month for a card purchase,
+    // keep invoice target 'auto' by default so card rules apply, OR if they're launching for a past/closed month let them switch with 1 click
+    setCardInvoiceTarget('auto');
     setEntryAmount('');
     setAmountInputType('total');
     setInstallments('1');
-    setEntryCategory(
-      mode === 'card' && expenseCategories.find(c => c.toLowerCase().includes('cart'))
-        ? (expenseCategories.find(c => c.toLowerCase().includes('cart')) as string)
-        : (expenseCategories[0] || 'Outras Despesas')
-    );
+
+    if (mode === 'income') {
+      setEntryCategory(incomeCategories[0] || 'Outras Receitas');
+    } else if (mode === 'card') {
+      setEntryCategory(
+        (expenseCategories.find(c => c.toLowerCase().includes('cart')) as string) ||
+          expenseCategories[0] ||
+          'Outras Despesas'
+      );
+    } else {
+      setEntryCategory(expenseCategories[0] || 'Outras Despesas');
+    }
+
     setEntryDescription('');
     setBillRepeat(false);
     setBillRepeatCount('6');
-    if (mode === 'card' && cards.length > 0) {
-      if (!selectedCardId || !cards.some(c => c.id === selectedCardId)) {
+
+    if (mode === 'card') {
+      if (presetCardId && cards.some(c => c.id === presetCardId)) {
+        setSelectedCardId(presetCardId);
+      } else if (cards.length > 0 && (!selectedCardId || !cards.some(c => c.id === selectedCardId))) {
         setSelectedCardId(cards[0].id);
       }
     }
+
     setShowEntryModal(true);
   };
 
@@ -616,17 +1010,22 @@ export function PlanningCalendar() {
         const groupId = nInst > 1 ? generateUUID() : null;
         const labelDesc = entryDescription.trim() || entryCategory || 'Compra no cartão';
         const batchIds: string[] = [];
+        const opts = forcedMonthKeyForCard
+          ? { forceFirstStatementMonthKey: forcedMonthKeyForCard }
+          : undefined;
 
         for (let i = 1; i <= nInst; i++) {
           const { statementDueDate } = computeCardStatementDueDate(
             entryDate,
             selectedCardObj.closingDay,
             selectedCardObj.dueDay,
-            i
+            i,
+            opts
           );
           const instId = generateUUID();
           batchIds.push(instId);
-          const instAmt = i === 1 ? Math.round((baseInstAmt + remainderCents) * 100) / 100 : baseInstAmt;
+          const instAmt =
+            i === 1 ? Math.round((baseInstAmt + remainderCents) * 100) / 100 : baseInstAmt;
           const parcelSuffix = nInst > 1 ? ` (${i}/${nInst})` : '';
           const payload: Transaction = {
             id: instId,
@@ -661,20 +1060,27 @@ export function PlanningCalendar() {
         const firstDue = batch[0]?.date;
         if (firstDue) {
           const [y, m] = firstDue.split('-').map(Number);
-          setCurrentMonth(new Date(y, m - 1, 1, 12, 0, 0));
-          setSelectedDayStr(firstDue);
+          navigateToMonth(new Date(y, m - 1, 1, 12, 0, 0), firstDue);
           setRightPanelTab('day');
         }
+
+        const firstMonthLabel = firstDue
+          ? format(new Date(firstDue + 'T12:00:00'), "MMM/yyyy", { locale: ptBR })
+          : '';
         toast.success(
           nInst > 1
-            ? `Compra parcelada em ${nInst}x lançada na fatura do ${selectedCardObj.name}!`
-            : `Compra lançada na fatura do ${selectedCardObj.name}!`
+            ? `Compra ${nInst}x lançada na fatura de ${firstMonthLabel} (${selectedCardObj.name})!`
+            : `Compra lançada na fatura de ${firstMonthLabel} (${selectedCardObj.name})!`
         );
       } else {
-        // Planned Standalone / Recurring Bill
+        // Planned Standalone/Recurring Bill OR Planned Income
+        const isIncomeMode = entryMode === 'income';
         const nInst = billRepeat ? Math.max(2, Math.min(36, Number(billRepeatCount) || 6)) : 1;
         const groupId = nInst > 1 ? generateUUID() : null;
-        const labelDesc = entryDescription.trim() || entryCategory || 'Conta agendada';
+        const labelDesc =
+          entryDescription.trim() ||
+          entryCategory ||
+          (isIncomeMode ? 'Receita prevista' : 'Conta agendada');
 
         for (let i = 1; i <= nInst; i++) {
           const instDate =
@@ -684,7 +1090,7 @@ export function PlanningCalendar() {
           const payload: Transaction = {
             id: instId,
             user_id: effectiveUid,
-            type: 'expense',
+            type: isIncomeMode ? 'income' : 'expense',
             amount: rawVal,
             date: instDate,
             due_date: instDate,
@@ -705,13 +1111,16 @@ export function PlanningCalendar() {
         }
 
         const [y, m] = entryDate.split('-').map(Number);
-        setCurrentMonth(new Date(y, m - 1, 1, 12, 0, 0));
-        setSelectedDayStr(entryDate);
+        navigateToMonth(new Date(y, m - 1, 1, 12, 0, 0), entryDate);
         setRightPanelTab('day');
         toast.success(
-          nInst > 1
-            ? `${nInst} contas recorrentes agendadas no calendário!`
-            : 'Conta futura agendada no calendário!'
+          isIncomeMode
+            ? nInst > 1
+              ? `${nInst} receitas recorrentes agendadas!`
+              : 'Receita prevista agendada no calendário!'
+            : nInst > 1
+              ? `${nInst} contas recorrentes agendadas!`
+              : 'Conta agendada no calendário!'
         );
       }
 
@@ -723,7 +1132,7 @@ export function PlanningCalendar() {
       });
       setShowEntryModal(false);
     } catch {
-      toast.error('Erro ao salvar planejamento.');
+      toast.error('Erro ao salvar lançamento.');
     } finally {
       setSavingEntry(false);
     }
@@ -744,18 +1153,108 @@ export function PlanningCalendar() {
           { payment_status: newStatus, payment_date: newPayDate },
           { silent: true }
         );
-        toast.success(newStatus === 'paid' ? 'Conta quitada!' : 'Conta marcada como pendente.');
+        if (item.kind === 'income') {
+          toast.success(newStatus === 'paid' ? 'Receita confirmada no caixa!' : 'Receita marcada como prevista.');
+        } else {
+          toast.success(newStatus === 'paid' ? 'Conta quitada!' : 'Conta marcada como pendente.');
+        }
       }
     } catch {
-      toast.error('Erro ao atualizar status da conta.');
+      toast.error('Erro ao atualizar status.');
     }
   };
 
+  const handleShiftItemMonth = async (item: NormalizedPlannedItem, deltaMonths: number) => {
+    const nextDate = calculateNextOccurrence(item.dateStr, 'monthly', deltaMonths);
+    try {
+      if (item.isReserveTx) {
+        await updateReserveTransaction(item.id, {
+          date: nextDate,
+          due_date: nextDate,
+        });
+      } else {
+        await updateTransaction(
+          item.id,
+          { date: nextDate, due_date: nextDate },
+          { silent: true }
+        );
+      }
+      const label = format(new Date(nextDate + 'T12:00:00'), 'dd/MM/yyyy');
+      toast.success(`Vencimento alterado para ${label}!`);
+    } catch {
+      toast.error('Erro ao reagendar lançamento.');
+    }
+  };
+
+  const handleMoveItemToCurrentMonth = async (item: NormalizedPlannedItem) => {
+    const targetYear = currentMonth.getFullYear();
+    const targetMonthIdx = currentMonth.getMonth();
+    const maxDay = endOfMonth(currentMonth).getDate();
+    const origDay = Number(item.dateStr.split('-')[2]) || 1;
+    const clampedDay = Math.max(1, Math.min(origDay, maxDay));
+    const targetDate = `${targetYear}-${String(targetMonthIdx + 1).padStart(2, '0')}-${String(clampedDay).padStart(2, '0')}`;
+
+    try {
+      if (item.isReserveTx) {
+        await updateReserveTransaction(item.id, {
+          date: targetDate,
+          due_date: targetDate,
+        });
+      } else {
+        await updateTransaction(
+          item.id,
+          { date: targetDate, due_date: targetDate },
+          { silent: true }
+        );
+      }
+      toast.success(`Movido para ${format(new Date(targetDate + 'T12:00:00'), 'dd/MM/yyyy')}!`);
+    } catch {
+      toast.error('Erro ao mover para este mês.');
+    }
+  };
+
+  const handleDuplicateItemNextMonth = async (item: NormalizedPlannedItem) => {
+    if (item.isReserveTx) {
+      toast.info('Despesas de reserva devem ser duplicadas na aba Reservas.');
+      return;
+    }
+    const effectiveUid = userId || (await getEffectiveUserId()) || 'default';
+    const nextDate = calculateNextOccurrence(item.dateStr, 'monthly', 1);
+    const newId = generateUUID();
+    const payload: Transaction = {
+      id: newId,
+      user_id: effectiveUid,
+      type: item.kind,
+      amount: item.amount,
+      date: nextDate,
+      due_date: nextDate,
+      category: item.category,
+      description: item.description.replace(/\s*\(\d+\/\d+\)\s*$/, ''),
+      payment_status: 'pending',
+      payment_date: null,
+      card_id: item.cardId,
+      card_name: item.cardId ? cardLookup[item.cardId]?.name || null : null,
+      created_at: new Date().toISOString(),
+    };
+    syncQueueManager.enqueue('transactions', 'insert', newId, payload);
+    if (item.cardId) {
+      planningStorage.linkTxsToCard(effectiveUid, [newId], item.cardId);
+      setTxCardMap(planningStorage.getTxCardMap(effectiveUid));
+    }
+    setTransactions(prev => {
+      const next = [payload, ...prev];
+      cacheManager.set(`transactions_${effectiveUid}`, next, undefined, 'transactions');
+      cacheManager.set('last_known_transactions', next, undefined, 'transactions');
+      return next;
+    });
+    toast.success(`Duplicado para ${format(new Date(nextDate + 'T12:00:00'), 'dd/MM/yyyy')}!`);
+  };
+
   const handleSettleDayPending = async () => {
-    if (selectedDayPendingItems.length === 0) return;
+    if (selectedDayPendingExpenses.length === 0) return;
     const payDate = getTodayLocalDateStr();
     try {
-      for (const item of selectedDayPendingItems) {
+      for (const item of selectedDayPendingExpenses) {
         if (item.isReserveTx) {
           await updateReserveTransaction(item.id, {
             payment_status: 'paid',
@@ -769,9 +1268,72 @@ export function PlanningCalendar() {
           );
         }
       }
-      toast.success(`${selectedDayPendingItems.length} contas do dia quitadas!`);
+      toast.success(`${selectedDayPendingExpenses.length} contas do dia quitadas!`);
     } catch {
       toast.error('Erro ao quitar contas do dia.');
+    }
+  };
+
+  const handleSettleAllOverdue = async () => {
+    const overdueItems = globalPendingExpenseItems.filter(i => i.dateStr < todayStr);
+    if (overdueItems.length === 0) return;
+    const payDate = getTodayLocalDateStr();
+    try {
+      for (const item of overdueItems) {
+        if (item.isReserveTx) {
+          await updateReserveTransaction(item.id, {
+            payment_status: 'paid',
+            payment_date: payDate,
+          });
+        } else {
+          await updateTransaction(
+            item.id,
+            { payment_status: 'paid', payment_date: payDate },
+            { silent: true }
+          );
+        }
+      }
+      toast.success(`${overdueItems.length} contas vencidas quitadas!`);
+    } catch {
+      toast.error('Erro ao quitar contas vencidas.');
+    }
+  };
+
+  const handleBatchSettleSelected = async () => {
+    const targets = monthItems.filter(i => selectedBatchIds.includes(i.id) && i.paymentStatus === 'pending');
+    if (targets.length === 0) return;
+    const payDate = getTodayLocalDateStr();
+    try {
+      for (const item of targets) {
+        if (item.isReserveTx) {
+          await updateReserveTransaction(item.id, { payment_status: 'paid', payment_date: payDate });
+        } else {
+          await updateTransaction(item.id, { payment_status: 'paid', payment_date: payDate }, { silent: true });
+        }
+      }
+      setSelectedBatchIds([]);
+      toast.success(`${targets.length} lançamento(s) quitado(s)!`);
+    } catch {
+      toast.error('Erro ao quitar itens selecionados.');
+    }
+  };
+
+  const handleBatchShiftNextMonth = async () => {
+    const targets = monthItems.filter(i => selectedBatchIds.includes(i.id));
+    if (targets.length === 0) return;
+    try {
+      for (const item of targets) {
+        const nextDate = calculateNextOccurrence(item.dateStr, 'monthly', 1);
+        if (item.isReserveTx) {
+          await updateReserveTransaction(item.id, { date: nextDate, due_date: nextDate });
+        } else {
+          await updateTransaction(item.id, { date: nextDate, due_date: nextDate }, { silent: true });
+        }
+      }
+      setSelectedBatchIds([]);
+      toast.success(`${targets.length} lançamento(s) adiado(s) em +1 mês!`);
+    } catch {
+      toast.error('Erro ao adiar itens selecionados.');
     }
   };
 
@@ -790,6 +1352,26 @@ export function PlanningCalendar() {
       toast.success(`Fatura do ${card.name} quitada (${inv.currentMonthPendingIds.length} itens)!`);
     } catch {
       toast.error('Erro ao quitar fatura do cartão.');
+    }
+  };
+
+  const handleSettleInstallmentGroup = async (groupId: string) => {
+    const targets = plannedItems.filter(
+      p => p.recurrenceGroupId === groupId && p.paymentStatus === 'pending'
+    );
+    if (targets.length === 0) return;
+    const payDate = getTodayLocalDateStr();
+    try {
+      for (const item of targets) {
+        if (item.isReserveTx) {
+          await updateReserveTransaction(item.id, { payment_status: 'paid', payment_date: payDate });
+        } else {
+          await updateTransaction(item.id, { payment_status: 'paid', payment_date: payDate }, { silent: true });
+        }
+      }
+      toast.success(`${targets.length} parcela(s) quitada(s) com sucesso!`);
+    } catch {
+      toast.error('Erro ao antecipar/quitar parcelas.');
     }
   };
 
@@ -817,6 +1399,7 @@ export function PlanningCalendar() {
       if (editingItem.isReserveTx) {
         await updateReserveTransaction(editingItem.id, {
           amount: parsedAmt,
+          date: editDate,
           due_date: editDate,
           category: editCategory,
           description: editDescription.trim() || editCategory,
@@ -825,9 +1408,11 @@ export function PlanningCalendar() {
         });
       } else {
         let cleanedDesc = editDescription.trim() || editCategory;
-        const chosenCard = editCardId !== '__none__' ? cards.find(c => c.id === editCardId) || null : null;
+        const chosenCard =
+          editingItem.kind === 'expense' && editCardId !== '__none__'
+            ? cards.find(c => c.id === editCardId) || null
+            : null;
 
-        // Remove any old [Cartão ...] prefix before applying updated card prefix
         cleanedDesc = cleanedDesc.replace(/^\[Cart[ãa]o [^\]]+\]\s*/i, '').trim();
         if (chosenCard) {
           cleanedDesc = `[Cartão ${chosenCard.name}] ${cleanedDesc}`;
@@ -890,7 +1475,7 @@ export function PlanningCalendar() {
   const executeDeleteGroupPending = async (item: NormalizedPlannedItem) => {
     if (!item.recurrenceGroupId) return;
     const effectiveUid = userId || (await getEffectiveUserId()) || 'default';
-    const targets = plannedExpenseItems.filter(
+    const targets = plannedItems.filter(
       p =>
         !p.isReserveTx &&
         p.recurrenceGroupId === item.recurrenceGroupId &&
@@ -909,23 +1494,63 @@ export function PlanningCalendar() {
     }
   };
 
+  const handleSaveCategoryBudget = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!budgetModalCategory) return;
+    const effectiveUid = userId || (await getEffectiveUserId()) || 'default';
+    const parsed = Number(budgetModalLimit);
+    const nextBudgets = { ...categoryBudgets };
+    if (!parsed || parsed <= 0) {
+      delete nextBudgets[budgetModalCategory];
+      toast.success(`Limite removido para ${budgetModalCategory}.`);
+    } else {
+      nextBudgets[budgetModalCategory] = parsed;
+      toast.success(`Teto mensal de ${formatCurrency(parsed)} salvo para ${budgetModalCategory}!`);
+    }
+    setCategoryBudgets(nextBudgets);
+    planningStorage.saveCategoryBudgets(effectiveUid, nextBudgets);
+    setBudgetModalCategory(null);
+  };
+
   const jumpToDate = (dateStr: string) => {
     const [y, m] = dateStr.split('-').map(Number);
     if (y && m) {
-      setCurrentMonth(new Date(y, m - 1, 1, 12, 0, 0));
+      navigateToMonth(new Date(y, m - 1, 1, 12, 0, 0), dateStr);
+    } else {
+      setSelectedDayStr(dateStr);
     }
-    setSelectedDayStr(dateStr);
     setRightPanelTab('day');
   };
 
-  const getCardById = (cardId: string | null) => cards.find(c => c.id === cardId) || null;
+  const getCardById = (cardId: string | null) => (cardId ? cardLookup[cardId] || null : null);
+
+  const toggleBatchItem = (id: string) => {
+    setSelectedBatchIds(prev => (prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]));
+  };
+
+  const toggleAllMonthBatch = () => {
+    if (selectedBatchIds.length === monthItems.length && monthItems.length > 0) {
+      setSelectedBatchIds([]);
+    } else {
+      setSelectedBatchIds(monthItems.map(i => i.id));
+    }
+  };
+
+  const viewedMonthLabel = format(currentMonth, 'MMM/yy', { locale: ptBR });
+  const nextMonthLabel = format(addMonths(currentMonth, 1), 'MMM/yy', { locale: ptBR });
+
+  const monthCoveragePct = useMemo(() => {
+    if (monthSummary.totalPending <= 0) return 100;
+    const available = Math.max(0, bancaLivre + monthSummary.incomesPending);
+    return Math.min(100, Math.round((available / monthSummary.totalPending) * 100));
+  }, [bancaLivre, monthSummary.incomesPending, monthSummary.totalPending]);
 
   return (
-    <div className="flex-1 w-full max-w-7xl mx-auto p-4 md:p-8 space-y-6 animate-fade-in">
+    <div className="flex-1 w-full max-w-7xl mx-auto p-4 md:p-8 space-y-5 animate-fade-in">
       {/* Header */}
-      <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-border/50 pb-5">
+      <header className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-border/60 pb-5">
         <div className="flex items-start gap-3">
-          <div className="h-11 w-11 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-500 shrink-0">
+          <div className="h-11 w-11 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-600 dark:text-indigo-400 shrink-0">
             <CalendarRange className="w-5 h-5" />
           </div>
           <div>
@@ -933,7 +1558,7 @@ export function PlanningCalendar() {
               Calendário de Contas &amp; Cartões
             </h1>
             <p className="text-xs sm:text-sm text-muted-foreground font-medium mt-0.5">
-              Gerencie faturas de cartão, compras parceladas e contas futuras com visão clara do total pendente.
+              Controle faturas, compras parceladas, contas agendadas e receitas previstas com previsão real de caixa.
             </p>
           </div>
         </div>
@@ -943,7 +1568,7 @@ export function PlanningCalendar() {
             type="button"
             variant="outline"
             onClick={() => handleOpenNewCard(false)}
-            className="h-10 rounded-xl text-xs font-extrabold gap-1.5 cursor-pointer"
+            className="h-10 rounded-xl text-xs font-extrabold gap-1.5 cursor-pointer whitespace-nowrap shrink-0"
           >
             <CreditCard className="w-4 h-4 text-purple-500" />
             <span>Novo Cartão</span>
@@ -951,8 +1576,17 @@ export function PlanningCalendar() {
           <Button
             type="button"
             variant="outline"
+            onClick={() => handleOpenNewEntry('income')}
+            className="h-10 rounded-xl text-xs font-extrabold gap-1.5 border-emerald-500/35 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 cursor-pointer whitespace-nowrap shrink-0"
+          >
+            <ArrowUpRight className="w-4 h-4" />
+            <span>+ Receita Prevista</span>
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
             onClick={() => handleOpenNewEntry('bill')}
-            className="h-10 rounded-xl text-xs font-extrabold gap-1.5 border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 cursor-pointer"
+            className="h-10 rounded-xl text-xs font-extrabold gap-1.5 border-amber-500/35 bg-amber-500/10 text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 cursor-pointer whitespace-nowrap shrink-0"
           >
             <ReceiptText className="w-4 h-4" />
             <span>+ Conta Planejada</span>
@@ -960,7 +1594,7 @@ export function PlanningCalendar() {
           <Button
             type="button"
             onClick={() => handleOpenNewEntry('card')}
-            className="h-10 rounded-xl text-xs font-black bg-indigo-600 hover:bg-indigo-700 text-white gap-1.5 cursor-pointer shadow-sm"
+            className="h-10 rounded-xl text-xs font-black bg-indigo-600 hover:bg-indigo-700 text-white gap-1.5 cursor-pointer whitespace-nowrap shrink-0"
           >
             <Plus className="w-4 h-4" />
             <span>+ Compra no Cartão</span>
@@ -968,92 +1602,94 @@ export function PlanningCalendar() {
         </div>
       </header>
 
-      {/* Top KPI Summary: Includes Global Total Pending + Current Month Breakdown */}
+      {/* Top KPI Summary */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
-        {/* KPI 1: Valor Total Pendente (Geral de todos os meses/cartões) */}
         <Card
           onClick={() => setRightPanelTab('pending')}
-          className="col-span-2 md:col-span-1 border-2 border-indigo-500/35 bg-indigo-500/[0.06] rounded-2xl cursor-pointer hover:border-indigo-500/60 transition-all"
+          className="col-span-2 md:col-span-1 border border-indigo-500/40 bg-indigo-500/[0.06] rounded-2xl cursor-pointer hover:border-indigo-500/70 transition-colors"
           title="Clique para listar todas as pendências em aberto"
         >
           <CardContent className="p-4 space-y-1">
-            <span className="text-[10px] font-black uppercase tracking-wider text-indigo-500 flex items-center justify-between gap-1">
+            <span className="text-[10px] font-black uppercase tracking-wider text-indigo-600 dark:text-indigo-400 flex items-center justify-between gap-1">
               <span className="flex items-center gap-1">
                 <Layers className="w-3.5 h-3.5" /> Total Pendente Geral
               </span>
-              <span className="px-1.5 py-0.2 rounded bg-indigo-500/15 text-[9px] font-black">
-                {globalPendingSummary.pendingCount} itens
+              <span className="font-mono tabular-nums text-[10px] font-black">
+                {globalPendingSummary.pendingCount}
               </span>
             </span>
-            <p className="text-lg sm:text-xl font-black font-mono text-indigo-600 dark:text-indigo-400">
+            <p className="text-lg sm:text-xl font-black font-mono tabular-nums text-indigo-600 dark:text-indigo-400">
               {formatCurrency(globalPendingSummary.totalPendingAll)}
             </p>
-            <p className="text-[10px] text-muted-foreground font-semibold truncate">
+            <p className="text-[10px] text-muted-foreground font-semibold truncate tabular-nums">
               Cartões: {formatCurrency(globalPendingSummary.totalPendingCardsAll)} • Avulsas:{' '}
               {formatCurrency(globalPendingSummary.totalPendingBillsAll)}
             </p>
           </CardContent>
         </Card>
 
-        <Card className="border border-border/70 rounded-2xl bg-card/95">
+        <Card className="border border-border/80 rounded-2xl bg-card">
           <CardContent className="p-4 space-y-1">
-            <span className="text-[10px] font-extrabold uppercase tracking-wider text-purple-500 flex items-center gap-1">
-              <CreditCard className="w-3.5 h-3.5" /> Faturas ({format(currentMonth, 'MMM/yy', { locale: ptBR })})
+            <span className="text-[10px] font-extrabold uppercase tracking-wider text-purple-600 dark:text-purple-400 flex items-center gap-1">
+              <CreditCard className="w-3.5 h-3.5" /> Faturas ({viewedMonthLabel})
             </span>
-            <p className="text-lg sm:text-xl font-black font-mono text-foreground">
+            <p className="text-lg sm:text-xl font-black font-mono tabular-nums text-foreground">
               {formatCurrency(monthSummary.cardsTotal)}
             </p>
-            <p className="text-[10px] text-muted-foreground font-semibold">
-              Pendente no mês: {formatCurrency(monthSummary.cardsPending)}
+            <p className="text-[10px] text-muted-foreground font-semibold tabular-nums">
+              Em aberto no mês: {formatCurrency(monthSummary.cardsPending)}
             </p>
           </CardContent>
         </Card>
 
-        <Card className="border border-border/70 rounded-2xl bg-card/95">
+        <Card className="border border-border/80 rounded-2xl bg-card">
           <CardContent className="p-4 space-y-1">
-            <span className="text-[10px] font-extrabold uppercase tracking-wider text-amber-500 flex items-center gap-1">
-              <Clock className="w-3.5 h-3.5" /> A Pagar no Mês
+            <span className="text-[10px] font-extrabold uppercase tracking-wider text-amber-600 dark:text-amber-400 flex items-center gap-1">
+              <Clock className="w-3.5 h-3.5" /> A Pagar ({viewedMonthLabel})
             </span>
-            <p className="text-lg sm:text-xl font-black font-mono text-amber-500">
+            <p className="text-lg sm:text-xl font-black font-mono tabular-nums text-amber-600 dark:text-amber-400">
               {formatCurrency(monthSummary.totalPending)}
             </p>
-            <p className="text-[10px] text-muted-foreground font-semibold">
+            <p className="text-[10px] text-muted-foreground font-semibold tabular-nums">
               Avulsas: {formatCurrency(monthSummary.billsPending)}
             </p>
           </CardContent>
         </Card>
 
-        <Card className="border border-border/70 rounded-2xl bg-card/95">
+        <Card className="border border-border/80 rounded-2xl bg-card">
           <CardContent className="p-4 space-y-1">
-            <span className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-500 flex items-center gap-1">
-              <CheckCircle2 className="w-3.5 h-3.5" /> Quitado no Mês
+            <span className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+              <CheckCircle2 className="w-3.5 h-3.5" /> Quitado ({viewedMonthLabel})
             </span>
-            <p className="text-lg sm:text-xl font-black font-mono text-emerald-500">
+            <p className="text-lg sm:text-xl font-black font-mono tabular-nums text-emerald-600 dark:text-emerald-400">
               {formatCurrency(monthSummary.totalPaid)}
             </p>
-            <p className="text-[10px] text-muted-foreground font-semibold">
-              Liquidado em {format(currentMonth, 'MMMM', { locale: ptBR })}
+            <p className="text-[10px] text-muted-foreground font-semibold tabular-nums">
+              A receber no mês: {formatCurrency(monthSummary.incomesPending)}
             </p>
           </CardContent>
         </Card>
 
         <Card
-          onClick={() => setRightPanelTab('pending')}
-          className={`border rounded-2xl cursor-pointer transition-all ${
+          onClick={() => {
+            setPendingScopeFilter('overdue');
+            setRightPanelTab('pending');
+          }}
+          className={`border rounded-2xl cursor-pointer transition-colors ${
             globalPendingSummary.overdueAllCount > 0
-              ? 'border-rose-500/40 bg-rose-500/[0.06] hover:border-rose-500/70'
-              : 'border-border/70 bg-card/95'
+              ? 'border-rose-500/45 bg-rose-500/[0.06] hover:border-rose-500/75'
+              : 'border-border/80 bg-card'
           }`}
           title="Clique para inspecionar contas em atraso"
         >
           <CardContent className="p-4 space-y-1">
-            <span className="text-[10px] font-extrabold uppercase tracking-wider text-rose-500 flex items-center gap-1">
+            <span className="text-[10px] font-extrabold uppercase tracking-wider text-rose-600 dark:text-rose-400 flex items-center gap-1">
               <AlertTriangle className="w-3.5 h-3.5" /> Em Atraso (Total)
             </span>
-            <p className="text-lg sm:text-xl font-black font-mono text-rose-500">
+            <p className="text-lg sm:text-xl font-black font-mono tabular-nums text-rose-600 dark:text-rose-400">
               {formatCurrency(globalPendingSummary.overdueAllAmount)}
             </p>
-            <p className="text-[10px] text-muted-foreground font-semibold">
+            <p className="text-[10px] text-muted-foreground font-semibold tabular-nums">
               {globalPendingSummary.overdueAllCount}{' '}
               {globalPendingSummary.overdueAllCount === 1 ? 'conta vencida' : 'contas vencidas'}
             </p>
@@ -1061,8 +1697,84 @@ export function PlanningCalendar() {
         </Card>
       </div>
 
+      {/* Cash Flow Coverage Strip */}
+      <Card className="border border-border/80 rounded-2xl bg-card">
+        <CardContent className="p-4 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 flex-1">
+            <div>
+              <span className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground flex items-center gap-1">
+                <Wallet className="w-3 h-3 text-primary" /> Caixa Livre Atual
+              </span>
+              <p className={`text-sm sm:text-base font-black font-mono tabular-nums mt-0.5 ${bancaLivre >= 0 ? 'text-foreground' : 'text-rose-600 dark:text-rose-400'}`}>
+                {formatCurrency(bancaLivre)}
+              </p>
+            </div>
+            <div>
+              <span className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground flex items-center gap-1">
+                <ArrowUpRight className="w-3 h-3 text-emerald-500" /> + A Receber ({viewedMonthLabel})
+              </span>
+              <p className="text-sm sm:text-base font-black font-mono tabular-nums text-emerald-600 dark:text-emerald-400 mt-0.5">
+                {formatCurrency(monthSummary.incomesPending)}
+              </p>
+            </div>
+            <div>
+              <span className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground flex items-center gap-1">
+                <ArrowDownRight className="w-3 h-3 text-amber-500" /> - Pendente ({viewedMonthLabel})
+              </span>
+              <p className="text-sm sm:text-base font-black font-mono tabular-nums text-amber-600 dark:text-amber-400 mt-0.5">
+                {formatCurrency(monthSummary.totalPending)}
+              </p>
+            </div>
+            <div>
+              <span className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground flex items-center gap-1">
+                <TrendingUp className="w-3 h-3 text-indigo-500" /> Saldo Projetado
+              </span>
+              <p
+                className={`text-sm sm:text-base font-black font-mono tabular-nums mt-0.5 ${
+                  monthSummary.projectedBalanceAfterMonth >= 0
+                    ? 'text-emerald-600 dark:text-emerald-400'
+                    : 'text-rose-600 dark:text-rose-400'
+                }`}
+              >
+                {formatCurrency(monthSummary.projectedBalanceAfterMonth)}
+              </p>
+            </div>
+          </div>
+
+          <div className="lg:w-64 space-y-1.5 shrink-0 border-t lg:border-t-0 lg:border-l border-border/50 pt-3 lg:pt-0 lg:pl-4">
+            <div className="flex items-center justify-between text-[11px] font-bold">
+              <span className="text-muted-foreground">Cobertura do Mês</span>
+              <span
+                className={`font-mono tabular-nums font-black ${
+                  monthSummary.projectedBalanceAfterMonth >= 0
+                    ? 'text-emerald-600 dark:text-emerald-400'
+                    : 'text-rose-600 dark:text-rose-400'
+                }`}
+              >
+                {monthCoveragePct}%
+              </span>
+            </div>
+            <div className="h-2 w-full bg-muted rounded-full overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all ${
+                  monthSummary.projectedBalanceAfterMonth >= 0 ? 'bg-emerald-500' : 'bg-rose-500'
+                }`}
+                style={{ width: `${monthCoveragePct}%` }}
+              />
+            </div>
+            <p className="text-[10px] text-muted-foreground font-medium">
+              {monthSummary.totalPending === 0
+                ? 'Sem pendências restantes neste mês.'
+                : monthSummary.projectedBalanceAfterMonth >= 0
+                  ? 'Caixa atual + receitas previstas cobrem todas as contas.'
+                  : 'Saldo previsto negativo — considere antecipar receitas ou ajustar contas.'}
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+
       {/* Credit Cards Strip */}
-      <Card className="border border-border/80 rounded-2xl bg-card/95">
+      <Card className="border border-border/80 rounded-2xl bg-card">
         <CardHeader className="pb-3 border-b border-border/40">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
@@ -1070,16 +1782,16 @@ export function PlanningCalendar() {
                 <CreditCard className="w-4 h-4 text-purple-500" /> Meus Cartões de Crédito
               </CardTitle>
               <CardDescription className="text-[11px]">
-                Clique em um cartão para filtrar o calendário por ele, ou quite a fatura do mês com 1 clique.
+                Clique em um cartão para filtrar o calendário, confira o melhor dia de compra ou quite a fatura com 1 clique.
               </CardDescription>
             </div>
             <div className="flex items-center gap-2 flex-wrap">
               <button
                 type="button"
                 onClick={() => setFilterCardId(filterCardId === 'no_card' ? 'all' : 'no_card')}
-                className={`h-7 px-2.5 rounded-lg border text-[11px] font-bold transition-all cursor-pointer ${
+                className={`h-7 px-2.5 rounded-lg border text-[11px] font-bold transition-colors cursor-pointer ${
                   filterCardId === 'no_card'
-                    ? 'border-amber-500 bg-amber-500/15 text-amber-600 dark:text-amber-400'
+                    ? 'border-amber-500 bg-amber-500/15 text-amber-700 dark:text-amber-400'
                     : 'border-border/70 bg-muted/20 text-muted-foreground hover:text-foreground'
                 }`}
               >
@@ -1107,7 +1819,7 @@ export function PlanningCalendar() {
                   Nenhum cartão de crédito cadastrado ainda
                 </p>
                 <p className="text-[11px] text-muted-foreground">
-                  Adicione seu Nubank, Inter, Itaú ou outro cartão para parcelar compras automaticamente nas faturas futuras.
+                  Adicione seu Nubank, Inter, Itaú ou outro cartão para calcular vencimentos e parcelas automaticamente.
                 </p>
               </div>
               <Button
@@ -1125,11 +1837,13 @@ export function PlanningCalendar() {
                 const inv = cardInvoices[card.id] || {
                   currentMonthTotal: 0,
                   currentMonthPending: 0,
+                  currentMonthPaid: 0,
                   currentMonthPendingIds: [],
                   nextMonthTotal: 0,
                   nextMonthPending: 0,
                   totalCommittedAllFuture: 0,
                 };
+                const cycle = getCardCycleStatus(card, todayStr);
                 const isFiltered = filterCardId === card.id;
                 const limitUsagePct =
                   card.limit && card.limit > 0
@@ -1140,31 +1854,41 @@ export function PlanningCalendar() {
                   <div
                     key={card.id}
                     onClick={() => setFilterCardId(isFiltered ? 'all' : card.id)}
-                    className={`rounded-2xl border p-3.5 space-y-2.5 transition-all cursor-pointer ${
+                    className={`rounded-xl border p-3.5 space-y-2.5 transition-colors cursor-pointer ${
                       isFiltered
-                        ? 'border-purple-500 bg-purple-500/[0.06] shadow-xs ring-1 ring-purple-500/30'
-                        : 'border-border/60 bg-muted/15 hover:bg-muted/30'
+                        ? 'border-purple-500 bg-purple-500/[0.06] ring-1 ring-purple-500/30'
+                        : 'border-border/70 bg-muted/15 hover:bg-muted/30'
                     }`}
                   >
                     <div className="flex items-start justify-between gap-2">
                       <div className="flex items-center gap-2.5 min-w-0">
                         <div
-                          className="w-9 h-9 rounded-xl flex items-center justify-center text-white shadow-xs shrink-0"
+                          className="w-9 h-9 rounded-xl flex items-center justify-center text-white shrink-0"
                           style={{ backgroundColor: card.color }}
                         >
                           <CreditCard className="w-4 h-4" />
                         </div>
                         <div className="min-w-0">
-                          <p className="text-xs font-black text-foreground truncate">{card.name}</p>
-                          <p className="text-[10px] font-semibold text-muted-foreground">
+                          <div className="flex items-center gap-1.5">
+                            <p className="text-xs font-black text-foreground truncate">{card.name}</p>
+                          </div>
+                          <p className="text-[10px] font-semibold text-muted-foreground tabular-nums">
                             Fecha dia {card.closingDay} • Vence dia {card.dueDay}
                           </p>
                         </div>
                       </div>
                       <div
-                        className="flex items-center gap-1 shrink-0"
+                        className="flex items-center gap-0.5 shrink-0"
                         onClick={e => e.stopPropagation()}
                       >
+                        <button
+                          type="button"
+                          onClick={() => handleOpenNewEntry('card', undefined, card.id)}
+                          className="p-1.5 rounded-lg text-indigo-600 dark:text-indigo-400 hover:bg-indigo-500/10 transition-colors cursor-pointer"
+                          title={`Nova compra no ${card.name}`}
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                        </button>
                         <button
                           type="button"
                           onClick={() => handleOpenEditCard(card)}
@@ -1184,28 +1908,40 @@ export function PlanningCalendar() {
                       </div>
                     </div>
 
+                    {/* Best purchase day / cycle status */}
+                    <div className="flex items-center justify-between text-[10px] font-bold px-2 py-1 rounded-lg bg-muted/40 border border-border/40">
+                      <span className="text-muted-foreground">
+                        Melhor dia: <strong className="text-foreground tabular-nums">dia {card.closingDay}</strong>
+                      </span>
+                      <span className={cycle.isBestPurchaseWindow ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}>
+                        {cycle.isBestPurchaseWindow
+                          ? `Fatura fechada • vence ${format(new Date(cycle.nextPurchaseDueInfo.statementDueDate + 'T12:00:00'), 'dd/MM')}`
+                          : `Fecha em ${cycle.daysUntilClosing}d`}
+                      </span>
+                    </div>
+
                     <div className="grid grid-cols-3 gap-2 pt-1 border-t border-border/40 text-[11px]">
                       <div>
                         <span className="text-[9px] font-bold uppercase text-muted-foreground block">
-                          Fatura ({format(currentMonth, 'MMM/yy', { locale: ptBR })})
+                          Fatura ({viewedMonthLabel})
                         </span>
-                        <span className="font-mono font-black text-foreground">
+                        <span className="font-mono tabular-nums font-black text-foreground">
                           {formatCurrency(inv.currentMonthTotal)}
                         </span>
                       </div>
                       <div>
                         <span className="text-[9px] font-bold uppercase text-muted-foreground block">
-                          Próx. Fatura
+                          Próx. ({nextMonthLabel})
                         </span>
-                        <span className="font-mono font-bold text-muted-foreground">
+                        <span className="font-mono tabular-nums font-bold text-muted-foreground">
                           {formatCurrency(inv.nextMonthTotal)}
                         </span>
                       </div>
                       <div className="text-right">
-                        <span className="text-[9px] font-bold uppercase text-amber-500 block">
+                        <span className="text-[9px] font-bold uppercase text-amber-600 dark:text-amber-400 block">
                           Total Aberto
                         </span>
-                        <span className="font-mono font-black text-amber-500">
+                        <span className="font-mono tabular-nums font-black text-amber-600 dark:text-amber-400">
                           {formatCurrency(inv.totalCommittedAllFuture)}
                         </span>
                       </div>
@@ -1218,13 +1954,13 @@ export function PlanningCalendar() {
                             className="h-full rounded-full transition-all"
                             style={{
                               width: `${limitUsagePct}%`,
-                              backgroundColor: limitUsagePct > 85 ? '#ef4444' : card.color,
+                              backgroundColor: limitUsagePct > 85 ? '#dc2626' : card.color,
                             }}
                           />
                         </div>
-                        <div className="flex justify-between text-[9.5px] font-semibold text-muted-foreground">
-                          <span>Disponível: {formatCurrency(Math.max(0, card.limit - inv.totalCommittedAllFuture))}</span>
-                          <span>Limite: {formatCurrency(card.limit)}</span>
+                        <div className="flex justify-between text-[9.5px] font-semibold text-muted-foreground tabular-nums">
+                          <span>Disp.: {formatCurrency(Math.max(0, card.limit - inv.totalCommittedAllFuture))}</span>
+                          <span>Lim.: {formatCurrency(card.limit)} ({Math.round(limitUsagePct)}%)</span>
                         </div>
                       </div>
                     )}
@@ -1251,10 +1987,115 @@ export function PlanningCalendar() {
         </CardContent>
       </Card>
 
-      {/* Main Split: Calendar Grid + Day/Pending Inspector */}
+      {/* Filter & View Controls Bar */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 p-3 rounded-2xl border border-border/80 bg-card">
+        <div className="flex flex-wrap items-center gap-2 flex-1">
+          <div className="relative flex-1 min-w-[200px] max-w-xs">
+            <Search className="w-3.5 h-3.5 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
+            <Input
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              placeholder="Buscar conta, cartão ou categoria..."
+              className="h-9 pl-8 pr-7 rounded-xl text-xs font-medium"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+
+          <Select value={kindFilter} onValueChange={(v: KindFilter) => setKindFilter(v)}>
+            <SelectTrigger className="h-9 w-[145px] rounded-xl text-xs font-bold">
+              <SelectValue>
+                {v => {
+                  switch (v) {
+                    case 'cards': return 'Só Cartões';
+                    case 'bills': return 'Só Contas';
+                    case 'incomes': return 'Só Receitas';
+                    default: return 'Todos os Tipos';
+                  }
+                }}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Todos os Tipos</SelectItem>
+              <SelectItem value="cards">Só Cartões</SelectItem>
+              <SelectItem value="bills">Só Contas Avulsas</SelectItem>
+              <SelectItem value="incomes">Só Receitas Previstas</SelectItem>
+            </SelectContent>
+          </Select>
+
+          <Select value={statusFilter} onValueChange={(v: StatusFilter) => setStatusFilter(v)}>
+            <SelectTrigger className="h-9 w-[140px] rounded-xl text-xs font-bold">
+              <SelectValue>
+                {v => {
+                  switch (v) {
+                    case 'pending': return 'Pendentes';
+                    case 'overdue': return 'Em Atraso';
+                    case 'paid': return 'Quitados';
+                    default: return 'Todos Status';
+                  }
+                }}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Todos Status</SelectItem>
+              <SelectItem value="pending">Pendentes</SelectItem>
+              <SelectItem value="overdue">Em Atraso</SelectItem>
+              <SelectItem value="paid">Quitados</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        {/* Main View Mode Switcher */}
+        <div className="grid grid-cols-3 gap-1 p-1 bg-muted/50 rounded-xl border border-border/50 shrink-0">
+          <button
+            type="button"
+            onClick={() => setMainView('calendar')}
+            className={`h-7 px-3 rounded-lg text-[11px] font-black inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap ${
+              mainView === 'calendar'
+                ? 'bg-card text-foreground border border-border/60'
+                : 'text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            <LayoutGrid className="w-3.5 h-3.5" />
+            <span>Calendário</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setMainView('list')}
+            className={`h-7 px-3 rounded-lg text-[11px] font-black inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap ${
+              mainView === 'list'
+                ? 'bg-card text-foreground border border-border/60'
+                : 'text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            <ListChecks className="w-3.5 h-3.5" />
+            <span>Lista ({monthItems.length})</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setMainView('installments')}
+            className={`h-7 px-3 rounded-lg text-[11px] font-black inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap ${
+              mainView === 'installments'
+                ? 'bg-card text-foreground border border-border/60'
+                : 'text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            <Repeat className="w-3.5 h-3.5" />
+            <span>Parcelas ({installmentGroups.length})</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Main Split: Calendar/List/Installments + Day/Pending/Categories Inspector */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Monthly Calendar Grid */}
-        <Card className="lg:col-span-2 border border-border/80 rounded-2xl bg-card/95">
+        <Card className="lg:col-span-2 border border-border/80 rounded-2xl bg-card">
           <CardHeader className="pb-3 border-b border-border/40">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2">
@@ -1262,20 +2103,22 @@ export function PlanningCalendar() {
                   type="button"
                   variant="outline"
                   size="icon"
-                  onClick={() => setCurrentMonth(prev => subMonths(prev, 1))}
+                  onClick={() => navigateToMonth(subMonths(currentMonth, 1))}
                   className="h-8 w-8 rounded-xl cursor-pointer"
+                  title="Mês anterior"
                 >
                   <ChevronLeft className="w-4 h-4" />
                 </Button>
-                <h2 className="text-sm sm:text-base font-black capitalize text-foreground min-w-[140px] text-center">
+                <h2 className="text-sm sm:text-base font-black capitalize text-foreground min-w-[155px] text-center">
                   {format(currentMonth, "MMMM 'de' yyyy", { locale: ptBR })}
                 </h2>
                 <Button
                   type="button"
                   variant="outline"
                   size="icon"
-                  onClick={() => setCurrentMonth(prev => addMonths(prev, 1))}
+                  onClick={() => navigateToMonth(addMonths(currentMonth, 1))}
                   className="h-8 w-8 rounded-xl cursor-pointer"
+                  title="Próximo mês"
                 >
                   <ChevronRight className="w-4 h-4" />
                 </Button>
@@ -1285,15 +2128,15 @@ export function PlanningCalendar() {
                 <button
                   type="button"
                   onClick={() => setShowSpotPaidExpenses(prev => !prev)}
-                  className={`h-8 px-2.5 rounded-xl border text-[11px] font-bold inline-flex items-center gap-1.5 cursor-pointer transition-all ${
+                  className={`h-8 px-2.5 rounded-xl border text-[11px] font-bold inline-flex items-center gap-1.5 cursor-pointer transition-colors ${
                     showSpotPaidExpenses
                       ? 'border-primary/40 bg-primary/10 text-primary'
                       : 'border-border/70 bg-muted/20 text-muted-foreground hover:text-foreground'
                   }`}
-                  title="Ocultar/exibir despesas avulsas já pagas no dia a dia"
+                  title="Exibir ou ocultar lançamentos avulsos já pagos no dia a dia"
                 >
                   {showSpotPaidExpenses ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
-                  <span className="hidden sm:inline">Pagas avulsas</span>
+                  <span className="hidden sm:inline">Avulsos pagos</span>
                 </button>
 
                 <Button
@@ -1301,9 +2144,7 @@ export function PlanningCalendar() {
                   variant="outline"
                   size="sm"
                   onClick={() => {
-                    const nowM = startOfMonth(new Date());
-                    setCurrentMonth(nowM);
-                    setSelectedDayStr(getTodayLocalDateStr());
+                    navigateToMonth(startOfMonth(new Date()), getTodayLocalDateStr());
                     setRightPanelTab('day');
                   }}
                   className="h-8 px-3 rounded-xl text-xs font-bold gap-1 cursor-pointer"
@@ -1315,126 +2156,509 @@ export function PlanningCalendar() {
           </CardHeader>
 
           <CardContent className="p-3 sm:p-4">
-            <div className="grid grid-cols-7 gap-1 mb-2 text-center">
-              {['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'].map(d => (
-                <div
-                  key={d}
-                  className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground py-1"
-                >
-                  {d}
+            {mainView === 'calendar' && (
+              <>
+                <div className="grid grid-cols-7 gap-1 mb-2 text-center">
+                  {['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'].map(d => (
+                    <div
+                      key={d}
+                      className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground py-1"
+                    >
+                      {d}
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
 
-            <div className="grid grid-cols-7 gap-1 sm:gap-1.5">
-              {calendarDays.map(day => {
-                const dStr = format(day, 'yyyy-MM-dd');
-                const inMonth = isSameMonth(day, currentMonth);
-                const isToday = dStr === todayStr;
-                const isSelected = dStr === selectedDayStr && rightPanelTab === 'day';
-                const dayItems = itemsByDay[dStr] || [];
-                const pendingDayTotal = dayItems
-                  .filter(i => i.paymentStatus === 'pending')
-                  .reduce((s, i) => s + i.amount, 0);
-                const paidDayTotal = dayItems
-                  .filter(i => i.paymentStatus === 'paid')
-                  .reduce((s, i) => s + i.amount, 0);
-                const hasOverdue = dayItems.some(
-                  i => i.paymentStatus === 'pending' && dStr < todayStr
-                );
+                <div className="grid grid-cols-7 gap-1 sm:gap-1.5">
+                  {calendarDays.map(day => {
+                    const dStr = format(day, 'yyyy-MM-dd');
+                    const inMonth = isSameMonth(day, currentMonth);
+                    const isToday = dStr === todayStr;
+                    const isSelected = dStr === selectedDayStr && rightPanelTab === 'day';
+                    const dayItems = itemsByDay[dStr] || [];
 
-                // Clamp card closingDay to actual days in this month
-                const daysInThisMonth = endOfMonth(day).getDate();
-                const cardsClosingThisDay = inMonth
-                  ? cards.filter(c => Math.min(c.closingDay, daysInThisMonth) === day.getDate())
-                  : [];
+                    const pendingExpenseTotal = dayItems
+                      .filter(i => i.kind === 'expense' && i.paymentStatus === 'pending')
+                      .reduce((s, i) => s + i.amount, 0);
+                    const paidExpenseTotal = dayItems
+                      .filter(i => i.kind === 'expense' && i.paymentStatus === 'paid')
+                      .reduce((s, i) => s + i.amount, 0);
+                    const incomeTotal = dayItems
+                      .filter(i => i.kind === 'income')
+                      .reduce((s, i) => s + i.amount, 0);
+                    const hasOverdue = dayItems.some(
+                      i => i.kind === 'expense' && i.paymentStatus === 'pending' && dStr < todayStr
+                    );
 
-                return (
-                  <button
-                    key={dStr}
-                    type="button"
-                    onClick={() => {
-                      setSelectedDayStr(dStr);
-                      if (!inMonth) {
-                        setCurrentMonth(startOfMonth(day));
-                      }
-                      setRightPanelTab('day');
-                    }}
-                    className={`min-h-[68px] sm:min-h-[82px] rounded-xl border p-1.5 flex flex-col justify-between text-left transition-all cursor-pointer ${
-                      isSelected
-                        ? 'border-indigo-500 bg-indigo-500/10 ring-1 ring-indigo-500/40'
-                        : isToday
-                          ? 'border-primary/50 bg-primary/[0.04]'
-                          : inMonth
-                            ? 'border-border/50 bg-muted/10 hover:bg-muted/30'
-                            : 'border-border/20 bg-muted/[0.03] opacity-40'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between w-full">
-                      <span
-                        className={`text-[11px] font-black leading-none ${
-                          isToday
-                            ? 'bg-primary text-primary-foreground px-1.5 py-0.5 rounded-md'
-                            : 'text-foreground'
+                    const daysInThisMonth = endOfMonth(day).getDate();
+                    const cardsClosingThisDay = inMonth
+                      ? cards.filter(c => Math.min(c.closingDay, daysInThisMonth) === day.getDate())
+                      : [];
+                    const cardsDueThisDay = inMonth
+                      ? cards.filter(c => Math.min(c.dueDay, daysInThisMonth) === day.getDate())
+                      : [];
+
+                    return (
+                      <div
+                        key={dStr}
+                        onClick={() => {
+                          setSelectedDayStr(dStr);
+                          if (!inMonth) {
+                            navigateToMonth(startOfMonth(day), dStr);
+                          }
+                          setRightPanelTab('day');
+                        }}
+                        className={`group relative min-h-[76px] sm:min-h-[90px] rounded-xl border p-1.5 flex flex-col justify-between text-left transition-colors cursor-pointer ${
+                          isSelected
+                            ? 'border-indigo-500 bg-indigo-500/10 ring-1 ring-indigo-500/40'
+                            : isToday
+                              ? 'border-primary/60 bg-primary/[0.04]'
+                              : inMonth
+                                ? 'border-border/60 bg-muted/10 hover:bg-muted/30'
+                                : 'border-border/20 bg-muted/[0.03] opacity-40'
                         }`}
                       >
-                        {day.getDate()}
-                      </span>
-                      {cardsClosingThisDay.length > 0 && (
-                        <span className="flex items-center gap-0.5">
-                          {cardsClosingThisDay.slice(0, 2).map(c => (
-                            <span
-                              key={c.id}
-                              className="w-2 h-2 rounded-full"
-                              style={{ backgroundColor: c.color }}
-                              title={`Fechamento ${c.name}`}
-                            />
-                          ))}
-                        </span>
-                      )}
+                        <div className="flex items-center justify-between w-full gap-1">
+                          <span
+                            className={`text-[11px] font-black leading-none tabular-nums ${
+                              isToday
+                                ? 'bg-primary text-primary-foreground px-1.5 py-0.5 rounded-md'
+                                : 'text-foreground'
+                            }`}
+                          >
+                            {day.getDate()}
+                          </span>
+
+                          <div className="flex items-center gap-0.5">
+                            {cardsClosingThisDay.slice(0, 2).map(c => (
+                              <span
+                                key={`close-${c.id}`}
+                                className="w-2 h-2 rounded-full ring-1 ring-background"
+                                style={{ backgroundColor: c.color }}
+                                title={`Fechamento ${c.name} (dia ${c.closingDay})`}
+                              />
+                            ))}
+                            {cardsDueThisDay.slice(0, 2).map(c => (
+                              <span
+                                key={`due-${c.id}`}
+                                className="w-2 h-2 rounded-xs border border-foreground/40"
+                                style={{ backgroundColor: c.color }}
+                                title={`Vencimento ${c.name} (dia ${c.dueDay})`}
+                              />
+                            ))}
+                            {inMonth && (
+                              <button
+                                type="button"
+                                onClick={e => {
+                                  e.stopPropagation();
+                                  setSelectedDayStr(dStr);
+                                  handleOpenNewEntry('bill', dStr);
+                                }}
+                                className="opacity-0 group-hover:opacity-100 hidden sm:inline-flex items-center justify-center w-4 h-4 rounded bg-muted hover:bg-primary hover:text-primary-foreground text-muted-foreground transition-opacity cursor-pointer"
+                                title={`Agendar em ${format(day, 'dd/MM')}`}
+                              >
+                                <Plus className="w-2.5 h-2.5" />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="space-y-0.5 w-full">
+                          {incomeTotal > 0 && (
+                            <div className="text-[9px] sm:text-[10px] font-mono tabular-nums font-black px-1 py-0.5 rounded bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 truncate">
+                              {hideValues ? '•••' : `+${Math.round(incomeTotal)}`}
+                            </div>
+                          )}
+                          {pendingExpenseTotal > 0 && (
+                            <div
+                              className={`text-[9px] sm:text-[10px] font-mono tabular-nums font-black px-1 py-0.5 rounded truncate ${
+                                hasOverdue
+                                  ? 'bg-rose-500/15 text-rose-600 dark:text-rose-400'
+                                  : 'bg-amber-500/15 text-amber-700 dark:text-amber-400'
+                              }`}
+                            >
+                              {hideValues ? '•••' : `-${Math.round(pendingExpenseTotal)}`}
+                            </div>
+                          )}
+                          {paidExpenseTotal > 0 && (
+                            <div className="text-[9px] font-mono tabular-nums font-bold px-1 py-0.5 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 truncate">
+                              {hideValues ? '•••' : `✓${Math.round(paidExpenseTotal)}`}
+                            </div>
+                          )}
+                          {dayItems.length > 0 && (
+                            <p className="text-[8.5px] font-bold text-muted-foreground truncate px-0.5 tabular-nums">
+                              {dayItems.length} {dayItems.length === 1 ? 'item' : 'itens'}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Legend */}
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-3 mt-3 border-t border-border/40 text-[10px] text-muted-foreground font-semibold">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <span className="inline-flex items-center gap-1">
+                      <span className="w-2 h-2 rounded-full bg-purple-500" /> Fechamento Cartão
+                    </span>
+                    <span className="inline-flex items-center gap-1">
+                      <span className="w-2 h-2 rounded-xs bg-purple-500 border border-foreground/40" /> Vencimento Cartão
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="text-emerald-600 dark:text-emerald-400">+ Receita</span>
+                    <span className="text-amber-600 dark:text-amber-400">- A Pagar</span>
+                    <span className="text-rose-600 dark:text-rose-400">Vencida</span>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {mainView === 'list' && (
+              <div className="space-y-3">
+                {/* Batch Actions Bar */}
+                {selectedBatchIds.length > 0 && (
+                  <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 rounded-xl border border-indigo-500/40 bg-indigo-500/10">
+                    <span className="text-xs font-black text-indigo-600 dark:text-indigo-400 tabular-nums">
+                      {selectedBatchIds.length} selecionado(s)
+                    </span>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={handleBatchSettleSelected}
+                        className="h-7 rounded-lg text-[11px] font-black bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer"
+                      >
+                        <CheckCircle2 className="w-3.5 h-3.5 mr-1" /> Quitar Selecionadas
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={handleBatchShiftNextMonth}
+                        className="h-7 rounded-lg text-[11px] font-bold cursor-pointer"
+                      >
+                        <CalendarPlus className="w-3.5 h-3.5 mr-1" /> Adiar +1 Mês
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setSelectedBatchIds([])}
+                        className="h-7 rounded-lg text-[11px] font-bold cursor-pointer"
+                      >
+                        Limpar
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {monthItems.length === 0 ? (
+                  <div className="py-12 text-center space-y-2.5">
+                    <Sparkles className="w-8 h-8 text-muted-foreground/40 mx-auto" />
+                    <p className="text-xs font-bold text-muted-foreground">
+                      Nenhum lançamento encontrado para {format(currentMonth, "MMMM 'de' yyyy", { locale: ptBR })} com os filtros atuais.
+                    </p>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => handleOpenNewEntry('bill')}
+                      className="h-8 rounded-xl text-xs font-bold cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5 mr-1" /> Agendar Conta neste Mês
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="border border-border/60 rounded-xl overflow-hidden">
+                    <div className="flex items-center justify-between px-3 py-2 bg-muted/40 border-b border-border/50 text-[10.5px] font-extrabold uppercase tracking-wider text-muted-foreground">
+                      <button
+                        type="button"
+                        onClick={toggleAllMonthBatch}
+                        className="inline-flex items-center gap-2 hover:text-foreground cursor-pointer"
+                      >
+                        {selectedBatchIds.length === monthItems.length && monthItems.length > 0 ? (
+                          <CheckSquare className="w-3.5 h-3.5 text-primary" />
+                        ) : (
+                          <Square className="w-3.5 h-3.5" />
+                        )}
+                        <span>Selecionar Todos</span>
+                      </button>
+                      <span className="tabular-nums">{monthItems.length} lançamento(s)</span>
                     </div>
 
-                    <div className="space-y-0.5 w-full">
-                      {pendingDayTotal > 0 && (
-                        <div
-                          className={`text-[9px] sm:text-[10px] font-mono font-black px-1 py-0.5 rounded truncate ${
-                            hasOverdue
-                              ? 'bg-rose-500/15 text-rose-500'
-                              : 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
-                          }`}
-                        >
-                          {hideValues ? '•••' : `-${Math.round(pendingDayTotal)}`}
-                        </div>
-                      )}
-                      {paidDayTotal > 0 && (
-                        <div className="text-[9px] font-mono font-bold px-1 py-0.5 rounded bg-emerald-500/10 text-emerald-500 truncate">
-                          {hideValues ? '•••' : `✓${Math.round(paidDayTotal)}`}
-                        </div>
-                      )}
-                      {dayItems.length > 0 && (
-                        <p className="text-[8.5px] font-bold text-muted-foreground truncate px-0.5">
-                          {dayItems.length} {dayItems.length === 1 ? 'conta' : 'contas'}
-                        </p>
-                      )}
+                    <div className="divide-y divide-border/40 max-h-[520px] overflow-y-auto custom-scrollbar">
+                      {monthItems.map(item => {
+                        const cardObj = getCardById(item.cardId);
+                        const isOverdue =
+                          item.kind === 'expense' &&
+                          item.paymentStatus === 'pending' &&
+                          item.dateStr < todayStr;
+                        const isChecked = selectedBatchIds.includes(item.id);
+
+                        return (
+                          <div
+                            key={item.id}
+                            className={`flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-3 py-2.5 text-xs transition-colors ${
+                              isChecked ? 'bg-indigo-500/[0.06]' : 'hover:bg-muted/25'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <button
+                                type="button"
+                                onClick={() => toggleBatchItem(item.id)}
+                                className="text-muted-foreground hover:text-primary shrink-0 cursor-pointer"
+                              >
+                                {isChecked ? (
+                                  <CheckSquare className="w-4 h-4 text-primary" />
+                                ) : (
+                                  <Square className="w-4 h-4" />
+                                )}
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => jumpToDate(item.dateStr)}
+                                className={`font-mono tabular-nums text-[11px] font-black px-1.5 py-0.5 rounded shrink-0 cursor-pointer ${
+                                  isOverdue
+                                    ? 'bg-rose-500/15 text-rose-600 dark:text-rose-400'
+                                    : 'bg-muted text-foreground'
+                                }`}
+                                title="Selecionar dia"
+                              >
+                                {format(new Date(item.dateStr + 'T12:00:00'), 'dd/MM')}
+                              </button>
+
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  {cardObj && (
+                                    <span
+                                      className="text-[9px] font-black text-white px-1.5 py-0.2 rounded"
+                                      style={{ backgroundColor: cardObj.color }}
+                                    >
+                                      {cardObj.name}
+                                    </span>
+                                  )}
+                                  {item.kind === 'income' && (
+                                    <span className="text-[9px] font-black text-emerald-700 dark:text-emerald-400 bg-emerald-500/15 px-1.5 py-0.2 rounded">
+                                      Receita
+                                    </span>
+                                  )}
+                                  <span className="font-black text-foreground truncate">
+                                    {item.description}
+                                  </span>
+                                </div>
+                                <p className="text-[10.5px] text-muted-foreground font-semibold">
+                                  {item.category} •{' '}
+                                  <span
+                                    className={
+                                      item.paymentStatus === 'paid'
+                                        ? 'text-emerald-600 dark:text-emerald-400'
+                                        : isOverdue
+                                          ? 'text-rose-600 dark:text-rose-400'
+                                          : 'text-amber-600 dark:text-amber-400'
+                                    }
+                                  >
+                                    {item.paymentStatus === 'paid'
+                                      ? item.kind === 'income'
+                                        ? 'Recebida'
+                                        : 'Quitada'
+                                      : isOverdue
+                                        ? 'Vencida'
+                                        : 'Pendente'}
+                                  </span>
+                                </p>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center justify-between sm:justify-end gap-2 shrink-0 pl-6 sm:pl-0">
+                              <span
+                                className={`font-mono tabular-nums font-black text-xs sm:text-sm ${
+                                  item.kind === 'income'
+                                    ? 'text-emerald-600 dark:text-emerald-400'
+                                    : item.paymentStatus === 'paid'
+                                      ? 'text-muted-foreground line-through'
+                                      : 'text-rose-600 dark:text-rose-400'
+                                }`}
+                              >
+                                {item.kind === 'income' ? '+' : '-'}
+                                {formatCurrency(item.amount)}
+                              </span>
+
+                              <div className="flex items-center gap-1">
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => handleTogglePayItem(item)}
+                                  className={`h-7 px-2 rounded-lg text-[10px] font-extrabold cursor-pointer ${
+                                    item.paymentStatus === 'pending'
+                                      ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+                                      : 'text-muted-foreground'
+                                  }`}
+                                >
+                                  {item.paymentStatus === 'pending'
+                                    ? item.kind === 'income'
+                                      ? 'Receber'
+                                      : 'Quitar'
+                                    : 'Reabrir'}
+                                </Button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenEditItem(item)}
+                                  className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted cursor-pointer"
+                                  title="Editar"
+                                >
+                                  <Edit2 className="w-3.5 h-3.5" />
+                                </button>
+                                {!item.isReserveTx && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRequestDeleteItem(item)}
+                                    className="p-1.5 rounded-lg text-muted-foreground hover:text-rose-500 hover:bg-rose-500/10 cursor-pointer"
+                                    title="Excluir"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
-                  </button>
-                );
-              })}
-            </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {mainView === 'installments' && (
+              <div className="space-y-3">
+                {installmentGroups.length === 0 ? (
+                  <div className="py-12 text-center space-y-2">
+                    <Repeat className="w-8 h-8 text-muted-foreground/40 mx-auto" />
+                    <p className="text-xs font-bold text-muted-foreground">
+                      Nenhuma compra parcelada ou conta recorrente encontrada.
+                    </p>
+                    <p className="text-[11px] text-muted-foreground">
+                      Ao lançar compras em 2x+ no cartão ou contas mensais recorrentes, você acompanha o progresso completo aqui.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-2.5 max-h-[540px] overflow-y-auto pr-1 custom-scrollbar">
+                    {installmentGroups.map(group => {
+                      const cardObj = getCardById(group.cardId);
+                      const totalCount = group.items.length;
+                      const pct = Math.round((group.paidCount / totalCount) * 100);
+                      return (
+                        <div
+                          key={group.groupId}
+                          className="rounded-xl border border-border/70 bg-muted/15 p-3.5 space-y-2.5"
+                        >
+                          <div className="flex flex-wrap items-start justify-between gap-2">
+                            <div className="space-y-0.5 min-w-0">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                {cardObj && (
+                                  <span
+                                    className="text-[9px] font-black text-white px-1.5 py-0.5 rounded"
+                                    style={{ backgroundColor: cardObj.color }}
+                                  >
+                                    {cardObj.name}
+                                  </span>
+                                )}
+                                <span className="text-[10px] font-bold text-muted-foreground">
+                                  {group.category}
+                                </span>
+                              </div>
+                              <p className="text-xs sm:text-sm font-black text-foreground truncate">
+                                {group.title}
+                              </p>
+                            </div>
+
+                            <div className="text-right shrink-0">
+                              <p className="text-xs font-black font-mono tabular-nums text-foreground">
+                                Total: {formatCurrency(group.totalAmount)}
+                              </p>
+                              <p className="text-[10.5px] font-bold font-mono tabular-nums text-amber-600 dark:text-amber-400">
+                                Falta: {formatCurrency(group.remainingAmount)}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between text-[10.5px] font-bold text-muted-foreground tabular-nums">
+                              <span>
+                                Progresso: <strong className="text-foreground">{group.paidCount}/{totalCount}</strong> pagas ({pct}%)
+                              </span>
+                              {group.nextPendingItem ? (
+                                <span>
+                                  Próx.:{' '}
+                                  <button
+                                    type="button"
+                                    onClick={() => jumpToDate(group.nextPendingItem!.dateStr)}
+                                    className="text-indigo-600 dark:text-indigo-400 hover:underline font-mono cursor-pointer"
+                                  >
+                                    {format(new Date(group.nextPendingItem.dateStr + 'T12:00:00'), 'dd/MM/yy')}
+                                  </button>
+                                </span>
+                              ) : (
+                                <span className="text-emerald-600 dark:text-emerald-400 font-black">Concluído</span>
+                              )}
+                            </div>
+                            <div className="h-2 w-full bg-muted rounded-full overflow-hidden">
+                              <div
+                                className="h-full bg-emerald-500 rounded-full transition-all"
+                                style={{ width: `${pct}%` }}
+                              />
+                            </div>
+                          </div>
+
+                          {group.pendingCount > 0 && (
+                            <div className="flex flex-wrap items-center justify-end gap-2 pt-1 border-t border-border/40">
+                              {group.nextPendingItem && (
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => handleTogglePayItem(group.nextPendingItem!)}
+                                  className="h-7 rounded-lg text-[10.5px] font-bold cursor-pointer"
+                                >
+                                  Quitar Próxima ({formatCurrency(group.nextPendingItem.amount)})
+                                </Button>
+                              )}
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                onClick={() => handleSettleInstallmentGroup(group.groupId)}
+                                className="h-7 rounded-lg text-[10.5px] font-extrabold border-emerald-500/35 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 cursor-pointer"
+                              >
+                                <CheckCircle2 className="w-3 h-3 mr-1" />
+                                Antecipar / Quitar {group.pendingCount} Restantes
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
           </CardContent>
         </Card>
 
-        {/* Right Panel: Selected Day OR All Pending Items */}
-        <Card className="border border-border/80 rounded-2xl bg-card/95 flex flex-col">
+        {/* Right Panel: Selected Day / Pending / Categories */}
+        <Card className="border border-border/80 rounded-2xl bg-card flex flex-col">
           <CardHeader className="pb-3 border-b border-border/40 space-y-3">
-            {/* Tab Switcher */}
-            <div className="grid grid-cols-2 gap-1 p-1 bg-muted/50 rounded-xl border border-border/50">
+            <div className="grid grid-cols-3 gap-1 p-1 bg-muted/50 rounded-xl border border-border/50">
               <button
                 type="button"
                 onClick={() => setRightPanelTab('day')}
-                className={`py-1.5 px-2 rounded-lg text-[11px] font-black transition-all cursor-pointer ${
+                className={`py-1.5 px-1.5 rounded-lg text-[10.5px] font-black transition-colors cursor-pointer ${
                   rightPanelTab === 'day'
-                    ? 'bg-card text-foreground shadow-xs'
+                    ? 'bg-card text-foreground border border-border/60'
                     : 'text-muted-foreground hover:text-foreground'
                 }`}
               >
@@ -1443,26 +2667,38 @@ export function PlanningCalendar() {
               <button
                 type="button"
                 onClick={() => setRightPanelTab('pending')}
-                className={`py-1.5 px-2 rounded-lg text-[11px] font-black transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                className={`py-1.5 px-1.5 rounded-lg text-[10.5px] font-black transition-colors cursor-pointer flex items-center justify-center gap-1 ${
                   rightPanelTab === 'pending'
-                    ? 'bg-card text-foreground shadow-xs'
+                    ? 'bg-card text-foreground border border-border/60'
                     : 'text-muted-foreground hover:text-foreground'
                 }`}
               >
                 <span>Pendentes</span>
                 <span
-                  className={`px-1.5 py-0.2 rounded-full text-[9.5px] font-black ${
+                  className={`px-1 rounded text-[9.5px] font-mono tabular-nums font-black ${
                     globalPendingSummary.overdueAllCount > 0
                       ? 'bg-rose-500 text-white'
-                      : 'bg-amber-500/20 text-amber-600 dark:text-amber-400'
+                      : 'bg-amber-500/20 text-amber-700 dark:text-amber-400'
                   }`}
                 >
                   {globalPendingSummary.pendingCount}
                 </span>
               </button>
+              <button
+                type="button"
+                onClick={() => setRightPanelTab('categories')}
+                className={`py-1.5 px-1.5 rounded-lg text-[10.5px] font-black transition-colors cursor-pointer flex items-center justify-center gap-1 ${
+                  rightPanelTab === 'categories'
+                    ? 'bg-card text-foreground border border-border/60'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                <PieChart className="w-3 h-3" />
+                <span>Categ.</span>
+              </button>
             </div>
 
-            {rightPanelTab === 'day' ? (
+            {rightPanelTab === 'day' && (
               <div className="flex items-center justify-between gap-2">
                 <div>
                   <CardTitle className="text-xs sm:text-sm font-black uppercase tracking-wider text-foreground">
@@ -1476,36 +2712,87 @@ export function PlanningCalendar() {
                   type="button"
                   size="sm"
                   onClick={() => handleOpenNewEntry('bill', selectedDayStr)}
-                  className="h-8 rounded-xl text-[11px] font-black cursor-pointer"
+                  className="h-8 rounded-xl text-[11px] font-black cursor-pointer shrink-0"
                 >
                   <Plus className="w-3.5 h-3.5 mr-1" /> Agendar Dia
                 </Button>
               </div>
-            ) : (
-              <div className="flex items-center justify-between gap-2">
-                <div>
-                  <CardTitle className="text-xs sm:text-sm font-black uppercase tracking-wider text-foreground flex items-center gap-1.5">
-                    <CalendarClock className="w-4 h-4 text-amber-500" />
-                    Todas as Pendências
-                  </CardTitle>
-                  <CardDescription className="text-[11px]">
-                    Total pendente: <strong className="text-foreground font-mono">{formatCurrency(globalPendingSummary.totalPendingAll)}</strong>
-                  </CardDescription>
+            )}
+
+            {rightPanelTab === 'pending' && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <CardTitle className="text-xs sm:text-sm font-black uppercase tracking-wider text-foreground flex items-center gap-1.5">
+                      <CalendarClock className="w-4 h-4 text-amber-500" />
+                      Todas as Pendências
+                    </CardTitle>
+                    <CardDescription className="text-[11px] tabular-nums">
+                      A pagar: <strong className="text-foreground font-mono">{formatCurrency(globalPendingSummary.totalPendingAll)}</strong>
+                    </CardDescription>
+                  </div>
+                  {globalPendingSummary.overdueAllCount > 0 && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={handleSettleAllOverdue}
+                      className="h-7 px-2 rounded-lg text-[10px] font-extrabold border-rose-500/40 bg-rose-500/10 text-rose-600 dark:text-rose-400 hover:bg-rose-500/20 cursor-pointer shrink-0"
+                    >
+                      Quitar Vencidas
+                    </Button>
+                  )}
                 </div>
+
+                <div className="grid grid-cols-4 gap-1">
+                  {(
+                    [
+                      { key: 'all', label: 'Todas' },
+                      { key: 'overdue', label: 'Vencidas' },
+                      { key: 'current_month', label: 'Este Mês' },
+                      { key: 'future', label: 'Futuras' },
+                    ] as { key: PendingScopeFilter; label: string }[]
+                  ).map(opt => (
+                    <button
+                      key={opt.key}
+                      type="button"
+                      onClick={() => setPendingScopeFilter(opt.key)}
+                      className={`py-1 rounded-lg border text-[10px] font-bold cursor-pointer transition-colors ${
+                        pendingScopeFilter === opt.key
+                          ? 'border-primary bg-primary/10 text-primary'
+                          : 'border-border/60 bg-muted/20 text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {rightPanelTab === 'categories' && (
+              <div>
+                <CardTitle className="text-xs sm:text-sm font-black uppercase tracking-wider text-foreground flex items-center gap-1.5">
+                  <SlidersHorizontal className="w-4 h-4 text-indigo-500" />
+                  Gastos por Categoria ({viewedMonthLabel})
+                </CardTitle>
+                <CardDescription className="text-[11px] tabular-nums">
+                  Total previsto no mês: <strong className="font-mono text-foreground">{formatCurrency(monthCategoryBreakdown.grandTotal)}</strong>
+                </CardDescription>
               </div>
             )}
           </CardHeader>
 
           <CardContent className="p-4 flex-1 flex flex-col justify-between space-y-4">
-            {rightPanelTab === 'day' ? (
+            {rightPanelTab === 'day' && (
               <>
                 {selectedDayItems.length === 0 ? (
                   <div className="py-10 text-center space-y-2.5">
                     <Sparkles className="w-8 h-8 text-muted-foreground/40 mx-auto" />
                     <p className="text-xs font-bold text-muted-foreground">
-                      Nenhuma conta ou fatura vencendo nesta data.
+                      Nenhuma conta, receita ou fatura nesta data.
                     </p>
-                    <div className="flex items-center justify-center gap-2 pt-1">
+                    <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
                       <Button
                         type="button"
                         variant="outline"
@@ -1513,7 +2800,7 @@ export function PlanningCalendar() {
                         onClick={() => handleOpenNewEntry('card', selectedDayStr)}
                         className="h-8 rounded-xl text-[11px] font-bold cursor-pointer"
                       >
-                        + Compra Cartão
+                        + Cartão
                       </Button>
                       <Button
                         type="button"
@@ -1522,13 +2809,22 @@ export function PlanningCalendar() {
                         onClick={() => handleOpenNewEntry('bill', selectedDayStr)}
                         className="h-8 rounded-xl text-[11px] font-bold cursor-pointer"
                       >
-                        + Conta Avulsa
+                        + Conta
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleOpenNewEntry('income', selectedDayStr)}
+                        className="h-8 rounded-xl text-[11px] font-bold cursor-pointer"
+                      >
+                        + Receita
                       </Button>
                     </div>
                   </div>
                 ) : (
-                  <div className="space-y-2.5 max-h-[420px] overflow-y-auto pr-1 custom-scrollbar">
-                    {selectedDayPendingItems.length > 1 && (
+                  <div className="space-y-2.5 max-h-[430px] overflow-y-auto pr-1 custom-scrollbar">
+                    {selectedDayPendingExpenses.length > 1 && (
                       <Button
                         type="button"
                         size="sm"
@@ -1537,22 +2833,27 @@ export function PlanningCalendar() {
                         className="w-full h-8 rounded-xl text-[11px] font-extrabold border-emerald-500/35 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 cursor-pointer"
                       >
                         <CheckCircle2 className="w-3.5 h-3.5 mr-1.5" />
-                        Quitar Todas do Dia ({formatCurrency(selectedDayPendingItems.reduce((s, i) => s + i.amount, 0))})
+                        Quitar Todas do Dia ({formatCurrency(selectedDayPendingExpenses.reduce((s, i) => s + i.amount, 0))})
                       </Button>
                     )}
 
                     {selectedDayItems.map(item => {
                       const cardObj = getCardById(item.cardId);
-                      const isOverdue = item.paymentStatus === 'pending' && item.dateStr < todayStr;
+                      const isOverdue =
+                        item.kind === 'expense' &&
+                        item.paymentStatus === 'pending' &&
+                        item.dateStr < todayStr;
                       return (
                         <div
                           key={item.id}
                           className={`rounded-xl border p-3 space-y-2 ${
                             item.paymentStatus === 'paid'
-                              ? 'border-emerald-500/25 bg-emerald-500/[0.04]'
-                              : isOverdue
-                                ? 'border-rose-500/40 bg-rose-500/10'
-                                : 'border-border/60 bg-muted/20'
+                              ? 'border-emerald-500/30 bg-emerald-500/[0.04]'
+                              : item.kind === 'income'
+                                ? 'border-emerald-500/35 bg-emerald-500/[0.06]'
+                                : isOverdue
+                                  ? 'border-rose-500/45 bg-rose-500/10'
+                                  : 'border-border/70 bg-muted/15'
                           }`}
                         >
                           <div className="flex items-start justify-between gap-2">
@@ -1566,6 +2867,11 @@ export function PlanningCalendar() {
                                     {cardObj.name}
                                   </span>
                                 )}
+                                {item.kind === 'income' && (
+                                  <span className="text-[9px] font-black text-emerald-700 dark:text-emerald-400 bg-emerald-500/15 px-1.5 py-0.5 rounded">
+                                    Receita
+                                  </span>
+                                )}
                                 <span className="text-[10px] font-bold text-muted-foreground">
                                   {item.category}
                                 </span>
@@ -1576,29 +2882,38 @@ export function PlanningCalendar() {
                             </div>
 
                             <span
-                              className={`text-sm font-black font-mono shrink-0 ${
-                                item.paymentStatus === 'paid' ? 'text-emerald-500' : 'text-rose-500'
+                              className={`text-sm font-black font-mono tabular-nums shrink-0 ${
+                                item.kind === 'income' || item.paymentStatus === 'paid'
+                                  ? 'text-emerald-600 dark:text-emerald-400'
+                                  : 'text-rose-600 dark:text-rose-400'
                               }`}
                             >
+                              {item.kind === 'income' ? '+' : ''}
                               {formatCurrency(item.amount)}
                             </span>
                           </div>
 
-                          <div className="flex items-center justify-between gap-2 pt-1.5 border-t border-border/40">
+                          <div className="flex flex-wrap items-center justify-between gap-1.5 pt-1.5 border-t border-border/40">
                             <span
                               className={`text-[10px] font-extrabold ${
                                 item.paymentStatus === 'paid'
-                                  ? 'text-emerald-500'
+                                  ? 'text-emerald-600 dark:text-emerald-400'
                                   : isOverdue
-                                    ? 'text-rose-500'
-                                    : 'text-amber-500'
+                                    ? 'text-rose-600 dark:text-rose-400'
+                                    : item.kind === 'income'
+                                      ? 'text-emerald-600 dark:text-emerald-400'
+                                      : 'text-amber-600 dark:text-amber-400'
                               }`}
                             >
                               {item.paymentStatus === 'paid'
-                                ? '✓ Quitado'
+                                ? item.kind === 'income'
+                                  ? '✓ Recebida'
+                                  : '✓ Quitado'
                                 : isOverdue
                                   ? '⚠️ Vencida'
-                                  : '⏳ A pagar'}
+                                  : item.kind === 'income'
+                                    ? '⏳ A receber'
+                                    : '⏳ A pagar'}
                             </span>
 
                             <div className="flex items-center gap-1">
@@ -1607,14 +2922,36 @@ export function PlanningCalendar() {
                                 size="sm"
                                 variant="outline"
                                 onClick={() => handleTogglePayItem(item)}
-                                className={`h-7 px-2.5 rounded-lg text-[10.5px] font-extrabold cursor-pointer ${
+                                className={`h-7 px-2 rounded-lg text-[10px] font-extrabold cursor-pointer ${
                                   item.paymentStatus === 'pending'
                                     ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20'
                                     : 'text-muted-foreground'
                                 }`}
                               >
-                                {item.paymentStatus === 'pending' ? 'Quitar' : 'Reabrir'}
+                                {item.paymentStatus === 'pending'
+                                  ? item.kind === 'income'
+                                    ? 'Receber'
+                                    : 'Quitar'
+                                  : 'Reabrir'}
                               </Button>
+                              <button
+                                type="button"
+                                onClick={() => handleShiftItemMonth(item, 1)}
+                                className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer"
+                                title="Adiar +1 mês"
+                              >
+                                <CalendarPlus className="w-3.5 h-3.5" />
+                              </button>
+                              {!item.isReserveTx && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleDuplicateItemNextMonth(item)}
+                                  className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer"
+                                  title="Duplicar para o próximo mês"
+                                >
+                                  <Copy className="w-3.5 h-3.5" />
+                                </button>
+                              )}
                               <button
                                 type="button"
                                 onClick={() => handleOpenEditItem(item)}
@@ -1641,43 +2978,48 @@ export function PlanningCalendar() {
                   </div>
                 )}
 
-                {/* Quick All-Month Bills Counter */}
-                <div className="pt-3 border-t border-border/40 space-y-1 text-[11px] text-muted-foreground font-semibold">
+                <div className="pt-3 border-t border-border/40 space-y-1 text-[11px] text-muted-foreground font-semibold tabular-nums">
                   <div className="flex items-center justify-between">
-                    <span>Compromissos no mês: {monthItems.length}</span>
+                    <span>Lançamentos no mês: {monthItems.length}</span>
                     <span className="font-mono font-black text-foreground">
-                      Mês: {formatCurrency(monthItems.reduce((s, i) => s + i.amount, 0))}
+                      Despesas mês: {formatCurrency(monthItems.filter(i => i.kind === 'expense').reduce((s, i) => s + i.amount, 0))}
                     </span>
                   </div>
                   <div className="flex items-center justify-between text-[10.5px]">
                     <span>Total Pendente (Geral):</span>
-                    <span className="font-mono font-black text-indigo-500">
+                    <span className="font-mono font-black text-indigo-600 dark:text-indigo-400">
                       {formatCurrency(globalPendingSummary.totalPendingAll)}
                     </span>
                   </div>
                 </div>
               </>
-            ) : (
+            )}
+
+            {rightPanelTab === 'pending' && (
               <>
-                {globalPendingItems.length === 0 ? (
+                {scopedPendingList.length === 0 ? (
                   <div className="py-10 text-center space-y-2">
                     <CheckCircle2 className="w-8 h-8 text-emerald-500/50 mx-auto" />
                     <p className="text-xs font-bold text-muted-foreground">
-                      Nenhuma conta ou fatura pendente! Tudo em dia.
+                      Nenhuma pendência neste filtro! Tudo em dia.
                     </p>
                   </div>
                 ) : (
-                  <div className="space-y-2 max-h-[440px] overflow-y-auto pr-1 custom-scrollbar">
-                    {globalPendingItems.map(item => {
+                  <div className="space-y-2 max-h-[430px] overflow-y-auto pr-1 custom-scrollbar">
+                    {scopedPendingList.map(item => {
                       const cardObj = getCardById(item.cardId);
-                      const isOverdue = item.dateStr < todayStr;
+                      const isOverdue = item.kind === 'expense' && item.dateStr < todayStr;
+                      const isInOtherMonth = item.monthKey !== currentMonthKey;
+
                       return (
                         <div
                           key={item.id}
                           className={`rounded-xl border p-2.5 space-y-1.5 ${
                             isOverdue
                               ? 'border-rose-500/40 bg-rose-500/10'
-                              : 'border-border/60 bg-muted/20'
+                              : item.kind === 'income'
+                                ? 'border-emerald-500/35 bg-emerald-500/[0.05]'
+                                : 'border-border/60 bg-muted/20'
                           }`}
                         >
                           <div className="flex items-start justify-between gap-2">
@@ -1686,9 +3028,9 @@ export function PlanningCalendar() {
                                 <button
                                   type="button"
                                   onClick={() => jumpToDate(item.dateStr)}
-                                  className={`text-[10px] font-mono font-black px-1.5 py-0.5 rounded hover:underline cursor-pointer ${
+                                  className={`text-[10px] font-mono tabular-nums font-black px-1.5 py-0.5 rounded hover:underline cursor-pointer ${
                                     isOverdue
-                                      ? 'bg-rose-500/20 text-rose-500'
+                                      ? 'bg-rose-500/20 text-rose-600 dark:text-rose-400'
                                       : 'bg-muted text-foreground'
                                   }`}
                                   title="Ir para esta data no calendário"
@@ -1711,16 +3053,45 @@ export function PlanningCalendar() {
                                 {item.description}
                               </p>
                             </div>
-                            <span className="text-xs font-black font-mono text-rose-500 shrink-0">
+                            <span
+                              className={`text-xs font-black font-mono tabular-nums shrink-0 ${
+                                item.kind === 'income'
+                                  ? 'text-emerald-600 dark:text-emerald-400'
+                                  : 'text-rose-600 dark:text-rose-400'
+                              }`}
+                            >
+                              {item.kind === 'income' ? '+' : ''}
                               {formatCurrency(item.amount)}
                             </span>
                           </div>
 
-                          <div className="flex items-center justify-between gap-1 pt-1 border-t border-border/30">
-                            <span className={`text-[9.5px] font-bold ${isOverdue ? 'text-rose-500' : 'text-amber-500'}`}>
-                              {isOverdue ? '⚠️ Vencida' : '⏳ A vencer'}
+                          <div className="flex flex-wrap items-center justify-between gap-1 pt-1 border-t border-border/30">
+                            <span
+                              className={`text-[9.5px] font-bold ${
+                                isOverdue
+                                  ? 'text-rose-600 dark:text-rose-400'
+                                  : item.kind === 'income'
+                                    ? 'text-emerald-600 dark:text-emerald-400'
+                                    : 'text-amber-600 dark:text-amber-400'
+                              }`}
+                            >
+                              {isOverdue
+                                ? '⚠️ Vencida'
+                                : item.kind === 'income'
+                                  ? '⏳ A receber'
+                                  : '⏳ A vencer'}
                             </span>
                             <div className="flex items-center gap-1">
+                              {isInOtherMonth && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleMoveItemToCurrentMonth(item)}
+                                  className="px-1.5 py-0.5 rounded bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-500/20 text-[9.5px] font-extrabold cursor-pointer"
+                                  title={`Trazer para ${viewedMonthLabel}`}
+                                >
+                                  Trazer p/ {viewedMonthLabel}
+                                </button>
+                              )}
                               <Button
                                 type="button"
                                 size="sm"
@@ -1728,7 +3099,7 @@ export function PlanningCalendar() {
                                 onClick={() => handleTogglePayItem(item)}
                                 className="h-6 px-2 rounded-lg text-[10px] font-extrabold border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 cursor-pointer"
                               >
-                                Quitar
+                                {item.kind === 'income' ? 'Receber' : 'Quitar'}
                               </Button>
                               <button
                                 type="button"
@@ -1756,13 +3127,89 @@ export function PlanningCalendar() {
                   </div>
                 )}
 
-                <div className="pt-3 border-t border-border/40 flex items-center justify-between text-[11px] font-semibold text-muted-foreground">
-                  <span>{globalPendingSummary.pendingCount} pendentes</span>
-                  <span className="font-mono font-black text-indigo-500">
-                    Total: {formatCurrency(globalPendingSummary.totalPendingAll)}
+                <div className="pt-3 border-t border-border/40 flex items-center justify-between text-[11px] font-semibold text-muted-foreground tabular-nums">
+                  <span>{scopedPendingList.length} exibida(s)</span>
+                  <span className="font-mono font-black text-indigo-600 dark:text-indigo-400">
+                    Total Despesas: {formatCurrency(globalPendingSummary.totalPendingAll)}
                   </span>
                 </div>
               </>
+            )}
+
+            {rightPanelTab === 'categories' && (
+              <div className="space-y-3">
+                {monthCategoryBreakdown.rows.length === 0 ? (
+                  <div className="py-10 text-center space-y-2">
+                    <PieChart className="w-8 h-8 text-muted-foreground/40 mx-auto" />
+                    <p className="text-xs font-bold text-muted-foreground">
+                      Sem despesas registradas em {viewedMonthLabel}.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-2.5 max-h-[440px] overflow-y-auto pr-1 custom-scrollbar">
+                    {monthCategoryBreakdown.rows.map(row => {
+                      const sharePct =
+                        monthCategoryBreakdown.grandTotal > 0
+                          ? Math.round((row.total / monthCategoryBreakdown.grandTotal) * 100)
+                          : 0;
+                      const budgetLimit = categoryBudgets[row.category] || 0;
+                      const budgetPct =
+                        budgetLimit > 0 ? Math.min(100, Math.round((row.total / budgetLimit) * 100)) : 0;
+                      const overBudget = budgetLimit > 0 && row.total > budgetLimit;
+
+                      return (
+                        <div
+                          key={row.category}
+                          className="rounded-xl border border-border/60 bg-muted/15 p-3 space-y-1.5"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-xs font-black text-foreground truncate">
+                              {row.category}{' '}
+                              <span className="text-[10px] font-semibold text-muted-foreground tabular-nums">
+                                ({sharePct}%)
+                              </span>
+                            </span>
+                            <span className="text-xs font-black font-mono tabular-nums text-foreground">
+                              {formatCurrency(row.total)}
+                            </span>
+                          </div>
+
+                          <div className="h-1.5 w-full bg-muted rounded-full overflow-hidden">
+                            <div
+                              className={`h-full rounded-full ${
+                                overBudget ? 'bg-rose-500' : 'bg-indigo-500'
+                              }`}
+                              style={{ width: `${budgetLimit > 0 ? budgetPct : sharePct}%` }}
+                            />
+                          </div>
+
+                          <div className="flex items-center justify-between text-[10px] font-semibold text-muted-foreground tabular-nums">
+                            <span>
+                              {budgetLimit > 0 ? (
+                                <span className={overBudget ? 'text-rose-600 dark:text-rose-400 font-bold' : ''}>
+                                  Teto: {formatCurrency(budgetLimit)} ({budgetPct}%)
+                                </span>
+                              ) : (
+                                `${row.count} ${row.count === 1 ? 'conta' : 'contas'}`
+                              )}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setBudgetModalCategory(row.category);
+                                setBudgetModalLimit(budgetLimit > 0 ? String(budgetLimit) : '');
+                              }}
+                              className="text-indigo-600 dark:text-indigo-400 font-extrabold hover:underline cursor-pointer"
+                            >
+                              {budgetLimit > 0 ? 'Alterar Teto' : '+ Definir Teto'}
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             )}
           </CardContent>
         </Card>
@@ -1798,7 +3245,7 @@ export function PlanningCalendar() {
               >
                 <SelectTrigger className="h-10 rounded-xl text-xs font-bold">
                   <SelectValue placeholder="Selecione a instituição...">
-                    {(val) => {
+                    {val => {
                       const preset = CARD_BRAND_PRESETS.find(p => p.value === val);
                       if (!preset) return 'Selecione a instituição / bandeira...';
                       return (
@@ -1866,7 +3313,7 @@ export function PlanningCalendar() {
                   max={31}
                   value={cardClosingDay}
                   onChange={e => setCardClosingDay(e.target.value)}
-                  className="h-10 rounded-xl text-xs font-bold"
+                  className="h-10 rounded-xl text-xs font-bold tabular-nums"
                   required
                 />
               </div>
@@ -1880,7 +3327,7 @@ export function PlanningCalendar() {
                   max={31}
                   value={cardDueDay}
                   onChange={e => setCardDueDay(e.target.value)}
-                  className="h-10 rounded-xl text-xs font-bold"
+                  className="h-10 rounded-xl text-xs font-bold tabular-nums"
                   required
                 />
               </div>
@@ -1920,80 +3367,128 @@ export function PlanningCalendar() {
         </DialogContent>
       </Dialog>
 
-      {/* Modal: Compra no Cartão ou Conta Planejada */}
+      {/* Modal: Compra no Cartão, Conta Planejada ou Receita Prevista */}
       <Dialog open={showEntryModal} onOpenChange={setShowEntryModal}>
-        <DialogContent className="max-w-lg rounded-3xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-lg rounded-3xl max-h-[92vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="text-lg font-black flex items-center gap-2">
               {entryMode === 'card' ? (
                 <CreditCard className="w-5 h-5 text-indigo-500" />
+              ) : entryMode === 'income' ? (
+                <ArrowUpRight className="w-5 h-5 text-emerald-500" />
               ) : (
                 <Wallet className="w-5 h-5 text-amber-500" />
               )}
-              {entryMode === 'card' ? 'Registrar Compra no Cartão' : 'Agendar Conta / Despesa Futura'}
+              {entryMode === 'card'
+                ? 'Registrar Compra no Cartão'
+                : entryMode === 'income'
+                  ? 'Agendar Receita Prevista'
+                  : 'Agendar Conta / Despesa Futura'}
             </DialogTitle>
             <DialogDescription className="text-xs">
-              Ficam ocultas no extrato padrão até você ativar &ldquo;Exibir futuras&rdquo;, e alimentam a Projeção de Caixa.
+              Ficam organizadas no calendário e alimentam a projeção do seu caixa.
             </DialogDescription>
           </DialogHeader>
 
-          {/* Mode Toggle */}
-          <div className="grid grid-cols-2 gap-2 p-1 bg-muted/50 rounded-xl border border-border/50">
+          {/* 3-Way Mode Toggle */}
+          <div className="grid grid-cols-3 gap-1.5 p-1 bg-muted/50 rounded-xl border border-border/50">
             <button
               type="button"
-              onClick={() => setEntryMode('card')}
-              className={`py-2 rounded-lg text-xs font-black transition-all cursor-pointer ${
+              onClick={() => {
+                setEntryMode('card');
+                setEntryCategory(
+                  (expenseCategories.find(c => c.toLowerCase().includes('cart')) as string) ||
+                    expenseCategories[0] ||
+                    'Outras Despesas'
+                );
+              }}
+              className={`py-2 px-1 rounded-lg text-[11px] font-black transition-colors cursor-pointer ${
                 entryMode === 'card'
-                  ? 'bg-indigo-600 text-white shadow-xs'
+                  ? 'bg-indigo-600 text-white'
                   : 'text-muted-foreground hover:text-foreground'
               }`}
             >
-              💳 Compra no Cartão
+              💳 Cartão
             </button>
             <button
               type="button"
-              onClick={() => setEntryMode('bill')}
-              className={`py-2 rounded-lg text-xs font-black transition-all cursor-pointer ${
+              onClick={() => {
+                setEntryMode('bill');
+                setEntryCategory(expenseCategories[0] || 'Outras Despesas');
+              }}
+              className={`py-2 px-1 rounded-lg text-[11px] font-black transition-colors cursor-pointer ${
                 entryMode === 'bill'
-                  ? 'bg-amber-500 text-zinc-950 shadow-xs'
+                  ? 'bg-amber-500 text-zinc-950'
                   : 'text-muted-foreground hover:text-foreground'
               }`}
             >
-              📅 Conta / Boleto Futuro
+              📅 Conta a Pagar
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setEntryMode('income');
+                setEntryCategory(incomeCategories[0] || 'Outras Receitas');
+              }}
+              className={`py-2 px-1 rounded-lg text-[11px] font-black transition-colors cursor-pointer ${
+                entryMode === 'income'
+                  ? 'bg-emerald-600 text-white'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              💵 Receita Prevista
             </button>
           </div>
 
           <form onSubmit={handleSaveEntry} className="space-y-4">
             {entryMode === 'card' && (
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <label className="text-[10.5px] font-extrabold uppercase tracking-wider text-muted-foreground">
-                    Cartão Utilizado
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowEntryModal(false);
-                      handleOpenNewCard(true);
-                    }}
-                    className="text-[11px] font-extrabold text-indigo-500 hover:underline cursor-pointer"
-                  >
-                    + Cadastrar Cartão
-                  </button>
-                </div>
-                {cards.length === 0 ? (
-                  <div className="p-3 rounded-xl border border-amber-500/30 bg-amber-500/10 text-xs text-amber-600 dark:text-amber-400 font-bold">
-                    Cadastre um cartão acima para calcular o vencimento automático da fatura.
+              <div className="space-y-3">
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[10.5px] font-extrabold uppercase tracking-wider text-muted-foreground">
+                      Cartão Utilizado
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowEntryModal(false);
+                        handleOpenNewCard(true);
+                      }}
+                      className="text-[11px] font-extrabold text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
+                    >
+                      + Cadastrar Cartão
+                    </button>
                   </div>
-                ) : (
-                  <Select value={selectedCardId} onValueChange={setSelectedCardId}>
-                    <SelectTrigger className="h-10 rounded-xl text-xs font-bold">
-                      <SelectValue placeholder="Selecione o cartão...">
-                        {(val) => {
-                          const c = cards.find(item => item.id === val);
-                          if (!c) return 'Selecione o cartão...';
-                          return (
-                            <div className="flex items-center gap-2 truncate">
+                  {cards.length === 0 ? (
+                    <div className="p-3 rounded-xl border border-amber-500/30 bg-amber-500/10 text-xs text-amber-700 dark:text-amber-400 font-bold">
+                      Cadastre um cartão acima para calcular o vencimento automático da fatura.
+                    </div>
+                  ) : (
+                    <Select value={selectedCardId} onValueChange={setSelectedCardId}>
+                      <SelectTrigger className="h-10 rounded-xl text-xs font-bold">
+                        <SelectValue placeholder="Selecione o cartão...">
+                          {val => {
+                            const c = cards.find(item => item.id === val);
+                            if (!c) return 'Selecione o cartão...';
+                            return (
+                              <div className="flex items-center gap-2 truncate">
+                                <span
+                                  className="w-2.5 h-2.5 rounded-full shrink-0"
+                                  style={{ backgroundColor: c.color }}
+                                />
+                                <span className="font-bold">{c.name}</span>
+                                <span className="text-muted-foreground text-[10px]">
+                                  (Fecha {c.closingDay} • Vence {c.dueDay})
+                                </span>
+                              </div>
+                            );
+                          }}
+                        </SelectValue>
+                      </SelectTrigger>
+                      <SelectContent>
+                        {cards.map(c => (
+                          <SelectItem key={c.id} value={c.id}>
+                            <div className="flex items-center gap-2">
                               <span
                                 className="w-2.5 h-2.5 rounded-full shrink-0"
                                 style={{ backgroundColor: c.color }}
@@ -2003,27 +3498,55 @@ export function PlanningCalendar() {
                                 (Fecha {c.closingDay} • Vence {c.dueDay})
                               </span>
                             </div>
-                          );
-                        }}
-                      </SelectValue>
-                    </SelectTrigger>
-                    <SelectContent>
-                      {cards.map(c => (
-                        <SelectItem key={c.id} value={c.id}>
-                          <div className="flex items-center gap-2">
-                            <span
-                              className="w-2.5 h-2.5 rounded-full shrink-0"
-                              style={{ backgroundColor: c.color }}
-                            />
-                            <span className="font-bold">{c.name}</span>
-                            <span className="text-muted-foreground text-[10px]">
-                              (Fecha {c.closingDay} • Vence {c.dueDay})
-                            </span>
-                          </div>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                </div>
+
+                {/* Explicit Target Invoice Month Control (fixes forced next-month surprises) */}
+                {selectedCardObj && (
+                  <div className="space-y-1.5">
+                    <label className="text-[10.5px] font-extrabold uppercase tracking-wider text-muted-foreground">
+                      Fatura de Destino (1ª Parcela)
+                    </label>
+                    <div className="grid grid-cols-3 gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setCardInvoiceTarget('auto')}
+                        className={`py-1.5 px-2 rounded-xl border text-[10.5px] font-extrabold transition-colors cursor-pointer ${
+                          cardInvoiceTarget === 'auto'
+                            ? 'border-indigo-500 bg-indigo-500/15 text-indigo-600 dark:text-indigo-400'
+                            : 'border-border/60 bg-muted/20 text-muted-foreground hover:text-foreground'
+                        }`}
+                      >
+                        Automático
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setCardInvoiceTarget('viewed_month')}
+                        className={`py-1.5 px-2 rounded-xl border text-[10.5px] font-extrabold transition-colors cursor-pointer capitalize ${
+                          cardInvoiceTarget === 'viewed_month'
+                            ? 'border-indigo-500 bg-indigo-500/15 text-indigo-600 dark:text-indigo-400'
+                            : 'border-border/60 bg-muted/20 text-muted-foreground hover:text-foreground'
+                        }`}
+                      >
+                        Fatura {viewedMonthLabel}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setCardInvoiceTarget('next_month')}
+                        className={`py-1.5 px-2 rounded-xl border text-[10.5px] font-extrabold transition-colors cursor-pointer capitalize ${
+                          cardInvoiceTarget === 'next_month'
+                            ? 'border-indigo-500 bg-indigo-500/15 text-indigo-600 dark:text-indigo-400'
+                            : 'border-border/60 bg-muted/20 text-muted-foreground hover:text-foreground'
+                        }`}
+                      >
+                        Próx. ({nextMonthLabel})
+                      </button>
+                    </div>
+                  </div>
                 )}
               </div>
             )}
@@ -2031,13 +3554,17 @@ export function PlanningCalendar() {
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <label className="text-[10.5px] font-extrabold uppercase tracking-wider text-muted-foreground">
-                  {entryMode === 'card' ? 'Data da Compra' : 'Data de Vencimento'}
+                  {entryMode === 'card'
+                    ? 'Data da Compra'
+                    : entryMode === 'income'
+                      ? 'Data Prevista'
+                      : 'Data de Vencimento'}
                 </label>
                 <Input
                   type="date"
                   value={entryDate}
                   onChange={e => setEntryDate(e.target.value)}
-                  className="h-10 rounded-xl text-xs font-bold"
+                  className="h-10 rounded-xl text-xs font-bold tabular-nums"
                   required
                 />
               </div>
@@ -2048,10 +3575,10 @@ export function PlanningCalendar() {
                 </label>
                 <Select value={entryCategory} onValueChange={setEntryCategory}>
                   <SelectTrigger className="h-10 rounded-xl text-xs font-bold">
-                    <SelectValue>{(val) => val || 'Selecione a categoria'}</SelectValue>
+                    <SelectValue>{val => val || 'Selecione a categoria'}</SelectValue>
                   </SelectTrigger>
                   <SelectContent>
-                    {expenseCategories.map(cat => (
+                    {(entryMode === 'income' ? incomeCategories : expenseCategories).map(cat => (
                       <SelectItem key={cat} value={cat}>
                         {cat}
                       </SelectItem>
@@ -2082,7 +3609,7 @@ export function PlanningCalendar() {
                     </label>
                     <Select value={installments} onValueChange={setInstallments}>
                       <SelectTrigger className="h-10 rounded-xl text-xs font-bold">
-                        <SelectValue>{(val) => (val ? `${val}x` : '1x')}</SelectValue>
+                        <SelectValue>{val => (val ? `${val}x` : '1x')}</SelectValue>
                       </SelectTrigger>
                       <SelectContent>
                         {Array.from({ length: 24 }, (_, idx) => String(idx + 1)).map(n => (
@@ -2122,31 +3649,51 @@ export function PlanningCalendar() {
                   </div>
                 )}
 
-                {cardPreview && Number(entryAmount) > 0 && (
-                  <div className="p-3 rounded-xl border border-indigo-500/25 bg-indigo-500/[0.06] text-[11px] space-y-1">
-                    <p className="font-black text-indigo-500">
-                      Resumo das Faturas ({selectedCardObj?.name}):
-                    </p>
-                    <p className="text-foreground font-semibold">
-                      {cardPreview.nInst}x de{' '}
-                      <strong className="font-mono">{formatCurrency(cardPreview.perInstallment)}</strong>{' '}
-                      (Total: {formatCurrency(cardPreview.totalPurchase)})
-                    </p>
-                    <p className="text-muted-foreground">
-                      1ª parcela vence em{' '}
-                      <strong>
-                        {format(new Date(cardPreview.first.statementDueDate + 'T12:00:00'), 'dd/MM/yyyy')}
-                      </strong>
-                      {cardPreview.nInst > 1 && (
-                        <>
-                          {' '}
-                          • Última em{' '}
-                          <strong>
-                            {format(new Date(cardPreview.last.statementDueDate + 'T12:00:00'), 'dd/MM/yyyy')}
-                          </strong>
-                        </>
-                      )}
-                    </p>
+                {cardPreview && (
+                  <div className="p-3 rounded-xl border border-indigo-500/25 bg-indigo-500/[0.06] text-[11px] space-y-1.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="font-black text-indigo-600 dark:text-indigo-400">
+                        Vencimento ({selectedCardObj?.name}):{' '}
+                        <span className="font-mono tabular-nums">
+                          {format(new Date(cardPreview.first.statementDueDate + 'T12:00:00'), 'dd/MM/yyyy')}
+                        </span>
+                      </p>
+                      <span className="text-[10px] font-bold uppercase text-indigo-600 dark:text-indigo-400 capitalize">
+                        {format(new Date(cardPreview.first.statementDueDate + 'T12:00:00'), 'MMM/yy', { locale: ptBR })}
+                      </span>
+                    </div>
+
+                    {Number(entryAmount) > 0 && (
+                      <p className="text-foreground font-semibold tabular-nums">
+                        {cardPreview.nInst}x de{' '}
+                        <strong className="font-mono">{formatCurrency(cardPreview.perInstallment)}</strong>{' '}
+                        (Total: {formatCurrency(cardPreview.totalPurchase)})
+                      </p>
+                    )}
+
+                    {cardPreview.nInst > 1 && (
+                      <p className="text-muted-foreground tabular-nums">
+                        Última parcela em{' '}
+                        <strong>
+                          {format(new Date(cardPreview.last.statementDueDate + 'T12:00:00'), 'dd/MM/yyyy')}
+                        </strong>
+                      </p>
+                    )}
+
+                    {cardInvoiceTarget === 'auto' && cardPreview.isAutoInDifferentMonthThanViewed && (
+                      <div className="pt-1.5 border-t border-indigo-500/20 flex items-center justify-between gap-2 text-[10.5px] text-amber-700 dark:text-amber-400 font-bold">
+                        <span>
+                          Após fechamento (dia {selectedCardObj?.closingDay}) → vai para o mês seguinte.
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setCardInvoiceTarget('viewed_month')}
+                          className="underline font-black whitespace-nowrap cursor-pointer inline-flex items-center gap-0.5"
+                        >
+                          Usar {viewedMonthLabel} <ArrowRight className="w-3 h-3" />
+                        </button>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -2154,7 +3701,7 @@ export function PlanningCalendar() {
               <div className="space-y-3">
                 <div className="space-y-1.5">
                   <label className="text-[10.5px] font-extrabold uppercase tracking-wider text-muted-foreground">
-                    Valor da Conta (R$)
+                    {entryMode === 'income' ? 'Valor Previsto (R$)' : 'Valor da Conta (R$)'}
                   </label>
                   <CurrencyInput
                     value={entryAmount}
@@ -2172,7 +3719,11 @@ export function PlanningCalendar() {
                     onChange={e => setBillRepeat(e.target.checked)}
                     className="h-4 w-4 rounded accent-primary"
                   />
-                  <span>Repetir conta em meses/semanas futuras (recorrência)</span>
+                  <span>
+                    {entryMode === 'income'
+                      ? 'Repetir receita periodicamente (recorrência)'
+                      : 'Repetir conta em meses/semanas futuras (recorrência)'}
+                  </span>
                 </label>
 
                 {billRepeat && (
@@ -2180,7 +3731,7 @@ export function PlanningCalendar() {
                     <Select value={billFrequency} onValueChange={(v: RecurrenceFrequency) => setBillFrequency(v)}>
                       <SelectTrigger className="h-10 rounded-xl text-xs font-bold">
                         <SelectValue>
-                          {(val) => {
+                          {val => {
                             switch (val) {
                               case 'weekly': return 'Semanal';
                               case 'biweekly': return 'Quinzenal';
@@ -2202,8 +3753,8 @@ export function PlanningCalendar() {
                       max={36}
                       value={billRepeatCount}
                       onChange={e => setBillRepeatCount(e.target.value)}
-                      placeholder="Qtd. meses"
-                      className="h-10 rounded-xl text-xs font-bold"
+                      placeholder="Qtd. repetições"
+                      className="h-10 rounded-xl text-xs font-bold tabular-nums"
                     />
                   </div>
                 )}
@@ -2218,7 +3769,11 @@ export function PlanningCalendar() {
                 value={entryDescription}
                 onChange={e => setEntryDescription(e.target.value)}
                 placeholder={
-                  entryMode === 'card' ? 'Ex: Capacete novo, Pneu traseiro, Mercado...' : 'Ex: Aluguel, Internet, IPVA...'
+                  entryMode === 'card'
+                    ? 'Ex: Capacete novo, Pneu traseiro, Mercado...'
+                    : entryMode === 'income'
+                      ? 'Ex: Repasse quinzenal, Frete fechado...'
+                      : 'Ex: Aluguel, Internet, IPVA...'
                 }
                 className="h-10 rounded-xl text-xs font-semibold"
               />
@@ -2236,9 +3791,19 @@ export function PlanningCalendar() {
               <Button
                 type="submit"
                 disabled={savingEntry}
-                className="rounded-xl text-xs font-black bg-indigo-600 hover:bg-indigo-700 text-white cursor-pointer"
+                className={`rounded-xl text-xs font-black text-white cursor-pointer ${
+                  entryMode === 'income'
+                    ? 'bg-emerald-600 hover:bg-emerald-700'
+                    : 'bg-indigo-600 hover:bg-indigo-700'
+                }`}
               >
-                {savingEntry ? 'Salvando...' : entryMode === 'card' ? 'Lançar na Fatura' : 'Agendar Conta'}
+                {savingEntry
+                  ? 'Salvando...'
+                  : entryMode === 'card'
+                    ? 'Lançar na Fatura'
+                    : entryMode === 'income'
+                      ? 'Agendar Receita'
+                      : 'Agendar Conta'}
               </Button>
             </div>
           </form>
@@ -2246,15 +3811,15 @@ export function PlanningCalendar() {
       </Dialog>
 
       {/* Modal: Editar Lançamento / Fatura */}
-      <Dialog open={editingItem !== null} onOpenChange={(open) => !open && setEditingItem(null)}>
+      <Dialog open={editingItem !== null} onOpenChange={open => !open && setEditingItem(null)}>
         <DialogContent className="max-w-md rounded-3xl">
           <DialogHeader>
             <DialogTitle className="text-lg font-black flex items-center gap-2">
               <Edit2 className="w-4 h-4 text-primary" />
-              Editar Conta / Fatura
+              {editingItem?.kind === 'income' ? 'Editar Receita Prevista' : 'Editar Conta / Fatura'}
             </DialogTitle>
             <DialogDescription className="text-xs">
-              Altere valor, vencimento, descrição, cartão ou status de pagamento.
+              Altere valor, data de vencimento, descrição, cartão ou status.
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={handleSaveEditItem} className="space-y-4 pt-1">
@@ -2272,13 +3837,13 @@ export function PlanningCalendar() {
               </div>
               <div className="space-y-1.5">
                 <label className="text-[10.5px] font-extrabold uppercase tracking-wider text-muted-foreground">
-                  Vencimento
+                  {editingItem?.kind === 'income' ? 'Data Prevista' : 'Vencimento'}
                 </label>
                 <Input
                   type="date"
                   value={editDate}
                   onChange={e => setEditDate(e.target.value)}
-                  className="h-10 rounded-xl text-xs font-bold"
+                  className="h-10 rounded-xl text-xs font-bold tabular-nums"
                   required
                 />
               </div>
@@ -2291,10 +3856,15 @@ export function PlanningCalendar() {
                 </label>
                 <Select value={editCategory} onValueChange={setEditCategory}>
                   <SelectTrigger className="h-10 rounded-xl text-xs font-bold">
-                    <SelectValue>{(val) => val || 'Selecione a categoria'}</SelectValue>
+                    <SelectValue>{val => val || 'Selecione a categoria'}</SelectValue>
                   </SelectTrigger>
                   <SelectContent>
-                    {Array.from(new Set([...expenseCategories, ...(editCategory ? [editCategory] : [])])).map(c => (
+                    {Array.from(
+                      new Set([
+                        ...(editingItem?.kind === 'income' ? incomeCategories : expenseCategories),
+                        ...(editCategory ? [editCategory] : []),
+                      ])
+                    ).map(c => (
                       <SelectItem key={c} value={c}>
                         {c}
                       </SelectItem>
@@ -2309,18 +3879,30 @@ export function PlanningCalendar() {
                 <Select value={editStatus} onValueChange={(v: 'paid' | 'pending') => setEditStatus(v)}>
                   <SelectTrigger className="h-10 rounded-xl text-xs font-bold">
                     <SelectValue>
-                      {(v) => (v === 'paid' ? 'Quitado (Pago)' : 'Pendente (A pagar)')}
+                      {v =>
+                        editingItem?.kind === 'income'
+                          ? v === 'paid'
+                            ? 'Recebida (No Caixa)'
+                            : 'Prevista (A Receber)'
+                          : v === 'paid'
+                            ? 'Quitado (Pago)'
+                            : 'Pendente (A pagar)'
+                      }
                     </SelectValue>
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="pending">Pendente (A pagar)</SelectItem>
-                    <SelectItem value="paid">Quitado (Pago)</SelectItem>
+                    <SelectItem value="pending">
+                      {editingItem?.kind === 'income' ? 'Prevista (A Receber)' : 'Pendente (A pagar)'}
+                    </SelectItem>
+                    <SelectItem value="paid">
+                      {editingItem?.kind === 'income' ? 'Recebida (No Caixa)' : 'Quitado (Pago)'}
+                    </SelectItem>
                   </SelectContent>
                 </Select>
               </div>
             </div>
 
-            {!editingItem?.isReserveTx && cards.length > 0 && (
+            {editingItem?.kind !== 'income' && !editingItem?.isReserveTx && cards.length > 0 && (
               <div className="space-y-1.5">
                 <label className="text-[10.5px] font-extrabold uppercase tracking-wider text-muted-foreground">
                   Cartão Vinculado
@@ -2328,7 +3910,7 @@ export function PlanningCalendar() {
                 <Select value={editCardId} onValueChange={setEditCardId}>
                   <SelectTrigger className="h-10 rounded-xl text-xs font-bold">
                     <SelectValue placeholder="Nenhum (Conta avulsa)">
-                      {(val) => {
+                      {val => {
                         if (val === '__none__' || !val) return 'Nenhum (Conta avulsa)';
                         const c = cards.find(card => card.id === val);
                         if (!c) return 'Nenhum (Conta avulsa)';
@@ -2391,7 +3973,7 @@ export function PlanningCalendar() {
       </Dialog>
 
       {/* Modal: Excluir Parcela Individual vs Grupo Recorrente */}
-      <Dialog open={deleteTargetItem !== null} onOpenChange={(open) => !open && setDeleteTargetItem(null)}>
+      <Dialog open={deleteTargetItem !== null} onOpenChange={open => !open && setDeleteTargetItem(null)}>
         <DialogContent className="max-w-sm rounded-3xl">
           <DialogHeader>
             <DialogTitle className="text-base font-black flex items-center gap-2 text-rose-500">
@@ -2426,6 +4008,47 @@ export function PlanningCalendar() {
               Cancelar
             </Button>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal: Teto Mensal por Categoria */}
+      <Dialog open={budgetModalCategory !== null} onOpenChange={open => !open && setBudgetModalCategory(null)}>
+        <DialogContent className="max-w-sm rounded-3xl">
+          <DialogHeader>
+            <DialogTitle className="text-base font-black flex items-center gap-2">
+              <SlidersHorizontal className="w-4 h-4 text-indigo-500" />
+              Teto Mensal: {budgetModalCategory}
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              Defina um limite mensal para acompanhar o quanto já comprometeu nesta categoria. Deixe 0 para remover.
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleSaveCategoryBudget} className="space-y-4 pt-1">
+            <div className="space-y-1.5">
+              <label className="text-[10.5px] font-extrabold uppercase tracking-wider text-muted-foreground">
+                Limite Mensal (R$)
+              </label>
+              <CurrencyInput
+                value={budgetModalLimit}
+                onChange={setBudgetModalLimit}
+                placeholder="0,00"
+                className="h-10 rounded-xl font-bold"
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setBudgetModalCategory(null)}
+                className="rounded-xl text-xs font-bold cursor-pointer"
+              >
+                Cancelar
+              </Button>
+              <Button type="submit" className="rounded-xl text-xs font-black cursor-pointer">
+                Salvar Teto
+              </Button>
+            </div>
+          </form>
         </DialogContent>
       </Dialog>
     </div>
