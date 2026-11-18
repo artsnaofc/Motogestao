@@ -3670,13 +3670,30 @@ export function Investments() {
       {isReportModalOpen && (
         <PortfolioReportModal
           positions={positions}
+          allPositions={allPositions}
           totalInvested={totalInvested}
           totalCurrent={totalCurrent}
           totalCapitalGain={totalCapitalGain}
+          totalRealizedGain={totalRealizedGain}
           capitalGainPercent={capitalGainPercent}
           dividendsReceived={divTotals.considered}
+          divTotals={divTotals}
           totalReturnWithDividends={totalReturnWithDividends}
           totalReturnPercent={totalReturnPercent}
+          overallYieldOnCost={overallYieldOnCost}
+          portfolioProjections={portfolioProjections}
+          performanceMetrics={performanceMetrics}
+          portfolioDiagnosis={portfolioDiagnosis}
+          allocationBreakdown={allocationBreakdown}
+          dividends={dividends}
+          investmentTransactions={investmentTransactions}
+          targetAllocations={targetAllocations}
+          rulesConfig={rulesConfig}
+          valuationTargets={valuationTargets}
+          b3AssetsMetadata={b3AssetsMetadata}
+          configuredReserve={configuredReserve}
+          quoteVariations={quoteVariations}
+          lastQuoteUpdatedAt={lastQuoteUpdatedAt}
           onClose={() => setIsReportModalOpen(false)}
           formatCurrency={formatCurrency}
           analysisMode={dividendAnalysisMode}
