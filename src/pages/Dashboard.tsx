@@ -99,7 +99,12 @@ import { getEffectiveUserId } from '../lib/authUtils';
 import { syncQueueManager } from '../lib/syncQueue';
 import { planningStorage } from '../lib/planningStorage';
 import { useData } from '../contexts/DataContext';
-import { getInvestmentTransactionNetAmount } from '../lib/investmentCalculations';
+import {
+  getInvestmentTransactionNetAmount,
+  isInvestmentPurchaseReserveUse,
+  isInvestmentSaleReserveAporte,
+  isNonCashReserveAporte,
+} from '../lib/investmentCalculations';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { ExecutiveReportModal } from '../components/ExecutiveReportModal';
@@ -975,6 +980,7 @@ export function Dashboard() {
     return (reserveTransactions || [])
       .filter(rt => {
         if (rt.linked_investment_id) return false;
+        if (isNonCashReserveAporte(rt) || isInvestmentPurchaseReserveUse(rt)) return false;
         // Evita duplicar provento/dividendo gerenciado pela página de investimentos com o lançamento das reservas
         const isLinkedToDividend = (dividends || []).some(d => 
           d.transaction_id === rt.id || 
@@ -1015,6 +1021,7 @@ export function Dashboard() {
           reserveIcon: matchedRes?.icon || 'PiggyBank',
           created_at: rt.created_at,
           originalCategory: rt.category,
+          linkedInvestmentId: rt.linked_investment_id,
           payment_status: rt.payment_status || 'paid',
           payment_date: rt.payment_date,
           due_date: rt.due_date,
@@ -1210,11 +1217,11 @@ export function Dashboard() {
   }, [dividends, globalPeriod, pastStartTime, pastEndTime]);
 
   const currentPeriodInvBuys = useMemo(() => {
-    return currentPeriodInvTx.filter(t => t.operation === 'buy').reduce((acc, t) => acc + Number(t.amount), 0);
+    return currentPeriodInvTx.filter(t => t.operation === 'buy').reduce((acc, t) => acc + getInvestmentTransactionNetAmount(t), 0);
   }, [currentPeriodInvTx]);
 
   const currentPeriodInvSells = useMemo(() => {
-    return currentPeriodInvTx.filter(t => t.operation === 'sell').reduce((acc, t) => acc + Number(t.amount), 0);
+    return currentPeriodInvTx.filter(t => t.operation === 'sell').reduce((acc, t) => acc + getInvestmentTransactionNetAmount(t), 0);
   }, [currentPeriodInvTx]);
 
   const currentPeriodDivSum = useMemo(() => {
@@ -1222,11 +1229,11 @@ export function Dashboard() {
   }, [currentPeriodDividends]);
 
   const pastPeriodInvBuys = useMemo(() => {
-    return pastPeriodInvTx.filter(t => t.operation === 'buy').reduce((acc, t) => acc + Number(t.amount), 0);
+    return pastPeriodInvTx.filter(t => t.operation === 'buy').reduce((acc, t) => acc + getInvestmentTransactionNetAmount(t), 0);
   }, [pastPeriodInvTx]);
 
   const pastPeriodInvSells = useMemo(() => {
-    return pastPeriodInvTx.filter(t => t.operation === 'sell').reduce((acc, t) => acc + Number(t.amount), 0);
+    return pastPeriodInvTx.filter(t => t.operation === 'sell').reduce((acc, t) => acc + getInvestmentTransactionNetAmount(t), 0);
   }, [pastPeriodInvTx]);
 
   const pastPeriodDivSum = useMemo(() => {
@@ -1275,6 +1282,12 @@ export function Dashboard() {
       if ((t as any).payment_status === 'pending') return;
       if ((t as any).isInvestmentTx) return;
       if (t.category === 'Aporte Reserva' || (t as any).isReserveAporte) return;
+      if ((t as any).isReserveTx && (t as any).reserveTxType === 'utilizacao' && isInvestmentPurchaseReserveUse({
+        type: 'utilizacao',
+        category: (t as any).originalCategory || t.category,
+        description: t.description,
+        linked_investment_id: (t as any).linkedInvestmentId,
+      })) return;
       if (isPersonalOpCategory(t.category)) return;
 
       const cat = t.category || 'Outros';
@@ -1373,6 +1386,14 @@ export function Dashboard() {
     txs.filter(t => t.type === 'expense').forEach(t => {
       if ((t as any).isInvestmentTx || (t as any).payment_status === 'pending') {
         // Asset purchases or pending expenses do not count as realized expenses
+        return;
+      }
+      if ((t as any).isReserveTx && (t as any).reserveTxType === 'utilizacao' && isInvestmentPurchaseReserveUse({
+        type: 'utilizacao',
+        category: (t as any).originalCategory || t.category,
+        description: t.description,
+        linked_investment_id: (t as any).linkedInvestmentId,
+      })) {
         return;
       }
       const isReserveAporteVal = (t as any).isReserveAporte === true || t.category === 'Aporte Reserva';
@@ -1612,8 +1633,10 @@ export function Dashboard() {
       .filter(rt => {
         if (rt.type !== 'aporte') return false;
         if (rt.payment_status === 'pending') return false;
+        if (isNonCashReserveAporte(rt)) return false;
         if (globalPeriod === 'all') return true;
-        const ts = parseLocalDate(rt.date).getTime();
+        const effectiveDateStr = rt.payment_date || rt.date;
+        const ts = parseLocalDate(effectiveDateStr).getTime();
         return ts >= currentStartTime && ts <= currentEndTime;
       })
       .reduce((sum, rt) => sum + Number(rt.amount), 0);
@@ -1708,7 +1731,7 @@ export function Dashboard() {
   }, [reserveTransactions, globalPeriod, pastStartTime, pastEndTime]);
 
   const pastPeriodInvBuysTotal = useMemo(() => {
-    const buys = pastPeriodInvTx.filter(t => t.operation === 'buy').reduce((acc, t) => acc + Number(t.amount), 0);
+    const buys = pastPeriodInvTx.filter(t => t.operation === 'buy').reduce((acc, t) => acc + getInvestmentTransactionNetAmount(t), 0);
     return buys + unlinkedReserveAssetPurchasesPast;
   }, [pastPeriodInvTx, unlinkedReserveAssetPurchasesPast]);
 
@@ -1740,7 +1763,8 @@ export function Dashboard() {
 
   const totalInvestmentEquity = useMemo(() => {
     const posMap: Record<string, number> = {};
-    investmentTransactions.forEach(tx => {
+    (investmentTransactions || []).forEach(tx => {
+      if ((tx as any).payment_status === 'pending') return;
       const q = Number(tx.quantity);
       if (tx.operation === 'buy') {
         posMap[tx.ticker] = (posMap[tx.ticker] || 0) + q;
@@ -1755,8 +1779,8 @@ export function Dashboard() {
       if (price > 0) {
         return acc + (price * quantity);
       }
-      const lastTx = investmentTransactions
-        .filter(t => t.ticker === ticker)
+      const lastTx = (investmentTransactions || [])
+        .filter(t => t.ticker === ticker && (t as any).payment_status !== 'pending')
         .sort((a, b) => (b.date || '').localeCompare(a.date || ''))[0];
       const fallbackPrice = lastTx ? Number(lastTx.price) : 0;
       return acc + (fallbackPrice * quantity);
@@ -1788,7 +1812,7 @@ export function Dashboard() {
       }
     });
 
-    // Include 'rendimento' and spent 'utilizacao' from reserves into total liquid net
+    // Include 'rendimento', spent 'utilizacao', and investment-sale 'aporte' (D+2) so Caixa matches History.tsx exactly
     (reserveTransactions || []).forEach(rt => {
       if (rt.payment_status === 'pending') return;
       if (rt.type === 'rendimento') {
@@ -1798,6 +1822,10 @@ export function Dashboard() {
         const isPureResgateToCash = !rt.linked_investment_id && (!cat || cat === 'resgate' || cat === 'resgate reserva' || cat === 'resgate de reserva' || cat === 'outros');
         if (!isPureResgateToCash) {
           rawNet -= Number(rt.amount);
+        }
+      } else if (rt.type === 'aporte') {
+        if (isInvestmentSaleReserveAporte(rt)) {
+          rawNet += Number(rt.amount);
         }
       }
     });
@@ -3462,7 +3490,7 @@ export function Dashboard() {
       let rawNet = 0;
       transactions.forEach(t => {
         if (t.payment_status === 'pending') return;
-        const tDate = parseLocalDate(t.date);
+        const tDate = parseLocalDate(t.payment_date || t.date);
         if (tDate > endOfMonthDate) return;
         
         const amount = Number(t.amount);
@@ -3488,10 +3516,10 @@ export function Dashboard() {
         }
       });
 
-      // Include 'rendimento' and spent 'utilizacao' from reserves up to end of this month
+      // Include 'rendimento', spent 'utilizacao', and investment-sale 'aporte' (D+2) up to end of this month
       (reserveTransactions || []).forEach(rt => {
         if (rt.payment_status === 'pending') return;
-        const rtDate = parseLocalDate(rt.date);
+        const rtDate = parseLocalDate(rt.payment_date || rt.date);
         if (rtDate > endOfMonthDate) return;
         
         if (rt.type === 'rendimento') {
@@ -3501,6 +3529,10 @@ export function Dashboard() {
           const isPureResgateToCash = !rt.linked_investment_id && (!cat || cat === 'resgate' || cat === 'resgate reserva' || cat === 'resgate de reserva' || cat === 'outros');
           if (!isPureResgateToCash) {
             rawNet -= Number(rt.amount);
+          }
+        } else if (rt.type === 'aporte') {
+          if (isInvestmentSaleReserveAporte(rt)) {
+            rawNet += Number(rt.amount);
           }
         }
       });
@@ -3514,7 +3546,7 @@ export function Dashboard() {
         const rts = (reserveTransactions || []).filter(rt => rt.reserve_id === r.id);
         rts.forEach(rt => {
           if (rt.payment_status === 'pending') return;
-          const rtDate = parseLocalDate(rt.date);
+          const rtDate = parseLocalDate(rt.payment_date || rt.date);
           if (rtDate > endOfMonthDate) return;
           
           if (rt.type === 'aporte') rBalance += Number(rt.amount);
@@ -3546,7 +3578,7 @@ export function Dashboard() {
         if (quantity <= 0) return acc;
         // Find last transaction up to endOfMonthDate
         const lastTx = investmentTransactions
-          .filter(t => t.ticker === ticker && parseLocalDate(t.date) <= endOfMonthDate)
+          .filter(t => t.ticker === ticker && (t as any).payment_status !== 'pending' && parseLocalDate(t.date) <= endOfMonthDate)
           .sort((a, b) => (b.date || '').localeCompare(a.date || ''))[0];
         const fallbackPrice = lastTx ? Number(lastTx.price) : 0;
         const price = quotes[ticker] || fallbackPrice;
@@ -3568,17 +3600,23 @@ export function Dashboard() {
   }, [transactions, reserveTransactions, investmentTransactions, reserves, settings, quotes]);
 
   const expensesDataRaw = useMemo(() => {
-    const raw = currentPeriodTx
-      .filter(t => t.type === 'expense' && (t as any).payment_status !== 'pending' && t.category !== 'Aporte Reserva' && !(t as any).isReserveAporte && !(t as any).isInvestmentTx)
+    return currentPeriodTx
+      .filter(t => {
+        if (t.type !== 'expense' || (t as any).payment_status === 'pending') return false;
+        if (t.category === 'Aporte Reserva' || (t as any).isReserveAporte || (t as any).isInvestmentTx) return false;
+        if ((t as any).isReserveTx && (t as any).reserveTxType === 'utilizacao' && isInvestmentPurchaseReserveUse({
+          type: 'utilizacao',
+          category: (t as any).originalCategory || t.category,
+          description: t.description,
+          linked_investment_id: (t as any).linkedInvestmentId,
+        })) return false;
+        return true;
+      })
       .reduce((acc, t) => {
         acc[t.category] = (acc[t.category] || 0) + Number(t.amount);
         return acc;
       }, {} as Record<string, number>);
-    if (currentPeriodInvBuys > 0) {
-      raw['Compra de Investimentos'] = currentPeriodInvBuys;
-    }
-    return raw;
-  }, [currentPeriodTx, currentPeriodInvBuys]);
+  }, [currentPeriodTx]);
 
   const expensesData = useMemo(() => {
     const colorsMap = ['#ef4444', '#f97316', '#eab308', '#3b82f6', '#8b5cf6', '#14b8a6', '#64748b'];
@@ -3586,7 +3624,7 @@ export function Dashboard() {
       .map(([name, value], idx) => ({
         name, 
         value: value as number, 
-        color: name === 'Compra de Investimentos' ? '#3b82f6' : colorsMap[idx % colorsMap.length]
+        color: colorsMap[idx % colorsMap.length]
       }))
       .sort((a, b) => b.value - a.value);
   }, [expensesDataRaw]);
@@ -3637,9 +3675,9 @@ export function Dashboard() {
   const incomeData = useMemo(() => {
     const incomeColorsMap = ['#10b981', '#3b82f6', '#8b5cf6', '#f59e0b', '#06b6d4', '#84cc16'];
     return Object.entries(incomeByCategory)
+      .filter(([name]) => name !== 'Venda de Investimentos')
       .map(([name, value], idx) => {
         let color = incomeColorsMap[idx % incomeColorsMap.length];
-        if (name === 'Venda de Investimentos') color = '#10b981';
         if (name === 'Proventos (Investimentos)') color = '#8b5cf6';
         return { name, value: value as number, color };
       })
@@ -3649,7 +3687,17 @@ export function Dashboard() {
   const opCats = settings?.operational_expense_categories || ['Combustível', 'Pedágio', 'Manutenção'];
   const expensesByCategory = useMemo(() => {
     const raw = currentPeriodTx
-      .filter(t => t.type === 'expense' && (t as any).payment_status !== 'pending' && t.category !== 'Aporte Reserva' && !(t as any).isReserveAporte && !(t as any).isInvestmentTx)
+      .filter(t => {
+        if (t.type !== 'expense' || (t as any).payment_status === 'pending') return false;
+        if (t.category === 'Aporte Reserva' || (t as any).isReserveAporte || (t as any).isInvestmentTx) return false;
+        if ((t as any).isReserveTx && (t as any).reserveTxType === 'utilizacao' && isInvestmentPurchaseReserveUse({
+          type: 'utilizacao',
+          category: (t as any).originalCategory || t.category,
+          description: t.description,
+          linked_investment_id: (t as any).linkedInvestmentId,
+        })) return false;
+        return true;
+      })
       .reduce((acc, t) => {
         acc[t.category] = (acc[t.category] || 0) + Number(t.amount);
         return acc;
@@ -4532,11 +4580,11 @@ export function Dashboard() {
 
               // Calculate period aportes and utilizacaos for this specific reserve
               const periodAportes = (reserveTransactions || [])
-                .filter(rt => rt.reserve_id === r.id && rt.type === 'aporte' && (globalPeriod === 'all' || isWithinInterval(parseLocalDate(rt.date), { start: currentStart, end: currentEnd })))
+                .filter(rt => rt.reserve_id === r.id && rt.type === 'aporte' && rt.payment_status !== 'pending' && (globalPeriod === 'all' || isWithinInterval(parseLocalDate(rt.payment_date || rt.date), { start: currentStart, end: currentEnd })))
                 .reduce((sum, rt) => sum + Number(rt.amount), 0);
                 
               const periodUtilizacaos = (reserveTransactions || [])
-                .filter(rt => rt.reserve_id === r.id && rt.type === 'utilizacao' && (globalPeriod === 'all' || isWithinInterval(parseLocalDate(rt.date), { start: currentStart, end: currentEnd })))
+                .filter(rt => rt.reserve_id === r.id && rt.type === 'utilizacao' && rt.payment_status !== 'pending' && (globalPeriod === 'all' || isWithinInterval(parseLocalDate(rt.payment_date || rt.date), { start: currentStart, end: currentEnd })))
                 .reduce((sum, rt) => sum + Number(rt.amount), 0);
 
               const hasTarget = Boolean(r.meta_objetivo && r.meta_objetivo > 0);
@@ -4824,10 +4872,9 @@ export function Dashboard() {
       <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 gap-2.5">
         {/* indicator 1: Faturamento Bruto */}
         {(() => {
-          const totalInflow = summary.totalIncome + (summary.totalVendaInvestimento || 0) + (summary.rendimentosReserva || 0);
+          const totalInflow = summary.totalIncome + (summary.rendimentosReserva || 0);
           const segments = [
             { label: 'Caixa', val: summary.totalIncome, pct: totalInflow > 0 ? (summary.totalIncome / totalInflow) * 100 : 0, color: 'bg-emerald-500', textColor: 'text-emerald-500', textBoldColor: 'text-emerald-600 dark:text-emerald-400', format: formatCompactValue(summary.totalIncome) },
-            { label: 'Ativos', val: summary.totalVendaInvestimento || 0, pct: totalInflow > 0 ? ((summary.totalVendaInvestimento || 0) / totalInflow) * 100 : 0, color: 'bg-blue-500', textColor: 'text-blue-500', textBoldColor: 'text-blue-600 dark:text-blue-400', format: formatCompactValue(summary.totalVendaInvestimento || 0) },
             { label: 'Proventos', val: summary.rendimentosReserva || 0, pct: totalInflow > 0 ? ((summary.rendimentosReserva || 0) / totalInflow) * 100 : 0, color: 'bg-purple-500', textColor: 'text-purple-500', textBoldColor: 'text-purple-600 dark:text-purple-400', format: formatCompactValue(summary.rendimentosReserva || 0) }
           ].filter(s => s.val > 0).sort((a, b) => b.val - a.val);
           return (

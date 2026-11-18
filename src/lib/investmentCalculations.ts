@@ -1,4 +1,4 @@
-import { Dividend, InvestmentTransaction, DividendAnalysisMode, ValuationTarget } from '../types';
+import { Dividend, InvestmentTransaction, ReserveTransaction, DividendAnalysisMode, ValuationTarget } from '../types';
 import { getTodayLocalDateStr } from './utils';
 
 /**
@@ -20,6 +20,67 @@ export function getInvestmentTransactionNetAmount(
   }
 
   return Math.max(0, Number(tx.amount || 0));
+}
+
+export function isInvestmentSaleReserveAporte(
+  rt: Pick<Partial<ReserveTransaction>, 'type' | 'category' | 'description' | 'linked_investment_id'> & { source?: string } | null | undefined
+): boolean {
+  if (!rt || rt.type !== 'aporte') return false;
+  const cat = (rt.category || '').toLowerCase().trim();
+  const desc = (rt.description || '').toLowerCase().trim();
+  return Boolean(
+    rt.linked_investment_id ||
+    rt.source === 'investment' ||
+    cat === 'investimentos' ||
+    cat === 'venda de ativos' ||
+    desc.includes('investimento:') ||
+    desc.includes('venda de ativo') ||
+    desc.includes('liq. d+2')
+  );
+}
+
+export function isDividendReserveAporte(
+  rt: Pick<Partial<ReserveTransaction>, 'type' | 'category' | 'description'> & { source?: string } | null | undefined
+): boolean {
+  if (!rt || rt.type !== 'aporte') return false;
+  const cat = (rt.category || '').toLowerCase().trim();
+  const desc = (rt.description || '').toLowerCase().trim();
+  return Boolean(
+    rt.source === 'dividends' ||
+    cat === 'proventos' ||
+    cat === 'dividendos' ||
+    desc.startsWith('provento:')
+  );
+}
+
+export function isNonCashReserveAporte(
+  rt: Pick<Partial<ReserveTransaction>, 'type' | 'category' | 'description' | 'linked_investment_id'> & { source?: string } | null | undefined
+): boolean {
+  return isInvestmentSaleReserveAporte(rt) || isDividendReserveAporte(rt);
+}
+
+export function isInvestmentPurchaseReserveUse(
+  rt: Pick<Partial<ReserveTransaction>, 'type' | 'category' | 'description' | 'linked_investment_id'> & { source?: string } | null | undefined
+): boolean {
+  if (!rt || rt.type !== 'utilizacao') return false;
+  const cat = (rt.category || '').toLowerCase().trim();
+  const desc = (rt.description || '').toLowerCase().trim();
+  return Boolean(
+    rt.linked_investment_id ||
+    rt.source === 'investment' ||
+    cat === 'investimentos' ||
+    cat === 'investimento' ||
+    cat === 'investimento na carteira' ||
+    desc.includes('investiment') ||
+    desc.includes('compra de ativo') ||
+    desc.includes('compra ativo')
+  );
+}
+
+export function getPendingSaleSettlementsTotal(reserveTransactions: ReserveTransaction[] | undefined): number {
+  return (reserveTransactions || [])
+    .filter(rt => rt.payment_status === 'pending' && isInvestmentSaleReserveAporte(rt))
+    .reduce((sum, rt) => sum + Number(rt.amount || 0), 0);
 }
 
 export interface AssetProjectionResult {

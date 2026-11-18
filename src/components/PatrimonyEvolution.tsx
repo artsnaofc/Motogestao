@@ -1,6 +1,9 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { cacheManager } from '../lib/cacheManager';
-import { getInvestmentTransactionNetAmount } from '../lib/investmentCalculations';
+import {
+  getInvestmentTransactionNetAmount,
+  isInvestmentSaleReserveAporte,
+} from '../lib/investmentCalculations';
 import { 
   Transaction, 
   ReserveTransaction, 
@@ -169,9 +172,9 @@ export const PatrimonyEvolution: React.FC<PatrimonyEvolutionProps> = ({
       const monthKey = format(monthDate, 'yyyy-MM');
 
       // Check if there are direct transactions/lançamentos in this specific month
-      const hasTx = realTransactions.some(t => t.date && t.date.startsWith(monthKey));
+      const hasTx = realTransactions.some(t => (t.payment_date || t.date || '').startsWith(monthKey));
       const hasInvTx = investmentTransactions.some(tx => tx.date && tx.date.startsWith(monthKey) && (tx as any).payment_status !== 'pending');
-      const hasResTx = (reserveTransactions || []).some(rt => rt.date && rt.date.startsWith(monthKey) && rt.payment_status !== 'pending');
+      const hasResTx = (reserveTransactions || []).some(rt => (rt.payment_date || rt.date || '').startsWith(monthKey) && rt.payment_status !== 'pending');
       const hasTransactionsInMonth = hasTx || hasInvTx || hasResTx;
 
       // Cumulative Net Cash Flow up to end of this month
@@ -179,8 +182,9 @@ export const PatrimonyEvolution: React.FC<PatrimonyEvolutionProps> = ({
 
       // 1. General Income & Expenses from realTransactions
       realTransactions.forEach(t => {
-        if (!t.date) return;
-        const tDate = parseLocalDate(t.date);
+        const effDate = t.payment_date || t.date;
+        if (!effDate) return;
+        const tDate = parseLocalDate(effDate);
         if (tDate > endOfMonthDate) return;
 
         const amount = Number(t.amount);
@@ -219,11 +223,12 @@ export const PatrimonyEvolution: React.FC<PatrimonyEvolutionProps> = ({
         }
       });
 
-      // 4. Reserve Rendimentos & Utilizações up to end of this month
+      // 4. Reserve Rendimentos, Utilizações & non-cash Aportes (D+2 sales / dividends) up to end of this month
       (reserveTransactions || []).forEach(rt => {
-        if (!rt.date) return;
+        const effDate = rt.payment_date || rt.date;
+        if (!effDate) return;
         if (rt.payment_status === 'pending') return;
-        const rtDate = parseLocalDate(rt.date);
+        const rtDate = parseLocalDate(effDate);
         if (rtDate > endOfMonthDate) return;
 
         if (rt.type === 'rendimento') {
@@ -233,6 +238,10 @@ export const PatrimonyEvolution: React.FC<PatrimonyEvolutionProps> = ({
           const isPureResgateToCash = !rt.linked_investment_id && (!cat || cat === 'resgate' || cat === 'resgate reserva' || cat === 'resgate de reserva' || cat === 'outros');
           if (!isPureResgateToCash) {
             rawNet -= Number(rt.amount);
+          }
+        } else if (rt.type === 'aporte') {
+          if (isInvestmentSaleReserveAporte(rt)) {
+            rawNet += Number(rt.amount);
           }
         }
       });
@@ -245,8 +254,9 @@ export const PatrimonyEvolution: React.FC<PatrimonyEvolutionProps> = ({
         let rBalance = Number(r.saldo_inicial || 0);
         const rts = (reserveTransactions || []).filter(rt => rt.reserve_id === r.id && rt.payment_status !== 'pending');
         rts.forEach(rt => {
-          if (!rt.date) return;
-          const rtDate = parseLocalDate(rt.date);
+          const effDate = rt.payment_date || rt.date;
+          if (!effDate) return;
+          const rtDate = parseLocalDate(effDate);
           if (rtDate > endOfMonthDate) return;
 
           if (rt.type === 'aporte') rBalance += Number(rt.amount);

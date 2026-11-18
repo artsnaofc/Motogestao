@@ -83,7 +83,11 @@ import {
 } from '../lib/recurrenceUtils';
 import { syncQueueManager } from '../lib/syncQueue';
 import { getTodayLocalDateStr, addBusinessDays, formatLocalDateBR } from '../lib/utils';
-import { getInvestmentTransactionNetAmount } from '../lib/investmentCalculations';
+import {
+  getInvestmentTransactionNetAmount,
+  isInvestmentPurchaseReserveUse,
+  isInvestmentSaleReserveAporte,
+} from '../lib/investmentCalculations';
 import { VehicleSelect } from '../components/VehicleSelect';
 import { useVehicles } from '../contexts/VehiclesContext';
 import { isVehicleRelatedCategory } from '../lib/vehicleUtils';
@@ -2118,9 +2122,7 @@ export function History() {
           patrimonio -= Number(rt.amount);
         }
       } else if (rt.type === 'aporte') {
-        const cat = (rt.category || '').toLowerCase().trim();
-        const isFromInvestmentSell = rt.linked_investment_id || cat === 'investimentos' || (rt.description && rt.description.includes('Investimento:'));
-        if (isFromInvestmentSell) {
+        if (isInvestmentSaleReserveAporte(rt)) {
           patrimonio += Number(rt.amount);
         }
       }
@@ -2167,11 +2169,12 @@ export function History() {
       const isReserveUse = t.is_reserve_use || t.description?.startsWith('[Reserva]') || ((t as any).isReserveTx === true && (t as any).reserveTxType === 'utilizacao');
       const isAporte = t.category === 'Aporte Reserva' || (t as any).reserveTxType === 'aporte';
       
-      const isInvestmentReserveUse = (t as any).isReserveTx === true && (t as any).reserveTxType === 'utilizacao' && (
-        (t as any).originalCategory === 'Investimentos' || 
-        (t as any).linkedInvestmentId || 
-        t.description?.includes('Investimento:')
-      );
+      const isInvestmentReserveUse = (t as any).isReserveTx === true && (t as any).reserveTxType === 'utilizacao' && isInvestmentPurchaseReserveUse({
+        type: 'utilizacao',
+        category: (t as any).originalCategory || t.category,
+        description: t.description,
+        linked_investment_id: (t as any).linkedInvestmentId,
+      });
 
       if (t.type === 'income') {
         const isReserveTx = (t as any).isReserveTx === true;
@@ -2272,6 +2275,18 @@ export function History() {
 
   const patrimonioPorDia = useMemo(() => {
     if (!transactions) return { dailyAccumulated: [], initialBalance: 0 };
+
+    const rtByInvId = new Map<string, ReserveTransaction>();
+    const rtById = new Map<string, ReserveTransaction>();
+    (reserveTransactions || []).forEach(rt => {
+      if (isInvestmentSaleReserveAporte(rt)) {
+        rtById.set(rt.id, rt);
+        if (rt.linked_investment_id) {
+          rtByInvId.set(rt.linked_investment_id, rt);
+        }
+      }
+    });
+
     const events = [
       ...transactions.filter(t => t.payment_status !== 'pending').map(t => {
         const effectiveDate = (t.payment_date || t.date || '').split('T')[0];
@@ -2284,6 +2299,8 @@ export function History() {
           t.category === 'Resgate de Reserva'
         );
         return {
+          rtId: undefined as string | undefined,
+          source: undefined as string | undefined,
           date: effectiveDate,
           amount: Number(t.amount),
           type: t.type,
@@ -2298,6 +2315,7 @@ export function History() {
           costs: undefined,
           reserve_id: undefined,
           linked_investment_id: undefined,
+          linkedRtId: undefined as string | undefined,
           description: t.description,
           created_at: t.created_at
         };
@@ -2307,6 +2325,8 @@ export function History() {
         .map(rt => {
           const effectiveDate = (rt.payment_date || rt.date || '').split('T')[0];
           return {
+            rtId: rt.id as string | undefined,
+            source: (rt as any).source as string | undefined,
             date: effectiveDate,
             amount: Number(rt.amount),
             type: rt.type === 'rendimento' ? ('income' as const) : (rt.type === 'aporte' ? ('income' as const) : ('expense' as const)),
@@ -2321,6 +2341,7 @@ export function History() {
             costs: undefined,
             reserve_id: rt.reserve_id,
             linked_investment_id: rt.linked_investment_id,
+            linkedRtId: undefined as string | undefined,
             description: rt.description,
             created_at: rt.created_at
           };
@@ -2329,6 +2350,8 @@ export function History() {
         const amount = getInvestmentTransactionNetAmount(tx);
         const effectiveDate = (tx.date || '').split('T')[0];
         return {
+          rtId: undefined as string | undefined,
+          source: undefined as string | undefined,
           date: effectiveDate,
           amount,
           type: tx.operation === 'buy' ? ('expense' as const) : ('income' as const),
@@ -2343,6 +2366,7 @@ export function History() {
           costs: Number(tx.costs || 0),
           reserve_id: tx.reserve_id,
           linked_investment_id: tx.id,
+          linkedRtId: tx.transaction_id as string | undefined,
           description: undefined,
           created_at: tx.created_at
         };
@@ -2352,11 +2376,15 @@ export function History() {
     const sorted = events.sort((a, b) => {
       const dComp = a.date.localeCompare(b.date);
       if (dComp !== 0) return dComp;
+      const typeOrderA = a.isInvestment ? 0 : 1;
+      const typeOrderB = b.isInvestment ? 0 : 1;
+      if (typeOrderA !== typeOrderB) return typeOrderA - typeOrderB;
       return (a.created_at || '').localeCompare(b.created_at || '');
     });
 
     let currentCash = settings?.initial_balance || 0;
     const portfolio: Record<string, number> = {};
+    const clearingByRtId: Record<string, number> = {};
     const dailyAccumulated: { dateStr: string; cash: number; patrimonio: number }[] = [];
 
     sorted.forEach(evt => {
@@ -2371,6 +2399,17 @@ export function History() {
         if (!evt.reserve_id) {
           const cashChange = evt.operation === 'buy' ? -evt.amount : evt.amount;
           currentCash += cashChange;
+        } else if (evt.operation === 'sell') {
+          // Track D+2 receivable in clearing between trade date D0 and settlement date D2
+          const linkedRt =
+            (evt.linked_investment_id ? rtByInvId.get(evt.linked_investment_id) : undefined) ||
+            (evt.linkedRtId ? rtById.get(evt.linkedRtId) : undefined);
+          if (linkedRt) {
+            const rtSettleDate = (linkedRt.payment_date || linkedRt.date || '').split('T')[0];
+            if (linkedRt.payment_status === 'pending' || (rtSettleDate && rtSettleDate > evt.date)) {
+              clearingByRtId[linkedRt.id] = Number(linkedRt.amount || evt.amount);
+            }
+          }
         }
       } else if (evt.isReserveTx) {
         if (evt.reserveTxType === 'rendimento') {
@@ -2382,10 +2421,17 @@ export function History() {
             currentCash -= evt.amount;
           }
         } else if (evt.reserveTxType === 'aporte') {
-          const cat = (evt.category || '').toLowerCase().trim();
-          const isFromInvestmentSell = evt.linked_investment_id || cat === 'investimentos' || (evt.description && evt.description.includes('Investimento:'));
-          if (isFromInvestmentSell) {
+          if (isInvestmentSaleReserveAporte({
+            type: 'aporte',
+            category: evt.category,
+            description: evt.description,
+            linked_investment_id: evt.linked_investment_id,
+            source: evt.source,
+          })) {
             currentCash += evt.amount;
+            if (evt.rtId && clearingByRtId[evt.rtId] !== undefined) {
+              delete clearingByRtId[evt.rtId];
+            }
           }
         }
       } else {
@@ -2420,7 +2466,8 @@ export function History() {
         return acc + (fallbackPrice * qty);
       }, 0);
 
-      const currentPatrimonio = currentCash + portfolioValue;
+      const clearingTotal = Object.values(clearingByRtId).reduce((sum, val) => sum + val, 0);
+      const currentPatrimonio = currentCash + portfolioValue + clearingTotal;
 
       const lastIndex = dailyAccumulated.findIndex(item => item.dateStr === dateStr);
       if (lastIndex !== -1) {
@@ -2450,14 +2497,15 @@ export function History() {
       return acc + (fallbackPrice * qty);
     }, 0);
 
+    const remainingClearingTotal = Object.values(clearingByRtId).reduce((sum, val) => sum + val, 0);
     const todayIdx = dailyAccumulated.findIndex(item => item.dateStr === todayStr);
     if (todayIdx !== -1) {
-      dailyAccumulated[todayIdx].patrimonio = dailyAccumulated[todayIdx].cash + currentPortfolioVal;
+      dailyAccumulated[todayIdx].patrimonio = dailyAccumulated[todayIdx].cash + currentPortfolioVal + remainingClearingTotal;
     } else {
       dailyAccumulated.push({
         dateStr: todayStr,
         cash: currentCash,
-        patrimonio: currentCash + currentPortfolioVal
+        patrimonio: currentCash + currentPortfolioVal + remainingClearingTotal
       });
       dailyAccumulated.sort((a, b) => a.dateStr.localeCompare(b.dateStr));
     }
@@ -3075,11 +3123,12 @@ export function History() {
       
       const isReserveUse = t.is_reserve_use || (t as any).isReserveUseOriginal === true || t.description?.startsWith('[Reserva]') || ((t as any).isReserveTx === true && (t as any).reserveTxType === 'utilizacao');
       
-      const isInvestmentReserveUse = (t as any).isReserveTx === true && (t as any).reserveTxType === 'utilizacao' && (
-        (t as any).originalCategory === 'Investimentos' || 
-        (t as any).linkedInvestmentId || 
-        t.description?.includes('Investimento:')
-      );
+      const isInvestmentReserveUse = (t as any).isReserveTx === true && (t as any).reserveTxType === 'utilizacao' && isInvestmentPurchaseReserveUse({
+        type: 'utilizacao',
+        category: (t as any).originalCategory || t.category,
+        description: t.description,
+        linked_investment_id: (t as any).linkedInvestmentId,
+      });
 
       const isInvestmentTx = (t as any).isInvestmentTx;
       const isPending = t.payment_status === 'pending';
@@ -5260,7 +5309,7 @@ export function History() {
               .reduce((acc, t) => acc + Number(t.amount), 0);
 
             const incStandard = group.transactions
-              .filter(t => t.type === 'income' && !isTransferToCashTx(t) && t.category !== 'Resgate Reserva' && (!(t as any).isReserveTx || (t as any).reserveTxType === 'rendimento') && !(t as any).isInvestmentTx)
+              .filter(t => t.type === 'income' && !isTransferToCashTx(t) && !(t as any).isSaleSettlement && t.category !== 'Resgate Reserva' && (!(t as any).isReserveTx || (t as any).reserveTxType === 'rendimento') && !(t as any).isInvestmentTx)
               .reduce((acc, t) => acc + Number(t.amount), 0);
 
             const dailyReserveRendimento = group.transactions
@@ -5284,11 +5333,12 @@ export function History() {
                 // Asset purchases convert cash into investment assets, so they do not reduce net worth or net profit
                 return;
               }
-              const isInvestmentReserveUse = (t as any).isReserveTx === true && (t as any).reserveTxType === 'utilizacao' && (
-                (t as any).originalCategory === 'Investimentos' || 
-                (t as any).linkedInvestmentId || 
-                t.description?.includes('Investimento:')
-              );
+              const isInvestmentReserveUse = (t as any).isReserveTx === true && (t as any).reserveTxType === 'utilizacao' && isInvestmentPurchaseReserveUse({
+                type: 'utilizacao',
+                category: (t as any).originalCategory || t.category,
+                description: t.description,
+                linked_investment_id: (t as any).linkedInvestmentId,
+              });
               if (isInvestmentReserveUse) {
                 return;
               }
