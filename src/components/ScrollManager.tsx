@@ -15,6 +15,14 @@ export function ScrollManager() {
     } catch {
       window.scrollTo(0, 0);
     }
+    const mainContainer = document.getElementById('main-scroll-container');
+    if (mainContainer) {
+      try {
+        mainContainer.scrollTo({ top: 0, left: 0, behavior: 'instant' as ScrollBehavior });
+      } catch {
+        mainContainer.scrollTop = 0;
+      }
+    }
   }, [pathname]);
 
   return null;

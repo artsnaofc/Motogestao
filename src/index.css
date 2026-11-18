@@ -123,11 +123,13 @@
     touch-action: manipulation;
   }
   body {
-    @apply bg-background text-foreground overflow-x-hidden;
+    @apply bg-background text-foreground;
+    overflow-x: clip;
     touch-action: manipulation;
   }
   html {
-    @apply font-sans overflow-x-hidden;
+    @apply font-sans;
+    overflow-x: clip;
     touch-action: manipulation;
   }
 }

@@ -190,7 +190,7 @@ export function MainLayout({ children }: { children?: React.ReactNode }) {
 
   return (
     <MaintenanceGuard>
-      <div className="flex min-h-screen bg-background text-foreground font-sans">
+      <div className="flex flex-col h-dvh overflow-hidden md:h-auto md:min-h-screen md:overflow-visible bg-background text-foreground font-sans">
         {/* Desktop & Tablet Sidebar (Hidden on Mobile) */}
         <aside className="hidden md:flex flex-col fixed inset-y-0 left-0 w-64 lg:w-72 border-r border-border/70 bg-card/75 backdrop-blur-xl z-40 p-5 justify-between">
           <div className="space-y-6">
@@ -315,8 +315,8 @@ export function MainLayout({ children }: { children?: React.ReactNode }) {
           </div>
         </aside>
 
-        {/* Mobile Top Header (Sticky on Mobile) */}
-        <header className="md:hidden fixed top-0 left-0 right-0 h-14 border-b border-border bg-background/80 backdrop-blur-md z-40 px-4 flex items-center justify-between">
+        {/* Mobile Top Header (Locked outside mobile scroll container) */}
+        <header className="md:hidden shrink-0 min-h-14 pt-[env(safe-area-inset-top,0px)] border-b border-border bg-background/95 backdrop-blur-md z-40 px-4 flex items-center justify-between">
           <div 
             onClick={handleMobileLogoClick}
             className="flex items-center gap-2 select-none cursor-pointer"
@@ -354,17 +354,20 @@ export function MainLayout({ children }: { children?: React.ReactNode }) {
         </header>
 
         {/* Main Content Area */}
-        <main className="flex-1 w-full md:pl-64 lg:pl-72 pt-14 md:pt-0 pb-20 md:pb-12 min-h-screen transition-all flex flex-col">
+        <main
+          id="main-scroll-container"
+          className="flex-1 min-h-0 overflow-y-auto overscroll-y-contain md:overflow-visible md:min-h-screen w-full md:pl-64 lg:pl-72 pb-8 md:pb-12 transition-colors flex flex-col"
+        >
           <BroadcastBanner />
           <div className="flex-1">
             {children || <Outlet />}
           </div>
         </main>
 
-        {/* REFINED MOBILE BOTTOM NAVIGATION (5 Primary Touch Targets) */}
+        {/* REFINED MOBILE BOTTOM NAVIGATION (5 Primary Touch Targets - Locked at Viewport Bottom) */}
         <nav 
           aria-label="Navegação inferior móvel"
-          className="md:hidden fixed bottom-0 left-0 right-0 border-t border-border/80 bg-background/95 backdrop-blur-xl z-40 pb-[max(0.35rem,safe-area-inset-bottom)] px-3 py-1.5 shadow-lg select-none touch-manipulation"
+          className="md:hidden shrink-0 relative border-t border-border/80 bg-background/95 backdrop-blur-xl z-40 pb-[max(0.45rem,env(safe-area-inset-bottom))] px-3 pt-1.5 shadow-lg select-none touch-manipulation"
         >
           <div className="flex items-center justify-around max-w-md mx-auto">
             {/* Slot 1 */}
