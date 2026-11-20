@@ -1847,7 +1847,7 @@ export function FreightQuoteForm({
       </div>
 
       {/* 7. FLOATING / STICKY HIGH-CONVERSION ACTIONS COCKPIT */}
-      <div className="fixed bottom-14 md:bottom-0 left-0 right-0 md:left-64 lg:left-72 z-30 bg-background/95 backdrop-blur-md border-t border-border/80 px-3 py-2 sm:px-4 sm:py-2.5 shadow-xl transition-all">
+      <div className="fixed bottom-[calc(3.25rem+env(safe-area-inset-bottom,0px))] md:bottom-0 left-0 right-0 md:left-64 lg:left-72 z-30 bg-background/95 backdrop-blur-md border-t border-border/80 px-3 py-2 sm:px-4 sm:py-2.5 shadow-xl transition-all">
         <div className="max-w-7xl mx-auto flex items-center justify-between gap-2.5 sm:gap-3">
           {/* Left Price preview */}
           <div className="flex items-center gap-3 shrink-0">

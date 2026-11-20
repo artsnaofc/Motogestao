@@ -51,6 +51,29 @@ export function MainLayout({ children }: { children?: React.ReactNode }) {
     return syncQueueManager.subscribe((q) => setSyncQueue(q));
   }, []);
 
+  // Keep mobile viewport anchored to (0,0) after iOS/Android virtual keyboard dismisses
+  React.useEffect(() => {
+    const resetPhantomWindowScroll = () => {
+      if (window.innerWidth >= 768) return;
+      const activeTag = document.activeElement?.tagName;
+      if (activeTag === 'INPUT' || activeTag === 'TEXTAREA' || activeTag === 'SELECT') return;
+      if (window.scrollY !== 0 || window.scrollX !== 0) {
+        window.scrollTo(0, 0);
+      }
+    };
+
+    const handleFocusOut = () => {
+      setTimeout(resetPhantomWindowScroll, 80);
+    };
+
+    window.addEventListener('focusout', handleFocusOut);
+    window.visualViewport?.addEventListener('resize', resetPhantomWindowScroll);
+    return () => {
+      window.removeEventListener('focusout', handleFocusOut);
+      window.visualViewport?.removeEventListener('resize', resetPhantomWindowScroll);
+    };
+  }, []);
+
   const handleLogout = async () => {
     await supabase.auth.signOut();
   };
@@ -190,7 +213,7 @@ export function MainLayout({ children }: { children?: React.ReactNode }) {
 
   return (
     <MaintenanceGuard>
-      <div className="flex flex-col md:block min-h-[100dvh] bg-background text-foreground font-sans">
+      <div className="fixed inset-0 md:static flex flex-col md:block md:min-h-[100dvh] overflow-hidden md:overflow-visible bg-background text-foreground font-sans">
         {/* Desktop & Tablet Sidebar (Hidden on Mobile) */}
         <aside className="hidden md:flex flex-col fixed inset-y-0 left-0 w-64 lg:w-72 border-r border-border/70 bg-card/75 backdrop-blur-xl z-40 p-5 justify-between">
           <div className="space-y-6">
@@ -315,15 +338,12 @@ export function MainLayout({ children }: { children?: React.ReactNode }) {
           </div>
         </aside>
 
-        {/* Mobile Top Header (GPU-pinned with iPhone safe-area spacing) */}
+        {/* Mobile Top Header (In-flow flex item so it stays pinned above the scroll container) */}
         <header
-          className="md:hidden fixed top-0 left-0 right-0 border-b border-border/80 bg-background/95 backdrop-blur-md z-40 px-4 flex items-center justify-between"
+          className="md:hidden shrink-0 relative border-b border-border/80 bg-background/95 backdrop-blur-md z-40 px-4 flex items-center justify-between"
           style={{
-            paddingTop: 'calc(env(safe-area-inset-top, 0px) + 14px)',
+            paddingTop: 'calc(env(safe-area-inset-top, 0px) + 12px)',
             paddingBottom: '12px',
-            transform: 'translate3d(0, 0, 0)',
-            WebkitTransform: 'translate3d(0, 0, 0)',
-            willChange: 'transform',
           }}
         >
           <div 
@@ -362,33 +382,24 @@ export function MainLayout({ children }: { children?: React.ReactNode }) {
           </div>
         </header>
 
-        {/* Main Content Area */}
+        {/* Main Content Area (Dedicated mobile scroll container so bottom nav never detaches) */}
         <main
           id="main-scroll-container"
-          className="flex-1 w-full md:pl-64 lg:pl-72 pb-24 md:pb-12 flex flex-col min-w-0"
+          className="flex-1 min-h-0 overflow-y-auto overscroll-y-contain md:overflow-visible w-full md:pl-64 lg:pl-72 pb-10 md:pb-12 flex flex-col min-w-0"
         >
-          {/* Exact spacer below fixed mobile header (adapts to iPhone notch safe-area) */}
-          <div
-            className="md:hidden shrink-0"
-            style={{ height: 'calc(env(safe-area-inset-top, 0px) + 64px)' }}
-            aria-hidden="true"
-          />
           <BroadcastBanner />
           <div className="flex-1 min-w-0">
             {children || <Outlet />}
           </div>
         </main>
 
-        {/* REFINED MOBILE BOTTOM NAVIGATION (5 Primary Touch Targets - Sleek & Pinned to Viewport Bottom) */}
+        {/* REFINED MOBILE BOTTOM NAVIGATION (5 Primary Touch Targets - Locked to App Shell Bottom) */}
         <nav 
           aria-label="Navegação inferior móvel"
-          className="md:hidden fixed bottom-0 left-0 right-0 border-t border-border/80 bg-background/95 backdrop-blur-xl z-40 px-2 shadow-lg select-none touch-manipulation"
+          className="md:hidden shrink-0 relative w-full border-t border-border/80 bg-background/95 backdrop-blur-xl z-40 px-2 shadow-[0_-4px_16px_rgba(0,0,0,0.08)] select-none touch-manipulation"
           style={{
             paddingTop: '4px',
-            paddingBottom: 'max(6px, calc(env(safe-area-inset-bottom, 0px) * 0.4))',
-            transform: 'translate3d(0, 0, 0)',
-            WebkitTransform: 'translate3d(0, 0, 0)',
-            willChange: 'transform',
+            paddingBottom: 'max(6px, env(safe-area-inset-bottom, 0px))',
           }}
         >
           <div className="flex items-center justify-around max-w-md mx-auto">
