@@ -3690,17 +3690,11 @@ export function PlanningCalendar() {
                     const isSelected = dStr === selectedDayStr && rightPanelTab === 'day';
                     const dayItems = itemsByDay[dStr] || [];
 
-                    const confirmedIncomeTotal = dayItems
-                      .filter(i => i.kind === 'income' && !i.isProjectedRecurring)
-                      .reduce((s, i) => s + i.amount, 0);
-                    const projectedIncomeTotal = dayItems
-                      .filter(i => i.kind === 'income' && i.isProjectedRecurring)
+                    const incomeTotal = dayItems
+                      .filter(i => i.kind === 'income')
                       .reduce((s, i) => s + i.amount, 0);
                     const pendingExpenseTotal = dayItems
-                      .filter(i => i.kind === 'expense' && i.paymentStatus === 'pending' && !i.isProjectedRecurring)
-                      .reduce((s, i) => s + i.amount, 0);
-                    const projectedExpenseTotal = dayItems
-                      .filter(i => i.kind === 'expense' && i.isProjectedRecurring)
+                      .filter(i => i.kind === 'expense' && i.paymentStatus === 'pending')
                       .reduce((s, i) => s + i.amount, 0);
                     const paidExpenseTotal = dayItems
                       .filter(i => i.kind === 'expense' && i.paymentStatus === 'paid' && !i.isProjectedRecurring)
@@ -3708,8 +3702,6 @@ export function PlanningCalendar() {
                     const hasOverdue = dayItems.some(
                       i => !i.isProjectedRecurring && i.kind === 'expense' && i.paymentStatus === 'pending' && dStr < todayStr
                     );
-                    const realDayCount = dayItems.filter(i => !i.isProjectedRecurring).length;
-                    const projectedDayCount = dayItems.filter(i => i.isProjectedRecurring).length;
 
                     const daysInThisMonth = endOfMonth(day).getDate();
                     const cardsClosingThisDay = inMonth
@@ -3785,20 +3777,12 @@ export function PlanningCalendar() {
                         </div>
 
                         <div className="space-y-0.5 w-full">
-                          {confirmedIncomeTotal > 0 && (
+                          {incomeTotal > 0 && (
                             <div
                               className="text-[9px] sm:text-[10px] font-mono tabular-nums font-black px-1 py-0.5 rounded bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 border border-emerald-500/35 truncate"
-                              title={`Receitas: +${formatCurrency(confirmedIncomeTotal)}`}
+                              title={`Receitas: +${formatCurrency(incomeTotal)}`}
                             >
-                              {hideValues ? '•••' : `↑ +${Math.round(confirmedIncomeTotal)}`}
-                            </div>
-                          )}
-                          {projectedIncomeTotal > 0 && (
-                            <div
-                              className="text-[9px] sm:text-[10px] font-mono tabular-nums font-black px-1 py-0.5 rounded border border-dashed border-teal-500/55 bg-teal-500/12 text-teal-700 dark:text-teal-300 truncate"
-                              title={`Provisão recorrente de receita: +${formatCurrency(projectedIncomeTotal)}`}
-                            >
-                              {hideValues ? '•••' : `🔄 +${Math.round(projectedIncomeTotal)}`}
+                              {hideValues ? '•••' : `↑ +${Math.round(incomeTotal)}`}
                             </div>
                           )}
                           {pendingExpenseTotal > 0 && (
@@ -3808,17 +3792,9 @@ export function PlanningCalendar() {
                                   ? 'bg-rose-500/20 text-rose-700 dark:text-rose-300 border-rose-500/35'
                                   : 'bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30'
                               }`}
-                              title={`Despesas pendentes: -${formatCurrency(pendingExpenseTotal)}`}
+                              title={`Despesas a pagar: -${formatCurrency(pendingExpenseTotal)}`}
                             >
                               {hideValues ? '•••' : `${hasOverdue ? '! ' : ''}-${Math.round(pendingExpenseTotal)}`}
-                            </div>
-                          )}
-                          {projectedExpenseTotal > 0 && (
-                            <div
-                              className="text-[9px] sm:text-[10px] font-mono tabular-nums font-black px-1 py-0.5 rounded border border-dashed border-violet-500/55 bg-violet-500/12 text-violet-700 dark:text-violet-300 truncate"
-                              title={`Provisão recorrente prevista: -${formatCurrency(projectedExpenseTotal)} (gerada ao quitar o ciclo anterior)`}
-                            >
-                              {hideValues ? '•••' : `🔄 -${Math.round(projectedExpenseTotal)}`}
                             </div>
                           )}
                           {paidExpenseTotal > 0 && (
@@ -3831,11 +3807,7 @@ export function PlanningCalendar() {
                           )}
                           {dayItems.length > 0 && (
                             <p className="text-[8.5px] font-bold text-muted-foreground truncate px-0.5 tabular-nums">
-                              {realDayCount > 0 && projectedDayCount > 0
-                                ? `${realDayCount} • ${projectedDayCount} prov.`
-                                : projectedDayCount > 0
-                                  ? `${projectedDayCount} ${projectedDayCount === 1 ? 'provisão' : 'provisões'}`
-                                  : `${realDayCount} ${realDayCount === 1 ? 'item' : 'itens'}`}
+                              {dayItems.length} {dayItems.length === 1 ? 'item' : 'itens'}
                             </p>
                           )}
                         </div>
@@ -3860,9 +3832,6 @@ export function PlanningCalendar() {
                     </span>
                     <span className="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30 font-extrabold">
                       - A Pagar
-                    </span>
-                    <span className="px-1.5 py-0.5 rounded bg-violet-500/12 text-violet-700 dark:text-violet-300 border border-dashed border-violet-500/55 font-extrabold">
-                      🔄 Provisão Recorrente
                     </span>
                     <span className="px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-700 dark:text-rose-300 border border-rose-500/35 font-extrabold">
                       ! - Vencida
