@@ -222,3 +222,116 @@ export function getPaymentStatusMeta(
     descriptionText: formattedDue ? `Vence em ${formattedDue}` : 'Pendente de pagamento'
   };
 }
+
+/**
+ * Returns true when a transaction or reserve_transaction is an auto-renewing
+ * recurring bill (i.e. creates 1 pending item and spawns the next occurrence upon payment),
+ * as opposed to a fixed-count pre-generated installment series (e.g. 1/12).
+ */
+export function isAutoRenewRecurring(
+  item: Partial<Transaction | ReserveTransaction> | null | undefined
+): boolean {
+  if (!item || !item.is_recurring) return false;
+  const total = Number(
+    item.installment_total ||
+      item.recurrence_installments ||
+      (item as any).total_installments ||
+      0
+  );
+  if (total > 1) return false;
+  if (Number((item as any).card_installments || 0) > 1) return false;
+  return true;
+}
+
+export function stripRecurrenceSuffix(desc?: string | null): string {
+  if (!desc) return '';
+  return desc.replace(/\s*\(\d+\/\d+\)\s*$/, '').trim();
+}
+
+export function hasExistingNextOccurrence(
+  items: Array<Partial<Transaction | ReserveTransaction>>,
+  sourceItem: Partial<Transaction | ReserveTransaction>,
+  groupId: string,
+  nextDate: string
+): boolean {
+  if (!groupId) return false;
+  return items.some(other => {
+    if (!other || other.id === sourceItem.id) return false;
+    if (other.recurrence_group_id !== groupId) return false;
+    const otherDate = ((other.due_date || other.date || '') as string).split('T')[0];
+    if (otherDate === nextDate) return true;
+    if (other.payment_status === 'pending' && otherDate >= nextDate) return true;
+    return false;
+  });
+}
+
+export function buildNextRecurringTransaction(
+  sourceTx: Transaction,
+  nextDate: string,
+  groupId: string,
+  userId?: string
+): Transaction {
+  const nextNum = (Number(sourceTx.installment_number || sourceTx.installment_index || 1) || 1) + 1;
+  const cleanDesc = stripRecurrenceSuffix(sourceTx.description) || sourceTx.category || 'Conta Recorrente';
+  return {
+    id: generateUUID(),
+    user_id: userId || sourceTx.user_id || 'default',
+    type: sourceTx.type,
+    amount: Number(sourceTx.amount),
+    date: nextDate,
+    due_date: nextDate,
+    category: sourceTx.category,
+    description: cleanDesc,
+    notes: sourceTx.notes,
+    payment_status: 'pending',
+    payment_date: null,
+    is_recurring: true,
+    recurrence_frequency: sourceTx.recurrence_frequency || 'monthly',
+    recurrence_installments: null,
+    recurrence_group_id: groupId,
+    installment_number: nextNum,
+    installment_total: null,
+    installment_index: nextNum,
+    total_installments: null,
+    vehicle_id: sourceTx.vehicle_id,
+    card_id: sourceTx.card_id || null,
+    card_name: sourceTx.card_name || null,
+    ignore_in_charts: Boolean(sourceTx.ignore_in_charts),
+    created_at: new Date().toISOString(),
+  };
+}
+
+export function buildNextRecurringReserveTransaction(
+  sourceRt: ReserveTransaction,
+  nextDate: string,
+  groupId: string,
+  userId?: string
+): ReserveTransaction {
+  const nextNum = (Number(sourceRt.installment_number || sourceRt.installment_index || 1) || 1) + 1;
+  const cleanDesc = stripRecurrenceSuffix(sourceRt.description) || sourceRt.category || 'Conta Recorrente (Reserva)';
+  return {
+    id: generateUUID(),
+    user_id: userId || sourceRt.user_id || 'default',
+    reserve_id: sourceRt.reserve_id,
+    type: sourceRt.type,
+    amount: Number(sourceRt.amount),
+    date: nextDate,
+    due_date: nextDate,
+    category: sourceRt.category,
+    description: cleanDesc,
+    payment_status: 'pending',
+    payment_date: null,
+    is_recurring: true,
+    recurrence_frequency: sourceRt.recurrence_frequency || 'monthly',
+    recurrence_installments: null,
+    recurrence_group_id: groupId,
+    installment_number: nextNum,
+    installment_total: null,
+    installment_index: nextNum,
+    total_installments: null,
+    vehicle_id: sourceRt.vehicle_id,
+    ignore_in_charts: Boolean(sourceRt.ignore_in_charts),
+    created_at: new Date().toISOString(),
+  };
+}
+

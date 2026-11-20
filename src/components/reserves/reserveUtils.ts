@@ -79,6 +79,7 @@ import {
   startOfWeek, 
   endOfWeek,
   addDays,
+  addMonths,
   differenceInCalendarDays,
   format
 } from 'date-fns';
@@ -249,10 +250,13 @@ export interface PeriodOption {
 }
 
 export const PERIOD_OPTIONS: PeriodOption[] = [
+  { id: 'today', label: 'Hoje', shortLabel: 'Hoje', description: 'Somente hoje' },
+  { id: 'last7Days', label: '7 dias', shortLabel: '7d', description: 'Últimos 7 dias' },
   { id: 'last30Days', label: '30 dias', shortLabel: '30d', description: 'Últimos 30 dias' },
   { id: 'last90Days', label: '90 dias', shortLabel: '90d', description: 'Últimos 90 dias' },
-  { id: 'month', label: 'Mês Atual', shortLabel: 'Mês', description: 'Do dia 1º até o fim do mês' },
   { id: 'lastMonth', label: 'Mês Passado', shortLabel: 'Mês Ant.', description: 'Mês civil anterior completo' },
+  { id: 'month', label: 'Mês Atual', shortLabel: 'Mês', description: 'Do dia 1º até o fim do mês' },
+  { id: 'nextMonth', label: 'Próx. Mês', shortLabel: 'Próx.', description: 'Próximo mês civil completo' },
   { id: 'thisYear', label: 'Este Ano', shortLabel: 'Ano', description: 'De 1º de janeiro até hoje' },
   { id: 'lastYear', label: 'Ano Passado', shortLabel: 'Ano Ant.', description: 'Ano civil anterior completo' },
   { id: 'week', label: 'Esta Semana', shortLabel: 'Semana', description: 'Segunda-feira até domingo' },
@@ -276,6 +280,7 @@ export const getPeriodDisplayLabel = (
   const match = PERIOD_OPTIONS.find(p => p.id === globalPeriod);
   if (match) return match.label;
   if (globalPeriod === 'last_month') return 'Mês Passado';
+  if (globalPeriod === 'next_month') return 'Próximo Mês';
   if (globalPeriod === 'year') return 'Este Ano';
   if (globalPeriod === 'last7Days') return 'Últimos 7 dias';
   if (globalPeriod === 'today') return 'Hoje';
@@ -426,6 +431,11 @@ export const isTxInPeriod = (
     if (globalPeriod === 'lastMonth' || globalPeriod === 'last_month') {
       const lastMonth = subMonths(now, 1);
       return d.getFullYear() === lastMonth.getFullYear() && d.getMonth() === lastMonth.getMonth();
+    }
+
+    if (globalPeriod === 'nextMonth' || globalPeriod === 'next_month') {
+      const nextMonth = addMonths(now, 1);
+      return d.getFullYear() === nextMonth.getFullYear() && d.getMonth() === nextMonth.getMonth();
     }
 
     if (globalPeriod === 'last3Months') {

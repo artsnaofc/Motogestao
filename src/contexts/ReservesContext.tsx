@@ -1,10 +1,19 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback, useMemo } from 'react';
+import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback, useMemo, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { Reserve, ReserveTransaction } from '../types';
 import { toast } from '../lib/toast';
 import { cacheManager } from '../lib/cacheManager';
 import { syncQueueManager } from '../lib/syncQueue';
 import { getEffectiveUserId } from '../lib/authUtils';
+import { getTodayLocalDateStr } from '../lib/utils';
+import {
+  isAutoRenewRecurring,
+  calculateNextOccurrence,
+  hasExistingNextOccurrence,
+  buildNextRecurringReserveTransaction,
+  parseLocalDate,
+} from '../lib/recurrenceUtils';
+import { format } from 'date-fns';
 
 export interface ReservesContextType {
   reserves: Reserve[];
@@ -45,6 +54,7 @@ export function ReservesProvider({
 }) {
   const [reserves, setReserves] = useState<Reserve[]>(initialReserves);
   const [reserveTransactions, setReserveTransactions] = useState<ReserveTransaction[]>(initialReserveTransactions);
+  const reserveTransactionsRef = useRef<ReserveTransaction[]>(initialReserveTransactions);
 
   // Synchronize when initial props change
   useEffect(() => {
@@ -54,6 +64,10 @@ export function ReservesProvider({
   useEffect(() => {
     setReserveTransactions(initialReserveTransactions);
   }, [initialReserveTransactions]);
+
+  useEffect(() => {
+    reserveTransactionsRef.current = reserveTransactions;
+  }, [reserveTransactions]);
 
   const persistBoostSetting = (userId: string, reserveId: string, fields: Partial<Reserve>) => {
     if (
@@ -284,22 +298,74 @@ export function ReservesProvider({
     const userId = await getEffectiveUserId();
     if (!userId) return;
 
-    if (updatedFields.boost_extra !== undefined) {
-      persistBoostExtra(userId, id, updatedFields.boost_extra);
+    const currentList = reserveTransactionsRef.current;
+    const prevRt = currentList.find(rt => rt.id === id);
+
+    let effectiveUpdatedFields = { ...updatedFields };
+    let nextRecurringRt: ReserveTransaction | null = null;
+
+    if (prevRt) {
+      const mergedRt: ReserveTransaction = { ...prevRt, ...updatedFields };
+      const transitionedToPaid = prevRt.payment_status === 'pending' && updatedFields.payment_status === 'paid';
+      if (transitionedToPaid && isAutoRenewRecurring(mergedRt)) {
+        const groupId = mergedRt.recurrence_group_id || generateUUID();
+        if (!mergedRt.recurrence_group_id) {
+          effectiveUpdatedFields.recurrence_group_id = groupId;
+          mergedRt.recurrence_group_id = groupId;
+        }
+        const baseDate = ((mergedRt.due_date || mergedRt.date || getTodayLocalDateStr()) as string).split('T')[0];
+        const nextDate = calculateNextOccurrence(baseDate, mergedRt.recurrence_frequency || 'monthly', 1);
+        if (!hasExistingNextOccurrence(currentList, mergedRt, groupId, nextDate)) {
+          nextRecurringRt = buildNextRecurringReserveTransaction(mergedRt, nextDate, groupId, userId);
+        }
+      }
+    }
+
+    if (effectiveUpdatedFields.boost_extra !== undefined) {
+      persistBoostExtra(userId, id, effectiveUpdatedFields.boost_extra);
     }
 
     // Optimistically update local state
     setReserveTransactions(prev => {
-      const existing = prev.map(rt => rt.id === id ? { ...rt, ...updatedFields } : rt);
+      const updated = prev.map(rt => rt.id === id ? { ...rt, ...effectiveUpdatedFields } : rt);
+      const existing = nextRecurringRt ? [nextRecurringRt, ...updated] : updated;
+      reserveTransactionsRef.current = existing;
       cacheManager.set(`reserve_transactions_${userId}`, existing, undefined, 'reserves');
       return existing;
     });
 
     // Sanitize payload for Supabase
-    const { source, batch_id, boost_extra, ...supabasePayload } = updatedFields as any;
+    const { source, batch_id, boost_extra, ...supabasePayload } = effectiveUpdatedFields as any;
 
     syncQueueManager.enqueue('reserve_transactions', 'update', id, supabasePayload);
     if (!options?.silent) toast.success('Movimentação de reserva atualizada!', { id: 'reserve-action' });
+
+    if (nextRecurringRt) {
+      const nextPayload: Record<string, any> = {
+        id: nextRecurringRt.id,
+        user_id: nextRecurringRt.user_id,
+        reserve_id: nextRecurringRt.reserve_id,
+        type: nextRecurringRt.type,
+        amount: nextRecurringRt.amount,
+        date: nextRecurringRt.date,
+        created_at: nextRecurringRt.created_at,
+        payment_status: nextRecurringRt.payment_status,
+        payment_date: nextRecurringRt.payment_date,
+        due_date: nextRecurringRt.due_date,
+        is_recurring: nextRecurringRt.is_recurring,
+        recurrence_frequency: nextRecurringRt.recurrence_frequency,
+        recurrence_group_id: nextRecurringRt.recurrence_group_id,
+        installment_number: nextRecurringRt.installment_number,
+        ignore_in_charts: nextRecurringRt.ignore_in_charts,
+      };
+      if (nextRecurringRt.description) nextPayload.description = nextRecurringRt.description;
+      if (nextRecurringRt.category) nextPayload.category = nextRecurringRt.category;
+      if (nextRecurringRt.vehicle_id) nextPayload.vehicle_id = nextRecurringRt.vehicle_id;
+
+      syncQueueManager.enqueue('reserve_transactions', 'insert', nextRecurringRt.id, nextPayload);
+      const nextLabel = format(parseLocalDate(nextRecurringRt.date), 'dd/MM/yyyy');
+      toast.info(`Próxima conta recorrente (reserva) agendada para ${nextLabel}!`, { id: 'recurring-next-bill' });
+    }
   }, []);
 
   // Dynamically calculate computed balances for reserves:

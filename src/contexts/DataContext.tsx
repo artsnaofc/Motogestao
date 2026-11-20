@@ -49,8 +49,8 @@ export interface DataContextType {
   updateReserve: (id: string, reserve: Partial<Reserve>) => Promise<void>;
   deleteReserve: (id: string) => Promise<void>;
   addReserveTransaction: (rt: Omit<ReserveTransaction, 'id' | 'user_id' | 'created_at'>, options?: { silent?: boolean }) => Promise<string | undefined>;
-  deleteReserveTransaction: (id: string) => Promise<void>;
-  updateReserveTransaction: (id: string, rt: Partial<ReserveTransaction>) => Promise<void>;
+  deleteReserveTransaction: (id: string, options?: { silent?: boolean }) => Promise<void>;
+  updateReserveTransaction: (id: string, rt: Partial<ReserveTransaction>, options?: { silent?: boolean }) => Promise<void>;
 
   // Investments & Dividends
   investmentTransactions: InvestmentTransaction[];

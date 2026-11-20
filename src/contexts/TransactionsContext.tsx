@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback, useMemo } from 'react';
+import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback, useMemo, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { Transaction, UserSettings } from '../types';
 import { toast } from '../lib/toast';
@@ -6,6 +6,15 @@ import { cacheManager } from '../lib/cacheManager';
 import { syncQueueManager } from '../lib/syncQueue';
 import { getTodayLocalDateStr } from '../lib/utils';
 import { getEffectiveUserId } from '../lib/authUtils';
+import {
+  isAutoRenewRecurring,
+  calculateNextOccurrence,
+  hasExistingNextOccurrence,
+  buildNextRecurringTransaction,
+  generateUUID,
+  parseLocalDate,
+} from '../lib/recurrenceUtils';
+import { format } from 'date-fns';
 
 export interface TransactionsContextType {
   transactions: Transaction[];
@@ -40,6 +49,7 @@ export function TransactionsProvider({
   onRefresh?: (silent?: boolean) => Promise<void>;
 }) {
   const [transactions, setTransactions] = useState<Transaction[]>(initialTransactions);
+  const transactionsRef = useRef<Transaction[]>(initialTransactions);
   const [settings, setSettings] = useState<UserSettings | null>(initialSettings);
   const [loading, setLoading] = useState(initialLoading);
   const [globalPeriod, setGlobalPeriod] = useState<string>(() => {
@@ -71,6 +81,10 @@ export function TransactionsProvider({
       return null;
     }
   });
+
+  useEffect(() => {
+    transactionsRef.current = transactions;
+  }, [transactions]);
 
   useEffect(() => {
     setTransactions(initialTransactions);
@@ -112,11 +126,35 @@ export function TransactionsProvider({
 
   const updateTransaction = useCallback(async (id: string, updatedFields: Partial<Transaction>, options?: { silent?: boolean }) => {
     const userId = await getEffectiveUserId();
+    const currentList = transactionsRef.current;
+    const prevTx = currentList.find(t => t.id === id);
 
-    const { id: _id, user_id: _uid, created_at: _ca, ...cleanPayload } = updatedFields as any;
+    let effectiveUpdatedFields = { ...updatedFields };
+    let nextRecurringTx: Transaction | null = null;
+
+    if (prevTx) {
+      const mergedTx: Transaction = { ...prevTx, ...updatedFields };
+      const transitionedToPaid = prevTx.payment_status === 'pending' && updatedFields.payment_status === 'paid';
+      if (transitionedToPaid && isAutoRenewRecurring(mergedTx)) {
+        const groupId = mergedTx.recurrence_group_id || generateUUID();
+        if (!mergedTx.recurrence_group_id) {
+          effectiveUpdatedFields.recurrence_group_id = groupId;
+          mergedTx.recurrence_group_id = groupId;
+        }
+        const baseDate = ((mergedTx.due_date || mergedTx.date || getTodayLocalDateStr()) as string).split('T')[0];
+        const nextDate = calculateNextOccurrence(baseDate, mergedTx.recurrence_frequency || 'monthly', 1);
+        if (!hasExistingNextOccurrence(currentList, mergedTx, groupId, nextDate)) {
+          nextRecurringTx = buildNextRecurringTransaction(mergedTx, nextDate, groupId, userId || mergedTx.user_id);
+        }
+      }
+    }
+
+    const { id: _id, user_id: _uid, created_at: _ca, ...cleanPayload } = effectiveUpdatedFields as any;
 
     setTransactions(prev => {
-      const newState = prev.map(t => t.id === id ? { ...t, ...updatedFields } : t);
+      const updated = prev.map(t => t.id === id ? { ...t, ...effectiveUpdatedFields } : t);
+      const newState = nextRecurringTx ? [nextRecurringTx, ...updated] : updated;
+      transactionsRef.current = newState;
       if (userId) {
         cacheManager.set(`transactions_${userId}`, newState, undefined, 'transactions');
       }
@@ -130,6 +168,12 @@ export function TransactionsProvider({
 
     // Always push to sync queue
     syncQueueManager.enqueue('transactions', 'update', id, cleanPayload);
+
+    if (nextRecurringTx) {
+      syncQueueManager.enqueue('transactions', 'insert', nextRecurringTx.id, nextRecurringTx);
+      const nextLabel = format(parseLocalDate(nextRecurringTx.date), 'dd/MM/yyyy');
+      toast.info(`Próxima conta recorrente agendada para ${nextLabel}!`, { id: 'recurring-next-bill' });
+    }
   }, []);
 
   const deleteTransaction = useCallback(async (id: string, options?: { silent?: boolean }) => {

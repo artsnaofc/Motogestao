@@ -35,9 +35,29 @@ import {
   Landmark,
   BarChart3,
   ChevronUp,
-  EyeOff
+  EyeOff,
+  Rocket,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
-import { subDays, format } from 'date-fns';
+import {
+  subDays,
+  addDays,
+  startOfDay,
+  endOfDay,
+  startOfMonth,
+  endOfMonth,
+  subMonths,
+  addMonths,
+  startOfYear,
+  endOfYear,
+  subYears,
+  addYears,
+  startOfWeek,
+  endOfWeek,
+  differenceInCalendarDays,
+  format
+} from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import {
   BarChart,
@@ -57,6 +77,8 @@ import {
   formatDateDisplay, 
   iconOptions, 
   isTxInPeriod,
+  getPeriodDisplayLabel,
+  getBoostExtraFromRt,
   parseLocalDate,
   getTodayLocalDateStr,
   toDateInputString
@@ -121,17 +143,19 @@ export function ReserveHistoryTab({
   // Primary Filter States
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedReserveId, setSelectedReserveId] = useState<string>('all');
-  const [selectedType, setSelectedType] = useState<string>('all'); // all, transactions_only, aporte, manual_aporte, mass_aporte, utilizacao, rendimento, rule_change
+  const [selectedType, setSelectedType] = useState<string>('aporte'); // Padrão: Aportes
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [selectedSource, setSelectedSource] = useState<string>('all'); // all, manual, mass, rendimento, rule
+  const [selectedPaymentStatus, setSelectedPaymentStatus] = useState<'all' | 'paid' | 'pending'>('all');
   const [minValue, setMinValue] = useState<string>('');
   const [maxValue, setMaxValue] = useState<string>('');
   const [sortBy, setSortBy] = useState<'date_desc' | 'date_asc' | 'amount_desc' | 'amount_asc' | 'reserve_asc'>('date_desc');
   const [groupByDate, setGroupByDate] = useState<boolean>(true);
   
-  // Advanced Filter Drawer Toggle
+  // Advanced Filter Drawer & Visual Analytics Toggle
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const [showMonthlyYieldChart, setShowMonthlyYieldChart] = useState(true);
+  const [chartTab, setChartTab] = useState<'flow' | 'yield' | 'reserves'>('flow');
 
   // Modal States
   const [txToDelete, setTxToDelete] = useState<ReserveTransaction | null>(null);
@@ -166,13 +190,176 @@ export function ReserveHistoryTab({
   const [editCategory, setEditCategory] = useState<string>('');
   const [editReserveId, setEditReserveId] = useState<string>('');
   const [editIgnoreInCharts, setEditIgnoreInCharts] = useState<boolean>(false);
+  const [editPaymentStatus, setEditPaymentStatus] = useState<'paid' | 'pending'>('paid');
 
-  // Period filter states - Defaults to 'all' so users immediately see all history
-  const [historyPeriod, setHistoryPeriod] = useState<string>('all');
+  // Period filter states - Defaults to 'month' (igual ao Dashboard)
+  const [historyPeriod, setHistoryPeriod] = useState<string>('month');
   const [customDateRange, setCustomDateRange] = useState<{ start: string; end: string } | null>(null);
 
   // Pagination / Chunked loading state (15 items per page/chunk)
   const [visibleCount, setVisibleCount] = useState<number>(15);
+
+  const now = useMemo(() => new Date(), []);
+
+  // Dashboard-aligned period bounds and step controls
+  const { periodStart, periodEnd } = useMemo(() => {
+    const nowDate = new Date();
+    if (historyPeriod === 'all') {
+      return { periodStart: null as Date | null, periodEnd: null as Date | null };
+    }
+    if (historyPeriod === 'today') {
+      return { periodStart: startOfDay(nowDate), periodEnd: endOfDay(nowDate) };
+    }
+    if (historyPeriod === 'last7Days') {
+      return { periodStart: startOfDay(subDays(nowDate, 6)), periodEnd: endOfDay(nowDate) };
+    }
+    if (historyPeriod === 'last30Days') {
+      return { periodStart: startOfDay(subDays(nowDate, 29)), periodEnd: endOfDay(nowDate) };
+    }
+    if (historyPeriod === 'last90Days') {
+      return { periodStart: startOfDay(subDays(nowDate, 89)), periodEnd: endOfDay(nowDate) };
+    }
+    if (historyPeriod === 'week') {
+      return { periodStart: startOfWeek(nowDate, { weekStartsOn: 1 }), periodEnd: endOfWeek(nowDate, { weekStartsOn: 1 }) };
+    }
+    if (historyPeriod === 'lastMonth') {
+      const lastM = subMonths(nowDate, 1);
+      return { periodStart: startOfMonth(lastM), periodEnd: endOfMonth(lastM) };
+    }
+    if (historyPeriod === 'nextMonth') {
+      const nextM = addMonths(nowDate, 1);
+      return { periodStart: startOfMonth(nextM), periodEnd: endOfMonth(nextM) };
+    }
+    if (historyPeriod === 'thisYear') {
+      return { periodStart: startOfYear(nowDate), periodEnd: endOfDay(nowDate) };
+    }
+    if (historyPeriod === 'lastYear') {
+      const lastY = subYears(nowDate, 1);
+      return { periodStart: startOfYear(lastY), periodEnd: endOfYear(lastY) };
+    }
+    if (historyPeriod === 'custom' && customDateRange?.start && customDateRange?.end) {
+      try {
+        const s = parseLocalDate(customDateRange.start);
+        const e = parseLocalDate(customDateRange.end);
+        if (!isNaN(s.getTime()) && !isNaN(e.getTime())) {
+          return { periodStart: startOfDay(s), periodEnd: endOfDay(e) };
+        }
+      } catch {
+        // fallback below
+      }
+    }
+    return { periodStart: startOfMonth(nowDate), periodEnd: endOfMonth(nowDate) };
+  }, [historyPeriod, customDateRange]);
+
+  const getHistoryPeriodLabel = () => {
+    switch (historyPeriod) {
+      case 'all': return 'Todo o Histórico';
+      case 'today': return 'Hoje';
+      case 'last7Days': return 'Últimos 7 dias';
+      case 'last30Days': return '30 dias';
+      case 'last90Days': return '90 dias';
+      case 'week': return 'Esta Semana';
+      case 'month': return 'Mês Atual';
+      case 'lastMonth': return 'Mês Passado';
+      case 'nextMonth': return 'Próximo Mês';
+      case 'thisYear': return 'Este Ano';
+      case 'lastYear': return 'Ano Passado';
+      case 'custom':
+        if (customDateRange?.start && customDateRange?.end) {
+          try {
+            const sDate = parseLocalDate(customDateRange.start);
+            const eDate = parseLocalDate(customDateRange.end);
+            const isFullMonth =
+              sDate.getDate() === 1 &&
+              sDate.getMonth() === eDate.getMonth() &&
+              sDate.getFullYear() === eDate.getFullYear() &&
+              eDate.getDate() === endOfMonth(sDate).getDate();
+            if (isFullMonth) {
+              const mName = format(sDate, "MMMM 'de' yyyy", { locale: ptBR });
+              return mName.charAt(0).toUpperCase() + mName.slice(1);
+            }
+            return `${format(sDate, 'dd/MM/yyyy')} até ${format(eDate, 'dd/MM/yyyy')}`;
+          } catch {
+            return 'Personalizado';
+          }
+        }
+        return 'Personalizado';
+      default: return 'Mês Atual';
+    }
+  };
+
+  const handleStepHistoryPeriod = (direction: -1 | 1) => {
+    const nowDate = new Date();
+    if (historyPeriod === 'all') {
+      setHistoryPeriod(direction === -1 ? 'lastMonth' : 'nextMonth');
+      setVisibleCount(15);
+      return;
+    }
+
+    const isSingleMonthCustom =
+      historyPeriod === 'custom' &&
+      customDateRange?.start &&
+      customDateRange?.end &&
+      (() => {
+        const s = parseLocalDate(customDateRange.start);
+        const e = parseLocalDate(customDateRange.end);
+        return (
+          s.getDate() === 1 &&
+          s.getMonth() === e.getMonth() &&
+          s.getFullYear() === e.getFullYear() &&
+          e.getDate() === endOfMonth(s).getDate()
+        );
+      })();
+
+    if (historyPeriod === 'month' || historyPeriod === 'lastMonth' || historyPeriod === 'nextMonth' || isSingleMonthCustom) {
+      const baseStart = periodStart || startOfMonth(nowDate);
+      const targetMonth = addMonths(baseStart, direction);
+      const isCurrM = targetMonth.getMonth() === nowDate.getMonth() && targetMonth.getFullYear() === nowDate.getFullYear();
+      const prevM = subMonths(nowDate, 1);
+      const isLastM = targetMonth.getMonth() === prevM.getMonth() && targetMonth.getFullYear() === prevM.getFullYear();
+      const nextM = addMonths(nowDate, 1);
+      const isNextM = targetMonth.getMonth() === nextM.getMonth() && targetMonth.getFullYear() === nextM.getFullYear();
+
+      if (isCurrM) setHistoryPeriod('month');
+      else if (isLastM) setHistoryPeriod('lastMonth');
+      else if (isNextM) setHistoryPeriod('nextMonth');
+      else {
+        setCustomDateRange({
+          start: format(startOfMonth(targetMonth), 'yyyy-MM-dd'),
+          end: format(endOfMonth(targetMonth), 'yyyy-MM-dd'),
+        });
+        setHistoryPeriod('custom');
+      }
+      setVisibleCount(15);
+      return;
+    }
+
+    if (historyPeriod === 'thisYear' || historyPeriod === 'lastYear') {
+      const baseStart = periodStart || startOfYear(nowDate);
+      const targetYear = addYears(baseStart, direction);
+      if (targetYear.getFullYear() === nowDate.getFullYear()) setHistoryPeriod('thisYear');
+      else if (targetYear.getFullYear() === nowDate.getFullYear() - 1) setHistoryPeriod('lastYear');
+      else {
+        setCustomDateRange({
+          start: format(startOfYear(targetYear), 'yyyy-MM-dd'),
+          end: format(endOfYear(targetYear), 'yyyy-MM-dd'),
+        });
+        setHistoryPeriod('custom');
+      }
+      setVisibleCount(15);
+      return;
+    }
+
+    const baseS = periodStart || startOfMonth(nowDate);
+    const baseE = periodEnd || endOfMonth(nowDate);
+    const daysSpan = Math.max(1, differenceInCalendarDays(baseE, baseS) + 1);
+    setCustomDateRange({
+      start: format(addDays(baseS, direction * daysSpan), 'yyyy-MM-dd'),
+      end: format(addDays(baseE, direction * daysSpan), 'yyyy-MM-dd'),
+    });
+    setHistoryPeriod('custom');
+    setVisibleCount(15);
+  };
 
   // Map reserves by id for fast O(1) lookup
   const reserveMap = useMemo(() => {
@@ -180,6 +367,54 @@ export function ReserveHistoryTab({
     reserves.forEach(r => { map[r.id] = r; });
     return map;
   }, [reserves]);
+
+  // Chronological Running Balance per Reserve (for true bank-statement clarity)
+  const runningBalanceMap = useMemo(() => {
+    const map: Record<string, { balanceBefore: number; balanceAfter: number; isPending: boolean }> = {};
+    const byReserve: Record<string, ReserveTransaction[]> = {};
+
+    (reserveTransactions || []).forEach(rt => {
+      if (!byReserve[rt.reserve_id]) byReserve[rt.reserve_id] = [];
+      byReserve[rt.reserve_id].push(rt);
+    });
+
+    Object.entries(byReserve).forEach(([reserveId, rts]) => {
+      const res = reserveMap[reserveId];
+      let running = Math.round(Number(res?.saldo_inicial || 0) * 100) / 100;
+
+      const sortedAsc = [...rts].sort((a, b) => {
+        const dCmp = (a.date || '').localeCompare(b.date || '');
+        if (dCmp !== 0) return dCmp;
+        const cCmp = (a.created_at || '').localeCompare(b.created_at || '');
+        if (cCmp !== 0) return cCmp;
+        return (a.id || '').localeCompare(b.id || '');
+      });
+
+      sortedAsc.forEach(rt => {
+        const isPending = rt.payment_status === 'pending' || (rt as any).status === 'pending';
+        const amt = Number(rt.amount || 0);
+        const delta = rt.type === 'utilizacao' ? -amt : amt;
+
+        if (isPending) {
+          map[rt.id] = {
+            balanceBefore: running,
+            balanceAfter: running,
+            isPending: true,
+          };
+        } else {
+          const before = running;
+          running = Math.round((running + delta) * 100) / 100;
+          map[rt.id] = {
+            balanceBefore: before,
+            balanceAfter: running,
+            isPending: false,
+          };
+        }
+      });
+    });
+
+    return map;
+  }, [reserveTransactions, reserveMap]);
 
   // Profile Income Categories for quick-chip selector
   const profileIncomeCategories = useMemo(() => {
@@ -514,27 +749,40 @@ export function ReserveHistoryTab({
   // Check if any non-default filter is active
   const hasActiveFilters = useMemo(() => {
     return (
-      historyPeriod !== 'all' ||
+      historyPeriod !== 'month' ||
       searchTerm.trim() !== '' ||
       selectedReserveId !== 'all' ||
-      selectedType !== 'all' ||
+      selectedType !== 'aporte' ||
       selectedCategory !== 'all' ||
       selectedSource !== 'all' ||
+      selectedPaymentStatus !== 'all' ||
       minValue !== '' ||
       maxValue !== '' ||
       sortBy !== 'date_desc'
     );
-  }, [historyPeriod, searchTerm, selectedReserveId, selectedType, selectedCategory, selectedSource, minValue, maxValue, sortBy]);
+  }, [historyPeriod, searchTerm, selectedReserveId, selectedType, selectedCategory, selectedSource, selectedPaymentStatus, minValue, maxValue, sortBy]);
 
-  // Reset all filters to default
+  const activeAdvancedFiltersCount = useMemo(() => {
+    let count = 0;
+    if (selectedType !== 'aporte') count++;
+    if (selectedReserveId !== 'all') count++;
+    if (selectedCategory !== 'all') count++;
+    if (selectedPaymentStatus !== 'all') count++;
+    if (minValue !== '' || maxValue !== '') count++;
+    if (sortBy !== 'date_desc') count++;
+    return count;
+  }, [selectedType, selectedReserveId, selectedCategory, selectedPaymentStatus, minValue, maxValue, sortBy]);
+
+  // Reset all filters to default (Mês Atual + Aportes)
   const handleResetFilters = () => {
-    setHistoryPeriod('all');
+    setHistoryPeriod('month');
     setCustomDateRange(null);
     setSearchTerm('');
     setSelectedReserveId('all');
-    setSelectedType('all');
+    setSelectedType('aporte');
     setSelectedCategory('all');
     setSelectedSource('all');
+    setSelectedPaymentStatus('all');
     setMinValue('');
     setMaxValue('');
     setSortBy('date_desc');
@@ -572,30 +820,147 @@ export function ReserveHistoryTab({
     return list;
   }, [reserveTransactions, allRuleEvents]);
 
-  // Filter and sort unified items
-  const filteredItems = useMemo<UnifiedHistoryItem[]>(() => {
-    return unifiedItems
-      .filter(item => {
-        // 1. Period filter
-        if (historyPeriod !== 'all') {
-          if (!isTxInPeriod(item.date, historyPeriod, customDateRange)) {
+  // Base filtered items WITHOUT selectedType filter so Bento summary cards always show real totals for Aportes, Resgates and Rendimentos
+  const summaryBaseItems = useMemo<UnifiedHistoryItem[]>(() => {
+    return unifiedItems.filter(item => {
+      // 1. Period filter
+      if (historyPeriod !== 'all') {
+        if (!isTxInPeriod(item.date, historyPeriod, customDateRange)) {
+          return false;
+        }
+      }
+
+      // 2. Reserve filter
+      if (selectedReserveId !== 'all' && item.reserve_id !== selectedReserveId) {
+        return false;
+      }
+
+      // 3. Payment status filter
+      if (selectedPaymentStatus !== 'all') {
+        if (item.kind !== 'transaction') return false;
+        const isPending = item.tx.payment_status === 'pending' || (item.tx as any).status === 'pending';
+        if (selectedPaymentStatus === 'pending' && !isPending) return false;
+        if (selectedPaymentStatus === 'paid' && isPending) return false;
+      }
+
+      // 4. Category filter
+      if (selectedCategory !== 'all') {
+        if (item.kind === 'transaction') {
+          const cat = item.tx.category || '';
+          if (cat.trim().toLowerCase() !== selectedCategory.trim().toLowerCase()) {
+            return false;
+          }
+        } else {
+          const ruleCats = item.rule.regra_categorias || [];
+          const hasCat = ruleCats.some(c => c.trim().toLowerCase() === selectedCategory.trim().toLowerCase());
+          if (!hasCat) return false;
+        }
+      }
+
+      // 5. Source filter
+      if (selectedSource !== 'all') {
+        if (selectedSource === 'rule') {
+          if (item.kind !== 'rule_update') return false;
+        } else if (item.kind === 'transaction') {
+          const info = getTxCategoryInfo(item.tx);
+          if (selectedSource === 'mass' && !info.isMass) return false;
+          if (selectedSource === 'manual' && (info.isMass || item.tx.type === 'rendimento')) return false;
+          if (selectedSource === 'rendimento' && item.tx.type !== 'rendimento') return false;
+        } else {
+          return false;
+        }
+      }
+
+      // 6. Min and Max Value filter (financial value for tx, rule value for rules)
+      if (minValue !== '') {
+        const min = parseFloat(minValue.replace(',', '.'));
+        if (!isNaN(min) && item.amount < min) return false;
+      }
+      if (maxValue !== '') {
+        const max = parseFloat(maxValue.replace(',', '.'));
+        if (!isNaN(max) && item.amount > max) return false;
+      }
+
+      // 7. Search text filter
+      if (searchTerm.trim()) {
+        const term = searchTerm.toLowerCase();
+        const res = reserveMap[item.reserve_id];
+        const resName = res?.name?.toLowerCase() || '';
+        const dateDisplay = formatDateDisplay(item.date).toLowerCase();
+
+        if (item.kind === 'transaction') {
+          const info = getTxCategoryInfo(item.tx);
+          const desc = (item.tx.description || '').toLowerCase();
+          const cat = (item.tx.category || '').toLowerCase();
+          const amountStr = String(item.tx.amount || '');
+          const txTypeStr = info.label.toLowerCase();
+
+          if (
+            !resName.includes(term) &&
+            !desc.includes(term) &&
+            !cat.includes(term) &&
+            !amountStr.includes(term) &&
+            !dateDisplay.includes(term) &&
+            !txTypeStr.includes(term)
+          ) {
+            return false;
+          }
+        } else {
+          const ruleFormula = getRuleFormulaLabel(item.rule.regra_tipo, item.rule.regra_valor).toLowerCase();
+          const ruleTypeName = getRuleTypeName(item.rule.regra_tipo).toLowerCase();
+          const desc = (item.rule.description || '').toLowerCase();
+          const catsStr = (item.rule.regra_categorias || []).join(' ').toLowerCase();
+          const statusStr = item.rule.isCurrentActive ? 'ativa em vigor vigente' : 'histórico arquivada inativa';
+
+          if (
+            !resName.includes(term) &&
+            !ruleFormula.includes(term) &&
+            !ruleTypeName.includes(term) &&
+            !desc.includes(term) &&
+            !catsStr.includes(term) &&
+            !statusStr.includes(term) &&
+            !dateDisplay.includes(term) &&
+            !term.includes('regra') &&
+            !term.includes('atualiza')
+          ) {
             return false;
           }
         }
+      }
 
-        // 2. Reserve filter
-        if (selectedReserveId !== 'all' && item.reserve_id !== selectedReserveId) {
-          return false;
-        }
+      return true;
+    });
+  }, [
+    unifiedItems,
+    historyPeriod,
+    customDateRange,
+    selectedReserveId,
+    selectedCategory,
+    selectedSource,
+    selectedPaymentStatus,
+    minValue,
+    maxValue,
+    searchTerm,
+    reserveMap
+  ]);
 
-        // 3. Type filter
+  // Filter by selectedType and sort unified items for timeline display
+  const filteredItems = useMemo<UnifiedHistoryItem[]>(() => {
+    return summaryBaseItems
+      .filter(item => {
         if (selectedType !== 'all') {
           if (selectedType === 'rule_change') {
             if (item.kind !== 'rule_update') return false;
           } else if (selectedType === 'transactions_only') {
             if (item.kind !== 'transaction') return false;
+          } else if (selectedType === 'pending_only') {
+            if (item.kind !== 'transaction') return false;
+            const isPending = item.tx.payment_status === 'pending' || (item.tx as any).status === 'pending';
+            if (!isPending) return false;
+          } else if (selectedType === 'boost_aporte') {
+            if (item.kind !== 'transaction') return false;
+            if (getBoostExtraFromRt(item.tx) <= 0) return false;
           } else {
-            // Must be transaction for specific financial types
             if (item.kind !== 'transaction') return false;
             const info = getTxCategoryInfo(item.tx);
             if (selectedType === 'aporte' && item.tx.type !== 'aporte') return false;
@@ -606,97 +971,9 @@ export function ReserveHistoryTab({
             if (selectedType === 'rendimento' && info.categoryKey !== 'rendimento') return false;
           }
         }
-
-        // 4. Category filter
-        if (selectedCategory !== 'all') {
-          if (item.kind === 'transaction') {
-            const cat = item.tx.category || '';
-            if (cat.trim().toLowerCase() !== selectedCategory.trim().toLowerCase()) {
-              return false;
-            }
-          } else {
-            const ruleCats = item.rule.regra_categorias || [];
-            const hasCat = ruleCats.some(c => c.trim().toLowerCase() === selectedCategory.trim().toLowerCase());
-            if (!hasCat) return false;
-          }
-        }
-
-        // 5. Source filter
-        if (selectedSource !== 'all') {
-          if (selectedSource === 'rule') {
-            if (item.kind !== 'rule_update') return false;
-          } else if (item.kind === 'transaction') {
-            const info = getTxCategoryInfo(item.tx);
-            if (selectedSource === 'mass' && !info.isMass) return false;
-            if (selectedSource === 'manual' && (info.isMass || item.tx.type === 'rendimento')) return false;
-            if (selectedSource === 'rendimento' && item.tx.type !== 'rendimento') return false;
-          } else {
-            return false;
-          }
-        }
-
-        // 6. Min and Max Value filter (financial value for tx, rule value for rules)
-        if (minValue !== '') {
-          const min = parseFloat(minValue.replace(',', '.'));
-          if (!isNaN(min) && item.amount < min) return false;
-        }
-        if (maxValue !== '') {
-          const max = parseFloat(maxValue.replace(',', '.'));
-          if (!isNaN(max) && item.amount > max) return false;
-        }
-
-        // 7. Search text filter
-        if (searchTerm.trim()) {
-          const term = searchTerm.toLowerCase();
-          const res = reserveMap[item.reserve_id];
-          const resName = res?.name?.toLowerCase() || '';
-          const dateDisplay = formatDateDisplay(item.date).toLowerCase();
-
-          if (item.kind === 'transaction') {
-            const info = getTxCategoryInfo(item.tx);
-            const desc = (item.tx.description || '').toLowerCase();
-            const cat = (item.tx.category || '').toLowerCase();
-            const amountStr = String(item.tx.amount || '');
-            const txTypeStr = info.label.toLowerCase();
-
-            if (
-              !resName.includes(term) && 
-              !desc.includes(term) && 
-              !cat.includes(term) && 
-              !amountStr.includes(term) &&
-              !dateDisplay.includes(term) &&
-              !txTypeStr.includes(term)
-            ) {
-              return false;
-            }
-          } else {
-            // Rule search
-            const ruleFormula = getRuleFormulaLabel(item.rule.regra_tipo, item.rule.regra_valor).toLowerCase();
-            const ruleTypeName = getRuleTypeName(item.rule.regra_tipo).toLowerCase();
-            const desc = (item.rule.description || '').toLowerCase();
-            const catsStr = (item.rule.regra_categorias || []).join(' ').toLowerCase();
-            const statusStr = item.rule.isCurrentActive ? 'ativa em vigor vigente' : 'histórico arquivada inativa';
-
-            if (
-              !resName.includes(term) &&
-              !ruleFormula.includes(term) &&
-              !ruleTypeName.includes(term) &&
-              !desc.includes(term) &&
-              !catsStr.includes(term) &&
-              !statusStr.includes(term) &&
-              !dateDisplay.includes(term) &&
-              !term.includes('regra') &&
-              !term.includes('atualiza')
-            ) {
-              return false;
-            }
-          }
-        }
-
         return true;
       })
       .sort((a, b) => {
-        // Critical Reorganization: Rules in effect (isCurrentActive) always stay ahead of historical rules
         if (sortBy === 'date_desc') {
           if (a.kind === 'rule_update' && b.kind === 'rule_update') {
             if (a.rule.isCurrentActive && !b.rule.isCurrentActive) return -1;
@@ -724,7 +1001,6 @@ export function ReserveHistoryTab({
           default: {
             const cmp = dateB.localeCompare(dateA);
             if (cmp !== 0) return cmp;
-            // If dates are identical, prioritize active rules before historical rules
             if (a.kind === 'rule_update' && b.kind === 'rule_update') {
               if (a.rule.isCurrentActive && !b.rule.isCurrentActive) return -1;
               if (!a.rule.isCurrentActive && b.rule.isCurrentActive) return 1;
@@ -733,41 +1009,38 @@ export function ReserveHistoryTab({
           }
         }
       });
-  }, [
-    unifiedItems,
-    historyPeriod,
-    customDateRange,
-    selectedReserveId,
-    selectedType,
-    selectedCategory,
-    selectedSource,
-    minValue,
-    maxValue,
-    searchTerm,
-    sortBy,
-    reserveMap
-  ]);
+  }, [summaryBaseItems, selectedType, sortBy, reserveMap]);
 
-  // Financial & Rule Summary Metrics for filtered view
+  // Financial & Rule Summary Metrics for active period/reserve (independent of selectedType filter)
   const summary = useMemo(() => {
     let totalAportesManuais = 0;
     let totalAportesSugeridos = 0;
     let totalAportesMassa = 0;
+    let totalBoostExtra = 0;
     let countAportes = 0;
     let totalUtilizacoes = 0;
+    let totalTransferToCash = 0;
     let countUtilizacoes = 0;
     let totalRendimentos = 0;
     let countRendimentos = 0;
+    let totalPendingAmount = 0;
+    let countPending = 0;
     let countRuleUpdates = 0;
     let countActiveRules = 0;
 
-    filteredItems.forEach(item => {
+    summaryBaseItems.forEach(item => {
       if (item.kind === 'transaction') {
-        if (item.tx.payment_status === 'pending' || (item.tx as any).status === 'pending') return;
-        const info = getTxCategoryInfo(item.tx);
         const amount = Number(item.tx.amount || 0);
+        if (item.tx.payment_status === 'pending' || (item.tx as any).status === 'pending') {
+          totalPendingAmount += amount;
+          countPending++;
+          return;
+        }
+        const info = getTxCategoryInfo(item.tx);
+        const boostExtra = getBoostExtraFromRt(item.tx);
+        if (boostExtra > 0) totalBoostExtra += boostExtra;
 
-        if (info.categoryKey === 'manual_aporte') {
+        if (info.categoryKey === 'manual_aporte' || info.categoryKey === 'provento_aporte') {
           totalAportesManuais += amount;
           countAportes++;
         } else if (info.categoryKey === 'suggestion_aporte') {
@@ -778,6 +1051,7 @@ export function ReserveHistoryTab({
           countAportes++;
         } else if (info.categoryKey === 'utilizacao') {
           totalUtilizacoes += amount;
+          if ((info as any).isTransferToCash) totalTransferToCash += amount;
           countUtilizacoes++;
         } else if (info.categoryKey === 'rendimento') {
           totalRendimentos += amount;
@@ -793,53 +1067,108 @@ export function ReserveHistoryTab({
 
     const totalAportes = totalAportesManuais + totalAportesSugeridos + totalAportesMassa;
     const netFlow = (totalAportes + totalRendimentos) - totalUtilizacoes;
+    const totalInflows = totalAportes + totalRendimentos;
+    const yieldSharePct = totalInflows > 0 ? Math.round((totalRendimentos / totalInflows) * 1000) / 10 : 0;
 
     return {
       totalAportesManuais: Math.round(totalAportesManuais * 100) / 100,
       totalAportesSugeridos: Math.round(totalAportesSugeridos * 100) / 100,
       totalAportesMassa: Math.round(totalAportesMassa * 100) / 100,
       totalAportesTotal: Math.round(totalAportes * 100) / 100,
+      totalBoostExtra: Math.round(totalBoostExtra * 100) / 100,
       countAportes,
       totalUtilizacoes: Math.round(totalUtilizacoes * 100) / 100,
+      totalTransferToCash: Math.round(totalTransferToCash * 100) / 100,
       countUtilizacoes,
       totalRendimentos: Math.round(totalRendimentos * 100) / 100,
       countRendimentos,
+      yieldSharePct,
+      totalPendingAmount: Math.round(totalPendingAmount * 100) / 100,
+      countPending,
       netFlow: Math.round(netFlow * 100) / 100,
       countRuleUpdates,
       countActiveRules,
       totalCount: filteredItems.length
     };
-  }, [filteredItems]);
+  }, [summaryBaseItems, filteredItems.length]);
 
-  // Consolidated Monthly Yield Evolution (respects reserve & period filters, excludes pending)
-  const monthlyYieldStats = useMemo(() => {
-    const monthMap: Record<string, { monthKey: string; label: string; fullLabel: string; total: number; count: number }> = {};
+  // Consolidated Monthly Flow & Yield Evolution — ALWAYS uses rolling last 12 months (independent of period filter)
+  const monthlyAnalytics = useMemo(() => {
+    const flowMap: Record<string, {
+      monthKey: string;
+      label: string;
+      fullLabel: string;
+      aportes: number;
+      rendimentos: number;
+      resgates: number;
+      net: number;
+    }> = {};
+    const yieldMap: Record<string, { monthKey: string; label: string; fullLabel: string; total: number; count: number }> = {};
+
+    const nowRef = new Date();
+    const minMonthStartStr = format(startOfMonth(subMonths(nowRef, 11)), 'yyyy-MM-dd');
+    const maxMonthEndStr = format(endOfMonth(nowRef), 'yyyy-MM-dd');
 
     (reserveTransactions || []).forEach(rt => {
-      if (rt.type !== 'rendimento') return;
       if (rt.payment_status === 'pending' || (rt as any).status === 'pending') return;
       if (selectedReserveId !== 'all' && rt.reserve_id !== selectedReserveId) return;
-      if (historyPeriod !== 'all' && !isTxInPeriod(rt.date, historyPeriod, customDateRange)) return;
 
       const cleanDate = toDateInputString(rt.date) || (rt.date || '').split('T')[0];
       if (!cleanDate || cleanDate.length < 7) return;
+      if (cleanDate < minMonthStartStr || cleanDate > maxMonthEndStr) return;
+
       const monthKey = cleanDate.slice(0, 7);
       const parsed = parseLocalDate(`${monthKey}-01`);
 
-      if (!monthMap[monthKey]) {
-        monthMap[monthKey] = {
+      if (!flowMap[monthKey]) {
+        flowMap[monthKey] = {
           monthKey,
           label: format(parsed, 'MMM/yy', { locale: ptBR }),
           fullLabel: format(parsed, "MMMM 'de' yyyy", { locale: ptBR }),
-          total: 0,
-          count: 0,
+          aportes: 0,
+          rendimentos: 0,
+          resgates: 0,
+          net: 0,
         };
       }
-      monthMap[monthKey].total += Number(rt.amount || 0);
-      monthMap[monthKey].count += 1;
+
+      const amt = Number(rt.amount || 0);
+      if (rt.type === 'aporte') {
+        flowMap[monthKey].aportes += amt;
+        flowMap[monthKey].net += amt;
+      } else if (rt.type === 'rendimento') {
+        flowMap[monthKey].rendimentos += amt;
+        flowMap[monthKey].net += amt;
+
+        if (!yieldMap[monthKey]) {
+          yieldMap[monthKey] = {
+            monthKey,
+            label: format(parsed, 'MMM/yy', { locale: ptBR }),
+            fullLabel: format(parsed, "MMMM 'de' yyyy", { locale: ptBR }),
+            total: 0,
+            count: 0,
+          };
+        }
+        yieldMap[monthKey].total += amt;
+        yieldMap[monthKey].count += 1;
+      } else if (rt.type === 'utilizacao') {
+        flowMap[monthKey].resgates += amt;
+        flowMap[monthKey].net -= amt;
+      }
     });
 
-    const series = Object.values(monthMap)
+    const flowSeries = Object.values(flowMap)
+      .sort((a, b) => a.monthKey.localeCompare(b.monthKey))
+      .slice(-12)
+      .map(m => ({
+        ...m,
+        aportes: Math.round(m.aportes * 100) / 100,
+        rendimentos: Math.round(m.rendimentos * 100) / 100,
+        resgates: Math.round(m.resgates * 100) / 100,
+        net: Math.round(m.net * 100) / 100,
+      }));
+
+    const yieldSeries = Object.values(yieldMap)
       .sort((a, b) => a.monthKey.localeCompare(b.monthKey))
       .slice(-12)
       .map(item => ({
@@ -847,20 +1176,104 @@ export function ReserveHistoryTab({
         total: Math.round(item.total * 100) / 100
       }));
 
-    const totalPeriod = series.reduce((s, m) => s + m.total, 0);
-    const avgMonthly = series.length > 0 ? totalPeriod / series.length : 0;
-    const bestMonth = series.reduce<typeof series[number] | null>(
+    const totalPeriodYield = yieldSeries.reduce((s, m) => s + m.total, 0);
+    const avgMonthlyYield = yieldSeries.length > 0 ? totalPeriodYield / yieldSeries.length : 0;
+    const bestMonthYield = yieldSeries.reduce<typeof yieldSeries[number] | null>(
       (best, cur) => (!best || cur.total > best.total ? cur : best),
       null
     );
 
     return {
-      series,
-      totalPeriod: Math.round(totalPeriod * 100) / 100,
-      avgMonthly: Math.round(avgMonthly * 100) / 100,
-      bestMonth,
+      flowSeries,
+      yieldSeries,
+      totalPeriodYield: Math.round(totalPeriodYield * 100) / 100,
+      avgMonthlyYield: Math.round(avgMonthlyYield * 100) / 100,
+      bestMonthYield,
     };
-  }, [reserveTransactions, selectedReserveId, historyPeriod, customDateRange]);
+  }, [reserveTransactions, selectedReserveId]);
+
+  // Per-reserve breakdown in rolling last 12 months (settled transactions, independent of period filter)
+  const reserveBreakdown = useMemo(() => {
+    const byRes: Record<string, {
+      reserve: Reserve;
+      aportes: number;
+      boostExtras: number;
+      rendimentos: number;
+      resgates: number;
+      netFlow: number;
+      txCount: number;
+    }> = {};
+
+    const nowRef = new Date();
+    const minMonthStartStr = format(startOfMonth(subMonths(nowRef, 11)), 'yyyy-MM-dd');
+    const maxMonthEndStr = format(endOfMonth(nowRef), 'yyyy-MM-dd');
+
+    reserves.forEach(r => {
+      byRes[r.id] = {
+        reserve: r,
+        aportes: 0,
+        boostExtras: 0,
+        rendimentos: 0,
+        resgates: 0,
+        netFlow: 0,
+        txCount: 0,
+      };
+    });
+
+    (reserveTransactions || []).forEach(rt => {
+      if (rt.payment_status === 'pending' || (rt as any).status === 'pending') return;
+      const cleanDate = toDateInputString(rt.date) || (rt.date || '').split('T')[0];
+      if (!cleanDate || cleanDate < minMonthStartStr || cleanDate > maxMonthEndStr) return;
+
+      const entry = byRes[rt.reserve_id];
+      if (!entry) return;
+      const amt = Number(rt.amount || 0);
+      entry.txCount += 1;
+      if (rt.type === 'aporte') {
+        entry.aportes += amt;
+        entry.netFlow += amt;
+        entry.boostExtras += getBoostExtraFromRt(rt);
+      } else if (rt.type === 'rendimento') {
+        entry.rendimentos += amt;
+        entry.netFlow += amt;
+      } else if (rt.type === 'utilizacao') {
+        entry.resgates += amt;
+        entry.netFlow -= amt;
+      }
+    });
+
+    return Object.values(byRes)
+      .filter(x => x.txCount > 0 || Number(x.reserve.saldo_atual || 0) > 0)
+      .map(x => ({
+        ...x,
+        aportes: Math.round(x.aportes * 100) / 100,
+        boostExtras: Math.round(x.boostExtras * 100) / 100,
+        rendimentos: Math.round(x.rendimentos * 100) / 100,
+        resgates: Math.round(x.resgates * 100) / 100,
+        netFlow: Math.round(x.netFlow * 100) / 100,
+      }))
+      .sort((a, b) => (b.aportes + b.rendimentos + b.resgates) - (a.aportes + a.rendimentos + a.resgates));
+  }, [reserves, reserveTransactions]);
+
+  // Quick reserve transaction counts for quick-pill selector
+  const reserveTxCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    (reserveTransactions || []).forEach(rt => {
+      if (historyPeriod !== 'all' && !isTxInPeriod(rt.date, historyPeriod, customDateRange)) return;
+      counts[rt.reserve_id] = (counts[rt.reserve_id] || 0) + 1;
+    });
+    return counts;
+  }, [reserveTransactions, historyPeriod, customDateRange]);
+
+  const totalBoostAportesCount = useMemo(() => {
+    return (reserveTransactions || []).filter(rt => getBoostExtraFromRt(rt) > 0).length;
+  }, [reserveTransactions]);
+
+  const totalPendingCount = useMemo(() => {
+    return (reserveTransactions || []).filter(
+      rt => rt.payment_status === 'pending' || (rt as any).status === 'pending'
+    ).length;
+  }, [reserveTransactions]);
 
   // Total Rule count in system for badges
   const totalSystemRuleUpdates = allRuleEvents.length;
@@ -904,10 +1317,13 @@ export function ReserveHistoryTab({
 
       if (item.kind === 'transaction') {
         const amt = Number(item.tx.amount || 0);
-        if (item.tx.type === 'aporte' || item.tx.type === 'rendimento') {
-          groups[dateKey].subtotalIn += amt;
-        } else {
-          groups[dateKey].subtotalOut += amt;
+        const isPending = item.tx.payment_status === 'pending' || (item.tx as any).status === 'pending';
+        if (!isPending) {
+          if (item.tx.type === 'aporte' || item.tx.type === 'rendimento') {
+            groups[dateKey].subtotalIn += amt;
+          } else {
+            groups[dateKey].subtotalOut += amt;
+          }
         }
       } else {
         groups[dateKey].ruleCount++;
@@ -925,6 +1341,9 @@ export function ReserveHistoryTab({
       return {
         key,
         ...value,
+        subtotalIn: Math.round(value.subtotalIn * 100) / 100,
+        subtotalOut: Math.round(value.subtotalOut * 100) / 100,
+        netMonth: Math.round((value.subtotalIn - value.subtotalOut) * 100) / 100,
         items: sortedItems
       };
     });
@@ -937,7 +1356,7 @@ export function ReserveHistoryTab({
       return;
     }
 
-    const headers = ['Data', 'Reserva', 'Tipo de Registro', 'Categoria / Tags', 'Detalhes / Descrição', 'Valor / Fórmula'];
+    const headers = ['Data', 'Reserva', 'Tipo de Registro', 'Status', 'Categoria / Tags', 'Detalhes / Descrição', 'Valor / Fórmula', 'Bônus Boost', 'Saldo Após'];
     const rows = filteredItems.map(item => {
       const res = reserveMap[item.reserve_id];
       const resName = res?.name || 'Reserva';
@@ -945,13 +1364,19 @@ export function ReserveHistoryTab({
       if (item.kind === 'transaction') {
         const info = getTxCategoryInfo(item.tx);
         const sign = item.tx.type === 'utilizacao' ? '-' : '+';
+        const isPending = item.tx.payment_status === 'pending' || (item.tx as any).status === 'pending';
+        const boostExtra = getBoostExtraFromRt(item.tx);
+        const balInfo = runningBalanceMap[item.tx.id];
         return [
           formatDateDisplay(item.tx.date),
           `"${resName.replace(/"/g, '""')}"`,
           `"${info.label}"`,
+          `"${isPending ? 'Pendente' : 'Liquidado'}"`,
           `"${(item.tx.category || '').replace(/"/g, '""')}"`,
           `"${(item.tx.description || '').replace(/"/g, '""')}"`,
-          `"${sign}${Number(item.tx.amount || 0).toFixed(2).replace('.', ',')}"`
+          `"${sign}${Number(item.tx.amount || 0).toFixed(2).replace('.', ',')}"`,
+          `"${boostExtra > 0 ? boostExtra.toFixed(2).replace('.', ',') : ''}"`,
+          `"${balInfo && !isPending ? balInfo.balanceAfter.toFixed(2).replace('.', ',') : ''}"`
         ];
       } else {
         const formula = getRuleFormulaLabel(item.rule.regra_tipo, item.rule.regra_valor);
@@ -961,9 +1386,12 @@ export function ReserveHistoryTab({
           formatDateDisplay(item.rule.date),
           `"${resName.replace(/"/g, '""')}"`,
           `"Atualização de Regra (${status})"`,
+          `"${item.rule.regra_ativa !== false ? 'Ativa' : 'Pausada'}"`,
           `"${cats.replace(/"/g, '""')}"`,
           `"${(item.rule.description || 'Configuração de aporte automático').replace(/"/g, '""')}"`,
-          `"${formula.replace(/"/g, '""')}"`
+          `"${formula.replace(/"/g, '""')}"`,
+          '""',
+          '""'
         ];
       }
     });
@@ -989,6 +1417,7 @@ export function ReserveHistoryTab({
     setEditCategory(tx.category || '');
     setEditReserveId(tx.reserve_id || '');
     setEditIgnoreInCharts(Boolean(tx.ignore_in_charts));
+    setEditPaymentStatus((tx.payment_status === 'pending' || (tx as any).status === 'pending') ? 'pending' : 'paid');
   };
 
   // Save edited transaction
@@ -1008,6 +1437,8 @@ export function ReserveHistoryTab({
         description: editDescription.trim(),
         category: editCategory.trim() || undefined,
         reserve_id: editReserveId || txToEdit.reserve_id,
+        payment_status: editPaymentStatus,
+        payment_date: editPaymentStatus === 'paid' ? (txToEdit.payment_date || editDate) : null,
         ignore_in_charts: txToEdit.type === 'utilizacao' ? editIgnoreInCharts : txToEdit.ignore_in_charts
       });
       toast.success('Movimentação atualizada com sucesso!');
@@ -1269,108 +1700,208 @@ export function ReserveHistoryTab({
 
   return (
     <div className="space-y-4 text-left">
-      {/* 1. Top Period Navigation Bar (Mobile First Horizontal Scroll with Pills) */}
-      <div className="flex flex-col gap-2">
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex overflow-x-auto scrollbar-none gap-1.5 p-1 bg-muted/40 border border-border/60 rounded-2xl w-full">
-            {[
-              { id: 'all', label: 'Todo o Histórico', icon: Layers },
-              { id: 'month', label: 'Mês Atual', icon: Calendar },
-              { id: 'lastMonth', label: 'Mês Passado', icon: Calendar },
-              { id: 'last30Days', label: '30 Dias', icon: Clock },
-              { id: 'last90Days', label: '90 Dias', icon: Clock },
-              { id: 'thisYear', label: 'Este Ano', icon: Calendar },
-              { id: 'week', label: 'Esta Semana', icon: Clock },
-              { id: 'custom', label: 'Personalizado', icon: SlidersHorizontal }
-            ].map((period) => {
-              const isSelected = historyPeriod === period.id;
-              const Icon = period.icon;
-              return (
-                <button
-                  key={period.id}
-                  type="button"
-                  onClick={() => {
-                    setHistoryPeriod(period.id);
-                    setVisibleCount(15);
-                  }}
-                  className="relative px-3.5 py-1.5 text-xs font-bold rounded-xl transition-all whitespace-nowrap focus:outline-none text-center flex-1 sm:flex-initial cursor-pointer active:scale-95 flex items-center justify-center gap-1.5"
-                  style={{ WebkitTapHighlightColor: 'transparent' }}
-                >
-                  {isSelected && (
-                    <motion.span
-                      layoutId="reserve-history-active-period"
-                      className="absolute inset-0 bg-background border border-border/80 shadow-2xs rounded-xl"
-                      transition={{ type: 'spring', stiffness: 400, damping: 30 }}
-                    />
-                  )}
-                  <span className={`relative z-10 flex items-center gap-1.5 transition-colors duration-200 ${
-                    isSelected ? 'text-foreground font-black' : 'text-muted-foreground hover:text-foreground'
-                  }`}>
-                    <Icon className={`w-3.5 h-3.5 ${isSelected ? 'text-indigo-500' : 'text-muted-foreground/70'}`} />
-                    {period.label}
-                  </span>
-                </button>
-              );
-            })}
+      {/* 1. Barra de Períodos & Navegação (Idêntica ao Dashboard) */}
+      <div className="bg-card border border-border/70 p-3.5 sm:p-4 rounded-2xl shadow-xs space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pb-2.5 border-b border-border/40">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 rounded-xl bg-primary/10 text-primary shrink-0">
+              <Calendar className="w-4 h-4" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs sm:text-sm font-black text-foreground tracking-tight">
+                  {getHistoryPeriodLabel()}
+                </span>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">
+                  {periodStart && periodEnd
+                    ? `${format(periodStart, 'dd/MM/yyyy')} — ${format(periodEnd, 'dd/MM/yyyy')}`
+                    : 'Todo o período registrado'}
+                </span>
+              </div>
+              <p className="text-[10.5px] text-muted-foreground font-medium capitalize mt-0.5">
+                Hoje: {format(now, "EEEE, dd 'de' MMMM 'de' yyyy", { locale: ptBR })}
+              </p>
+            </div>
+          </div>
+
+          {/* Controles de Avanço / Retrocesso de Período */}
+          <div className="flex items-center gap-1.5 self-start sm:self-auto">
+            <button
+              type="button"
+              onClick={() => handleStepHistoryPeriod(-1)}
+              className="h-8 px-2.5 rounded-xl border border-border/70 bg-muted/20 hover:bg-muted text-xs font-bold text-foreground flex items-center gap-1 transition-all cursor-pointer"
+              title="Período / Mês Anterior"
+            >
+              <ChevronLeft className="w-4 h-4" />
+              <span className="hidden xs:inline">Anterior</span>
+            </button>
+
+            {historyPeriod !== 'month' && (
+              <button
+                type="button"
+                onClick={() => {
+                  setHistoryPeriod('month');
+                  setVisibleCount(15);
+                }}
+                className="h-8 px-2.5 rounded-xl border border-primary/30 bg-primary/10 hover:bg-primary/20 text-[11px] font-extrabold text-primary flex items-center gap-1 transition-all cursor-pointer"
+                title="Voltar para o Mês Atual"
+              >
+                <RotateCcw className="w-3 h-3" />
+                <span>Mês Atual</span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={() => handleStepHistoryPeriod(1)}
+              className="h-8 px-2.5 rounded-xl border border-border/70 bg-muted/20 hover:bg-muted text-xs font-bold text-foreground flex items-center gap-1 transition-all cursor-pointer"
+              title="Próximo Período / Mês"
+            >
+              <span className="hidden xs:inline">Próximo</span>
+              <ChevronRight className="w-4 h-4" />
+            </button>
           </div>
         </div>
 
-        {/* Custom Date Range Picker when 'custom' is active */}
-        {historyPeriod === 'custom' && (
-          <motion.div 
-            initial={{ opacity: 0, y: -6 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="flex items-center gap-2 flex-wrap bg-card p-3 rounded-2xl border border-indigo-500/30 shadow-xs"
-          >
-            <div className="flex items-center gap-1.5 text-xs font-bold text-foreground">
-              <Calendar className="w-4 h-4 text-indigo-500" />
-              <span>Intervalo de Datas:</span>
-            </div>
-            <div className="flex items-center gap-2 flex-wrap">
-              <input
-                type="date"
-                className="bg-background border border-border/80 rounded-xl px-3 py-1.5 text-xs text-foreground focus:ring-1 focus:ring-indigo-500 outline-none font-mono cursor-pointer"
-                value={customDateRange?.start || ''}
-                onChange={(e) => {
-                  const todayStr = getTodayLocalDateStr();
-                  setCustomDateRange({
-                    start: e.target.value,
-                    end: customDateRange?.end || todayStr
-                  });
-                  setVisibleCount(15);
-                }}
-              />
-              <span className="text-muted-foreground text-xs font-medium">até</span>
-              <input
-                type="date"
-                className="bg-background border border-border/80 rounded-xl px-3 py-1.5 text-xs text-foreground focus:ring-1 focus:ring-indigo-500 outline-none font-mono cursor-pointer"
-                value={customDateRange?.end || ''}
-                onChange={(e) => {
-                  const todayStr = getTodayLocalDateStr();
-                  setCustomDateRange({
-                    start: customDateRange?.start || todayStr,
-                    end: e.target.value
-                  });
-                  setVisibleCount(15);
-                }}
-              />
-              <Button
-                variant="ghost"
-                size="sm"
+        {/* Botões Rápidos de Período (Mesmos botões e ordem do Dashboard + Todo Histórico) */}
+        <div className="flex overflow-x-auto scrollbar-none gap-1.5 p-1 bg-muted/25 border border-border/40 rounded-xl w-full max-w-full">
+          {[
+            { id: 'today', label: 'Hoje' },
+            { id: 'last7Days', label: '7 dias' },
+            { id: 'last30Days', label: '30 dias' },
+            { id: 'last90Days', label: '90 dias' },
+            { id: 'lastMonth', label: 'Mês Passado' },
+            { id: 'month', label: 'Mês Atual' },
+            { id: 'nextMonth', label: 'Próx. Mês' },
+            { id: 'thisYear', label: 'Este Ano' },
+            { id: 'lastYear', label: 'Ano Passado' },
+            { id: 'all', label: 'Todo Histórico' },
+            { id: 'custom', label: 'Personalizado' }
+          ].map((period) => {
+            const isSelected = historyPeriod === period.id;
+            return (
+              <button
+                key={period.id}
+                type="button"
                 onClick={() => {
-                  const now = new Date();
-                  const firstDay = getTodayLocalDateStr(new Date(now.getFullYear(), now.getMonth(), 1));
-                  const lastDay = getTodayLocalDateStr(new Date(now.getFullYear(), now.getMonth() + 1, 0));
-                  setCustomDateRange({ start: firstDay, end: lastDay });
+                  setHistoryPeriod(period.id);
+                  setVisibleCount(15);
                 }}
-                className="h-7 text-[11px] font-bold text-indigo-600 dark:text-indigo-400"
+                className="relative px-3.5 py-1.5 text-xs font-bold rounded-lg transition-all whitespace-nowrap focus:outline-none shrink-0 text-center active:scale-95 cursor-pointer"
+                style={{ WebkitTapHighlightColor: 'transparent' }}
               >
-                Mês Corrente
-              </Button>
-            </div>
-          </motion.div>
+                {isSelected && (
+                  <motion.span
+                    layoutId="reserve-history-active-period"
+                    className="absolute inset-0 bg-background border border-border/60 shadow-xs rounded-lg"
+                    transition={{ type: 'spring', stiffness: 380, damping: 28 }}
+                  />
+                )}
+                <span className={`relative z-10 transition-colors duration-200 ${
+                  isSelected ? 'text-foreground font-black' : 'text-muted-foreground hover:text-foreground'
+                }`}>
+                  {period.label}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        {historyPeriod === 'custom' && (
+          <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-border/40 animate-in fade-in slide-in-from-top-2">
+            <span className="text-muted-foreground text-xs font-bold">Intervalo de Datas:</span>
+            <input
+              type="date"
+              className="bg-background border border-border/60 rounded-xl px-2.5 py-1.5 text-base sm:text-xs font-semibold text-foreground focus:ring-1 focus:ring-primary outline-none cursor-pointer"
+              value={customDateRange?.start || ''}
+              onChange={(e) => {
+                setCustomDateRange({
+                  start: e.target.value,
+                  end: customDateRange?.end || getTodayLocalDateStr()
+                });
+                setVisibleCount(15);
+              }}
+            />
+            <span className="text-muted-foreground text-xs font-bold">até</span>
+            <input
+              type="date"
+              className="bg-background border border-border/60 rounded-xl px-2.5 py-1.5 text-base sm:text-xs font-semibold text-foreground focus:ring-1 focus:ring-primary outline-none cursor-pointer"
+              value={customDateRange?.end || ''}
+              onChange={(e) => {
+                setCustomDateRange({
+                  start: customDateRange?.start || getTodayLocalDateStr(),
+                  end: e.target.value
+                });
+                setVisibleCount(15);
+              }}
+            />
+          </div>
         )}
       </div>
+
+      {/* 1B. Quick 1-Tap Reserve Selector Pills */}
+      {reserves.length > 0 && (
+        <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none pb-0.5">
+          <button
+            type="button"
+            onClick={() => {
+              setSelectedReserveId('all');
+              setVisibleCount(15);
+            }}
+            className={`px-3 py-1.5 rounded-xl text-[11px] font-bold border transition-all whitespace-nowrap cursor-pointer flex items-center gap-1.5 shrink-0 active:scale-95 ${
+              selectedReserveId === 'all'
+                ? 'bg-foreground text-background border-foreground shadow-2xs'
+                : 'bg-card/80 text-muted-foreground border-border/70 hover:text-foreground hover:bg-muted/60'
+            }`}
+          >
+            <PiggyBank className="w-3.5 h-3.5" />
+            <span>Todas as Reservas</span>
+            <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
+              selectedReserveId === 'all' ? 'bg-background/20 text-background' : 'bg-muted text-muted-foreground'
+            }`}>
+              {Object.values(reserveTxCounts).reduce((a, b) => a + b, 0)}
+            </span>
+          </button>
+
+          {reserves.map(r => {
+            const isSelected = selectedReserveId === r.id;
+            const txCount = reserveTxCounts[r.id] || 0;
+            return (
+              <button
+                key={r.id}
+                type="button"
+                onClick={() => {
+                  setSelectedReserveId(isSelected ? 'all' : r.id);
+                  setVisibleCount(15);
+                }}
+                className={`px-3 py-1.5 rounded-xl text-[11px] font-bold border transition-all whitespace-nowrap cursor-pointer flex items-center gap-1.5 shrink-0 active:scale-95 ${
+                  isSelected
+                    ? 'bg-indigo-600 text-white border-indigo-600 shadow-2xs'
+                    : 'bg-card/80 text-foreground border-border/70 hover:border-border hover:bg-muted/50'
+                }`}
+              >
+                <span
+                  className="w-2.5 h-2.5 rounded-full shrink-0 border border-white/40"
+                  style={{ backgroundColor: r.color || '#6366f1' }}
+                />
+                <span className="truncate max-w-[120px]">{r.name}</span>
+                <span className={`text-[10px] font-mono font-semibold ${
+                  isSelected ? 'text-white/85' : 'text-muted-foreground'
+                }`}>
+                  {hideValues ? '••••' : formatCurrency(Number(r.saldo_atual || 0))}
+                </span>
+                {txCount > 0 && (
+                  <span className={`px-1.5 py-0.2 rounded-full text-[9px] font-mono font-black ${
+                    isSelected ? 'bg-white/20 text-white' : 'bg-muted text-muted-foreground'
+                  }`}>
+                    {txCount}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {/* 2. Extrato Bento Summary Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3">
@@ -1388,13 +1919,18 @@ export function ReserveHistoryTab({
           <p className="text-base sm:text-xl font-black text-emerald-600 dark:text-emerald-400 font-mono tracking-tight">
             {hideValues ? 'R$ •••••' : formatCurrency(summary.totalAportesTotal)}
           </p>
-          <div className="text-[10px] text-muted-foreground flex flex-wrap gap-x-2 gap-y-0.5 pt-0.5 border-t border-emerald-500/10 font-medium">
+          <div className="text-[10px] text-muted-foreground flex flex-wrap gap-x-2 gap-y-0.5 pt-1 border-t border-emerald-500/10 font-medium">
             <span>Manuais: <strong>{hideValues ? '••••' : formatCurrency(summary.totalAportesManuais)}</strong></span>
             {summary.totalAportesSugeridos > 0 && (
               <span>• Sugeridos: <strong>{hideValues ? '••••' : formatCurrency(summary.totalAportesSugeridos)}</strong></span>
             )}
             {summary.totalAportesMassa > 0 && (
               <span>• Lote: <strong>{hideValues ? '••••' : formatCurrency(summary.totalAportesMassa)}</strong></span>
+            )}
+            {summary.totalBoostExtra > 0 && (
+              <span className="text-orange-600 dark:text-orange-400 font-bold inline-flex items-center gap-0.5">
+                • 🚀 Boost: +{hideValues ? '••••' : formatCurrency(summary.totalBoostExtra)}
+              </span>
             )}
           </div>
         </div>
@@ -1413,8 +1949,12 @@ export function ReserveHistoryTab({
           <p className="text-base sm:text-xl font-black text-rose-600 dark:text-rose-400 font-mono tracking-tight">
             {hideValues ? 'R$ •••••' : formatCurrency(summary.totalUtilizacoes)}
           </p>
-          <div className="text-[10px] text-muted-foreground pt-0.5 border-t border-rose-500/10 font-medium">
-            <span>Gastos cobertos pelas reservas</span>
+          <div className="text-[10px] text-muted-foreground pt-1 border-t border-rose-500/10 font-medium flex flex-wrap gap-x-2 gap-y-0.5">
+            {summary.totalTransferToCash > 0 ? (
+              <span>P/ Caixa: <strong className="text-emerald-600 dark:text-emerald-400">{hideValues ? '••••' : formatCurrency(summary.totalTransferToCash)}</strong></span>
+            ) : (
+              <span>Gastos cobertos pelas reservas</span>
+            )}
           </div>
         </div>
 
@@ -1432,12 +1972,16 @@ export function ReserveHistoryTab({
           <p className="text-base sm:text-xl font-black text-blue-600 dark:text-blue-400 font-mono tracking-tight">
             {hideValues ? 'R$ •••••' : `+${formatCurrency(summary.totalRendimentos)}`}
           </p>
-          <div className="text-[10px] text-muted-foreground pt-0.5 border-t border-blue-500/10 font-medium">
-            <span>Lucros & CDI acumulados</span>
+          <div className="text-[10px] text-muted-foreground pt-1 border-t border-blue-500/10 font-medium flex items-center justify-between">
+            <span>
+              {summary.yieldSharePct > 0
+                ? `${summary.yieldSharePct}% das entradas`
+                : 'Lucros & CDI acumulados'}
+            </span>
           </div>
         </div>
 
-        {/* Saldo Líquido & Atualizações de Regra Card */}
+        {/* Saldo Líquido & Pendências / Regras Card */}
         <div className={`p-3.5 sm:p-4 rounded-2xl border space-y-1.5 shadow-2xs ${
           summary.netFlow >= 0 
             ? 'bg-indigo-500/5 border-indigo-500/20' 
@@ -1457,13 +2001,19 @@ export function ReserveHistoryTab({
           <p className={`text-base sm:text-xl font-black font-mono tracking-tight ${
             summary.netFlow >= 0 ? 'text-indigo-600 dark:text-indigo-400' : 'text-amber-600 dark:text-amber-400'
           }`}>
-            {hideValues ? 'R$ •••••' : formatCurrency(summary.netFlow)}
+            {hideValues ? 'R$ •••••' : `${summary.netFlow >= 0 ? '+' : ''}${formatCurrency(summary.netFlow)}`}
           </p>
-          <div className="text-[10px] text-muted-foreground pt-0.5 border-t border-border/40 font-medium flex items-center justify-between">
-            <span className="flex items-center gap-1">
-              <Sparkles className="w-3 h-3 text-indigo-500" />
-              <strong>{summary.countRuleUpdates}</strong> regras
-            </span>
+          <div className="text-[10px] text-muted-foreground pt-1 border-t border-border/40 font-medium flex items-center justify-between gap-1 flex-wrap">
+            {summary.countPending > 0 ? (
+              <span className="text-amber-600 dark:text-amber-400 font-bold">
+                ⏳ {summary.countPending} pend. ({hideValues ? '••••' : formatCurrency(summary.totalPendingAmount)})
+              </span>
+            ) : (
+              <span className="flex items-center gap-1">
+                <Sparkles className="w-3 h-3 text-indigo-500" />
+                <strong>{summary.countRuleUpdates}</strong> regras
+              </span>
+            )}
             <span className={`font-bold ${summary.netFlow >= 0 ? 'text-emerald-500' : 'text-amber-500'}`}>
               {summary.netFlow >= 0 ? 'Saldo +' : 'Saldo -'}
             </span>
@@ -1471,50 +2021,59 @@ export function ReserveHistoryTab({
         </div>
       </div>
 
-      {/* 2B. Histórico Consolidado de Rendimentos por Mês */}
-      {(monthlyYieldStats.series.length > 0 || selectedType === 'rendimento') && (
+      {/* 2B. Raio-X Visual do Extrato (Fluxo Mensal / Rendimentos / Por Reserva) */}
+      {(monthlyAnalytics.flowSeries.length > 0 || reserveBreakdown.length > 0) && (
         <div className="bg-card border border-border/80 rounded-2xl p-3.5 sm:p-4 shadow-2xs space-y-3">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
             <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center shrink-0">
-                <BarChart3 className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+              <div className="w-8 h-8 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center shrink-0">
+                <BarChart3 className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
               </div>
               <div>
-                <h3 className="text-xs sm:text-sm font-black text-foreground tracking-tight">
-                  Histórico Consolidado de Rendimentos por Mês
-                </h3>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="text-xs sm:text-sm font-black text-foreground tracking-tight">
+                    Raio-X Visual do Extrato
+                  </h3>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20">
+                    Últimos 12 meses
+                  </span>
+                </div>
                 <p className="text-[10.5px] text-muted-foreground font-medium">
                   {selectedReserveId !== 'all'
-                    ? `Filtrado: ${reserveMap[selectedReserveId]?.name || 'Reserva selecionada'}`
-                    : 'Soma mensal de rendimentos e CDI em todas as reservas'}
+                    ? `Histórico consolidado de ${reserveMap[selectedReserveId]?.name || 'Reserva selecionada'}`
+                    : 'Evolução de entradas, saídas, rendimentos e divisão por reserva'}
                 </p>
               </div>
             </div>
 
-            <div className="flex items-center gap-2 self-end sm:self-auto">
-              {monthlyYieldStats.series.length > 0 && (
-                <div className="flex items-center gap-3 text-[11px] font-medium text-muted-foreground mr-1">
-                  <span>
-                    Média/mês:{' '}
-                    <strong className="font-mono font-black text-blue-600 dark:text-blue-400 tabular-nums">
-                      {hideValues ? 'R$ •••' : formatCurrency(monthlyYieldStats.avgMonthly)}
-                    </strong>
-                  </span>
-                  {monthlyYieldStats.bestMonth && (
-                    <span className="hidden md:inline">
-                      Melhor ({monthlyYieldStats.bestMonth.label}):{' '}
-                      <strong className="font-mono font-black text-emerald-600 dark:text-emerald-400 tabular-nums">
-                        {hideValues ? 'R$ •••' : formatCurrency(monthlyYieldStats.bestMonth.total)}
-                      </strong>
-                    </span>
-                  )}
+            <div className="flex items-center justify-between sm:justify-end gap-2">
+              {showMonthlyYieldChart && (
+                <div className="flex items-center gap-1 p-1 rounded-xl bg-muted/50 border border-border/60">
+                  {[
+                    { id: 'flow' as const, label: 'Fluxo Mensal' },
+                    { id: 'yield' as const, label: 'Rendimentos' },
+                    { id: 'reserves' as const, label: 'Por Reserva' },
+                  ].map(tab => (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      onClick={() => setChartTab(tab.id)}
+                      className={`px-2.5 py-1 rounded-lg text-[10.5px] font-bold transition-all cursor-pointer whitespace-nowrap ${
+                        chartTab === tab.id
+                          ? 'bg-background text-foreground shadow-2xs border border-border/70'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
                 </div>
               )}
 
               <button
                 type="button"
                 onClick={() => setShowMonthlyYieldChart(prev => !prev)}
-                className="px-2.5 py-1 rounded-xl border border-border/70 bg-muted/30 hover:bg-muted text-[11px] font-bold text-foreground flex items-center gap-1 cursor-pointer transition-colors"
+                className="px-2.5 py-1.5 rounded-xl border border-border/70 bg-muted/30 hover:bg-muted text-[11px] font-bold text-foreground flex items-center gap-1 cursor-pointer transition-colors shrink-0"
               >
                 <span>{showMonthlyYieldChart ? 'Ocultar' : 'Exibir'}</span>
                 {showMonthlyYieldChart ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
@@ -1523,52 +2082,207 @@ export function ReserveHistoryTab({
           </div>
 
           {showMonthlyYieldChart && (
-            monthlyYieldStats.series.length === 0 ? (
-              <div className="p-4 rounded-xl bg-muted/20 border border-dashed border-border text-center text-xs text-muted-foreground">
-                Nenhum rendimento quitado registrado para os filtros atuais.
-              </div>
-            ) : (
-              <div className="h-[190px] w-full pt-1">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={monthlyYieldStats.series} margin={{ top: 8, right: 10, left: -12, bottom: 2 }}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(148, 163, 184, 0.2)" />
-                    <XAxis
-                      dataKey="label"
-                      axisLine={false}
-                      tickLine={false}
-                      tick={{ fontSize: 10.5, fill: '#71717a', fontWeight: 700 }}
-                    />
-                    <YAxis
-                      axisLine={false}
-                      tickLine={false}
-                      tick={{ fontSize: 10, fill: '#71717a', fontWeight: 600 }}
-                      tickFormatter={(val) => (hideValues ? '•••' : `R$ ${Math.round(val)}`)}
-                    />
-                    <RechartsTooltip
-                      cursor={{ fill: 'rgba(59, 130, 246, 0.08)' }}
-                      contentStyle={{
-                        backgroundColor: 'hsl(var(--card))',
-                        borderColor: 'hsl(var(--border))',
-                        borderRadius: '12px',
-                        fontSize: '12px'
-                      }}
-                      labelFormatter={(_label, payload) => payload?.[0]?.payload?.fullLabel || _label}
-                      formatter={(val: any) => [
-                        hideValues ? 'R$ •••••' : formatCurrency(Number(val)),
-                        'Rendimento no mês'
-                      ]}
-                    />
-                    <Bar
-                      dataKey="total"
-                      name="Rendimento"
-                      fill="#3b82f6"
-                      radius={[6, 6, 0, 0]}
-                      maxBarSize={44}
-                    />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            )
+            <>
+              {chartTab === 'flow' && (
+                monthlyAnalytics.flowSeries.length === 0 ? (
+                  <div className="p-4 rounded-xl bg-muted/20 border border-dashed border-border text-center text-xs text-muted-foreground">
+                    Nenhuma movimentação liquidada registrada para o período selecionado.
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-[10.5px] font-bold text-muted-foreground px-1">
+                      <div className="flex items-center gap-3">
+                        <span className="flex items-center gap-1.5">
+                          <span className="w-2.5 h-2.5 rounded-xs bg-emerald-500 inline-block" />
+                          Aportes
+                        </span>
+                        <span className="flex items-center gap-1.5">
+                          <span className="w-2.5 h-2.5 rounded-xs bg-blue-500 inline-block" />
+                          Rendimentos
+                        </span>
+                        <span className="flex items-center gap-1.5">
+                          <span className="w-2.5 h-2.5 rounded-xs bg-rose-500 inline-block" />
+                          Resgates
+                        </span>
+                      </div>
+                      <span className="text-[10px] font-medium">Últimos {monthlyAnalytics.flowSeries.length} meses com movimento</span>
+                    </div>
+                    <div className="h-[200px] w-full">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={monthlyAnalytics.flowSeries} margin={{ top: 8, right: 8, left: -12, bottom: 2 }}>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(148, 163, 184, 0.2)" />
+                          <XAxis
+                            dataKey="label"
+                            axisLine={false}
+                            tickLine={false}
+                            tick={{ fontSize: 10.5, fill: '#71717a', fontWeight: 700 }}
+                          />
+                          <YAxis
+                            axisLine={false}
+                            tickLine={false}
+                            tick={{ fontSize: 10, fill: '#71717a', fontWeight: 600 }}
+                            tickFormatter={(val) => (hideValues ? '•••' : `R$ ${Math.round(val)}`)}
+                          />
+                          <RechartsTooltip
+                            cursor={{ fill: 'rgba(99, 102, 241, 0.07)' }}
+                            contentStyle={{
+                              backgroundColor: 'hsl(var(--card))',
+                              borderColor: 'hsl(var(--border))',
+                              borderRadius: '12px',
+                              fontSize: '12px'
+                            }}
+                            labelFormatter={(_label, payload) => payload?.[0]?.payload?.fullLabel || _label}
+                            formatter={(val: any, name: any) => [
+                              hideValues ? 'R$ •••••' : formatCurrency(Number(val)),
+                              name
+                            ]}
+                          />
+                          <Bar dataKey="aportes" name="Aportes" fill="#10b981" radius={[4, 4, 0, 0]} maxBarSize={24} />
+                          <Bar dataKey="rendimentos" name="Rendimentos" fill="#3b82f6" radius={[4, 4, 0, 0]} maxBarSize={24} />
+                          <Bar dataKey="resgates" name="Resgates" fill="#f43f5e" radius={[4, 4, 0, 0]} maxBarSize={24} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                )
+              )}
+
+              {chartTab === 'yield' && (
+                monthlyAnalytics.yieldSeries.length === 0 ? (
+                  <div className="p-4 rounded-xl bg-muted/20 border border-dashed border-border text-center text-xs text-muted-foreground">
+                    Nenhum rendimento liquidado registrado para os filtros atuais.
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] font-medium text-muted-foreground px-1">
+                      <span>
+                        Média/mês:{' '}
+                        <strong className="font-mono font-black text-blue-600 dark:text-blue-400 tabular-nums">
+                          {hideValues ? 'R$ •••' : formatCurrency(monthlyAnalytics.avgMonthlyYield)}
+                        </strong>
+                      </span>
+                      {monthlyAnalytics.bestMonthYield && (
+                        <span>
+                          Melhor ({monthlyAnalytics.bestMonthYield.label}):{' '}
+                          <strong className="font-mono font-black text-emerald-600 dark:text-emerald-400 tabular-nums">
+                            {hideValues ? 'R$ •••' : formatCurrency(monthlyAnalytics.bestMonthYield.total)}
+                          </strong>
+                        </span>
+                      )}
+                    </div>
+                    <div className="h-[190px] w-full">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={monthlyAnalytics.yieldSeries} margin={{ top: 8, right: 10, left: -12, bottom: 2 }}>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(148, 163, 184, 0.2)" />
+                          <XAxis
+                            dataKey="label"
+                            axisLine={false}
+                            tickLine={false}
+                            tick={{ fontSize: 10.5, fill: '#71717a', fontWeight: 700 }}
+                          />
+                          <YAxis
+                            axisLine={false}
+                            tickLine={false}
+                            tick={{ fontSize: 10, fill: '#71717a', fontWeight: 600 }}
+                            tickFormatter={(val) => (hideValues ? '•••' : `R$ ${Math.round(val)}`)}
+                          />
+                          <RechartsTooltip
+                            cursor={{ fill: 'rgba(59, 130, 246, 0.08)' }}
+                            contentStyle={{
+                              backgroundColor: 'hsl(var(--card))',
+                              borderColor: 'hsl(var(--border))',
+                              borderRadius: '12px',
+                              fontSize: '12px'
+                            }}
+                            labelFormatter={(_label, payload) => payload?.[0]?.payload?.fullLabel || _label}
+                            formatter={(val: any) => [
+                              hideValues ? 'R$ •••••' : formatCurrency(Number(val)),
+                              'Rendimento no mês'
+                            ]}
+                          />
+                          <Bar
+                            dataKey="total"
+                            name="Rendimento"
+                            fill="#3b82f6"
+                            radius={[6, 6, 0, 0]}
+                            maxBarSize={44}
+                          />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                )
+              )}
+
+              {chartTab === 'reserves' && (
+                reserveBreakdown.length === 0 ? (
+                  <div className="p-4 rounded-xl bg-muted/20 border border-dashed border-border text-center text-xs text-muted-foreground">
+                    Nenhuma reserva com saldo ou movimentação no período.
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {reserveBreakdown.map(row => {
+                      const isRowSelected = selectedReserveId === row.reserve.id;
+                      return (
+                        <button
+                          key={row.reserve.id}
+                          type="button"
+                          onClick={() => {
+                            setSelectedReserveId(isRowSelected ? 'all' : row.reserve.id);
+                            setVisibleCount(15);
+                          }}
+                          className={`p-3 rounded-xl border text-left transition-all cursor-pointer space-y-1.5 ${
+                            isRowSelected
+                              ? 'bg-indigo-500/10 border-indigo-500/40 ring-1 ring-indigo-500/30'
+                              : 'bg-muted/25 border-border/70 hover:bg-muted/50'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span
+                                className="w-2.5 h-2.5 rounded-full shrink-0"
+                                style={{ backgroundColor: row.reserve.color || '#6366f1' }}
+                              />
+                              <span className="text-xs font-black text-foreground truncate">{row.reserve.name}</span>
+                              <span className="text-[10px] font-bold text-muted-foreground">({row.txCount})</span>
+                            </div>
+                            <span className="text-xs font-mono font-black text-foreground shrink-0">
+                              {hideValues ? 'R$ •••' : formatCurrency(Number(row.reserve.saldo_atual || 0))}
+                            </span>
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-[10px] font-mono">
+                            <span className="text-emerald-600 dark:text-emerald-400 font-bold">
+                              +{hideValues ? '•••' : formatCurrency(row.aportes)} ap.
+                            </span>
+                            {row.boostExtras > 0 && (
+                              <span className="text-orange-600 dark:text-orange-400 font-bold">
+                                🚀+{hideValues ? '•••' : formatCurrency(row.boostExtras)}
+                              </span>
+                            )}
+                            {row.rendimentos > 0 && (
+                              <span className="text-blue-600 dark:text-blue-400 font-bold">
+                                +{hideValues ? '•••' : formatCurrency(row.rendimentos)} rend.
+                              </span>
+                            )}
+                            {row.resgates > 0 && (
+                              <span className="text-rose-600 dark:text-rose-400 font-bold">
+                                -{hideValues ? '•••' : formatCurrency(row.resgates)} resg.
+                              </span>
+                            )}
+                            <span className={`ml-auto font-black ${
+                              row.netFlow >= 0 ? 'text-indigo-600 dark:text-indigo-400' : 'text-amber-600 dark:text-amber-400'
+                            }`}>
+                              Líq: {row.netFlow >= 0 ? '+' : ''}{hideValues ? '•••' : formatCurrency(row.netFlow)}
+                            </span>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )
+              )}
+            </>
           )}
         </div>
       )}
@@ -1580,13 +2294,13 @@ export function ReserveHistoryTab({
           <div className="relative flex-1">
             <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
             <Input
-              placeholder="Buscar por descrição, regra, km, faturamento, reserva..."
+              placeholder="Buscar por reserva, categoria, descrição ou valor..."
               value={searchTerm}
               onChange={e => {
                 setSearchTerm(e.target.value);
                 setVisibleCount(15);
               }}
-              className="pl-9 pr-8 h-9 text-xs rounded-xl bg-background border-border/80"
+              className="pl-9 pr-8 h-9 text-base sm:text-xs rounded-xl bg-background border-border/80"
             />
             {searchTerm && (
               <button
@@ -1609,10 +2323,16 @@ export function ReserveHistoryTab({
                 showAdvancedFilters ? 'bg-indigo-600 hover:bg-indigo-700 text-white' : 'border-border/80'
               }`}
             >
-              <Filter className="w-3.5 h-3.5" />
-              <span>Filtros</span>
-              {hasActiveFilters && (
-                <span className="w-2 h-2 rounded-full bg-amber-400 inline-block" />
+              <SlidersHorizontal className="w-3.5 h-3.5" />
+              <span>Filtros Avançados</span>
+              {activeAdvancedFiltersCount > 0 && (
+                <span className={`px-1.5 py-0.2 text-[10px] font-black rounded-full ${
+                  showAdvancedFilters
+                    ? 'bg-white/20 text-white'
+                    : 'bg-indigo-500/15 text-indigo-600 dark:text-indigo-400'
+                }`}>
+                  {activeAdvancedFiltersCount}
+                </span>
               )}
             </Button>
 
@@ -1622,28 +2342,30 @@ export function ReserveHistoryTab({
               size="sm"
               onClick={handleExportCSV}
               className="h-9 px-3 text-xs font-bold rounded-xl gap-1.5 border-border/80 hover:bg-muted cursor-pointer"
-              title="Exportar registros e regras filtrados para planilha CSV"
+              title="Exportar registros filtrados para planilha CSV"
             >
               <Download className="w-3.5 h-3.5 text-muted-foreground" />
-              <span className="hidden sm:inline">Exportar</span>
+              <span className="hidden sm:inline">Exportar CSV</span>
             </Button>
           </div>
         </div>
 
-        {/* Quick Type Selection Chips */}
+        {/* Quick Type Selection Chips (Default: Aportes) */}
         <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none pb-1 pt-0.5">
           {[
-            { id: 'all', label: 'Todos os Registros' },
-            { id: 'rule_change', label: `⚙️ Atualizações de Regra (${totalSystemRuleUpdates})`, isSpecial: true },
-            { id: 'transactions_only', label: '💸 Apenas Movimentações' },
-            { id: 'aporte', label: '📥 Aportes (Geral)' },
-            { id: 'manual_aporte', label: '👤 Manuais' },
-            { id: 'suggestion_aporte', label: '✨ Sugeridos' },
-            { id: 'mass_aporte', label: '⚡ Em Lote' },
-            { id: 'utilizacao', label: '📤 Resgates' },
-            { id: 'rendimento', label: '📈 Rendimentos' }
-          ].map(chip => {
+            { id: 'aporte', label: 'Aportes', icon: ArrowDownLeft },
+            { id: 'all', label: 'Todos', icon: Layers },
+            { id: 'manual_aporte', label: 'Manuais', icon: PiggyBank },
+            { id: 'suggestion_aporte', label: 'Sugeridos', icon: Sparkles },
+            { id: 'mass_aporte', label: 'Em Lote', icon: Zap },
+            ...(totalBoostAportesCount > 0 ? [{ id: 'boost_aporte', label: `Com Boost (${totalBoostAportesCount})`, icon: Rocket, isBoost: true }] : []),
+            { id: 'utilizacao', label: 'Resgates', icon: ArrowUpRight },
+            { id: 'rendimento', label: 'Rendimentos', icon: TrendingUp },
+            ...(totalPendingCount > 0 ? [{ id: 'pending_only', label: `Pendentes (${totalPendingCount})`, icon: Clock, isPending: true }] : []),
+            { id: 'rule_change', label: `Histórico de Regras (${totalSystemRuleUpdates})`, icon: Sliders, isSpecial: true },
+          ].map((chip: any) => {
             const isSelected = selectedType === chip.id;
+            const ChipIcon = chip.icon;
             return (
               <button
                 key={chip.id}
@@ -1652,17 +2374,24 @@ export function ReserveHistoryTab({
                   setSelectedType(chip.id);
                   setVisibleCount(15);
                 }}
-                className={`px-3 py-1 text-[11px] font-bold rounded-full transition-all whitespace-nowrap cursor-pointer border active:scale-95 ${
+                className={`px-3 py-1.5 text-[11px] font-bold rounded-xl transition-all whitespace-nowrap cursor-pointer border active:scale-95 flex items-center gap-1.5 shrink-0 ${
                   isSelected 
-                    ? chip.isSpecial
-                      ? 'bg-indigo-600 text-white border-indigo-600 shadow-2xs font-black'
-                      : 'bg-indigo-600 text-white border-indigo-600 shadow-2xs' 
+                    ? chip.isBoost
+                      ? 'bg-orange-500 text-white border-orange-500 shadow-2xs font-black'
+                      : chip.isPending
+                      ? 'bg-amber-500 text-white border-amber-500 shadow-2xs font-black'
+                      : 'bg-indigo-600 text-white border-indigo-600 shadow-2xs font-black'
+                    : chip.isBoost
+                      ? 'bg-orange-500/10 text-orange-600 dark:text-orange-400 border-orange-500/30 hover:bg-orange-500/20'
+                    : chip.isPending
+                      ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30 hover:bg-amber-500/20'
                     : chip.isSpecial
                       ? 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/30 hover:bg-indigo-500/20'
                       : 'bg-muted/40 text-muted-foreground border-border/60 hover:text-foreground hover:bg-muted/80'
                 }`}
               >
-                {chip.label}
+                <ChipIcon className="w-3 h-3" />
+                <span>{chip.label}</span>
               </button>
             );
           })}
@@ -1676,14 +2405,46 @@ export function ReserveHistoryTab({
               animate={{ height: 'auto', opacity: 1 }}
               exit={{ height: 0, opacity: 0 }}
               transition={{ duration: 0.2 }}
-              className="overflow-hidden pt-2 border-t border-border/60 space-y-3"
+              className="overflow-hidden pt-2.5 border-t border-border/60 space-y-3"
             >
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2.5 text-left">
-                {/* 1. Select Reserve */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 text-left">
+                {/* 1. Tipo de Lançamento */}
                 <div className="space-y-1">
-                  <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1">
-                    <PiggyBank className="w-3 h-3 text-indigo-500" />
-                    Filtrar por Reserva
+                  <label className="text-[11px] font-bold text-muted-foreground flex items-center gap-1.5">
+                    <Filter className="w-3.5 h-3.5 text-indigo-500" />
+                    Tipo de Lançamento
+                  </label>
+                  <Select
+                    value={selectedType}
+                    onValueChange={v => {
+                      setSelectedType(v);
+                      setVisibleCount(15);
+                    }}
+                  >
+                    <SelectTrigger className="h-9 text-base sm:text-xs font-semibold rounded-xl bg-background border-border/80">
+                      <SelectValue placeholder="Selecione o tipo" />
+                    </SelectTrigger>
+                    <SelectContent align="start" className="text-xs">
+                      <SelectItem value="aporte">Aportes (Padrão)</SelectItem>
+                      <SelectItem value="all">Todos os registros e regras</SelectItem>
+                      <SelectItem value="transactions_only">Todas as movimentações</SelectItem>
+                      <SelectItem value="manual_aporte">Aportes manuais</SelectItem>
+                      <SelectItem value="suggestion_aporte">Aportes sugeridos</SelectItem>
+                      <SelectItem value="mass_aporte">Aportes em lote</SelectItem>
+                      <SelectItem value="boost_aporte">Aportes com Modo Boost</SelectItem>
+                      <SelectItem value="utilizacao">Resgates e transferências</SelectItem>
+                      <SelectItem value="rendimento">Rendimentos e lucros</SelectItem>
+                      <SelectItem value="pending_only">Somente pendentes</SelectItem>
+                      <SelectItem value="rule_change">Histórico de regras</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* 2. Reserva */}
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-muted-foreground flex items-center gap-1.5">
+                    <PiggyBank className="w-3.5 h-3.5 text-indigo-500" />
+                    Reserva
                   </label>
                   <Select 
                     value={selectedReserveId} 
@@ -1692,11 +2453,11 @@ export function ReserveHistoryTab({
                       setVisibleCount(15);
                     }}
                   >
-                    <SelectTrigger className="h-8 text-xs font-semibold rounded-xl bg-background border-border/80">
-                      <SelectValue placeholder="Todas as Reservas" />
+                    <SelectTrigger className="h-9 text-base sm:text-xs font-semibold rounded-xl bg-background border-border/80">
+                      <SelectValue placeholder="Todas as reservas" />
                     </SelectTrigger>
                     <SelectContent align="start" className="text-xs">
-                      <SelectItem value="all">Todas as Reservas</SelectItem>
+                      <SelectItem value="all">Todas as reservas</SelectItem>
                       {reserves.map(r => (
                         <SelectItem key={r.id} value={r.id}>
                           <div className="flex items-center gap-2">
@@ -1712,11 +2473,11 @@ export function ReserveHistoryTab({
                   </Select>
                 </div>
 
-                {/* 2. Select Category */}
+                {/* 3. Categoria */}
                 <div className="space-y-1">
-                  <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1">
-                    <Tag className="w-3 h-3 text-emerald-500" />
-                    Filtrar por Categoria
+                  <label className="text-[11px] font-bold text-muted-foreground flex items-center gap-1.5">
+                    <Tag className="w-3.5 h-3.5 text-emerald-500" />
+                    Categoria
                   </label>
                   <Select 
                     value={selectedCategory} 
@@ -1725,11 +2486,11 @@ export function ReserveHistoryTab({
                       setVisibleCount(15);
                     }}
                   >
-                    <SelectTrigger className="h-8 text-xs font-semibold rounded-xl bg-background border-border/80">
-                      <SelectValue placeholder="Todas as Categorias" />
+                    <SelectTrigger className="h-9 text-base sm:text-xs font-semibold rounded-xl bg-background border-border/80">
+                      <SelectValue placeholder="Todas as categorias" />
                     </SelectTrigger>
                     <SelectContent align="start" className="text-xs max-h-56">
-                      <SelectItem value="all">Todas as Categorias</SelectItem>
+                      <SelectItem value="all">Todas as categorias</SelectItem>
                       {uniqueCategories.map(cat => (
                         <SelectItem key={cat} value={cat}>
                           {cat}
@@ -1739,11 +2500,35 @@ export function ReserveHistoryTab({
                   </Select>
                 </div>
 
-                {/* 3. Sort Order */}
+                {/* 4. Situação */}
                 <div className="space-y-1">
-                  <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1">
-                    <ArrowUpDown className="w-3 h-3 text-amber-500" />
-                    Ordenação
+                  <label className="text-[11px] font-bold text-muted-foreground flex items-center gap-1.5">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                    Situação do Lançamento
+                  </label>
+                  <Select 
+                    value={selectedPaymentStatus} 
+                    onValueChange={(v: 'all' | 'paid' | 'pending') => {
+                      setSelectedPaymentStatus(v);
+                      setVisibleCount(15);
+                    }}
+                  >
+                    <SelectTrigger className="h-9 text-base sm:text-xs font-semibold rounded-xl bg-background border-border/80">
+                      <SelectValue placeholder="Todas as situações" />
+                    </SelectTrigger>
+                    <SelectContent align="start" className="text-xs">
+                      <SelectItem value="all">Liquidados e pendentes</SelectItem>
+                      <SelectItem value="paid">Somente liquidados</SelectItem>
+                      <SelectItem value="pending">Somente pendentes</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* 5. Ordenar por */}
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold text-muted-foreground flex items-center gap-1.5">
+                    <ArrowUpDown className="w-3.5 h-3.5 text-amber-500" />
+                    Ordenar por
                   </label>
                   <Select 
                     value={sortBy} 
@@ -1752,47 +2537,59 @@ export function ReserveHistoryTab({
                       setVisibleCount(15);
                     }}
                   >
-                    <SelectTrigger className="h-8 text-xs font-semibold rounded-xl bg-background border-border/80">
+                    <SelectTrigger className="h-9 text-base sm:text-xs font-semibold rounded-xl bg-background border-border/80">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent align="start" className="text-xs">
-                      <SelectItem value="date_desc">Mais Recentes (Data ↓)</SelectItem>
-                      <SelectItem value="date_asc">Mais Antigos (Data ↑)</SelectItem>
-                      <SelectItem value="amount_desc">Maior Valor (R$ ↓)</SelectItem>
-                      <SelectItem value="amount_asc">Menor Valor (R$ ↑)</SelectItem>
-                      <SelectItem value="reserve_asc">Nome da Reserva (A-Z)</SelectItem>
+                      <SelectItem value="date_desc">Mais recentes primeiro</SelectItem>
+                      <SelectItem value="date_asc">Mais antigos primeiro</SelectItem>
+                      <SelectItem value="amount_desc">Maior valor primeiro</SelectItem>
+                      <SelectItem value="amount_asc">Menor valor primeiro</SelectItem>
+                      <SelectItem value="reserve_asc">Nome da reserva (A–Z)</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
 
-                {/* 4. Value Range (Min / Max) */}
+                {/* 6. Faixa de Valor */}
                 <div className="space-y-1">
-                  <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1">
-                    <DollarSign className="w-3 h-3 text-blue-500" />
-                    Faixa de Valor (R$)
+                  <label className="text-[11px] font-bold text-muted-foreground flex items-center gap-1.5">
+                    <DollarSign className="w-3.5 h-3.5 text-blue-500" />
+                    Faixa de Valor
                   </label>
                   <div className="flex items-center gap-1.5">
-                    <Input
-                      placeholder="Mín"
-                      type="number"
-                      value={minValue}
-                      onChange={e => {
-                        setMinValue(e.target.value);
-                        setVisibleCount(15);
-                      }}
-                      className="h-8 text-xs rounded-xl bg-background border-border/80 px-2"
-                    />
-                    <span className="text-muted-foreground text-xs">-</span>
-                    <Input
-                      placeholder="Máx"
-                      type="number"
-                      value={maxValue}
-                      onChange={e => {
-                        setMaxValue(e.target.value);
-                        setVisibleCount(15);
-                      }}
-                      className="h-8 text-xs rounded-xl bg-background border-border/80 px-2"
-                    />
+                    <div className="relative flex-1">
+                      <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[10px] font-bold text-muted-foreground pointer-events-none">
+                        R$
+                      </span>
+                      <Input
+                        placeholder="Mínimo"
+                        type="number"
+                        inputMode="decimal"
+                        value={minValue}
+                        onChange={e => {
+                          setMinValue(e.target.value);
+                          setVisibleCount(15);
+                        }}
+                        className="h-9 pl-7 pr-2 text-base sm:text-xs rounded-xl bg-background border-border/80 font-mono"
+                      />
+                    </div>
+                    <span className="text-muted-foreground text-xs font-bold">–</span>
+                    <div className="relative flex-1">
+                      <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[10px] font-bold text-muted-foreground pointer-events-none">
+                        R$
+                      </span>
+                      <Input
+                        placeholder="Máximo"
+                        type="number"
+                        inputMode="decimal"
+                        value={maxValue}
+                        onChange={e => {
+                          setMaxValue(e.target.value);
+                          setVisibleCount(15);
+                        }}
+                        className="h-9 pl-7 pr-2 text-base sm:text-xs rounded-xl bg-background border-border/80 font-mono"
+                      />
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1803,13 +2600,13 @@ export function ReserveHistoryTab({
                   <button
                     type="button"
                     onClick={() => setGroupByDate(prev => !prev)}
-                    className={`px-2.5 py-1 text-[11px] font-bold rounded-lg border transition-all cursor-pointer ${
+                    className={`px-3 py-1.5 text-[11px] font-bold rounded-xl border transition-all cursor-pointer ${
                       groupByDate 
                         ? 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/20' 
                         : 'bg-muted text-muted-foreground border-border/60'
                     }`}
                   >
-                    {groupByDate ? '✓ Agrupado por Mês' : 'Lista Contínua'}
+                    {groupByDate ? '✓ Agrupado por mês' : 'Lista contínua'}
                   </button>
                 </div>
 
@@ -1818,10 +2615,10 @@ export function ReserveHistoryTab({
                     variant="ghost"
                     size="sm"
                     onClick={handleResetFilters}
-                    className="h-7 px-2.5 text-xs text-rose-500 hover:text-rose-600 hover:bg-rose-500/10 font-bold gap-1 cursor-pointer"
+                    className="h-8 px-2.5 text-xs text-rose-500 hover:text-rose-600 hover:bg-rose-500/10 font-bold gap-1.5 cursor-pointer"
                   >
-                    <RotateCcw className="w-3 h-3" />
-                    Limpar Todos os Filtros
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    Restaurar padrão (Mês Atual · Aportes)
                   </Button>
                 )}
               </div>
@@ -1832,11 +2629,11 @@ export function ReserveHistoryTab({
         {/* Active Filter Tags */}
         {hasActiveFilters && (
           <div className="flex flex-wrap items-center gap-1.5 pt-1 text-[11px]">
-            <span className="text-muted-foreground font-medium">Filtros Ativos:</span>
-            {historyPeriod !== 'all' && (
+            <span className="text-muted-foreground font-medium">Filtros ativos:</span>
+            {historyPeriod !== 'month' && (
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20 font-bold">
-                Período: {historyPeriod}
-                <button type="button" onClick={() => setHistoryPeriod('all')} className="hover:text-indigo-800">
+                Período: {getPeriodDisplayLabel(historyPeriod, customDateRange)}
+                <button type="button" onClick={() => setHistoryPeriod('month')} className="hover:text-indigo-800 cursor-pointer">
                   <X className="w-3 h-3" />
                 </button>
               </span>
@@ -1844,15 +2641,37 @@ export function ReserveHistoryTab({
             {selectedReserveId !== 'all' && (
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20 font-bold">
                 Reserva: {reserveMap[selectedReserveId]?.name || selectedReserveId}
-                <button type="button" onClick={() => setSelectedReserveId('all')} className="hover:text-indigo-800">
+                <button type="button" onClick={() => setSelectedReserveId('all')} className="hover:text-indigo-800 cursor-pointer">
                   <X className="w-3 h-3" />
                 </button>
               </span>
             )}
-            {selectedType !== 'all' && (
+            {selectedType !== 'aporte' && (
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 font-bold">
-                Tipo: {selectedType === 'rule_change' ? 'Alterações de Regra' : selectedType}
-                <button type="button" onClick={() => setSelectedType('all')} className="hover:text-emerald-800">
+                Tipo: {(
+                  {
+                    all: 'Todos os registros',
+                    rule_change: 'Histórico de regras',
+                    transactions_only: 'Movimentações',
+                    aporte: 'Aportes',
+                    manual_aporte: 'Manuais',
+                    suggestion_aporte: 'Sugeridos',
+                    mass_aporte: 'Em lote',
+                    boost_aporte: 'Com Boost',
+                    utilizacao: 'Resgates',
+                    rendimento: 'Rendimentos',
+                    pending_only: 'Pendentes',
+                  } as Record<string, string>
+                )[selectedType] || selectedType}
+                <button type="button" onClick={() => setSelectedType('aporte')} className="hover:text-emerald-800 cursor-pointer">
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            )}
+            {selectedPaymentStatus !== 'all' && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 font-bold">
+                Situação: {selectedPaymentStatus === 'pending' ? 'Pendentes' : 'Liquidados'}
+                <button type="button" onClick={() => setSelectedPaymentStatus('all')} className="hover:text-amber-800 cursor-pointer">
                   <X className="w-3 h-3" />
                 </button>
               </span>
@@ -1860,15 +2679,15 @@ export function ReserveHistoryTab({
             {selectedCategory !== 'all' && (
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 font-bold">
                 Categoria: {selectedCategory}
-                <button type="button" onClick={() => setSelectedCategory('all')} className="hover:text-amber-800">
+                <button type="button" onClick={() => setSelectedCategory('all')} className="hover:text-amber-800 cursor-pointer">
                   <X className="w-3 h-3" />
                 </button>
               </span>
             )}
             {(minValue !== '' || maxValue !== '') && (
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20 font-bold">
-                Valor: {minValue || '0'} a {maxValue || '∞'}
-                <button type="button" onClick={() => { setMinValue(''); setMaxValue(''); }} className="hover:text-blue-800">
+                Valor: R$ {minValue || '0'} até {maxValue ? `R$ ${maxValue}` : '∞'}
+                <button type="button" onClick={() => { setMinValue(''); setMaxValue(''); }} className="hover:text-blue-800 cursor-pointer">
                   <X className="w-3 h-3" />
                 </button>
               </span>
@@ -1876,7 +2695,7 @@ export function ReserveHistoryTab({
             {searchTerm && (
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-muted text-foreground border border-border font-bold">
                 Busca: &quot;{searchTerm}&quot;
-                <button type="button" onClick={() => setSearchTerm('')} className="hover:text-foreground">
+                <button type="button" onClick={() => setSearchTerm('')} className="hover:text-foreground cursor-pointer">
                   <X className="w-3 h-3" />
                 </button>
               </span>
@@ -1886,7 +2705,7 @@ export function ReserveHistoryTab({
               onClick={handleResetFilters}
               className="text-xs text-muted-foreground hover:text-foreground underline font-bold ml-1 cursor-pointer"
             >
-              Limpar tudo
+              Restaurar padrão
             </button>
           </div>
         )}
@@ -1902,14 +2721,26 @@ export function ReserveHistoryTab({
             <div className="space-y-1">
               <h4 className="text-base font-black text-foreground">Nenhum registro encontrado</h4>
               <p className="text-xs text-muted-foreground max-w-md mx-auto">
-                {hasActiveFilters 
-                  ? 'Não há movimentações ou alterações de regras com os filtros selecionados. Tente expandir o período ou remover filtros.'
-                  : 'Nenhum lançamento ou atualização de regra foi registrado ainda.'}
+                Não há lançamentos para o filtro atual ({getHistoryPeriodLabel()} · {selectedType === 'aporte' ? 'Aportes' : 'Filtro personalizado'}). Tente ver todos os tipos ou expandir para todo o histórico.
               </p>
             </div>
 
             {/* Quick resolution CTAs */}
             <div className="flex flex-wrap items-center justify-center gap-2 pt-2">
+              {selectedType !== 'all' && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setSelectedType('all');
+                    setVisibleCount(15);
+                  }}
+                  className="h-8 px-4 text-xs font-bold rounded-xl gap-1.5 cursor-pointer"
+                >
+                  <Filter className="w-3.5 h-3.5" />
+                  Ver Todos os Tipos
+                </Button>
+              )}
               {historyPeriod !== 'all' && (
                 <Button
                   variant="default"
@@ -1926,13 +2757,13 @@ export function ReserveHistoryTab({
               )}
               {hasActiveFilters && (
                 <Button
-                  variant="outline"
+                  variant="ghost"
                   size="sm"
                   onClick={handleResetFilters}
                   className="h-8 px-4 text-xs font-bold rounded-xl gap-1.5 cursor-pointer"
                 >
                   <RotateCcw className="w-3.5 h-3.5" />
-                  Limpar Filtros
+                  Restaurar Padrão
                 </Button>
               )}
             </div>
@@ -1942,8 +2773,8 @@ export function ReserveHistoryTab({
           groupedItems.map(group => (
             <div key={group.key} className="space-y-2">
               {/* Group Month Header */}
-              <div className="flex items-center justify-between px-2 pt-2 text-xs font-black text-foreground">
-                <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center justify-between gap-2 px-2 pt-2 text-xs font-black text-foreground">
+                <div className="flex items-center gap-2 flex-wrap">
                   <Calendar className="w-3.5 h-3.5 text-indigo-500" />
                   <span>{group.label}</span>
                   <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-full bg-muted text-muted-foreground">
@@ -1955,12 +2786,21 @@ export function ReserveHistoryTab({
                     </span>
                   )}
                 </div>
-                <div className="text-[11px] font-mono font-bold text-muted-foreground flex items-center gap-2">
+                <div className="text-[11px] font-mono font-bold text-muted-foreground flex items-center gap-2 flex-wrap">
                   {group.subtotalIn > 0 && (
                     <span className="text-emerald-600 dark:text-emerald-400">+{hideValues ? '••••' : formatCurrency(group.subtotalIn)}</span>
                   )}
                   {group.subtotalOut > 0 && (
                     <span className="text-rose-600 dark:text-rose-400">-{hideValues ? '••••' : formatCurrency(group.subtotalOut)}</span>
+                  )}
+                  {(group.subtotalIn > 0 || group.subtotalOut > 0) && (
+                    <span className={`px-1.5 py-0.5 rounded-md border text-[10px] font-black ${
+                      group.netMonth >= 0
+                        ? 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/20'
+                        : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20'
+                    }`}>
+                      = {group.netMonth >= 0 ? '+' : ''}{hideValues ? '••••' : formatCurrency(group.netMonth)}
+                    </span>
                   )}
                 </div>
               </div>
@@ -2618,82 +3458,145 @@ export function ReserveHistoryTab({
             {(() => {
               const info = getTxCategoryInfo(txToViewDetails);
               const isTransfer = Boolean((info as any).isTransferToCash);
+              const boostExtra = getBoostExtraFromRt(txToViewDetails);
+              const isPending = txToViewDetails.payment_status === 'pending' || (txToViewDetails as any).status === 'pending';
+              const balInfo = runningBalanceMap[txToViewDetails.id];
               return (
-                <div className={`p-4 rounded-2xl border text-center space-y-1 ${
-                  isTransfer
-                    ? 'bg-emerald-500/10 border-emerald-500/20'
-                    : txToViewDetails.type === 'utilizacao'
-                    ? 'bg-rose-500/10 border-rose-500/20'
-                    : txToViewDetails.type === 'rendimento'
-                    ? 'bg-blue-500/10 border-blue-500/20'
-                    : 'bg-emerald-500/10 border-emerald-500/20'
-                }`}>
-                  <span className="text-[10px] font-black uppercase tracking-wider text-muted-foreground">
-                    {info.label}
-                  </span>
-                  <div className={`text-2xl sm:text-3xl font-black font-mono ${
+                <>
+                  <div className={`p-4 rounded-2xl border text-center space-y-1 ${
                     isTransfer
-                      ? 'text-emerald-600 dark:text-emerald-400'
+                      ? 'bg-emerald-500/10 border-emerald-500/20'
                       : txToViewDetails.type === 'utilizacao'
-                      ? 'text-rose-600 dark:text-rose-400'
+                      ? 'bg-rose-500/10 border-rose-500/20'
                       : txToViewDetails.type === 'rendimento'
-                      ? 'text-blue-600 dark:text-blue-400'
-                      : 'text-emerald-600 dark:text-emerald-400'
+                      ? 'bg-blue-500/10 border-blue-500/20'
+                      : 'bg-emerald-500/10 border-emerald-500/20'
                   }`}>
-                    {isTransfer ? '⇄ ' : (txToViewDetails.type === 'utilizacao' ? '-' : '+')}
-                    {hideValues ? 'R$ •••••' : formatCurrency(txToViewDetails.amount)}
+                    <div className="flex items-center justify-center gap-1.5 flex-wrap">
+                      <span className="text-[10px] font-black uppercase tracking-wider text-muted-foreground">
+                        {info.label}
+                      </span>
+                      <span className={`px-1.5 py-0.2 text-[9px] font-black rounded-full border ${
+                        isPending
+                          ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30'
+                          : 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30'
+                      }`}>
+                        {isPending ? '⏳ Pendente' : '✓ Liquidado'}
+                      </span>
+                      {boostExtra > 0 && (
+                        <span className="px-1.5 py-0.2 text-[9px] font-black rounded-full bg-orange-500/15 text-orange-600 dark:text-orange-400 border border-orange-500/30 inline-flex items-center gap-0.5">
+                          <Rocket className="w-2.5 h-2.5" />
+                          Boost +{hideValues ? '•••' : formatCurrency(boostExtra)}
+                        </span>
+                      )}
+                    </div>
+                    <div className={`text-2xl sm:text-3xl font-black font-mono ${
+                      isTransfer
+                        ? 'text-emerald-600 dark:text-emerald-400'
+                        : txToViewDetails.type === 'utilizacao'
+                        ? 'text-rose-600 dark:text-rose-400'
+                        : txToViewDetails.type === 'rendimento'
+                        ? 'text-blue-600 dark:text-blue-400'
+                        : 'text-emerald-600 dark:text-emerald-400'
+                    }`}>
+                      {isTransfer ? '⇄ ' : (txToViewDetails.type === 'utilizacao' ? '-' : '+')}
+                      {hideValues ? 'R$ •••••' : formatCurrency(txToViewDetails.amount)}
+                    </div>
+                    {isTransfer && (
+                      <span className="text-[10px] font-mono text-emerald-600/80 dark:text-emerald-400/80 block">
+                        Transferência de saldo para o Caixa Geral
+                      </span>
+                    )}
                   </div>
-                  {isTransfer && (
-                    <span className="text-[10px] font-mono text-emerald-600/80 dark:text-emerald-400/80 block">
-                      Transferência de saldo para o Caixa Geral
-                    </span>
+
+                  {/* Impacto no Saldo da Reserva */}
+                  {balInfo && (
+                    <div className="p-3 rounded-2xl bg-indigo-500/5 border border-indigo-500/20 flex items-center justify-between gap-2 text-xs">
+                      <div className="text-left">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block">Saldo Anterior</span>
+                        <span className="font-mono font-bold text-foreground">
+                          {hideValues ? 'R$ •••' : formatCurrency(balInfo.balanceBefore)}
+                        </span>
+                      </div>
+                      <span className="text-indigo-500 font-black">➔</span>
+                      <div className="text-right">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block">
+                          {isPending ? 'Saldo Previsto (Pendente)' : 'Saldo Após Lançamento'}
+                        </span>
+                        <span className="font-mono font-black text-indigo-600 dark:text-indigo-400">
+                          {isPending
+                            ? (hideValues ? 'R$ •••' : formatCurrency(balInfo.balanceAfter))
+                            : (hideValues ? 'R$ •••' : formatCurrency(balInfo.balanceAfter))}
+                        </span>
+                      </div>
+                    </div>
                   )}
-                </div>
+
+                  {/* Detailed Key-Value Specs */}
+                  <div className="p-3.5 bg-muted/40 rounded-2xl border border-border/80 space-y-2.5 text-xs">
+                    <div className="flex justify-between items-center">
+                      <span className="text-muted-foreground">Data da Movimentação:</span>
+                      <span className="font-bold text-foreground">{formatDateDisplay(txToViewDetails.date)}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-muted-foreground">Reserva de Destino:</span>
+                      <span className="font-bold text-foreground">{reserveMap[txToViewDetails.reserve_id]?.name || 'N/D'}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-muted-foreground">Tipo de Operação:</span>
+                      <span className="font-bold capitalize">{info.label}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-muted-foreground">Status de Liquidação:</span>
+                      <span className={`font-bold ${isPending ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                        {isPending
+                          ? (txToViewDetails.due_date ? `Pendente (prev. ${formatDateDisplay(txToViewDetails.due_date)})` : 'Pendente')
+                          : `Liquidado${txToViewDetails.payment_date ? ` em ${formatDateDisplay(txToViewDetails.payment_date)}` : ''}`}
+                      </span>
+                    </div>
+                    {boostExtra > 0 && (
+                      <div className="flex justify-between items-center">
+                        <span className="text-muted-foreground">Bônus Modo Boost:</span>
+                        <span className="font-mono font-black text-orange-600 dark:text-orange-400">
+                          +{hideValues ? 'R$ •••' : formatCurrency(boostExtra)}
+                        </span>
+                      </div>
+                    )}
+                    {txToViewDetails.category && (
+                      <div className="flex justify-between items-center">
+                        <span className="text-muted-foreground">Categoria Associada:</span>
+                        <span className="font-bold px-2 py-0.5 rounded-md bg-background border border-border/60">
+                          {txToViewDetails.category}
+                        </span>
+                      </div>
+                    )}
+                    {txToViewDetails.source && (
+                      <div className="flex justify-between items-center">
+                        <span className="text-muted-foreground">Canal de Origem:</span>
+                        <span className="font-medium text-foreground">
+                          {txToViewDetails.source === 'mass_contribution'
+                            ? '⚡ Consolidador em Lote'
+                            : txToViewDetails.source === 'automation'
+                            ? '✨ Aporte Sugerido'
+                            : '👤 Lançamento Direto'}
+                        </span>
+                      </div>
+                    )}
+                    {txToViewDetails.description && (
+                      <div className="pt-2 border-t border-border/60 space-y-1">
+                        <span className="text-muted-foreground text-[11px]">Descrição / Observações:</span>
+                        <p className="text-foreground font-medium bg-background p-2.5 rounded-xl border border-border/60 text-[11px] break-words">
+                          {txToViewDetails.description}
+                        </p>
+                      </div>
+                    )}
+                    <div className="pt-1.5 border-t border-border/60 flex justify-between text-[10px] text-muted-foreground font-mono">
+                      <span>ID: {txToViewDetails.id.substring(0, 16)}...</span>
+                    </div>
+                  </div>
+                </>
               );
             })()}
-
-            {/* Detailed Key-Value Specs */}
-            <div className="p-3.5 bg-muted/40 rounded-2xl border border-border/80 space-y-2.5 text-xs">
-              <div className="flex justify-between items-center">
-                <span className="text-muted-foreground">Data da Movimentação:</span>
-                <span className="font-bold text-foreground">{formatDateDisplay(txToViewDetails.date)}</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-muted-foreground">Reserva de Destino:</span>
-                <span className="font-bold text-foreground">{reserveMap[txToViewDetails.reserve_id]?.name || 'N/D'}</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-muted-foreground">Tipo de Operação:</span>
-                <span className="font-bold capitalize">{getTxCategoryInfo(txToViewDetails).label}</span>
-              </div>
-              {txToViewDetails.category && (
-                <div className="flex justify-between items-center">
-                  <span className="text-muted-foreground">Categoria Associada:</span>
-                  <span className="font-bold px-2 py-0.5 rounded-md bg-background border border-border/60">
-                    {txToViewDetails.category}
-                  </span>
-                </div>
-              )}
-              {txToViewDetails.source && (
-                <div className="flex justify-between items-center">
-                  <span className="text-muted-foreground">Canal de Origem:</span>
-                  <span className="font-medium text-foreground">
-                    {txToViewDetails.source === 'mass_contribution' ? '⚡ Consolidador em Lote' : '👤 Lançamento Direto'}
-                  </span>
-                </div>
-              )}
-              {txToViewDetails.description && (
-                <div className="pt-2 border-t border-border/60 space-y-1">
-                  <span className="text-muted-foreground text-[11px]">Descrição / Observações:</span>
-                  <p className="text-foreground font-medium bg-background p-2.5 rounded-xl border border-border/60 text-[11px]">
-                    {txToViewDetails.description}
-                  </p>
-                </div>
-              )}
-              <div className="pt-1.5 border-t border-border/60 flex justify-between text-[10px] text-muted-foreground font-mono">
-                <span>ID: {txToViewDetails.id.substring(0, 16)}...</span>
-              </div>
-            </div>
 
             {/* Modal Actions */}
             <div className="flex items-center justify-end gap-2 pt-2">
@@ -2755,27 +3658,61 @@ export function ReserveHistoryTab({
                 </label>
                 <Input
                   type="text"
+                  inputMode="decimal"
                   required
                   value={editAmount}
                   onChange={e => setEditAmount(e.target.value)}
                   placeholder="Ex: 50.00"
-                  className="h-10 text-sm font-mono font-bold rounded-xl"
+                  className="h-10 text-base sm:text-sm font-mono font-bold rounded-xl"
                 />
               </div>
 
-              {/* Data */}
-              <div className="space-y-1">
-                <label className="font-bold text-foreground flex items-center gap-1">
-                  <Calendar className="w-3.5 h-3.5 text-indigo-500" />
-                  Data da Movimentação
-                </label>
-                <Input
-                  type="date"
-                  required
-                  value={editDate}
-                  onChange={e => setEditDate(e.target.value)}
-                  className="h-10 text-xs rounded-xl"
-                />
+              {/* Data + Status */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <div className="space-y-1">
+                  <label className="font-bold text-foreground flex items-center gap-1">
+                    <Calendar className="w-3.5 h-3.5 text-indigo-500" />
+                    Data da Movimentação
+                  </label>
+                  <Input
+                    type="date"
+                    required
+                    value={editDate}
+                    onChange={e => setEditDate(e.target.value)}
+                    className="h-10 text-base sm:text-xs rounded-xl"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="font-bold text-foreground flex items-center gap-1">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                    Liquidação
+                  </label>
+                  <div className="grid grid-cols-2 gap-1.5 h-10 p-1 rounded-xl bg-muted/40 border border-border/80">
+                    <button
+                      type="button"
+                      onClick={() => setEditPaymentStatus('paid')}
+                      className={`rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                        editPaymentStatus === 'paid'
+                          ? 'bg-emerald-600 text-white shadow-2xs'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      ✓ Liquidado
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEditPaymentStatus('pending')}
+                      className={`rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                        editPaymentStatus === 'pending'
+                          ? 'bg-amber-500 text-white shadow-2xs'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      ⏳ Pendente
+                    </button>
+                  </div>
+                </div>
               </div>
 
               {/* Reserva */}
@@ -2809,7 +3746,7 @@ export function ReserveHistoryTab({
                   value={editCategory}
                   onChange={e => setEditCategory(e.target.value)}
                   placeholder="Ex: Manutenção, Seguro, IPVA"
-                  className="h-10 text-xs rounded-xl"
+                  className="h-10 text-base sm:text-xs rounded-xl"
                 />
               </div>
 
@@ -2821,7 +3758,7 @@ export function ReserveHistoryTab({
                   value={editDescription}
                   onChange={e => setEditDescription(e.target.value)}
                   placeholder="Ex: Aporte semanal para revisão"
-                  className="h-10 text-xs rounded-xl"
+                  className="h-10 text-base sm:text-xs rounded-xl"
                 />
               </div>
 
@@ -2951,11 +3888,19 @@ export function ReserveHistoryTab({
     const ResIcon = res ? (iconOptions[res.icon] || PiggyBank) : PiggyBank;
     const resColor = res?.color || '#6366f1';
     const IconComp = info.icon;
+    const boostExtra = getBoostExtraFromRt(tx);
+    const isPending = tx.payment_status === 'pending' || (tx as any).status === 'pending';
+    const balInfo = runningBalanceMap[tx.id];
+    const isTransfer = Boolean((info as any).isTransferToCash);
 
     return (
       <div
         key={`tx_${tx.id}`}
-        className="p-3.5 sm:p-4 rounded-2xl bg-card border border-border/80 hover:border-border transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs hover:shadow-xs group text-left"
+        className={`p-3.5 sm:p-4 rounded-2xl bg-card border transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs hover:shadow-xs group text-left ${
+          isPending
+            ? 'border-amber-500/35 bg-amber-500/[0.02] hover:border-amber-500/60'
+            : 'border-border/80 hover:border-border'
+        }`}
       >
         {/* Left: Icon, Reserve Name, Type Badge, Category, Date & Description */}
         <div className="flex items-start sm:items-center gap-3 min-w-0 flex-1">
@@ -2968,7 +3913,7 @@ export function ReserveHistoryTab({
           </div>
 
           <div className="min-w-0 flex-1 space-y-1">
-            <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-1.5 flex-wrap">
               <span className="text-xs font-black text-foreground truncate">
                 {res?.name || 'Reserva Desconhecida'}
               </span>
@@ -2979,8 +3924,16 @@ export function ReserveHistoryTab({
                 {info.label}
               </span>
 
+              {/* Boost Badge */}
+              {boostExtra > 0 && (
+                <span className="px-1.5 py-0.2 text-[9px] font-black rounded-md bg-orange-500/15 text-orange-600 dark:text-orange-400 border border-orange-500/30 inline-flex items-center gap-0.5">
+                  <Rocket className="w-2.5 h-2.5" />
+                  Boost +{hideValues ? '•••' : formatCurrency(boostExtra)}
+                </span>
+              )}
+
               {/* Payment Status Tag */}
-              {tx.payment_status === 'pending' ? (
+              {isPending ? (
                 <span className="px-1.5 py-0.2 text-[9px] font-bold rounded-md bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
                   {tx.due_date ? `⏳ Liquida em ${formatDateDisplay(tx.due_date)}` : '⏳ Pendente'}
                 </span>
@@ -3003,6 +3956,17 @@ export function ReserveHistoryTab({
                   ⚡ Lote
                 </span>
               )}
+
+              {/* Ignored in Charts Tag */}
+              {tx.ignore_in_charts && (
+                <span
+                  className="px-1.5 py-0.2 text-[9px] font-bold rounded-md bg-muted text-muted-foreground border border-border inline-flex items-center gap-0.5"
+                  title="Desconsiderado dos gráficos e médias"
+                >
+                  <EyeOff className="w-2.5 h-2.5" />
+                  Oculto
+                </span>
+              )}
             </div>
 
             <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground">
@@ -3017,7 +3981,7 @@ export function ReserveHistoryTab({
                 </span>
               )}
               {tx.description && (
-                <span className="truncate text-foreground/80 font-medium max-w-xs">
+                <span className="text-foreground/80 font-medium line-clamp-2 sm:line-clamp-1 max-w-full sm:max-w-sm">
                   • {tx.description}
                 </span>
               )}
@@ -3025,34 +3989,34 @@ export function ReserveHistoryTab({
           </div>
         </div>
 
-        {/* Right: Amount & Quick Actions */}
+        {/* Right: Amount, Running Balance & Quick Actions */}
         <div className="flex items-center justify-between sm:justify-end gap-3 shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-border/60">
           <div className="text-left sm:text-right">
-            {(() => {
-              const info = getTxCategoryInfo(tx);
-              const isTransfer = Boolean((info as any).isTransferToCash);
-              return (
-                <>
-                  <div className={`text-sm sm:text-base font-black font-mono tracking-tight ${
-                    isTransfer
-                      ? 'text-emerald-600 dark:text-emerald-400'
-                      : tx.type === 'utilizacao' 
-                      ? 'text-rose-600 dark:text-rose-400' 
-                      : tx.type === 'rendimento'
-                      ? 'text-blue-600 dark:text-blue-400'
-                      : 'text-emerald-600 dark:text-emerald-400'
-                  }`}>
-                    {isTransfer ? '⇄ ' : (tx.type === 'utilizacao' ? '-' : '+')}
-                    {hideValues ? 'R$ •••••' : formatCurrency(tx.amount)}
-                  </div>
-                  {isTransfer && (
-                    <span className="text-[9px] font-mono text-emerald-600/80 dark:text-emerald-400/80 block">
-                      Crédito em Caixa
-                    </span>
-                  )}
-                </>
-              );
-            })()}
+            <div className={`text-sm sm:text-base font-black font-mono tracking-tight ${
+              isTransfer
+                ? 'text-emerald-600 dark:text-emerald-400'
+                : tx.type === 'utilizacao' 
+                ? 'text-rose-600 dark:text-rose-400' 
+                : tx.type === 'rendimento'
+                ? 'text-blue-600 dark:text-blue-400'
+                : 'text-emerald-600 dark:text-emerald-400'
+            }`}>
+              {isTransfer ? '⇄ ' : (tx.type === 'utilizacao' ? '-' : '+')}
+              {hideValues ? 'R$ •••••' : formatCurrency(tx.amount)}
+            </div>
+            {isPending ? (
+              <span className="text-[9.5px] font-mono text-amber-600 dark:text-amber-400 block">
+                Aguardando liquidação
+              </span>
+            ) : balInfo ? (
+              <span className="text-[9.5px] font-mono text-muted-foreground block tabular-nums">
+                Saldo: <strong className="text-foreground/80">{hideValues ? '••••' : formatCurrency(balInfo.balanceAfter)}</strong>
+              </span>
+            ) : isTransfer ? (
+              <span className="text-[9px] font-mono text-emerald-600/80 dark:text-emerald-400/80 block">
+                Crédito em Caixa
+              </span>
+            ) : null}
           </div>
 
           {/* Action Buttons */}

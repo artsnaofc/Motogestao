@@ -78,7 +78,7 @@ import { startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth,
 import { syncQueueManager } from '../lib/syncQueue';
 import { cacheManager } from '../lib/cacheManager';
 import { freightStorage } from '../lib/freightStorage';
-import { calculateNextOccurrence, getFrequencyLabel, generateUUID, parseLocalDate } from '../lib/recurrenceUtils';
+import { calculateNextOccurrence, getFrequencyLabel, generateUUID, parseLocalDate, buildNextRecurringTransaction } from '../lib/recurrenceUtils';
 import { getTodayLocalDateStr } from '../lib/utils';
 import { getEffectiveUserId } from '../lib/authUtils';
 import { RefreshCw, CalendarClock, CalendarRange, CheckCircle2, AlertCircle, EyeOff, Bookmark, X } from 'lucide-react';
@@ -112,7 +112,7 @@ export function AddTransaction() {
   const paramQuoteId = searchParams.get('quote_id') || '';
   const paramDistanceKm = searchParams.get('distance_km') || '';
 
-  const { transactions, setTransactions, settings, refreshData, globalPeriod, reserves, addReserveTransaction, updateReserve, hideValues } = useData();
+  const { transactions, setTransactions, settings, refreshData, globalPeriod, reserves, addReserveTransaction, hideValues } = useData();
   const { activeVehicle, vehicles } = useVehicles();
 
   const [selectedVehicleId, setSelectedVehicleId] = useState<string>(
@@ -166,10 +166,12 @@ export function AddTransaction() {
   const [paymentStatus, setPaymentStatus] = useState<PaymentStatus>('paid');
   const [paymentDate, setPaymentDate] = useState<string>('');
   const [dueDate, setDueDate] = useState<string>('');
+  const [useCustomSecondaryDate, setUseCustomSecondaryDate] = useState<boolean>(false);
   const [ignoreInCharts, setIgnoreInCharts] = useState<boolean>(false);
   const [deductFromReserve, setDeductFromReserve] = useState<boolean>(false);
   const [deductReserveId, setDeductReserveId] = useState<string>('');
   const [isRecurring, setIsRecurring] = useState<boolean>(false);
+  const [recurrenceMode, setRecurrenceMode] = useState<'auto' | 'fixed'>('auto');
   const [recurrenceFrequency, setRecurrenceFrequency] = useState<RecurrenceFrequency>('monthly');
   const [recurrenceInstallments, setRecurrenceInstallments] = useState<string>('12');
 
@@ -250,20 +252,25 @@ export function AddTransaction() {
   }, [activeTab, category, activeReservesList]);
 
   useEffect(() => {
-    if (activeTab === 'despesa' && suggestedExpenseReserve) {
-      setDeductReserveId(suggestedExpenseReserve.id);
-    } else if (activeTab !== 'despesa') {
+    if (activeTab !== 'despesa') {
       setDeductFromReserve(false);
       setDeductReserveId('');
-    } else if (!suggestedExpenseReserve) {
-      setDeductFromReserve(false);
-      setDeductReserveId('');
+      return;
     }
-  }, [activeTab, suggestedExpenseReserve?.id]);
+    if (suggestedExpenseReserve) {
+      setDeductReserveId(suggestedExpenseReserve.id);
+    } else if (!deductReserveId || !activeReservesList.some(r => r.id === deductReserveId)) {
+      setDeductReserveId(activeReservesList[0]?.id || '');
+    }
+  }, [activeTab, suggestedExpenseReserve?.id, activeReservesList]);
 
   const selectedDeductReserve = useMemo(() => {
-    if (!deductReserveId) return suggestedExpenseReserve;
-    return activeReservesList.find(r => r.id === deductReserveId) || suggestedExpenseReserve;
+    if (!activeReservesList.length) return null;
+    if (deductReserveId) {
+      const found = activeReservesList.find(r => r.id === deductReserveId);
+      if (found) return found;
+    }
+    return suggestedExpenseReserve || activeReservesList[0] || null;
   }, [deductReserveId, activeReservesList, suggestedExpenseReserve]);
 
   const selectedReserveObj = useMemo(() => {
@@ -413,8 +420,10 @@ export function AddTransaction() {
     setPaymentStatus('paid');
     setPaymentDate('');
     setDueDate('');
+    setUseCustomSecondaryDate(false);
     setDate(getTodayLocalDateStr());
     setIsRecurring(false);
+    setRecurrenceMode('auto');
     setRecurrenceFrequency('monthly');
     setRecurrenceInstallments('12');
     setIgnoreInCharts(false);
@@ -433,6 +442,9 @@ export function AddTransaction() {
     if (tpl.outOfNeighborhood !== undefined) setOutOfNeighborhood(tpl.outOfNeighborhood);
     if (tpl.operationalExpenses !== undefined) setOperationalExpenses(tpl.operationalExpenses);
     if (tpl.paymentStatus) setPaymentStatus(tpl.paymentStatus);
+    setUseCustomSecondaryDate(false);
+    setPaymentDate('');
+    setDueDate('');
     setIgnoreInCharts(Boolean(tpl.ignoreInCharts));
     toast.success(`Modelo "${tpl.name}" preenchido!`);
   };
@@ -664,14 +676,73 @@ export function AddTransaction() {
         }
 
         const effectivePaymentStatus = paymentStatus;
-        const effectivePaymentDate = effectivePaymentStatus === 'paid' 
-          ? (paymentDate.trim() || date || getTodayLocalDateStr())
+        const effectivePaymentDate = effectivePaymentStatus === 'paid'
+          ? ((useCustomSecondaryDate ? paymentDate.trim() : '') || date || getTodayLocalDateStr())
           : null;
-        const effectiveDueDate = dueDate.trim() || date;
+        const effectiveDueDate = (useCustomSecondaryDate ? dueDate.trim() : '') || date;
 
         let targetHighlightId = '';
 
-        if (isRecurring) {
+        if (isRecurring && recurrenceMode === 'auto') {
+          const recurrenceGroupId = generateUUID();
+          const reserveVehicleId = getEffectiveVehicleId();
+          const baseDesc = description || (rtType === 'aporte' ? `Aporte para ${selectedRes?.name}` : `Uso da reserva ${selectedRes?.name}`);
+
+          const rtId = await addReserveTransaction({
+            reserve_id: reserveId,
+            type: rtType,
+            amount: finalAmt,
+            date: date,
+            category: rtType === 'utilizacao' ? finalRtCategory : 'Aporte Extra',
+            description: baseDesc,
+            payment_status: effectivePaymentStatus,
+            payment_date: effectivePaymentDate,
+            due_date: effectiveDueDate,
+            is_recurring: true,
+            recurrence_frequency: recurrenceFrequency,
+            recurrence_installments: null,
+            recurrence_group_id: recurrenceGroupId,
+            installment_number: 1,
+            installment_total: null,
+            installment_index: 1,
+            total_installments: null,
+            vehicle_id: reserveVehicleId,
+            ignore_in_charts: ignoreInCharts,
+          }, { silent: true });
+
+          targetHighlightId = rtId || '';
+
+          if (effectivePaymentStatus === 'paid') {
+            const nextDate = calculateNextOccurrence(effectiveDueDate || date, recurrenceFrequency, 1);
+            await addReserveTransaction({
+              reserve_id: reserveId,
+              type: rtType,
+              amount: finalAmt,
+              date: nextDate,
+              category: rtType === 'utilizacao' ? finalRtCategory : 'Aporte Extra',
+              description: baseDesc,
+              payment_status: 'pending',
+              payment_date: null,
+              due_date: nextDate,
+              is_recurring: true,
+              recurrence_frequency: recurrenceFrequency,
+              recurrence_installments: null,
+              recurrence_group_id: recurrenceGroupId,
+              installment_number: 2,
+              installment_total: null,
+              installment_index: 2,
+              total_installments: null,
+              vehicle_id: reserveVehicleId,
+              ignore_in_charts: ignoreInCharts,
+            }, { silent: true });
+            toast.success(`Lançado! Próxima conta recorrente agendada para ${format(parseLocalDate(nextDate), 'dd/MM/yyyy')}.`, { id: 'add-tx' });
+          } else {
+            toast.success(
+              `Conta recorrente (${getFrequencyLabel(recurrenceFrequency)}) agendada na reserva! A próxima será gerada ao quitar.`,
+              { id: 'add-tx' }
+            );
+          }
+        } else if (isRecurring) {
           const numInstallments = Math.max(2, Math.min(60, Number(recurrenceInstallments) || 12));
           const recurrenceGroupId = generateUUID();
           const reserveVehicleId = getEffectiveVehicleId();
@@ -781,13 +852,67 @@ export function AddTransaction() {
       if (activeTab === 'despesa' && deductFromReserve && selectedDeductReserve) {
         const effectivePaymentStatus = paymentStatus;
         const effectivePaymentDate = effectivePaymentStatus === 'paid'
-          ? (paymentDate.trim() || date || getTodayLocalDateStr())
+          ? ((useCustomSecondaryDate ? paymentDate.trim() : '') || date || getTodayLocalDateStr())
           : null;
-        const effectiveDueDate = dueDate.trim() || date;
+        const effectiveDueDate = (useCustomSecondaryDate ? dueDate.trim() : '') || date;
         const reserveVehicleId = getEffectiveVehicleId();
         let targetHighlightId = '';
 
-        if (isRecurring) {
+        if (isRecurring && recurrenceMode === 'auto') {
+          const recurrenceGroupId = generateUUID();
+          const baseDesc = description || finalCategory || `Uso da reserva ${selectedDeductReserve.name}`;
+          const rtId = await addReserveTransaction({
+            reserve_id: selectedDeductReserve.id,
+            type: 'utilizacao',
+            amount: finalAmount,
+            date: date,
+            category: finalCategory,
+            description: baseDesc,
+            payment_status: effectivePaymentStatus,
+            payment_date: effectivePaymentDate,
+            due_date: effectiveDueDate,
+            is_recurring: true,
+            recurrence_frequency: recurrenceFrequency,
+            recurrence_installments: null,
+            recurrence_group_id: recurrenceGroupId,
+            installment_number: 1,
+            installment_total: null,
+            installment_index: 1,
+            total_installments: null,
+            vehicle_id: reserveVehicleId,
+            ignore_in_charts: ignoreInCharts,
+          }, { silent: true });
+
+          if (rtId) targetHighlightId = rtId;
+
+          if (effectivePaymentStatus === 'paid') {
+            const nextDate = calculateNextOccurrence(effectiveDueDate || date, recurrenceFrequency, 1);
+            await addReserveTransaction({
+              reserve_id: selectedDeductReserve.id,
+              type: 'utilizacao',
+              amount: finalAmount,
+              date: nextDate,
+              category: finalCategory,
+              description: baseDesc,
+              payment_status: 'pending',
+              payment_date: null,
+              due_date: nextDate,
+              is_recurring: true,
+              recurrence_frequency: recurrenceFrequency,
+              recurrence_installments: null,
+              recurrence_group_id: recurrenceGroupId,
+              installment_number: 2,
+              installment_total: null,
+              installment_index: 2,
+              total_installments: null,
+              vehicle_id: reserveVehicleId,
+              ignore_in_charts: ignoreInCharts,
+            }, { silent: true });
+            toast.success(`Abatido da reserva "${selectedDeductReserve.name}"! Próxima agendada para ${format(parseLocalDate(nextDate), 'dd/MM/yyyy')}.`, { id: 'add-tx' });
+          } else {
+            toast.success(`Conta recorrente agendada na reserva "${selectedDeductReserve.name}"!`, { id: 'add-tx' });
+          }
+        } else if (isRecurring) {
           const numInstallments = Math.max(2, Math.min(60, Number(recurrenceInstallments) || 12));
           const recurrenceGroupId = generateUUID();
 
@@ -823,11 +948,6 @@ export function AddTransaction() {
             if (isFirst && rtId) targetHighlightId = rtId;
           }
 
-          if (effectivePaymentStatus === 'paid') {
-            const newBal = Math.max(0, Math.round(((selectedDeductReserve.saldo_atual || 0) - finalAmount) * 100) / 100);
-            await updateReserve(selectedDeductReserve.id, { saldo_atual: newBal });
-          }
-
           toast.success(`Despesa recorrente (${numInstallments}x) abatida da reserva "${selectedDeductReserve.name}"!`, { id: 'add-tx' });
         } else {
           const rtId = await addReserveTransaction({
@@ -847,12 +967,7 @@ export function AddTransaction() {
 
           if (rtId) targetHighlightId = rtId;
 
-          if (effectivePaymentStatus === 'paid') {
-            const newBal = Math.max(0, Math.round(((selectedDeductReserve.saldo_atual || 0) - finalAmount) * 100) / 100);
-            await updateReserve(selectedDeductReserve.id, { saldo_atual: newBal });
-          }
-
-          toast.success(`Despesa de ${formatCurrency(finalAmount)} abatida da reserva "${selectedDeductReserve.name}"!`, { id: 'add-tx' });
+          toast.success(`Despesa de ${formatCurrency(finalAmount)} ${effectivePaymentStatus === 'paid' ? 'abatida da' : 'agendada na'} reserva "${selectedDeductReserve.name}"!`, { id: 'add-tx' });
         }
 
         resetForm();
@@ -894,7 +1009,7 @@ export function AddTransaction() {
           const instStatus: PaymentStatus = i === 1 ? paymentStatus : 'pending';
           const instPayDate =
             instStatus === 'paid'
-              ? (paymentDate.trim() || statementDueDate)
+              ? ((useCustomSecondaryDate ? paymentDate.trim() : '') || statementDueDate)
               : null;
 
           const payload = {
@@ -951,12 +1066,79 @@ export function AddTransaction() {
       }
 
       // Handle Recurring Expenses
+      if (activeTab === 'despesa' && isRecurring && recurrenceMode === 'auto') {
+        const recurrenceGroupId = generateUUID();
+        const effectiveDueDate = (useCustomSecondaryDate ? dueDate.trim() : '') || date;
+        const effectivePaymentDate = paymentStatus === 'paid'
+          ? ((useCustomSecondaryDate ? paymentDate.trim() : '') || date || getTodayLocalDateStr())
+          : null;
+        const firstTxId = generateUUID();
+        const baseDesc = description || finalCategory || 'Despesa';
+
+        const firstPayload: any = {
+          id: firstTxId,
+          user_id: userId,
+          type: 'expense' as TransactionType,
+          amount: finalAmount,
+          date: date,
+          category: finalCategory,
+          description: baseDesc,
+          payment_status: paymentStatus,
+          payment_date: effectivePaymentDate,
+          due_date: effectiveDueDate,
+          is_recurring: true,
+          recurrence_frequency: recurrenceFrequency,
+          recurrence_installments: null,
+          recurrence_group_id: recurrenceGroupId,
+          installment_number: 1,
+          installment_total: null,
+          installment_index: 1,
+          total_installments: null,
+          start_km: null,
+          end_km: null,
+          deliveries: null,
+          out_of_neighborhood: null,
+          vehicle_id: getEffectiveVehicleId(),
+          ignore_in_charts: ignoreInCharts,
+          created_at: new Date().toISOString()
+        };
+
+        const batchToInsert = [firstPayload];
+        syncQueueManager.enqueue('transactions', 'insert', firstTxId, firstPayload);
+
+        let nextDateLabel = '';
+        if (paymentStatus === 'paid') {
+          const nextDate = calculateNextOccurrence(effectiveDueDate, recurrenceFrequency, 1);
+          const nextTx = buildNextRecurringTransaction(firstPayload, nextDate, recurrenceGroupId, userId);
+          batchToInsert.unshift(nextTx);
+          syncQueueManager.enqueue('transactions', 'insert', nextTx.id, nextTx);
+          nextDateLabel = format(parseLocalDate(nextDate), 'dd/MM/yyyy');
+        }
+
+        setTransactions(prev => {
+          const newState = [...batchToInsert, ...prev];
+          cacheManager.set(`transactions_${userId}`, newState, undefined, 'transactions');
+          cacheManager.set('last_known_transactions', newState, undefined, 'transactions');
+          return newState;
+        });
+
+        toast.success(
+          nextDateLabel
+            ? `Despesa paga! Próxima conta recorrente agendada para ${nextDateLabel}.`
+            : `Conta recorrente (${getFrequencyLabel(recurrenceFrequency)}) agendada! Próxima será gerada ao quitar.`,
+          { id: 'add-tx' }
+        );
+        resetForm();
+        navigate(`/history?highlight=${firstTxId}`);
+        return;
+      }
+
       if (activeTab === 'despesa' && isRecurring) {
         const numInstallments = Math.max(2, Math.min(60, Number(recurrenceInstallments) || 12));
         const recurrenceGroupId = generateUUID();
-        const effectiveDueDate = dueDate.trim() || date;
-        const effectivePaymentDate = paymentStatus === 'paid' 
-          ? (paymentDate.trim() || date || getTodayLocalDateStr())
+        const effectiveDueDate = (useCustomSecondaryDate ? dueDate.trim() : '') || date;
+        const effectivePaymentDate = paymentStatus === 'paid'
+          ? ((useCustomSecondaryDate ? paymentDate.trim() : '') || date || getTodayLocalDateStr())
           : null;
 
         const newTxBatch: any[] = [];
@@ -1022,10 +1204,10 @@ export function AddTransaction() {
       // Single Transaction (Normal Flow)
       const newTxId = generateUUID();
       const effectivePaymentStatus: PaymentStatus = activeTab === 'despesa' ? paymentStatus : 'paid';
-      const effectivePaymentDate = effectivePaymentStatus === 'paid' 
-        ? (paymentDate.trim() || date || getTodayLocalDateStr())
+      const effectivePaymentDate = effectivePaymentStatus === 'paid'
+        ? ((useCustomSecondaryDate ? paymentDate.trim() : '') || date || getTodayLocalDateStr())
         : null;
-      const effectiveDueDate = (activeTab === 'despesa' && dueDate.trim()) ? dueDate.trim() : date;
+      const effectiveDueDate = (activeTab === 'despesa' && useCustomSecondaryDate && dueDate.trim()) ? dueDate.trim() : date;
 
       const newTxPayload = {
         id: newTxId,
@@ -1233,13 +1415,26 @@ export function AddTransaction() {
           <form onSubmit={handleSave} className="w-full space-y-5">
             
             {/* Common Top */}
-            <div className="space-y-2 max-w-[220px]">
-              <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground/90">Data da Transação</label>
+            <div className="space-y-2 max-w-[240px]">
+              <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground/90">
+                {selectedCardObj
+                  ? 'Data da Compra'
+                  : (activeTab === 'despesa' || (activeTab === 'reserva' && rtType === 'utilizacao')) && !useCustomSecondaryDate
+                    ? (paymentStatus === 'pending' ? 'Data / Vencimento' : 'Data / Pagamento')
+                    : 'Data da Transação'}
+              </label>
               <Input
                 type="date"
                 value={date}
                 className="h-11 rounded-xl border-border font-semibold focus:ring-1 focus:ring-primary focus-visible:ring-primary"
-                onChange={(e) => setDate(e.target.value)}
+                onChange={(e) => {
+                  const newDate = e.target.value;
+                  setDate(newDate);
+                  if (!useCustomSecondaryDate) {
+                    setPaymentDate(newDate);
+                    setDueDate(newDate);
+                  }
+                }}
                 required
               />
             </div>
@@ -1749,8 +1944,8 @@ export function AddTransaction() {
                   </div>
                 )}
 
-                {/* Alocação Inteligente por Categoria (Match Automático de Reserva) */}
-                {activeTab === 'despesa' && suggestedExpenseReserve && selectedDeductReserve && (
+                {/* Alocação por Reserva (Sugestão automática ou escolha manual) */}
+                {activeTab === 'despesa' && !selectedCardObj && activeReservesList.length > 0 && selectedDeductReserve && (
                   <div className="p-3.5 rounded-xl border border-indigo-500/30 bg-indigo-500/[0.06] space-y-2.5 animate-fade-in">
                     <label className="flex items-start gap-2.5 cursor-pointer select-none">
                       <input
@@ -1763,19 +1958,21 @@ export function AddTransaction() {
                         <div className="flex items-center justify-between gap-2 flex-wrap">
                           <span className="text-xs font-extrabold text-foreground flex items-center gap-1.5">
                             <PiggyBank className="w-3.5 h-3.5 text-indigo-500" />
-                            Abater diretamente da reserva <strong className="text-indigo-600 dark:text-indigo-400">{selectedDeductReserve.name}</strong>?
+                            Pagar usando a reserva <strong className="text-indigo-600 dark:text-indigo-400">{selectedDeductReserve.name}</strong>?
                           </span>
                           <span className="text-[10px] font-bold font-mono px-1.5 py-0.5 rounded bg-card border border-border/70 text-foreground">
                             Saldo: {formatCurrency(selectedDeductReserve.saldo_atual || 0)}
                           </span>
                         </div>
                         <p className="text-[10.5px] text-muted-foreground leading-snug">
-                          Detectamos uma reserva compatível com <strong>{category}</strong>. Ao marcar, o gasto usa o saldo guardado da reserva sem descontar do seu caixa livre.
+                          {suggestedExpenseReserve
+                            ? <>Detectamos uma reserva compatível com <strong>{category}</strong>. Ao marcar, o gasto usa o saldo da reserva sem descontar do caixa livre.</>
+                            : <>Ao marcar, esta conta será abatida da reserva selecionada (sem descontar do seu caixa livre).</>}
                         </p>
                       </div>
                     </label>
 
-                    {deductFromReserve && activeReservesList.length > 1 && (
+                    {deductFromReserve && activeReservesList.length >= 1 && (
                       <div className="pt-2 border-t border-indigo-500/20 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                         <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
                           Reserva selecionada:
@@ -1821,7 +2018,9 @@ export function AddTransaction() {
                       <CalendarClock className="w-3.5 h-3.5 text-primary" /> Status do Pagamento
                     </label>
                     <span className="text-[10px] text-muted-foreground">
-                      {paymentStatus === 'paid' ? 'Liquidado no caixa' : 'Pendente de quitação'}
+                      {activeTab === 'reserva' || (activeTab === 'despesa' && deductFromReserve && selectedDeductReserve)
+                        ? (paymentStatus === 'paid' ? 'Abatido da reserva' : 'Pendente na reserva')
+                        : (paymentStatus === 'paid' ? 'Liquidado no caixa' : 'Pendente de quitação')}
                     </span>
                   </div>
 
@@ -1852,46 +2051,86 @@ export function AddTransaction() {
                     </button>
                   </div>
 
-                  {paymentStatus === 'paid' ? (
-                    <div className="space-y-1.5 animate-fade-in">
-                      <div className="flex justify-between items-center">
-                        <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground/90">
-                          Data do Pagamento
-                        </label>
-                        <span className="text-[9px] text-muted-foreground bg-muted/60 px-1.5 py-0.5 rounded">
-                          Vazio = Hoje
-                        </span>
-                      </div>
-                      <Input
-                        type="date"
-                        value={paymentDate}
-                        placeholder={date || getTodayLocalDateStr()}
-                        onChange={(e) => setPaymentDate(e.target.value)}
-                        className="h-10 rounded-xl border-border bg-card text-xs font-semibold"
-                      />
-                      <p className="text-[10px] text-muted-foreground/80 leading-relaxed">
-                        Caso deixe a data de pagamento vazia, o sistema considerará como pago na data informada ({date || 'hoje'}).
-                      </p>
-                    </div>
-                  ) : selectedCardObj ? (
+                  {selectedCardObj && paymentStatus === 'pending' ? (
                     <div className="p-2.5 rounded-xl bg-purple-500/10 border border-purple-500/25 text-[10.5px] text-purple-600 dark:text-purple-300 font-semibold leading-relaxed">
                       Vencimento calculado automaticamente pela fatura do cartão <strong>{selectedCardObj.name}</strong> (fecha dia {selectedCardObj.closingDay}, vence dia {selectedCardObj.dueDay}).
                     </div>
+                  ) : !useCustomSecondaryDate ? (
+                    <div className="space-y-1.5 animate-fade-in">
+                      <div className={`flex flex-wrap items-center justify-between gap-2 px-3 py-2.5 rounded-xl border text-xs ${
+                        paymentStatus === 'pending'
+                          ? 'bg-amber-500/10 border-amber-500/25 text-amber-700 dark:text-amber-300'
+                          : 'bg-emerald-500/10 border-emerald-500/25 text-emerald-700 dark:text-emerald-300'
+                      }`}>
+                        <div className="flex items-center gap-2 min-w-0">
+                          <Calendar className="w-3.5 h-3.5 shrink-0" />
+                          <span className="font-semibold">
+                            {paymentStatus === 'paid' ? 'Pago na data:' : 'Vencimento em:'}{' '}
+                            <strong className="font-black">
+                              {date ? format(parseLocalDate(date), 'dd/MM/yyyy') : 'Hoje'}
+                            </strong>
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const fallback = date || getTodayLocalDateStr();
+                            if (paymentStatus === 'paid') setPaymentDate(fallback);
+                            else setDueDate(fallback);
+                            setUseCustomSecondaryDate(true);
+                          }}
+                          className="text-[11px] font-extrabold underline underline-offset-2 hover:opacity-80 cursor-pointer shrink-0"
+                        >
+                          {paymentStatus === 'paid' ? 'Outra data?' : 'Vencimento diferente?'}
+                        </button>
+                      </div>
+                      {paymentStatus === 'pending' && (
+                        <p className="text-[10px] text-amber-600/90 dark:text-amber-400/90 leading-relaxed px-0.5">
+                          Esta despesa ficará visível na seção <strong>"A Pagar / Pendentes"</strong> do Extrato até você liquidá-la.
+                        </p>
+                      )}
+                    </div>
                   ) : (
                     <div className="space-y-1.5 animate-fade-in">
-                      <label className="text-[10px] font-extrabold uppercase tracking-wider text-amber-600 dark:text-amber-400 flex items-center gap-1 font-bold">
-                        <AlertCircle className="w-3 h-3" /> Data de Vencimento
-                      </label>
+                      <div className="flex flex-wrap justify-between items-center gap-2">
+                        <label className={`text-[10px] font-extrabold uppercase tracking-wider flex items-center gap-1 ${
+                          paymentStatus === 'pending' ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground/90'
+                        }`}>
+                          {paymentStatus === 'pending' ? (
+                            <><AlertCircle className="w-3 h-3" /> Data de Vencimento</>
+                          ) : (
+                            'Data do Pagamento'
+                          )}
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setUseCustomSecondaryDate(false);
+                            setPaymentDate(date);
+                            setDueDate(date);
+                          }}
+                          className="text-[10.5px] font-extrabold text-primary hover:underline cursor-pointer"
+                        >
+                          Unificar com data principal ({date ? format(parseLocalDate(date), 'dd/MM/yyyy') : 'hoje'})
+                        </button>
+                      </div>
                       <Input
                         type="date"
-                        value={dueDate || date}
-                        onChange={(e) => setDueDate(e.target.value)}
-                        className="h-10 rounded-xl border-amber-500/30 bg-card text-xs font-semibold focus:ring-amber-500"
-                        required
+                        value={paymentStatus === 'paid' ? (paymentDate || date) : (dueDate || date)}
+                        onChange={(e) => {
+                          if (paymentStatus === 'paid') setPaymentDate(e.target.value);
+                          else setDueDate(e.target.value);
+                        }}
+                        className={`h-10 rounded-xl bg-card text-xs font-semibold ${
+                          paymentStatus === 'pending' ? 'border-amber-500/30 focus:ring-amber-500' : 'border-border'
+                        }`}
+                        required={paymentStatus === 'pending'}
                       />
-                      <p className="text-[10px] text-amber-600/90 dark:text-amber-400/90 leading-relaxed">
-                        Esta despesa ficará visível na seção <strong>"A Pagar / Pendentes"</strong> do Extrato até você liquidá-la.
-                      </p>
+                      {paymentStatus === 'pending' && (
+                        <p className="text-[10px] text-amber-600/90 dark:text-amber-400/90 leading-relaxed">
+                          Esta despesa ficará visível na seção <strong>"A Pagar / Pendentes"</strong> do Extrato até você liquidá-la.
+                        </p>
+                      )}
                     </div>
                   )}
                 </div>
@@ -1928,7 +2167,32 @@ export function AddTransaction() {
 
                   {isRecurring && (
                     <div className="space-y-4 pt-2 border-t border-primary/10 animate-fade-in">
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-muted/50 border border-border/50">
+                        <button
+                          type="button"
+                          onClick={() => setRecurrenceMode('auto')}
+                          className={`py-2 px-2 rounded-lg text-[11px] font-black transition-colors cursor-pointer ${
+                            recurrenceMode === 'auto'
+                              ? 'bg-primary text-primary-foreground shadow-xs'
+                              : 'text-muted-foreground hover:text-foreground'
+                          }`}
+                        >
+                          🔄 Conta Recorrente (Auto)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setRecurrenceMode('fixed')}
+                          className={`py-2 px-2 rounded-lg text-[11px] font-black transition-colors cursor-pointer ${
+                            recurrenceMode === 'fixed'
+                              ? 'bg-primary text-primary-foreground shadow-xs'
+                              : 'text-muted-foreground hover:text-foreground'
+                          }`}
+                        >
+                          📑 Parcelado Fixo (Nx)
+                        </button>
+                      </div>
+
+                      <div className={`grid grid-cols-1 ${recurrenceMode === 'fixed' ? 'sm:grid-cols-2' : ''} gap-3`}>
                         <div className="space-y-1.5">
                           <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground/90">
                             Frequência
@@ -1967,85 +2231,117 @@ export function AddTransaction() {
                           </Select>
                         </div>
 
-                        <div className="space-y-1.5">
-                          <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground/90">
-                            Qtd. Parcelas / Repetições
-                          </label>
-                          <div className="flex items-center gap-1.5">
-                            <button
-                              type="button"
-                              onClick={() => setRecurrenceInstallments(String(Math.max(2, (Number(recurrenceInstallments) || 12) - 1)))}
-                              className="h-10 w-10 shrink-0 rounded-xl bg-card border border-border flex items-center justify-center font-black text-sm hover:bg-muted cursor-pointer"
-                            >
-                              -
-                            </button>
-                            <Input
-                              type="number"
-                              min="2"
-                              max="60"
-                              value={recurrenceInstallments}
-                              onChange={(e) => setRecurrenceInstallments(e.target.value)}
-                              className="h-10 rounded-xl font-black text-center border-border bg-card text-xs"
-                              placeholder="12"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => setRecurrenceInstallments(String(Math.min(60, (Number(recurrenceInstallments) || 12) + 1)))}
-                              className="h-10 w-10 shrink-0 rounded-xl bg-primary text-primary-foreground flex items-center justify-center font-black text-sm hover:bg-primary/90 cursor-pointer"
-                            >
-                              +
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Quick Presets for Installments */}
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="text-[9px] font-bold text-muted-foreground mr-1">Atalhos:</span>
-                        {['2', '3', '6', '12', '24', '36'].map((preset) => (
-                          <button
-                            key={preset}
-                            type="button"
-                            onClick={() => setRecurrenceInstallments(preset)}
-                            className={`px-2 py-0.5 rounded-lg text-[10px] font-bold transition-colors cursor-pointer border ${
-                              recurrenceInstallments === preset
-                                ? 'bg-primary text-primary-foreground border-primary'
-                                : 'bg-card border-border text-muted-foreground hover:bg-muted'
-                            }`}
-                          >
-                            {preset}x
-                          </button>
-                        ))}
-                      </div>
-
-                      {/* Recurrence Summary & Preview */}
-                      {Number(recurrenceInstallments) >= 2 && (
-                        <div className="p-3 bg-card border border-border/80 rounded-xl space-y-2 text-xs">
-                          <div className="flex justify-between items-center font-bold text-foreground">
-                            <span className="flex items-center gap-1 text-[11px]">
-                              <CalendarRange className="w-3.5 h-3.5 text-primary" />
-                              Plano Gerado: {recurrenceInstallments}x de R$ {Number(amount) ? Number(amount).toFixed(2) : '0,00'}
-                            </span>
-                            <span className="text-primary font-mono text-[11px]">
-                              Total: R$ {((Number(amount) || 0) * (Number(recurrenceInstallments) || 0)).toFixed(2)}
-                            </span>
-                          </div>
-
-                          <div className="text-[10px] text-muted-foreground space-y-1 pt-1 border-t border-border/60">
-                            <p className="font-semibold text-foreground/80">Primeiras datas geradas:</p>
-                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-1">
-                              <span className="bg-muted/40 p-1.5 rounded text-[10px]">
-                                1ª: <strong>{date ? format(parseLocalDate(date), 'dd/MM/yyyy') : 'Hoje'}</strong> ({paymentStatus === 'paid' ? 'Pago' : 'Pendente'})
-                              </span>
-                              <span className="bg-muted/40 p-1.5 rounded text-[10px]">
-                                2ª: <strong>{format(parseLocalDate(calculateNextOccurrence(date || getTodayLocalDateStr(), recurrenceFrequency, 1)), 'dd/MM/yyyy')}</strong> (Pendente)
-                              </span>
-                              <span className="bg-muted/40 p-1.5 rounded text-[10px]">
-                                3ª: <strong>{format(parseLocalDate(calculateNextOccurrence(date || getTodayLocalDateStr(), recurrenceFrequency, 2)), 'dd/MM/yyyy')}</strong> (Pendente)
-                              </span>
+                        {recurrenceMode === 'fixed' && (
+                          <div className="space-y-1.5">
+                            <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground/90">
+                              Qtd. Parcelas / Repetições
+                            </label>
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => setRecurrenceInstallments(String(Math.max(2, (Number(recurrenceInstallments) || 12) - 1)))}
+                                className="h-10 w-10 shrink-0 rounded-xl bg-card border border-border flex items-center justify-center font-black text-sm hover:bg-muted cursor-pointer"
+                              >
+                                -
+                              </button>
+                              <Input
+                                type="number"
+                                min="2"
+                                max="60"
+                                value={recurrenceInstallments}
+                                onChange={(e) => setRecurrenceInstallments(e.target.value)}
+                                className="h-10 rounded-xl font-black text-center border-border bg-card text-xs"
+                                placeholder="12"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => setRecurrenceInstallments(String(Math.min(60, (Number(recurrenceInstallments) || 12) + 1)))}
+                                className="h-10 w-10 shrink-0 rounded-xl bg-primary text-primary-foreground flex items-center justify-center font-black text-sm hover:bg-primary/90 cursor-pointer"
+                              >
+                                +
+                              </button>
                             </div>
                           </div>
+                        )}
+                      </div>
+
+                      {recurrenceMode === 'auto' ? (
+                        <div className="p-3 bg-indigo-500/10 border border-indigo-500/20 rounded-xl space-y-1 text-xs">
+                          <p className="font-bold text-indigo-700 dark:text-indigo-300 flex items-center gap-1.5 text-[11px]">
+                            <CalendarRange className="w-3.5 h-3.5" />
+                            Renovação automática sob pagamento
+                          </p>
+                          <p className="text-[10.5px] text-muted-foreground leading-relaxed">
+                            Gera a conta para{' '}
+                            <strong className="text-foreground">
+                              {date ? format(parseLocalDate((useCustomSecondaryDate && dueDate ? dueDate : date)), 'dd/MM/yyyy') : 'hoje'}
+                            </strong>{' '}
+                            ({paymentStatus === 'paid' ? 'já quitada' : 'pendente'}).{' '}
+                            {paymentStatus === 'paid'
+                              ? 'Como já está paga, o sistema já deixará a próxima pendente agendada para '
+                              : 'Assim que ela for paga, o sistema gerará automaticamente a próxima para '}
+                            <strong className="text-foreground">
+                              {format(
+                                parseLocalDate(
+                                  calculateNextOccurrence(((useCustomSecondaryDate && dueDate ? dueDate : date) || getTodayLocalDateStr()), recurrenceFrequency, 1)
+                                ),
+                                'dd/MM/yyyy'
+                              )}
+                            </strong>
+                            .
+                          </p>
                         </div>
+                      ) : (
+                        <>
+                          {/* Quick Presets for Installments */}
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-[9px] font-bold text-muted-foreground mr-1">Atalhos:</span>
+                            {['2', '3', '6', '12', '24', '36'].map((preset) => (
+                              <button
+                                key={preset}
+                                type="button"
+                                onClick={() => setRecurrenceInstallments(preset)}
+                                className={`px-2 py-0.5 rounded-lg text-[10px] font-bold transition-colors cursor-pointer border ${
+                                  recurrenceInstallments === preset
+                                    ? 'bg-primary text-primary-foreground border-primary'
+                                    : 'bg-card border-border text-muted-foreground hover:bg-muted'
+                                }`}
+                              >
+                                {preset}x
+                              </button>
+                            ))}
+                          </div>
+
+                          {/* Recurrence Summary & Preview */}
+                          {Number(recurrenceInstallments) >= 2 && (
+                            <div className="p-3 bg-card border border-border/80 rounded-xl space-y-2 text-xs">
+                              <div className="flex justify-between items-center font-bold text-foreground">
+                                <span className="flex items-center gap-1 text-[11px]">
+                                  <CalendarRange className="w-3.5 h-3.5 text-primary" />
+                                  Plano Gerado: {recurrenceInstallments}x de R$ {Number(amount) ? Number(amount).toFixed(2) : '0,00'}
+                                </span>
+                                <span className="text-primary font-mono text-[11px]">
+                                  Total: R$ {((Number(amount) || 0) * (Number(recurrenceInstallments) || 0)).toFixed(2)}
+                                </span>
+                              </div>
+
+                              <div className="text-[10px] text-muted-foreground space-y-1 pt-1 border-t border-border/60">
+                                <p className="font-semibold text-foreground/80">Primeiras datas geradas:</p>
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-1">
+                                  <span className="bg-muted/40 p-1.5 rounded text-[10px]">
+                                    1ª: <strong>{date ? format(parseLocalDate(date), 'dd/MM/yyyy') : 'Hoje'}</strong> ({paymentStatus === 'paid' ? 'Pago' : 'Pendente'})
+                                  </span>
+                                  <span className="bg-muted/40 p-1.5 rounded text-[10px]">
+                                    2ª: <strong>{format(parseLocalDate(calculateNextOccurrence(date || getTodayLocalDateStr(), recurrenceFrequency, 1)), 'dd/MM/yyyy')}</strong> (Pendente)
+                                  </span>
+                                  <span className="bg-muted/40 p-1.5 rounded text-[10px]">
+                                    3ª: <strong>{format(parseLocalDate(calculateNextOccurrence(date || getTodayLocalDateStr(), recurrenceFrequency, 2)), 'dd/MM/yyyy')}</strong> (Pendente)
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                        </>
                       )}
                     </div>
                   )}

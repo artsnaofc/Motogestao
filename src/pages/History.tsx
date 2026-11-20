@@ -79,6 +79,11 @@ import {
   calculateNextOccurrence, 
   generateUUID, 
   getFrequencyLabel, 
+  isAutoRenewRecurring,
+  hasExistingNextOccurrence,
+  buildNextRecurringTransaction,
+  buildNextRecurringReserveTransaction,
+  stripRecurrenceSuffix,
   RecurrenceFrequency 
 } from '../lib/recurrenceUtils';
 import { syncQueueManager } from '../lib/syncQueue';
@@ -413,7 +418,7 @@ function CollapsibleCashFlowBlock({
 }
 
 export function History() {
-  const { transactions, setTransactions, updateTransaction, deleteTransaction, settings, loading, refreshData, globalPeriod, setGlobalPeriod, customDateRange, setCustomDateRange, hideValues, reserves, reserveTransactions, setReserveTransactions, investmentTransactions, deleteReserveTransaction, updateReserveTransaction, quotes, dividends, deleteInvestmentTransaction, deleteDividend } = useData();
+  const { transactions, setTransactions, updateTransaction, deleteTransaction, settings, loading, refreshData, globalPeriod, setGlobalPeriod, customDateRange, setCustomDateRange, hideValues, reserves, reserveTransactions, setReserveTransactions, investmentTransactions, addReserveTransaction, deleteReserveTransaction, updateReserveTransaction, quotes, dividends, deleteInvestmentTransaction, deleteDividend } = useData();
 
   const [searchParams, setSearchParams] = useSearchParams();
   const highlightId = searchParams.get('highlight');
@@ -457,6 +462,7 @@ export function History() {
   // Quick Settle & Agenda / Series Reconciliation States
   const [settleItem, setSettleItem] = useState<Transaction | null>(null);
   const [settlePaymentDate, setSettlePaymentDate] = useState<string>(getTodayLocalDateStr());
+  const [settleReserveId, setSettleReserveId] = useState<string>('__cash__');
   const [isSettling, setIsSettling] = useState(false);
   const [instantSettlingId, setInstantSettlingId] = useState<string | null>(null);
   const [showBillsAgenda, setShowBillsAgenda] = useState(false);
@@ -469,6 +475,7 @@ export function History() {
   const handleOpenSettle = (t: Transaction) => {
     setSettleItem(t);
     setSettlePaymentDate(getTodayLocalDateStr());
+    setSettleReserveId('__cash__');
   };
 
   const handleConfirmSettle = async () => {
@@ -483,6 +490,74 @@ export function History() {
           payment_status: 'paid',
           payment_date: finalPaymentDate,
         });
+      } else if (settleItem.type === 'expense' && settleReserveId !== '__cash__') {
+        const chosenReserve = (reserves || []).find(r => r.id === settleReserveId);
+        const groupId = settleItem.recurrence_group_id || (isAutoRenewRecurring(settleItem) ? generateUUID() : null);
+        const rawDesc = (settleItem as any).rawDescription || settleItem.description || settleItem.category || 'Conta paga via reserva';
+        const newRtId = await addReserveTransaction(
+          {
+            reserve_id: settleReserveId,
+            type: 'utilizacao',
+            amount: Number(settleItem.amount),
+            date: settleItem.date,
+            due_date: settleItem.due_date || settleItem.date,
+            category: settleItem.category,
+            description: rawDesc,
+            payment_status: 'paid',
+            payment_date: finalPaymentDate,
+            is_recurring: Boolean(settleItem.is_recurring),
+            recurrence_frequency: settleItem.recurrence_frequency,
+            recurrence_installments: settleItem.recurrence_installments ?? null,
+            recurrence_group_id: groupId,
+            installment_number: settleItem.installment_number ?? null,
+            installment_total: settleItem.installment_total ?? null,
+            installment_index: (settleItem as any).installment_index ?? null,
+            total_installments: (settleItem as any).total_installments ?? null,
+            vehicle_id: settleItem.vehicle_id || undefined,
+            ignore_in_charts: Boolean(settleItem.ignore_in_charts),
+          },
+          { silent: true }
+        );
+
+        await deleteTransaction(settleItem.id, { silent: true });
+
+        if (isAutoRenewRecurring(settleItem) && groupId) {
+          const baseDate = ((settleItem.due_date || settleItem.date || finalPaymentDate) as string).split('T')[0];
+          const freq = settleItem.recurrence_frequency || 'monthly';
+          const nextDate = calculateNextOccurrence(baseDate, freq, 1);
+          const nextNum = (Number(settleItem.installment_number || (settleItem as any).installment_index || 1) || 1) + 1;
+          await addReserveTransaction(
+            {
+              reserve_id: settleReserveId,
+              type: 'utilizacao',
+              amount: Number(settleItem.amount),
+              date: nextDate,
+              due_date: nextDate,
+              category: settleItem.category,
+              description: stripRecurrenceSuffix(rawDesc) || settleItem.category,
+              payment_status: 'pending',
+              payment_date: null,
+              is_recurring: true,
+              recurrence_frequency: freq,
+              recurrence_installments: null,
+              recurrence_group_id: groupId,
+              installment_number: nextNum,
+              installment_total: null,
+              installment_index: nextNum,
+              total_installments: null,
+              vehicle_id: settleItem.vehicle_id || undefined,
+              ignore_in_charts: Boolean(settleItem.ignore_in_charts),
+            },
+            { silent: true }
+          );
+          if (newRtId) {
+            toast.info(`Próxima conta recorrente agendada na reserva para ${format(parseLocalDate(nextDate), 'dd/MM/yyyy')}!`);
+          }
+        }
+        toast.success(`Conta quitada usando a reserva "${chosenReserve?.name || 'Reserva'}"!`);
+        setSettleItem(null);
+        await refreshData(true);
+        return;
       } else {
         await updateTransaction(settleItem.id, {
           payment_status: 'paid',
@@ -609,10 +684,12 @@ export function History() {
   const [editPaymentStatus, setEditPaymentStatus] = useState<'paid' | 'pending'>('paid');
   const [editPaymentDate, setEditPaymentDate] = useState('');
   const [editDueDate, setEditDueDate] = useState('');
+  const [editCustomSecondaryDate, setEditCustomSecondaryDate] = useState(false);
   const [editIgnoreInCharts, setEditIgnoreInCharts] = useState(false);
 
   // Recurrence Edit States
   const [editIsRecurring, setEditIsRecurring] = useState(false);
+  const [editRecurrenceMode, setEditRecurrenceMode] = useState<'auto' | 'fixed'>('auto');
   const [editRecurrenceFrequency, setEditRecurrenceFrequency] = useState<RecurrenceFrequency>('monthly');
   const [editRecurrenceInstallments, setEditRecurrenceInstallments] = useState('12');
   const [editGenerateFuture, setEditGenerateFuture] = useState(true);
@@ -690,13 +767,22 @@ export function History() {
 
     const tAmount = (t as any).rawAmount !== undefined ? (t as any).rawAmount : t.amount;
     const tDescription = (t as any).rawDescription !== undefined ? (t as any).rawDescription : t.description;
+    const normDate = (d?: string | null) => (d ? String(d).split('T')[0] : '');
 
-    setEditPaymentStatus(t.payment_status || 'paid');
-    setEditPaymentDate(t.payment_date || t.date);
-    setEditDueDate(t.due_date || t.date);
+    const initStatus = t.payment_status || 'paid';
+    const initDate = normDate(t.date);
+    const initPay = normDate(t.payment_date);
+    const initDue = normDate(t.due_date);
+    setEditPaymentStatus(initStatus);
+    setEditPaymentDate(initPay || initDate);
+    setEditDueDate(initDue || initDate);
+    setEditCustomSecondaryDate(
+      t.type === 'expense' && (initStatus === 'pending' ? Boolean(initDue && initDue !== initDate) : Boolean(initPay && initPay !== initDate))
+    );
 
     const isRecurring = Boolean(t.is_recurring);
     setEditIsRecurring(isRecurring);
+    setEditRecurrenceMode(isRecurring ? (isAutoRenewRecurring(t) ? 'auto' : 'fixed') : 'auto');
     setEditRecurrenceFrequency((t.recurrence_frequency as RecurrenceFrequency) || 'monthly');
     setEditRecurrenceInstallments(String(t.recurrence_installments || (t as any).total_installments || (t as any).installment_total || 12));
     setEditGenerateFuture(!isRecurring);
@@ -717,14 +803,23 @@ export function History() {
 
       const matchRt = (reserveTransactions || []).find(r => r.id === t.id);
       if (matchRt) {
-        setEditPaymentStatus(matchRt.payment_status || t.payment_status || 'paid');
-        setEditPaymentDate(matchRt.payment_date || t.payment_date || t.date);
-        setEditDueDate(matchRt.due_date || t.due_date || t.date);
+        const rtStatus = matchRt.payment_status || t.payment_status || 'paid';
+        const rtBaseDate = normDate(matchRt.date || t.date);
+        const rtPay = normDate(matchRt.payment_date || t.payment_date);
+        const rtDue = normDate(matchRt.due_date || t.due_date);
+        setEditPaymentStatus(rtStatus);
+        setEditPaymentDate(rtPay || rtBaseDate);
+        setEditDueDate(rtDue || rtBaseDate);
+        setEditCustomSecondaryDate(
+          (matchRt.type === 'utilizacao' || (t as any).reserveTxType === 'utilizacao') &&
+          (rtStatus === 'pending' ? Boolean(rtDue && rtDue !== rtBaseDate) : Boolean(rtPay && rtPay !== rtBaseDate))
+        );
         if ((matchRt as any).vehicle_id) {
           setEditVehicleId((matchRt as any).vehicle_id);
         }
         const isRec = Boolean(matchRt.is_recurring ?? t.is_recurring);
         setEditIsRecurring(isRec);
+        setEditRecurrenceMode(isRec ? (isAutoRenewRecurring(matchRt) ? 'auto' : 'fixed') : 'auto');
         setEditRecurrenceFrequency((matchRt.recurrence_frequency || t.recurrence_frequency || 'monthly') as RecurrenceFrequency);
         setEditRecurrenceInstallments(String(matchRt.recurrence_installments || t.recurrence_installments || (t as any).total_installments || (t as any).installment_total || 12));
         setEditGenerateFuture(!isRec);
@@ -763,11 +858,19 @@ export function History() {
         setEditVehicleId(t.vehicle_id || (matchRt as any).vehicle_id || '');
         setShowEditVehicleSelect(false);
 
-        setEditPaymentStatus(matchRt.payment_status || t.payment_status || 'paid');
-        setEditPaymentDate(matchRt.payment_date || t.payment_date || t.date);
-        setEditDueDate(matchRt.due_date || t.due_date || t.date);
+        const rtStatus = matchRt.payment_status || t.payment_status || 'paid';
+        const rtBaseDate = normDate(matchRt.date || t.date);
+        const rtPay = normDate(matchRt.payment_date || t.payment_date);
+        const rtDue = normDate(matchRt.due_date || t.due_date);
+        setEditPaymentStatus(rtStatus);
+        setEditPaymentDate(rtPay || rtBaseDate);
+        setEditDueDate(rtDue || rtBaseDate);
+        setEditCustomSecondaryDate(
+          rtStatus === 'pending' ? Boolean(rtDue && rtDue !== rtBaseDate) : Boolean(rtPay && rtPay !== rtBaseDate)
+        );
         const isRec = Boolean(matchRt.is_recurring ?? t.is_recurring);
         setEditIsRecurring(isRec);
+        setEditRecurrenceMode(isRec ? (isAutoRenewRecurring(matchRt) ? 'auto' : 'fixed') : 'auto');
         setEditRecurrenceFrequency((matchRt.recurrence_frequency || t.recurrence_frequency || 'monthly') as RecurrenceFrequency);
         setEditRecurrenceInstallments(String(matchRt.recurrence_installments || t.recurrence_installments || (t as any).total_installments || (t as any).installment_total || 12));
         setEditGenerateFuture(!isRec);
@@ -840,10 +943,10 @@ export function History() {
         const oldRt = (reserveTransactions || []).find(r => r.id === editItem.id);
         const effectivePaymentStatus = editReserveTxType === 'utilizacao' ? editPaymentStatus : 'paid';
         const effectivePaymentDate = editReserveTxType === 'utilizacao' && editPaymentStatus === 'paid'
-          ? (editPaymentDate || editDate)
+          ? ((editCustomSecondaryDate ? editPaymentDate : editDate) || editDate)
           : (editReserveTxType !== 'utilizacao' ? editDate : null);
         const effectiveDueDate = editReserveTxType === 'utilizacao' && editPaymentStatus === 'pending'
-          ? (editDueDate || editDate)
+          ? ((editCustomSecondaryDate ? editDueDate : editDate) || editDate)
           : null;
 
         const finalVehicleId = editVehicleId === '__none__' || !editVehicleId.trim()
@@ -851,7 +954,69 @@ export function History() {
           : editVehicleId.trim();
 
         if (editReserveTxType === 'utilizacao') {
-          if (editIsRecurring) {
+          if (editIsRecurring && editRecurrenceMode === 'auto') {
+            const currentGroup = oldRt?.recurrence_group_id || generateUUID();
+            const currentInstNum = oldRt?.installment_number || (oldRt as any)?.installment_index || 1;
+            const cleanBaseDesc = stripRecurrenceSuffix(editDesc.trim()) || defaultDesc;
+
+            await updateReserveTransaction(editItem.id, {
+              reserve_id: editReserveId,
+              type: 'utilizacao',
+              amount: finalAmt,
+              date: editDate,
+              category: finalReserveCat || undefined,
+              description: cleanBaseDesc,
+              payment_status: effectivePaymentStatus,
+              payment_date: effectivePaymentDate,
+              due_date: effectiveDueDate,
+              vehicle_id: finalVehicleId,
+              is_recurring: true,
+              recurrence_frequency: editRecurrenceFrequency,
+              recurrence_installments: undefined,
+              recurrence_group_id: currentGroup,
+              installment_number: currentInstNum,
+              installment_total: undefined,
+              installment_index: currentInstNum,
+              total_installments: undefined,
+              ignore_in_charts: editIgnoreInCharts,
+            }, { silent: true });
+
+            if (effectivePaymentStatus === 'paid' && oldRt?.payment_status !== 'pending') {
+              const userId = (await getEffectiveUserId()) || oldRt?.user_id || 'local';
+              const baseDate = (effectiveDueDate || editDate || getTodayLocalDateStr()).split('T')[0];
+              const nextDate = calculateNextOccurrence(baseDate, editRecurrenceFrequency, 1);
+              const syntheticSource: ReserveTransaction = {
+                id: editItem.id,
+                user_id: userId,
+                reserve_id: editReserveId,
+                type: 'utilizacao',
+                amount: finalAmt,
+                date: editDate,
+                due_date: effectiveDueDate,
+                category: finalReserveCat || undefined,
+                description: cleanBaseDesc,
+                payment_status: 'paid',
+                payment_date: effectivePaymentDate,
+                vehicle_id: finalVehicleId,
+                is_recurring: true,
+                recurrence_frequency: editRecurrenceFrequency,
+                recurrence_group_id: currentGroup,
+                installment_number: currentInstNum,
+                ignore_in_charts: editIgnoreInCharts,
+              };
+              if (!hasExistingNextOccurrence(reserveTransactions || [], syntheticSource, currentGroup, nextDate)) {
+                const nextRt = buildNextRecurringReserveTransaction(syntheticSource, nextDate, currentGroup, userId);
+                setReserveTransactions(prev => {
+                  const newState = [nextRt, ...prev];
+                  cacheManager.set(`reserve_transactions_${userId}`, newState, undefined, 'reserves');
+                  return newState;
+                });
+                syncQueueManager.enqueue('reserve_transactions', 'insert', nextRt.id, nextRt);
+                toast.info(`Próxima conta recorrente agendada para ${format(parseLocalDate(nextDate), 'dd/MM/yyyy')}!`);
+              }
+            }
+            toast.success('Conta recorrente (auto-renovável) atualizada!');
+          } else if (editIsRecurring) {
             const numInstallments = Math.max(2, Math.min(60, Number(editRecurrenceInstallments) || 12));
 
             if (!oldRt?.is_recurring) {
@@ -889,8 +1054,8 @@ export function History() {
                 for (let i = 2; i <= numInstallments; i++) {
                   const instId = generateUUID();
                   const instDate = calculateNextOccurrence(editDate, editRecurrenceFrequency, i - 1);
-                  const instDueDate = effectivePaymentStatus === 'pending' && editDueDate
-                    ? calculateNextOccurrence(editDueDate, editRecurrenceFrequency, i - 1)
+                  const instDueDate = effectivePaymentStatus === 'pending' && effectiveDueDate
+                    ? calculateNextOccurrence(effectiveDueDate, editRecurrenceFrequency, i - 1)
                     : instDate;
                   const instDesc = `${baseDesc} (${i}/${numInstallments})`;
 
@@ -1087,18 +1252,34 @@ export function History() {
       : editVehicleId.trim();
 
     const effectivePaymentStatus = editType === 'expense' ? editPaymentStatus : 'paid';
-    const effectivePaymentDate = editType === 'expense' && editPaymentStatus === 'paid' 
-      ? (editPaymentDate || editDate) 
+    const effectivePaymentDate = editType === 'expense' && editPaymentStatus === 'paid'
+      ? ((editCustomSecondaryDate ? editPaymentDate : editDate) || editDate)
       : (editType === 'income' ? editDate : null);
-    const effectiveDueDate = editType === 'expense' && editPaymentStatus === 'pending' 
-      ? (editDueDate || editDate) 
+    const effectiveDueDate = editType === 'expense' && editPaymentStatus === 'pending'
+      ? ((editCustomSecondaryDate ? editDueDate : editDate) || editDate)
       : editDate;
 
     // Recurrence logic handling
     let recurrenceFields: Partial<Transaction> = {};
 
     if (editType === 'expense') {
-      if (editIsRecurring) {
+      if (editIsRecurring && editRecurrenceMode === 'auto') {
+        const currentGroup = oldTx?.recurrence_group_id || generateUUID();
+        const currentInstNum = oldTx?.installment_number || (oldTx as any)?.installment_index || 1;
+        const cleanBaseDesc = stripRecurrenceSuffix(editDesc.trim()) || editCategory || 'Despesa';
+
+        recurrenceFields = {
+          is_recurring: true,
+          recurrence_frequency: editRecurrenceFrequency,
+          recurrence_installments: null as any,
+          recurrence_group_id: currentGroup,
+          installment_number: currentInstNum,
+          installment_total: null as any,
+          installment_index: currentInstNum,
+          total_installments: null as any,
+          description: cleanBaseDesc,
+        };
+      } else if (editIsRecurring) {
         const numInstallments = Math.max(2, Math.min(60, Number(editRecurrenceInstallments) || 12));
         
         // Scenario A: Converting from single non-recurring to recurring
@@ -1125,8 +1306,8 @@ export function History() {
             for (let i = 2; i <= numInstallments; i++) {
               const instId = generateUUID();
               const instDate = calculateNextOccurrence(editDate, editRecurrenceFrequency, i - 1);
-              const instDueDate = editPaymentStatus === 'pending' && editDueDate
-                ? calculateNextOccurrence(editDueDate, editRecurrenceFrequency, i - 1)
+              const instDueDate = editPaymentStatus === 'pending' && effectiveDueDate
+                ? calculateNextOccurrence(effectiveDueDate, editRecurrenceFrequency, i - 1)
                 : instDate;
               const instDesc = `${baseDesc} (${i}/${numInstallments})`;
 
@@ -1277,6 +1458,50 @@ export function History() {
 
     await updateTransaction(editItem.id, txUpdatePayload);
 
+    // If edited while already 'paid' and newly configured as auto-renewing, spawn next pending occurrence
+    if (
+      editType === 'expense' &&
+      editIsRecurring &&
+      editRecurrenceMode === 'auto' &&
+      effectivePaymentStatus === 'paid' &&
+      oldTx?.payment_status !== 'pending' &&
+      recurrenceFields.recurrence_group_id
+    ) {
+      const uid = (await getEffectiveUserId()) || oldTx?.user_id || 'local';
+      const baseDate = (effectiveDueDate || editDate || getTodayLocalDateStr()).split('T')[0];
+      const nextDate = calculateNextOccurrence(baseDate, editRecurrenceFrequency, 1);
+      const mergedSource: Transaction = {
+        ...(oldTx || ({} as Transaction)),
+        id: editItem.id,
+        user_id: uid,
+        type: 'expense',
+        amount: finalAmount,
+        date: editDate,
+        due_date: effectiveDueDate,
+        category: editCategory,
+        description: txUpdatePayload.description || editCategory,
+        payment_status: 'paid',
+        payment_date: effectivePaymentDate,
+        vehicle_id: finalVehicleId || undefined,
+        ignore_in_charts: editIgnoreInCharts,
+        is_recurring: true,
+        recurrence_frequency: editRecurrenceFrequency,
+        recurrence_group_id: recurrenceFields.recurrence_group_id,
+        installment_number: recurrenceFields.installment_number,
+      };
+      if (!hasExistingNextOccurrence(transactions, mergedSource, recurrenceFields.recurrence_group_id, nextDate)) {
+        const nextTx = buildNextRecurringTransaction(mergedSource, nextDate, recurrenceFields.recurrence_group_id, uid);
+        setTransactions(prev => {
+          const newState = [nextTx, ...prev];
+          cacheManager.set(`transactions_${uid}`, newState, undefined, 'transactions');
+          cacheManager.set('last_known_transactions', newState, undefined, 'transactions');
+          return newState;
+        });
+        syncQueueManager.enqueue('transactions', 'insert', nextTx.id, nextTx);
+        toast.info(`Próxima conta recorrente agendada para ${format(parseLocalDate(nextDate), 'dd/MM/yyyy')}!`);
+      }
+    }
+
     // Keep matching reserve transaction in sync!
     if (oldTx && (oldTx.is_reserve_use || oldTx.description?.startsWith('[Reserva]'))) {
       const matchRt = (reserveTransactions || []).find(
@@ -1299,7 +1524,7 @@ export function History() {
       }
     }
 
-    if (!editIsRecurring || oldTx?.is_recurring) {
+    if (!editIsRecurring || editRecurrenceMode === 'auto' || oldTx?.is_recurring) {
       toast.success('Lançamento atualizado com sucesso!');
     }
     setEditItem(null);
@@ -3881,11 +4106,13 @@ export function History() {
                   <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-md bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 border border-indigo-500/20 flex items-center gap-1">
                     <span>🔄</span>
                     <span>{formatRecurrenceFrequency(t.recurrence_frequency)}</span>
-                    {t.installment_index && t.total_installments && (
+                    {t.installment_index && t.total_installments ? (
                       <span className="font-mono">
                         ({t.installment_index}/{t.total_installments})
                       </span>
-                    )}
+                    ) : isAutoRenewRecurring(t) ? (
+                      <span className="font-bold opacity-85">Auto</span>
+                    ) : null}
                   </span>
                 )}
 
@@ -6375,11 +6602,22 @@ export function History() {
 
                 {/* Date */}
                 <div className="space-y-1.5">
-                  <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Data</label>
+                  <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                    {editReserveTxType === 'utilizacao' && !editCustomSecondaryDate
+                      ? (editPaymentStatus === 'pending' ? 'Data / Vencimento' : 'Data / Pagamento')
+                      : 'Data'}
+                  </label>
                   <Input
                     type="date"
                     value={editDate}
-                    onChange={(e) => setEditDate(e.target.value)}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setEditDate(val);
+                      if (!editCustomSecondaryDate) {
+                        setEditPaymentDate(val);
+                        setEditDueDate(val);
+                      }
+                    }}
                     className="rounded-lg border-border"
                     required
                   />
@@ -6454,7 +6692,7 @@ export function History() {
                         <CalendarClock className="w-3.5 h-3.5 text-primary" /> Status do Pagamento
                       </label>
                       <span className="text-[10px] text-muted-foreground">
-                        {editPaymentStatus === 'paid' ? 'Liquidado no caixa' : 'Pendente de quitação'}
+                        {editPaymentStatus === 'paid' ? 'Abatido da reserva' : 'Pendente na reserva'}
                       </span>
                     </div>
 
@@ -6483,11 +6721,58 @@ export function History() {
                       </button>
                     </div>
 
-                    {editPaymentStatus === 'pending' ? (
+                    {!editCustomSecondaryDate ? (
                       <div className="space-y-1.5 animate-in fade-in duration-150">
-                        <label className="text-[10px] font-extrabold uppercase tracking-wider text-amber-600 dark:text-amber-400">
-                          Data de Vencimento
-                        </label>
+                        <div className={`flex flex-wrap items-center justify-between gap-2 px-3 py-2 rounded-lg border text-xs ${
+                          editPaymentStatus === 'pending'
+                            ? 'bg-amber-500/10 border-amber-500/25 text-amber-700 dark:text-amber-300'
+                            : 'bg-emerald-500/10 border-emerald-500/25 text-emerald-700 dark:text-emerald-300'
+                        }`}>
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <Calendar className="w-3.5 h-3.5 shrink-0" />
+                            <span className="font-semibold">
+                              {editPaymentStatus === 'pending' ? 'Vencimento em:' : 'Pago na data:'}{' '}
+                              <strong className="font-black">
+                                {editDate ? format(parseLocalDate(editDate), 'dd/MM/yyyy') : 'Hoje'}
+                              </strong>
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (editPaymentStatus === 'pending') setEditDueDate(editDate || getTodayLocalDateStr());
+                              else setEditPaymentDate(editDate || getTodayLocalDateStr());
+                              setEditCustomSecondaryDate(true);
+                            }}
+                            className="text-[11px] font-extrabold underline underline-offset-2 hover:opacity-80 cursor-pointer shrink-0"
+                          >
+                            {editPaymentStatus === 'pending' ? 'Vencimento diferente?' : 'Outra data?'}
+                          </button>
+                        </div>
+                        {editPaymentStatus === 'pending' && (
+                          <p className="text-[9.5px] text-amber-600/90 dark:text-amber-400/90 leading-tight px-0.5">
+                            Resgates pendentes aparecem na seção <strong>"A Pagar / Pendentes"</strong> até a quitação.
+                          </p>
+                        )}
+                      </div>
+                    ) : editPaymentStatus === 'pending' ? (
+                      <div className="space-y-1.5 animate-in fade-in duration-150">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <label className="text-[10px] font-extrabold uppercase tracking-wider text-amber-600 dark:text-amber-400">
+                            Data de Vencimento
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditCustomSecondaryDate(false);
+                              setEditDueDate(editDate);
+                              setEditPaymentDate(editDate);
+                            }}
+                            className="text-[10px] font-extrabold text-primary hover:underline cursor-pointer"
+                          >
+                            Unificar com Data ({editDate ? format(parseLocalDate(editDate), 'dd/MM/yyyy') : 'hoje'})
+                          </button>
+                        </div>
                         <Input
                           type="date"
                           value={editDueDate || editDate}
@@ -6501,9 +6786,22 @@ export function History() {
                       </div>
                     ) : (
                       <div className="space-y-1.5 animate-in fade-in duration-150">
-                        <label className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
-                          Data Efetiva de Pagamento
-                        </label>
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <label className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
+                            Data Efetiva de Pagamento
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditCustomSecondaryDate(false);
+                              setEditPaymentDate(editDate);
+                              setEditDueDate(editDate);
+                            }}
+                            className="text-[10px] font-extrabold text-primary hover:underline cursor-pointer"
+                          >
+                            Unificar com Data ({editDate ? format(parseLocalDate(editDate), 'dd/MM/yyyy') : 'hoje'})
+                          </button>
+                        </div>
                         <Input
                           type="date"
                           value={editPaymentDate || editDate}
@@ -6533,9 +6831,11 @@ export function History() {
                           {editItem?.is_recurring ? 'Configurações de Recorrência' : 'Tornar Resgate Recorrente / Parcelado'}
                         </h4>
                         <p className="text-[9.5px] text-muted-foreground leading-tight">
-                          {editItem?.is_recurring 
-                            ? `Parcela atual: ${editItem.installment_number || 1} de ${editItem.installment_total || editItem.recurrence_installments || '?'}`
-                            : 'Gera parcelas periódicas de uso de reserva no extrato'}
+                          {editItem?.is_recurring
+                            ? isAutoRenewRecurring(editItem)
+                              ? 'Conta recorrente automática (renova ao quitar)'
+                              : `Parcela atual: ${editItem.installment_number || 1} de ${editItem.installment_total || editItem.recurrence_installments || '?'}`
+                            : 'Gera nova conta automática ao pagar ou parcelas fixas'}
                         </p>
                       </div>
                     </div>
@@ -6549,7 +6849,32 @@ export function History() {
 
                   {editIsRecurring && (
                     <div className="space-y-3.5 pt-2 border-t border-primary/10 animate-in fade-in duration-200">
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-muted/50 border border-border/50">
+                        <button
+                          type="button"
+                          onClick={() => setEditRecurrenceMode('auto')}
+                          className={`py-1.5 px-2 rounded-lg text-[10.5px] font-black transition-colors cursor-pointer ${
+                            editRecurrenceMode === 'auto'
+                              ? 'bg-primary text-primary-foreground shadow-xs'
+                              : 'text-muted-foreground hover:text-foreground'
+                          }`}
+                        >
+                          🔄 Auto-renovável
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setEditRecurrenceMode('fixed')}
+                          className={`py-1.5 px-2 rounded-lg text-[10.5px] font-black transition-colors cursor-pointer ${
+                            editRecurrenceMode === 'fixed'
+                              ? 'bg-primary text-primary-foreground shadow-xs'
+                              : 'text-muted-foreground hover:text-foreground'
+                          }`}
+                        >
+                          📑 Parcelas fixas (Nx)
+                        </button>
+                      </div>
+
+                      <div className={`grid grid-cols-1 ${editRecurrenceMode === 'fixed' ? 'sm:grid-cols-2' : ''} gap-3`}>
                         <div className="space-y-1">
                           <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground/90">
                             Frequência
@@ -6574,91 +6899,110 @@ export function History() {
                           </Select>
                         </div>
 
-                        <div className="space-y-1">
-                          <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground/90">
-                            Qtd. Parcelas / Repetições
-                          </label>
-                          <div className="flex items-center gap-1.5">
-                            <button
-                              type="button"
-                              onClick={() => setEditRecurrenceInstallments(String(Math.max(2, (Number(editRecurrenceInstallments) || 12) - 1)))}
-                              className="h-9 w-9 shrink-0 rounded-lg bg-card border border-border flex items-center justify-center font-black text-sm hover:bg-muted cursor-pointer"
-                            >
-                              -
-                            </button>
-                            <Input
-                              type="number"
-                              min="2"
-                              max="60"
-                              value={editRecurrenceInstallments}
-                              onChange={(e) => setEditRecurrenceInstallments(e.target.value)}
-                              className="h-9 rounded-lg font-black text-center border-border bg-card text-xs"
-                              placeholder="12"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => setEditRecurrenceInstallments(String(Math.min(60, (Number(editRecurrenceInstallments) || 12) + 1)))}
-                              className="h-9 w-9 shrink-0 rounded-lg bg-primary text-primary-foreground flex items-center justify-center font-black text-sm hover:bg-primary/90 cursor-pointer"
-                            >
-                              +
-                            </button>
+                        {editRecurrenceMode === 'fixed' && (
+                          <div className="space-y-1">
+                            <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground/90">
+                              Qtd. Parcelas / Repetições
+                            </label>
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => setEditRecurrenceInstallments(String(Math.max(2, (Number(editRecurrenceInstallments) || 12) - 1)))}
+                                className="h-9 w-9 shrink-0 rounded-lg bg-card border border-border flex items-center justify-center font-black text-sm hover:bg-muted cursor-pointer"
+                              >
+                                -
+                              </button>
+                              <Input
+                                type="number"
+                                min="2"
+                                max="60"
+                                value={editRecurrenceInstallments}
+                                onChange={(e) => setEditRecurrenceInstallments(e.target.value)}
+                                className="h-9 rounded-lg font-black text-center border-border bg-card text-xs"
+                                placeholder="12"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => setEditRecurrenceInstallments(String(Math.min(60, (Number(editRecurrenceInstallments) || 12) + 1)))}
+                                className="h-9 w-9 shrink-0 rounded-lg bg-primary text-primary-foreground flex items-center justify-center font-black text-sm hover:bg-primary/90 cursor-pointer"
+                              >
+                                +
+                              </button>
+                            </div>
                           </div>
-                        </div>
+                        )}
                       </div>
 
-                      {/* Quick Presets */}
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="text-[9px] font-bold text-muted-foreground mr-1">Atalhos:</span>
-                        {['2', '3', '6', '12', '24', '36'].map((preset) => (
-                          <button
-                            key={preset}
-                            type="button"
-                            onClick={() => setEditRecurrenceInstallments(preset)}
-                            className={`px-2 py-0.5 rounded-lg text-[10px] font-bold transition-colors cursor-pointer border ${
-                              editRecurrenceInstallments === preset
-                                ? 'bg-primary text-primary-foreground border-primary'
-                                : 'bg-card text-muted-foreground border-border hover:bg-muted'
-                            }`}
-                          >
-                            {preset}x
-                          </button>
-                        ))}
-                      </div>
-
-                      {!editItem?.is_recurring ? (
-                        <label className="flex items-start gap-2 p-2.5 bg-primary/5 rounded-lg border border-primary/15 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={editGenerateFuture}
-                            onChange={(e) => setEditGenerateFuture(e.target.checked)}
-                            className="h-4 w-4 mt-0.5 rounded border-border text-primary focus:ring-primary cursor-pointer"
-                          />
-                          <div className="space-y-0.5">
-                            <span className="text-xs font-bold text-foreground">
-                              Gerar as próximas parcelas automaticamente no extrato
-                            </span>
-                            <p className="text-[9.5px] text-muted-foreground leading-snug">
-                              Cria as {(Number(editRecurrenceInstallments) || 12) - 1} parcelas futuras com status "Pendente" e vencimentos programados por {getFrequencyLabel(editRecurrenceFrequency)}.
-                            </p>
-                          </div>
-                        </label>
+                      {editRecurrenceMode === 'auto' ? (
+                        <p className="text-[10px] text-indigo-700 dark:text-indigo-300 font-semibold leading-snug bg-indigo-500/10 border border-indigo-500/20 rounded-lg p-2.5">
+                          Ao marcar como paga, a próxima conta será gerada automaticamente para{' '}
+                          <strong>
+                            {format(
+                              parseLocalDate(
+                                calculateNextOccurrence(((editCustomSecondaryDate && editDueDate ? editDueDate : editDate) || getTodayLocalDateStr()), editRecurrenceFrequency, 1)
+                              ),
+                              'dd/MM/yyyy'
+                            )}
+                          </strong>
+                          .
+                        </p>
                       ) : (
-                        <label className="flex items-start gap-2 p-2.5 bg-primary/5 rounded-lg border border-primary/15 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={editApplyToFuture}
-                            onChange={(e) => setEditApplyToFuture(e.target.checked)}
-                            className="h-4 w-4 mt-0.5 rounded border-border text-primary focus:ring-primary cursor-pointer"
-                          />
-                          <div className="space-y-0.5">
-                            <span className="text-xs font-bold text-foreground">
-                              Aplicar valor e categoria às próximas parcelas deste grupo
-                            </span>
-                            <p className="text-[9.5px] text-muted-foreground leading-snug">
-                              Mantém todas as parcelas futuras sincronizadas com as novas configurações.
-                            </p>
+                        <>
+                          {/* Quick Presets */}
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-[9px] font-bold text-muted-foreground mr-1">Atalhos:</span>
+                            {['2', '3', '6', '12', '24', '36'].map((preset) => (
+                              <button
+                                key={preset}
+                                type="button"
+                                onClick={() => setEditRecurrenceInstallments(preset)}
+                                className={`px-2 py-0.5 rounded-lg text-[10px] font-bold transition-colors cursor-pointer border ${
+                                  editRecurrenceInstallments === preset
+                                    ? 'bg-primary text-primary-foreground border-primary'
+                                    : 'bg-card text-muted-foreground border-border hover:bg-muted'
+                                }`}
+                              >
+                                {preset}x
+                              </button>
+                            ))}
                           </div>
-                        </label>
+
+                          {!editItem?.is_recurring ? (
+                            <label className="flex items-start gap-2 p-2.5 bg-primary/5 rounded-lg border border-primary/15 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={editGenerateFuture}
+                                onChange={(e) => setEditGenerateFuture(e.target.checked)}
+                                className="h-4 w-4 mt-0.5 rounded border-border text-primary focus:ring-primary cursor-pointer"
+                              />
+                              <div className="space-y-0.5">
+                                <span className="text-xs font-bold text-foreground">
+                                  Gerar as próximas parcelas automaticamente no extrato
+                                </span>
+                                <p className="text-[9.5px] text-muted-foreground leading-snug">
+                                  Cria as {(Number(editRecurrenceInstallments) || 12) - 1} parcelas futuras com status "Pendente" e vencimentos programados por {getFrequencyLabel(editRecurrenceFrequency)}.
+                                </p>
+                              </div>
+                            </label>
+                          ) : (
+                            <label className="flex items-start gap-2 p-2.5 bg-primary/5 rounded-lg border border-primary/15 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={editApplyToFuture}
+                                onChange={(e) => setEditApplyToFuture(e.target.checked)}
+                                className="h-4 w-4 mt-0.5 rounded border-border text-primary focus:ring-primary cursor-pointer"
+                              />
+                              <div className="space-y-0.5">
+                                <span className="text-xs font-bold text-foreground">
+                                  Aplicar valor e categoria às próximas parcelas deste grupo
+                                </span>
+                                <p className="text-[9.5px] text-muted-foreground leading-snug">
+                                  Mantém todas as parcelas futuras sincronizadas com as novas configurações.
+                                </p>
+                              </div>
+                            </label>
+                          )}
+                        </>
                       )}
                     </div>
                   )}
@@ -6732,11 +7076,22 @@ export function History() {
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground/90">Data</label>
+                  <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground/90">
+                    {editType === 'expense' && !editCustomSecondaryDate
+                      ? (editPaymentStatus === 'pending' ? 'Data / Vencimento' : 'Data / Pagamento')
+                      : 'Data'}
+                  </label>
                   <Input
                     type="date"
                     value={editDate}
-                    onChange={(e) => setEditDate(e.target.value)}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setEditDate(val);
+                      if (!editCustomSecondaryDate) {
+                        setEditPaymentDate(val);
+                        setEditDueDate(val);
+                      }
+                    }}
                     className="h-10 rounded-xl border-border font-semibold focus:ring-1 focus:ring-primary focus-visible:ring-primary"
                     required
                   />
@@ -6879,11 +7234,58 @@ export function History() {
                     </div>
                   </div>
 
-                  {editPaymentStatus === 'pending' ? (
+                  {!editCustomSecondaryDate ? (
                     <div className="space-y-1.5 animate-in fade-in duration-150">
-                      <label className="text-[10px] font-extrabold uppercase tracking-wider text-amber-600 dark:text-amber-400">
-                        Data de Vencimento
-                      </label>
+                      <div className={`flex flex-wrap items-center justify-between gap-2 px-3 py-2 rounded-lg border text-xs ${
+                        editPaymentStatus === 'pending'
+                          ? 'bg-amber-500/10 border-amber-500/25 text-amber-700 dark:text-amber-300'
+                          : 'bg-emerald-500/10 border-emerald-500/25 text-emerald-700 dark:text-emerald-300'
+                      }`}>
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <Calendar className="w-3.5 h-3.5 shrink-0" />
+                          <span className="font-semibold">
+                            {editPaymentStatus === 'pending' ? 'Vencimento em:' : 'Pago na data:'}{' '}
+                            <strong className="font-black">
+                              {editDate ? format(parseLocalDate(editDate), 'dd/MM/yyyy') : 'Hoje'}
+                            </strong>
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (editPaymentStatus === 'pending') setEditDueDate(editDate || getTodayLocalDateStr());
+                            else setEditPaymentDate(editDate || getTodayLocalDateStr());
+                            setEditCustomSecondaryDate(true);
+                          }}
+                          className="text-[11px] font-extrabold underline underline-offset-2 hover:opacity-80 cursor-pointer shrink-0"
+                        >
+                          {editPaymentStatus === 'pending' ? 'Vencimento diferente?' : 'Outra data?'}
+                        </button>
+                      </div>
+                      {editPaymentStatus === 'pending' && (
+                        <p className="text-[9.5px] text-amber-600/90 dark:text-amber-400/90 leading-tight px-0.5">
+                          Despesas pendentes aparecem na seção <strong>"A Pagar / Pendentes"</strong> até a quitação.
+                        </p>
+                      )}
+                    </div>
+                  ) : editPaymentStatus === 'pending' ? (
+                    <div className="space-y-1.5 animate-in fade-in duration-150">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <label className="text-[10px] font-extrabold uppercase tracking-wider text-amber-600 dark:text-amber-400">
+                          Data de Vencimento
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditCustomSecondaryDate(false);
+                            setEditDueDate(editDate);
+                            setEditPaymentDate(editDate);
+                          }}
+                          className="text-[10px] font-extrabold text-primary hover:underline cursor-pointer"
+                        >
+                          Unificar com Data ({editDate ? format(parseLocalDate(editDate), 'dd/MM/yyyy') : 'hoje'})
+                        </button>
+                      </div>
                       <Input
                         type="date"
                         value={editDueDate || editDate}
@@ -6897,9 +7299,22 @@ export function History() {
                     </div>
                   ) : (
                     <div className="space-y-1.5 animate-in fade-in duration-150">
-                      <label className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
-                        Data Efetiva de Pagamento
-                      </label>
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <label className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
+                          Data Efetiva de Pagamento
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditCustomSecondaryDate(false);
+                            setEditPaymentDate(editDate);
+                            setEditDueDate(editDate);
+                          }}
+                          className="text-[10px] font-extrabold text-primary hover:underline cursor-pointer"
+                        >
+                          Unificar com Data ({editDate ? format(parseLocalDate(editDate), 'dd/MM/yyyy') : 'hoje'})
+                        </button>
+                      </div>
                       <Input
                         type="date"
                         value={editPaymentDate || editDate}
@@ -6928,9 +7343,11 @@ export function History() {
                           {editItem?.is_recurring ? 'Configurações de Recorrência' : 'Tornar Despesa Recorrente'}
                         </h4>
                         <p className="text-[9.5px] text-muted-foreground leading-tight">
-                          {editItem?.is_recurring 
-                            ? `Parcela atual: ${editItem.installment_number || 1} de ${editItem.installment_total || editItem.recurrence_installments || '?'}`
-                            : 'Gera parcelas periódicas (mensal, semanal, etc.) no extrato'}
+                          {editItem?.is_recurring
+                            ? isAutoRenewRecurring(editItem)
+                              ? 'Conta recorrente automática (renova ao quitar)'
+                              : `Parcela atual: ${editItem.installment_number || 1} de ${editItem.installment_total || editItem.recurrence_installments || '?'}`
+                            : 'Gera próxima conta automaticamente ao pagar ou parcelas fixas'}
                         </p>
                       </div>
                     </div>
@@ -6944,7 +7361,32 @@ export function History() {
 
                   {editIsRecurring && (
                     <div className="space-y-3.5 pt-2 border-t border-primary/10 animate-in fade-in duration-200">
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-muted/50 border border-border/50">
+                        <button
+                          type="button"
+                          onClick={() => setEditRecurrenceMode('auto')}
+                          className={`py-1.5 px-2 rounded-lg text-[10.5px] font-black transition-colors cursor-pointer ${
+                            editRecurrenceMode === 'auto'
+                              ? 'bg-primary text-primary-foreground shadow-xs'
+                              : 'text-muted-foreground hover:text-foreground'
+                          }`}
+                        >
+                          🔄 Auto-renovável
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setEditRecurrenceMode('fixed')}
+                          className={`py-1.5 px-2 rounded-lg text-[10.5px] font-black transition-colors cursor-pointer ${
+                            editRecurrenceMode === 'fixed'
+                              ? 'bg-primary text-primary-foreground shadow-xs'
+                              : 'text-muted-foreground hover:text-foreground'
+                          }`}
+                        >
+                          📑 Parcelas fixas (Nx)
+                        </button>
+                      </div>
+
+                      <div className={`grid grid-cols-1 ${editRecurrenceMode === 'fixed' ? 'sm:grid-cols-2' : ''} gap-3`}>
                         <div className="space-y-1">
                           <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground/90">
                             Frequência
@@ -6969,92 +7411,111 @@ export function History() {
                           </Select>
                         </div>
 
-                        <div className="space-y-1">
-                          <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground/90">
-                            Qtd. Parcelas / Repetições
-                          </label>
-                          <div className="flex items-center gap-1.5">
-                            <button
-                              type="button"
-                              onClick={() => setEditRecurrenceInstallments(String(Math.max(2, (Number(editRecurrenceInstallments) || 12) - 1)))}
-                              className="h-9 w-9 shrink-0 rounded-lg bg-card border border-border flex items-center justify-center font-black text-sm hover:bg-muted cursor-pointer"
-                            >
-                              -
-                            </button>
-                            <Input
-                              type="number"
-                              min="2"
-                              max="60"
-                              value={editRecurrenceInstallments}
-                              onChange={(e) => setEditRecurrenceInstallments(e.target.value)}
-                              className="h-9 rounded-lg font-black text-center border-border bg-card text-xs"
-                              placeholder="12"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => setEditRecurrenceInstallments(String(Math.min(60, (Number(editRecurrenceInstallments) || 12) + 1)))}
-                              className="h-9 w-9 shrink-0 rounded-lg bg-primary text-primary-foreground flex items-center justify-center font-black text-sm hover:bg-primary/90 cursor-pointer"
-                            >
-                              +
-                            </button>
+                        {editRecurrenceMode === 'fixed' && (
+                          <div className="space-y-1">
+                            <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground/90">
+                              Qtd. Parcelas / Repetições
+                            </label>
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => setEditRecurrenceInstallments(String(Math.max(2, (Number(editRecurrenceInstallments) || 12) - 1)))}
+                                className="h-9 w-9 shrink-0 rounded-lg bg-card border border-border flex items-center justify-center font-black text-sm hover:bg-muted cursor-pointer"
+                              >
+                                -
+                              </button>
+                              <Input
+                                type="number"
+                                min="2"
+                                max="60"
+                                value={editRecurrenceInstallments}
+                                onChange={(e) => setEditRecurrenceInstallments(e.target.value)}
+                                className="h-9 rounded-lg font-black text-center border-border bg-card text-xs"
+                                placeholder="12"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => setEditRecurrenceInstallments(String(Math.min(60, (Number(editRecurrenceInstallments) || 12) + 1)))}
+                                className="h-9 w-9 shrink-0 rounded-lg bg-primary text-primary-foreground flex items-center justify-center font-black text-sm hover:bg-primary/90 cursor-pointer"
+                              >
+                                +
+                              </button>
+                            </div>
                           </div>
-                        </div>
+                        )}
                       </div>
 
-                      {/* Quick Presets for Installments */}
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="text-[9px] font-bold text-muted-foreground mr-1">Atalhos:</span>
-                        {['2', '3', '6', '12', '24', '36'].map((preset) => (
-                          <button
-                            key={preset}
-                            type="button"
-                            onClick={() => setEditRecurrenceInstallments(preset)}
-                            className={`px-2 py-0.5 rounded-lg text-[10px] font-bold transition-colors cursor-pointer border ${
-                              editRecurrenceInstallments === preset
-                                ? 'bg-primary text-primary-foreground border-primary'
-                                : 'bg-card text-muted-foreground border-border hover:bg-muted'
-                            }`}
-                          >
-                            {preset}x
-                          </button>
-                        ))}
-                      </div>
-
-                      {/* Action Scope: New recurring vs Existing recurring */}
-                      {!editItem?.is_recurring ? (
-                        <label className="flex items-start gap-2 p-2.5 bg-primary/5 rounded-lg border border-primary/15 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={editGenerateFuture}
-                            onChange={(e) => setEditGenerateFuture(e.target.checked)}
-                            className="h-4 w-4 mt-0.5 rounded border-border text-primary focus:ring-primary cursor-pointer"
-                          />
-                          <div className="space-y-0.5">
-                            <span className="text-xs font-bold text-foreground">
-                              Gerar as próximas parcelas automaticamente no extrato
-                            </span>
-                            <p className="text-[9.5px] text-muted-foreground leading-snug">
-                              Cria as {(Number(editRecurrenceInstallments) || 12) - 1} parcelas futuras com status "Pendente" e vencimentos programados por {getFrequencyLabel(editRecurrenceFrequency)}.
-                            </p>
-                          </div>
-                        </label>
+                      {editRecurrenceMode === 'auto' ? (
+                        <p className="text-[10px] text-indigo-700 dark:text-indigo-300 font-semibold leading-snug bg-indigo-500/10 border border-indigo-500/20 rounded-lg p-2.5">
+                          Ao marcar como paga, a próxima conta será gerada automaticamente para{' '}
+                          <strong>
+                            {format(
+                              parseLocalDate(
+                                calculateNextOccurrence(((editCustomSecondaryDate && editDueDate ? editDueDate : editDate) || getTodayLocalDateStr()), editRecurrenceFrequency, 1)
+                              ),
+                              'dd/MM/yyyy'
+                            )}
+                          </strong>
+                          .
+                        </p>
                       ) : (
-                        <label className="flex items-start gap-2 p-2.5 bg-primary/5 rounded-lg border border-primary/15 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={editApplyToFuture}
-                            onChange={(e) => setEditApplyToFuture(e.target.checked)}
-                            className="h-4 w-4 mt-0.5 rounded border-border text-primary focus:ring-primary cursor-pointer"
-                          />
-                          <div className="space-y-0.5">
-                            <span className="text-xs font-bold text-foreground">
-                              Aplicar valor e categoria às próximas parcelas deste grupo
-                            </span>
-                            <p className="text-[9.5px] text-muted-foreground leading-snug">
-                              Mantém todas as parcelas futuras sincronizadas com as novas configurações.
-                            </p>
+                        <>
+                          {/* Quick Presets for Installments */}
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-[9px] font-bold text-muted-foreground mr-1">Atalhos:</span>
+                            {['2', '3', '6', '12', '24', '36'].map((preset) => (
+                              <button
+                                key={preset}
+                                type="button"
+                                onClick={() => setEditRecurrenceInstallments(preset)}
+                                className={`px-2 py-0.5 rounded-lg text-[10px] font-bold transition-colors cursor-pointer border ${
+                                  editRecurrenceInstallments === preset
+                                    ? 'bg-primary text-primary-foreground border-primary'
+                                    : 'bg-card text-muted-foreground border-border hover:bg-muted'
+                                }`}
+                              >
+                                {preset}x
+                              </button>
+                            ))}
                           </div>
-                        </label>
+
+                          {/* Action Scope: New recurring vs Existing recurring */}
+                          {!editItem?.is_recurring ? (
+                            <label className="flex items-start gap-2 p-2.5 bg-primary/5 rounded-lg border border-primary/15 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={editGenerateFuture}
+                                onChange={(e) => setEditGenerateFuture(e.target.checked)}
+                                className="h-4 w-4 mt-0.5 rounded border-border text-primary focus:ring-primary cursor-pointer"
+                              />
+                              <div className="space-y-0.5">
+                                <span className="text-xs font-bold text-foreground">
+                                  Gerar as próximas parcelas automaticamente no extrato
+                                </span>
+                                <p className="text-[9.5px] text-muted-foreground leading-snug">
+                                  Cria as {(Number(editRecurrenceInstallments) || 12) - 1} parcelas futuras com status "Pendente" e vencimentos programados por {getFrequencyLabel(editRecurrenceFrequency)}.
+                                </p>
+                              </div>
+                            </label>
+                          ) : (
+                            <label className="flex items-start gap-2 p-2.5 bg-primary/5 rounded-lg border border-primary/15 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={editApplyToFuture}
+                                onChange={(e) => setEditApplyToFuture(e.target.checked)}
+                                className="h-4 w-4 mt-0.5 rounded border-border text-primary focus:ring-primary cursor-pointer"
+                              />
+                              <div className="space-y-0.5">
+                                <span className="text-xs font-bold text-foreground">
+                                  Aplicar valor e categoria às próximas parcelas deste grupo
+                                </span>
+                                <p className="text-[9.5px] text-muted-foreground leading-snug">
+                                  Mantém todas as parcelas futuras sincronizadas com as novas configurações.
+                                </p>
+                              </div>
+                            </label>
+                          )}
+                        </>
                       )}
                     </div>
                   )}
@@ -7146,6 +7607,34 @@ export function History() {
                   required
                 />
               </div>
+
+              {settleItem.type === 'expense' && !(settleItem as any).isReserveTx && (reserves || []).filter(r => r.status !== 'inactive').length > 0 && (
+                <div className="space-y-1.5 pt-2 border-t border-border/60">
+                  <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                    <PiggyBank className="w-3.5 h-3.5 text-amber-500" />
+                    Pagar com:
+                  </label>
+                  <Select value={settleReserveId} onValueChange={setSettleReserveId}>
+                    <SelectTrigger className="h-10 rounded-xl border-border bg-card font-bold text-xs">
+                      <SelectValue>
+                        {val => {
+                          if (!val || val === '__cash__') return '💵 Caixa Livre (padrão)';
+                          const found = (reserves || []).find(r => r.id === val);
+                          return found ? `🐷 ${found.name} (${formatCurrency(found.saldo_atual || 0)})` : '💵 Caixa Livre';
+                        }}
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__cash__">💵 Caixa Livre (padrão)</SelectItem>
+                      {(reserves || []).filter(r => r.status !== 'inactive').map(r => (
+                        <SelectItem key={r.id} value={r.id}>
+                          🐷 {r.name} (Saldo: {formatCurrency(r.saldo_atual || 0)})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
             </div>
           )}
 

@@ -32,7 +32,19 @@ import {
   getInvestmentTransactionNetAmount,
   isInvestmentSaleReserveAporte,
 } from '../lib/investmentCalculations';
-import { calculateNextOccurrence, generateUUID } from '../lib/recurrenceUtils';
+import {
+  calculateNextOccurrence,
+  generateUUID,
+  isAutoRenewRecurring,
+  getFrequencyLabel,
+  getFrequencyShortLabel,
+  hasExistingNextOccurrence,
+  buildNextRecurringTransaction,
+  buildNextRecurringReserveTransaction,
+  stripRecurrenceSuffix,
+  parseLocalDate,
+} from '../lib/recurrenceUtils';
+import { findMatchingReserveForExpense } from '../components/reserves/reserveUtils';
 import { getTodayLocalDateStr } from '../lib/utils';
 import { getEffectiveUserId } from '../lib/authUtils';
 import { syncQueueManager } from '../lib/syncQueue';
@@ -84,6 +96,7 @@ import {
   SlidersHorizontal,
   ArrowRight,
   X,
+  PiggyBank,
 } from 'lucide-react';
 
 interface NormalizedPlannedItem {
@@ -118,7 +131,10 @@ export function PlanningCalendar() {
     updateTransaction,
     deleteTransaction,
     reserveTransactions,
+    setReserveTransactions,
+    addReserveTransaction,
     updateReserveTransaction,
+    deleteReserveTransaction,
     investmentTransactions,
     reserves,
     settings,
@@ -167,8 +183,11 @@ export function PlanningCalendar() {
   const [entryCategory, setEntryCategory] = useState<string>('Outras Despesas');
   const [entryDescription, setEntryDescription] = useState<string>('');
   const [billRepeat, setBillRepeat] = useState<boolean>(false);
+  const [billRecurrenceMode, setBillRecurrenceMode] = useState<'auto' | 'fixed'>('auto');
   const [billFrequency, setBillFrequency] = useState<RecurrenceFrequency>('monthly');
   const [billRepeatCount, setBillRepeatCount] = useState<string>('6');
+  const [billUseReserve, setBillUseReserve] = useState<boolean>(false);
+  const [billReserveId, setBillReserveId] = useState<string>('');
   const [savingEntry, setSavingEntry] = useState(false);
 
   // Edit Existing Planned Item Dialog
@@ -179,6 +198,11 @@ export function PlanningCalendar() {
   const [editDescription, setEditDescription] = useState<string>('');
   const [editStatus, setEditStatus] = useState<'paid' | 'pending'>('pending');
   const [editCardId, setEditCardId] = useState<string>('__none__');
+  const [editIsRecurring, setEditIsRecurring] = useState<boolean>(false);
+  const [editRecurrenceMode, setEditRecurrenceMode] = useState<'auto' | 'fixed'>('auto');
+  const [editRecurrenceFrequency, setEditRecurrenceFrequency] = useState<RecurrenceFrequency>('monthly');
+  const [editUseReserve, setEditUseReserve] = useState<boolean>(false);
+  const [editReserveId, setEditReserveId] = useState<string>('');
   const [savingEdit, setSavingEdit] = useState(false);
 
   // Delete Parcel Group Confirmation Dialog
@@ -262,6 +286,32 @@ export function PlanningCalendar() {
       ]
     );
   }, [settings]);
+
+  const activeReserves = useMemo(() => {
+    return (reserves || []).filter(r => r.status !== 'inactive');
+  }, [reserves]);
+
+  const reserveLookup = useMemo(() => {
+    const map: Record<string, (typeof activeReserves)[number]> = {};
+    (reserves || []).forEach(r => {
+      map[r.id] = r;
+    });
+    return map;
+  }, [reserves]);
+
+  const suggestedBillReserve = useMemo(() => {
+    if (entryMode !== 'bill' || !entryCategory) return null;
+    return findMatchingReserveForExpense(entryCategory, activeReserves);
+  }, [entryMode, entryCategory, activeReserves]);
+
+  useEffect(() => {
+    if (entryMode !== 'bill') return;
+    if (suggestedBillReserve) {
+      setBillReserveId(suggestedBillReserve.id);
+    } else if (!billReserveId || !activeReserves.some(r => r.id === billReserveId)) {
+      setBillReserveId(activeReserves[0]?.id || '');
+    }
+  }, [entryMode, suggestedBillReserve?.id, activeReserves]);
 
   const formatCurrency = (val: number) => {
     if (hideValues) return 'R$ •••••';
@@ -512,7 +562,8 @@ export function PlanningCalendar() {
   const monthSummary = useMemo(() => {
     let cardsPending = 0;
     let cardsPaid = 0;
-    let billsPending = 0;
+    let cashBillsPending = 0;
+    let reserveBillsPending = 0;
     let billsPaid = 0;
     let incomesPending = 0;
     let incomesPaid = 0;
@@ -533,19 +584,27 @@ export function PlanningCalendar() {
           if (item.paymentStatus === 'pending') cardsPending += item.amount;
           else cardsPaid += item.amount;
         } else {
-          if (item.paymentStatus === 'pending') billsPending += item.amount;
-          else billsPaid += item.amount;
+          if (item.paymentStatus === 'pending') {
+            if (item.isReserveTx) reserveBillsPending += item.amount;
+            else cashBillsPending += item.amount;
+          } else {
+            billsPaid += item.amount;
+          }
         }
       });
 
+    const billsPending = cashBillsPending + reserveBillsPending;
     const totalPending = cardsPending + billsPending;
+    const cashPendingTotal = cardsPending + cashBillsPending;
     const totalPaid = cardsPaid + billsPaid;
-    const projectedBalanceAfterMonth = bancaLivre + incomesPending - totalPending;
+    const projectedBalanceAfterMonth = bancaLivre + incomesPending - cashPendingTotal;
 
     return {
       cardsTotal: cardsPending + cardsPaid,
       cardsPending,
       billsPending,
+      cashBillsPending,
+      reserveBillsPending,
       totalPending,
       totalPaid,
       incomesPending,
@@ -723,7 +782,7 @@ export function PlanningCalendar() {
     });
 
     return Object.values(groups)
-      .filter(g => g.items.length > 1)
+      .filter(g => g.items.length > 1 || g.items.some(i => isAutoRenewRecurring(i.rawTx)))
       .sort((a, b) => {
         if (a.pendingCount > 0 && b.pendingCount === 0) return -1;
         if (a.pendingCount === 0 && b.pendingCount > 0) return 1;
@@ -1021,7 +1080,14 @@ export function PlanningCalendar() {
 
     setEntryDescription('');
     setBillRepeat(false);
+    setBillRecurrenceMode('auto');
+    setBillFrequency('monthly');
     setBillRepeatCount('6');
+    setBillUseReserve(false);
+    const matchingRes = mode === 'bill'
+      ? findMatchingReserveForExpense(expenseCategories[0] || '', activeReserves)
+      : null;
+    setBillReserveId(matchingRes?.id || activeReserves[0]?.id || '');
 
     if (mode === 'card') {
       if (presetCardId && cards.some(c => c.id === presetCardId)) {
@@ -1129,18 +1195,71 @@ export function PlanningCalendar() {
       } else {
         // Planned Standalone/Recurring Bill OR Planned Income
         const isIncomeMode = entryMode === 'income';
-        const nInst = billRepeat ? Math.max(2, Math.min(36, Number(billRepeatCount) || 6)) : 1;
-        const groupId = nInst > 1 ? generateUUID() : null;
+        const isAutoRenew = billRepeat && billRecurrenceMode === 'auto';
+        const nInst = billRepeat && billRecurrenceMode === 'fixed'
+          ? Math.max(2, Math.min(36, Number(billRepeatCount) || 6))
+          : 1;
+        const groupId = billRepeat ? generateUUID() : null;
         const labelDesc =
           entryDescription.trim() ||
           entryCategory ||
           (isIncomeMode ? 'Receita prevista' : 'Conta agendada');
 
+        if (!isIncomeMode && billUseReserve) {
+          const targetRes = activeReserves.find(r => r.id === billReserveId) || activeReserves[0];
+          if (!targetRes) {
+            toast.error('Selecione uma reserva válida para pagar esta conta.');
+            setSavingEntry(false);
+            return;
+          }
+
+          for (let i = 1; i <= nInst; i++) {
+            const instDate =
+              i === 1 ? entryDate : calculateNextOccurrence(entryDate, billFrequency, i - 1);
+            const parcelSuffix = !isAutoRenew && nInst > 1 ? ` (${i}/${nInst})` : '';
+            await addReserveTransaction(
+              {
+                reserve_id: targetRes.id,
+                type: 'utilizacao',
+                amount: rawVal,
+                date: instDate,
+                due_date: instDate,
+                category: entryCategory,
+                description: `${labelDesc}${parcelSuffix}`,
+                payment_status: 'pending',
+                payment_date: null,
+                is_recurring: billRepeat,
+                recurrence_frequency: billRepeat ? billFrequency : undefined,
+                recurrence_installments: billRepeat && !isAutoRenew ? nInst : null,
+                recurrence_group_id: groupId,
+                installment_number: billRepeat ? i : null,
+                installment_total: billRepeat && !isAutoRenew ? nInst : null,
+                installment_index: billRepeat ? i : null,
+                total_installments: billRepeat && !isAutoRenew ? nInst : null,
+              },
+              { silent: true }
+            );
+          }
+
+          const [y, m] = entryDate.split('-').map(Number);
+          navigateToMonth(new Date(y, m - 1, 1, 12, 0, 0), entryDate);
+          setRightPanelTab('day');
+          toast.success(
+            isAutoRenew
+              ? `Conta recorrente (${getFrequencyLabel(billFrequency)}) agendada na reserva "${targetRes.name}"!`
+              : nInst > 1
+                ? `${nInst} contas agendadas na reserva "${targetRes.name}"!`
+                : `Conta agendada para pagar com a reserva "${targetRes.name}"!`
+          );
+          setShowEntryModal(false);
+          return;
+        }
+
         for (let i = 1; i <= nInst; i++) {
           const instDate =
             i === 1 ? entryDate : calculateNextOccurrence(entryDate, billFrequency, i - 1);
           const instId = generateUUID();
-          const parcelSuffix = nInst > 1 ? ` (${i}/${nInst})` : '';
+          const parcelSuffix = !isAutoRenew && nInst > 1 ? ` (${i}/${nInst})` : '';
           const payload: Transaction = {
             id: instId,
             user_id: effectiveUid,
@@ -1152,12 +1271,14 @@ export function PlanningCalendar() {
             description: `${labelDesc}${parcelSuffix}`,
             payment_status: 'pending',
             payment_date: null,
-            is_recurring: nInst > 1,
-            recurrence_frequency: nInst > 1 ? billFrequency : undefined,
-            recurrence_installments: nInst > 1 ? nInst : null,
+            is_recurring: billRepeat,
+            recurrence_frequency: billRepeat ? billFrequency : undefined,
+            recurrence_installments: billRepeat && !isAutoRenew ? nInst : null,
             recurrence_group_id: groupId,
-            installment_number: nInst > 1 ? i : null,
-            installment_total: nInst > 1 ? nInst : null,
+            installment_number: billRepeat ? i : null,
+            installment_total: billRepeat && !isAutoRenew ? nInst : null,
+            installment_index: billRepeat ? i : null,
+            total_installments: billRepeat && !isAutoRenew ? nInst : null,
             created_at: new Date().toISOString(),
           };
           batch.push(payload);
@@ -1169,12 +1290,16 @@ export function PlanningCalendar() {
         setRightPanelTab('day');
         toast.success(
           isIncomeMode
-            ? nInst > 1
-              ? `${nInst} receitas recorrentes agendadas!`
-              : 'Receita prevista agendada no calendário!'
-            : nInst > 1
-              ? `${nInst} contas recorrentes agendadas!`
-              : 'Conta agendada no calendário!'
+            ? isAutoRenew
+              ? `Receita recorrente (${getFrequencyLabel(billFrequency)}) agendada!`
+              : nInst > 1
+                ? `${nInst} receitas recorrentes agendadas!`
+                : 'Receita prevista agendada no calendário!'
+            : isAutoRenew
+              ? `Conta recorrente (${getFrequencyLabel(billFrequency)}) agendada! Próxima será gerada ao quitar.`
+              : nInst > 1
+                ? `${nInst} contas recorrentes agendadas!`
+                : 'Conta agendada no calendário!'
         );
       }
 
@@ -1197,10 +1322,15 @@ export function PlanningCalendar() {
     const newPayDate = newStatus === 'paid' ? getTodayLocalDateStr() : null;
     try {
       if (item.isReserveTx) {
-        await updateReserveTransaction(item.id, {
-          payment_status: newStatus,
-          payment_date: newPayDate,
-        });
+        await updateReserveTransaction(
+          item.id,
+          {
+            payment_status: newStatus,
+            payment_date: newPayDate,
+          },
+          { silent: true }
+        );
+        toast.success(newStatus === 'paid' ? 'Conta da reserva quitada!' : 'Conta marcada como pendente.');
       } else {
         await updateTransaction(
           item.id,
@@ -1467,6 +1597,21 @@ export function PlanningCalendar() {
     setEditDescription(item.description);
     setEditStatus(item.paymentStatus);
     setEditCardId(item.cardId || '__none__');
+
+    const raw = item.rawTx || {};
+    const isRec = Boolean(raw.is_recurring);
+    const isAuto = isAutoRenewRecurring(raw);
+    setEditIsRecurring(isRec);
+    setEditRecurrenceMode(isRec ? (isAuto ? 'auto' : 'fixed') : 'auto');
+    setEditRecurrenceFrequency((raw.recurrence_frequency as RecurrenceFrequency) || 'monthly');
+
+    setEditUseReserve(item.isReserveTx);
+    if (item.isReserveTx && raw.reserve_id) {
+      setEditReserveId(raw.reserve_id);
+    } else {
+      const matchRes = item.kind === 'expense' ? findMatchingReserveForExpense(item.category, activeReserves) : null;
+      setEditReserveId(matchRes?.id || activeReserves[0]?.id || '');
+    }
   };
 
   const handleSaveEditItem = async (e: React.FormEvent) => {
@@ -1480,26 +1625,241 @@ export function PlanningCalendar() {
     const effectiveUid = userId || (await getEffectiveUserId()) || 'default';
     setSavingEdit(true);
     try {
-      if (editingItem.isReserveTx) {
-        await updateReserveTransaction(editingItem.id, {
+      const raw = editingItem.rawTx || {};
+      const shouldAutoRenew = editIsRecurring && editRecurrenceMode === 'auto';
+      const existingGroupId = raw.recurrence_group_id || (editIsRecurring ? generateUUID() : null);
+      const existingInstNum = raw.installment_number || raw.installment_index || 1;
+      const existingInstTotal = raw.installment_total || raw.recurrence_installments || raw.total_installments || null;
+      const payDateVal = editStatus === 'paid' ? (raw.payment_date || getTodayLocalDateStr()) : null;
+
+      let cleanedBaseDesc = editDescription.trim() || editCategory;
+      if (shouldAutoRenew) {
+        cleanedBaseDesc = stripRecurrenceSuffix(cleanedBaseDesc) || editCategory;
+      }
+
+      const recurrencePatch = editIsRecurring
+        ? shouldAutoRenew
+          ? {
+              is_recurring: true,
+              recurrence_frequency: editRecurrenceFrequency,
+              recurrence_installments: null,
+              recurrence_group_id: existingGroupId,
+              installment_number: existingInstNum,
+              installment_total: null,
+              installment_index: existingInstNum,
+              total_installments: null,
+            }
+          : {
+              is_recurring: true,
+              recurrence_frequency: editRecurrenceFrequency,
+              recurrence_installments: existingInstTotal,
+              recurrence_group_id: existingGroupId,
+              installment_number: existingInstNum,
+              installment_total: existingInstTotal,
+              installment_index: existingInstNum,
+              total_installments: existingInstTotal,
+            }
+        : {
+            is_recurring: false,
+            recurrence_frequency: undefined,
+            recurrence_installments: null,
+            recurrence_group_id: null,
+            installment_number: null,
+            installment_total: null,
+            installment_index: null,
+            total_installments: null,
+          };
+
+      const targetUseReserve =
+        editingItem.kind === 'expense' &&
+        editUseReserve &&
+        (editCardId === '__none__' || editingItem.isReserveTx);
+
+      // Case 1: Converting Cash -> Reserve
+      if (!editingItem.isReserveTx && targetUseReserve) {
+        const targetRes = activeReserves.find(r => r.id === editReserveId) || activeReserves[0];
+        if (!targetRes) {
+          toast.error('Selecione uma reserva válida.');
+          setSavingEdit(false);
+          return;
+        }
+        const pureDesc = cleanedBaseDesc.replace(/^\[Cart[ãa]o [^\]]+\]\s*/i, '').trim() || editCategory;
+        const newRtId = await addReserveTransaction(
+          {
+            reserve_id: targetRes.id,
+            type: 'utilizacao',
+            amount: parsedAmt,
+            date: editDate,
+            due_date: editDate,
+            category: editCategory,
+            description: pureDesc,
+            payment_status: editStatus,
+            payment_date: payDateVal,
+            vehicle_id: raw.vehicle_id || undefined,
+            ignore_in_charts: Boolean(raw.ignore_in_charts),
+            is_recurring: recurrencePatch.is_recurring,
+            recurrence_frequency: recurrencePatch.recurrence_frequency,
+            recurrence_installments: recurrencePatch.recurrence_installments,
+            recurrence_group_id: recurrencePatch.recurrence_group_id,
+            installment_number: recurrencePatch.installment_number,
+            installment_total: recurrencePatch.installment_total,
+            installment_index: recurrencePatch.installment_index,
+            total_installments: recurrencePatch.total_installments,
+          },
+          { silent: true }
+        );
+
+        await deleteTransaction(editingItem.id, { silent: true });
+        planningStorage.unlinkTxFromCard(effectiveUid, editingItem.id);
+        setTxCardMap(planningStorage.getTxCardMap(effectiveUid));
+
+        if (editStatus === 'paid' && shouldAutoRenew && existingGroupId) {
+          const nextDate = calculateNextOccurrence(editDate, editRecurrenceFrequency, 1);
+          const syntheticSource: any = {
+            id: newRtId || editingItem.id,
+            user_id: effectiveUid,
+            reserve_id: targetRes.id,
+            type: 'utilizacao',
+            amount: parsedAmt,
+            date: editDate,
+            due_date: editDate,
+            category: editCategory,
+            description: pureDesc,
+            is_recurring: true,
+            recurrence_frequency: editRecurrenceFrequency,
+            recurrence_group_id: existingGroupId,
+            installment_number: existingInstNum,
+          };
+          if (!hasExistingNextOccurrence(reserveTransactions, syntheticSource, existingGroupId, nextDate)) {
+            const nextRt = buildNextRecurringReserveTransaction(syntheticSource, nextDate, existingGroupId, effectiveUid);
+            setReserveTransactions(prev => {
+              const nextState = [nextRt, ...prev];
+              cacheManager.set(`reserve_transactions_${effectiveUid}`, nextState, undefined, 'reserves');
+              return nextState;
+            });
+            syncQueueManager.enqueue('reserve_transactions', 'insert', nextRt.id, nextRt);
+            toast.info(`Próxima conta recorrente agendada para ${format(parseLocalDate(nextDate), 'dd/MM/yyyy')}!`);
+          }
+        }
+
+        toast.success(`Conta transferida para a reserva "${targetRes.name}"!`);
+        setEditingItem(null);
+        return;
+      }
+
+      // Case 2: Converting Reserve -> Cash
+      if (editingItem.isReserveTx && !targetUseReserve) {
+        const chosenCard = editCardId !== '__none__' ? cards.find(c => c.id === editCardId) || null : null;
+        const cleanDesc = cleanedBaseDesc.replace(/^\[Cart[ãa]o [^\]]+\]\s*/i, '').trim();
+        const finalDesc = chosenCard ? `[Cartão ${chosenCard.name}] ${cleanDesc}` : cleanDesc;
+        const newTxId = generateUUID();
+        const newTxPayload: Transaction = {
+          id: newTxId,
+          user_id: effectiveUid,
+          type: 'expense',
           amount: parsedAmt,
           date: editDate,
           due_date: editDate,
           category: editCategory,
-          description: editDescription.trim() || editCategory,
+          description: finalDesc,
           payment_status: editStatus,
-          payment_date: editStatus === 'paid' ? (editingItem.rawTx?.payment_date || getTodayLocalDateStr()) : null,
+          payment_date: payDateVal,
+          card_id: chosenCard ? chosenCard.id : null,
+          card_name: chosenCard ? chosenCard.name : null,
+          vehicle_id: raw.vehicle_id || null,
+          ignore_in_charts: Boolean(raw.ignore_in_charts),
+          ...recurrencePatch,
+          created_at: new Date().toISOString(),
+        };
+
+        const extraBatch: Transaction[] = [newTxPayload];
+        if (editStatus === 'paid' && shouldAutoRenew && existingGroupId) {
+          const nextDate = calculateNextOccurrence(editDate, editRecurrenceFrequency, 1);
+          if (!hasExistingNextOccurrence(transactions, newTxPayload, existingGroupId, nextDate)) {
+            const nextTx = buildNextRecurringTransaction(newTxPayload, nextDate, existingGroupId, effectiveUid);
+            extraBatch.push(nextTx);
+            syncQueueManager.enqueue('transactions', 'insert', nextTx.id, nextTx);
+            toast.info(`Próxima conta recorrente agendada para ${format(parseLocalDate(nextDate), 'dd/MM/yyyy')}!`);
+          }
+        }
+
+        syncQueueManager.enqueue('transactions', 'insert', newTxId, newTxPayload);
+        setTransactions(prev => {
+          const next = [...extraBatch, ...prev];
+          cacheManager.set(`transactions_${effectiveUid}`, next, undefined, 'transactions');
+          cacheManager.set('last_known_transactions', next, undefined, 'transactions');
+          return next;
         });
+
+        if (chosenCard) {
+          planningStorage.linkTxsToCard(effectiveUid, [newTxId], chosenCard.id);
+          setTxCardMap(planningStorage.getTxCardMap(effectiveUid));
+        }
+
+        await deleteReserveTransaction(editingItem.id, { silent: true });
+        toast.success('Conta movida da reserva para o Caixa Livre!');
+        setEditingItem(null);
+        return;
+      }
+
+      // Case 3: Staying in Reserve
+      if (editingItem.isReserveTx) {
+        const targetResId = editReserveId || raw.reserve_id;
+        await updateReserveTransaction(
+          editingItem.id,
+          {
+            reserve_id: targetResId,
+            amount: parsedAmt,
+            date: editDate,
+            due_date: editDate,
+            category: editCategory,
+            description: cleanedBaseDesc,
+            payment_status: editStatus,
+            payment_date: payDateVal,
+            ...recurrencePatch,
+          },
+          { silent: true }
+        );
+
+        // If already paid & newly marked auto-renewing, ensure next occurrence exists
+        if (editingItem.paymentStatus === 'paid' && editStatus === 'paid' && shouldAutoRenew && existingGroupId) {
+          const nextDate = calculateNextOccurrence(editDate, editRecurrenceFrequency, 1);
+          const mergedSource: any = {
+            ...raw,
+            id: editingItem.id,
+            reserve_id: targetResId,
+            type: 'utilizacao',
+            amount: parsedAmt,
+            date: editDate,
+            due_date: editDate,
+            category: editCategory,
+            description: cleanedBaseDesc,
+            is_recurring: true,
+            recurrence_frequency: editRecurrenceFrequency,
+            recurrence_group_id: existingGroupId,
+            installment_number: existingInstNum,
+          };
+          if (!hasExistingNextOccurrence(reserveTransactions, mergedSource, existingGroupId, nextDate)) {
+            const nextRt = buildNextRecurringReserveTransaction(mergedSource, nextDate, existingGroupId, effectiveUid);
+            setReserveTransactions(prev => {
+              const nextState = [nextRt, ...prev];
+              cacheManager.set(`reserve_transactions_${effectiveUid}`, nextState, undefined, 'reserves');
+              return nextState;
+            });
+            syncQueueManager.enqueue('reserve_transactions', 'insert', nextRt.id, nextRt);
+            toast.info(`Próxima conta recorrente agendada para ${format(parseLocalDate(nextDate), 'dd/MM/yyyy')}!`);
+          }
+        }
       } else {
-        let cleanedDesc = editDescription.trim() || editCategory;
+        // Case 4: Staying in Cash / Card
         const chosenCard =
           editingItem.kind === 'expense' && editCardId !== '__none__'
             ? cards.find(c => c.id === editCardId) || null
             : null;
 
-        cleanedDesc = cleanedDesc.replace(/^\[Cart[ãa]o [^\]]+\]\s*/i, '').trim();
+        let finalDesc = cleanedBaseDesc.replace(/^\[Cart[ãa]o [^\]]+\]\s*/i, '').trim();
         if (chosenCard) {
-          cleanedDesc = `[Cartão ${chosenCard.name}] ${cleanedDesc}`;
+          finalDesc = `[Cartão ${chosenCard.name}] ${finalDesc}`;
           planningStorage.linkTxsToCard(effectiveUid, [editingItem.id], chosenCard.id);
         } else {
           planningStorage.unlinkTxFromCard(effectiveUid, editingItem.id);
@@ -1513,14 +1873,47 @@ export function PlanningCalendar() {
             date: editDate,
             due_date: editDate,
             category: editCategory,
-            description: cleanedDesc,
+            description: finalDesc,
             payment_status: editStatus,
-            payment_date: editStatus === 'paid' ? (editingItem.rawTx?.payment_date || getTodayLocalDateStr()) : null,
+            payment_date: payDateVal,
             card_id: chosenCard ? chosenCard.id : null,
             card_name: chosenCard ? chosenCard.name : null,
+            ...recurrencePatch,
           },
           { silent: true }
         );
+
+        // If already paid & newly marked auto-renewing, ensure next occurrence exists
+        if (editingItem.paymentStatus === 'paid' && editStatus === 'paid' && shouldAutoRenew && existingGroupId) {
+          const nextDate = calculateNextOccurrence(editDate, editRecurrenceFrequency, 1);
+          const mergedSource: any = {
+            ...raw,
+            id: editingItem.id,
+            type: editingItem.kind,
+            amount: parsedAmt,
+            date: editDate,
+            due_date: editDate,
+            category: editCategory,
+            description: finalDesc,
+            is_recurring: true,
+            recurrence_frequency: editRecurrenceFrequency,
+            recurrence_group_id: existingGroupId,
+            installment_number: existingInstNum,
+            card_id: chosenCard ? chosenCard.id : null,
+            card_name: chosenCard ? chosenCard.name : null,
+          };
+          if (!hasExistingNextOccurrence(transactions, mergedSource, existingGroupId, nextDate)) {
+            const nextTx = buildNextRecurringTransaction(mergedSource, nextDate, existingGroupId, effectiveUid);
+            setTransactions(prev => {
+              const nextState = [nextTx, ...prev];
+              cacheManager.set(`transactions_${effectiveUid}`, nextState, undefined, 'transactions');
+              cacheManager.set('last_known_transactions', nextState, undefined, 'transactions');
+              return nextState;
+            });
+            syncQueueManager.enqueue('transactions', 'insert', nextTx.id, nextTx);
+            toast.info(`Próxima conta recorrente agendada para ${format(parseLocalDate(nextDate), 'dd/MM/yyyy')}!`);
+          }
+        }
       }
 
       toast.success('Lançamento atualizado!');
@@ -1533,10 +1926,6 @@ export function PlanningCalendar() {
   };
 
   const handleRequestDeleteItem = (item: NormalizedPlannedItem) => {
-    if (item.isReserveTx) {
-      toast.info('Despesas de reserva podem ser removidas no Extrato ou em Reservas.');
-      return;
-    }
     if (item.recurrenceGroupId) {
       setDeleteTargetItem(item);
       return;
@@ -1547,9 +1936,14 @@ export function PlanningCalendar() {
   const executeDeleteSingleItem = async (item: NormalizedPlannedItem) => {
     const effectiveUid = userId || (await getEffectiveUserId()) || 'default';
     try {
-      await deleteTransaction(item.id);
-      planningStorage.unlinkTxFromCard(effectiveUid, item.id);
-      setTxCardMap(planningStorage.getTxCardMap(effectiveUid));
+      if (item.isReserveTx) {
+        await deleteReserveTransaction(item.id, { silent: true });
+        toast.success('Conta da reserva excluída!');
+      } else {
+        await deleteTransaction(item.id);
+        planningStorage.unlinkTxFromCard(effectiveUid, item.id);
+        setTxCardMap(planningStorage.getTxCardMap(effectiveUid));
+      }
       setDeleteTargetItem(null);
     } catch {
       toast.error('Erro ao remover lançamento.');
@@ -1561,18 +1955,21 @@ export function PlanningCalendar() {
     const effectiveUid = userId || (await getEffectiveUserId()) || 'default';
     const targets = plannedItems.filter(
       p =>
-        !p.isReserveTx &&
         p.recurrenceGroupId === item.recurrenceGroupId &&
         (p.paymentStatus === 'pending' || p.id === item.id)
     );
     try {
       for (const t of targets) {
-        await deleteTransaction(t.id, { silent: true });
-        planningStorage.unlinkTxFromCard(effectiveUid, t.id);
+        if (t.isReserveTx) {
+          await deleteReserveTransaction(t.id, { silent: true });
+        } else {
+          await deleteTransaction(t.id, { silent: true });
+          planningStorage.unlinkTxFromCard(effectiveUid, t.id);
+        }
       }
       setTxCardMap(planningStorage.getTxCardMap(effectiveUid));
       setDeleteTargetItem(null);
-      toast.success(`${targets.length} parcela(s) removida(s)!`);
+      toast.success(`${targets.length} lançamento(s) do grupo removido(s)!`);
     } catch {
       toast.error('Erro ao remover parcelas do grupo.');
     }
@@ -2540,6 +2937,16 @@ export function PlanningCalendar() {
                                       {cardObj.name}
                                     </span>
                                   )}
+                                  {item.isReserveTx && (
+                                    <span className="text-[9px] font-black text-amber-700 dark:text-amber-300 bg-amber-500/15 px-1.5 py-0.2 rounded inline-flex items-center gap-0.5">
+                                      🐷 {reserveLookup[item.rawTx?.reserve_id]?.name || 'Reserva'}
+                                    </span>
+                                  )}
+                                  {isAutoRenewRecurring(item.rawTx) && (
+                                    <span className="text-[9px] font-black text-indigo-700 dark:text-indigo-300 bg-indigo-500/12 px-1.5 py-0.2 rounded inline-flex items-center gap-0.5">
+                                      🔄 {getFrequencyShortLabel(item.rawTx?.recurrence_frequency)}
+                                    </span>
+                                  )}
                                   {item.kind === 'income' && (
                                     <span className="text-[9px] font-black text-emerald-700 dark:text-emerald-400 bg-emerald-500/15 px-1.5 py-0.2 rounded">
                                       Receita
@@ -2612,16 +3019,14 @@ export function PlanningCalendar() {
                                 >
                                   <Edit2 className="w-3.5 h-3.5" />
                                 </button>
-                                {!item.isReserveTx && (
-                                  <button
-                                    type="button"
-                                    onClick={() => handleRequestDeleteItem(item)}
-                                    className="p-1.5 rounded-lg text-muted-foreground hover:text-rose-500 hover:bg-rose-500/10 cursor-pointer"
-                                    title="Excluir"
-                                  >
-                                    <Trash2 className="w-3.5 h-3.5" />
-                                  </button>
-                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => handleRequestDeleteItem(item)}
+                                  className="p-1.5 rounded-lg text-muted-foreground hover:text-rose-500 hover:bg-rose-500/10 cursor-pointer"
+                                  title="Excluir"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
                               </div>
                             </div>
                           </div>
@@ -3071,6 +3476,16 @@ export function PlanningCalendar() {
                                       <span className="text-muted-foreground/50">•</span>
                                     </span>
                                   )}
+                                  {item.isReserveTx && (
+                                    <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-amber-500/12 text-amber-700 dark:text-amber-300 font-extrabold text-[9px]">
+                                      🐷 {reserveLookup[item.rawTx?.reserve_id]?.name || 'Reserva'}
+                                    </span>
+                                  )}
+                                  {isAutoRenewRecurring(item.rawTx) && (
+                                    <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-indigo-500/12 text-indigo-700 dark:text-indigo-300 font-extrabold text-[9px]">
+                                      🔄 {getFrequencyShortLabel(item.rawTx?.recurrence_frequency)}
+                                    </span>
+                                  )}
                                   <span className="font-semibold text-muted-foreground truncate">
                                     {item.category}
                                   </span>
@@ -3181,16 +3596,14 @@ export function PlanningCalendar() {
                                 >
                                   <Edit2 className="w-3.5 h-3.5" />
                                 </button>
-                                {!item.isReserveTx && (
-                                  <button
-                                    type="button"
-                                    onClick={() => handleRequestDeleteItem(item)}
-                                    className="p-1.5 rounded-lg text-muted-foreground hover:text-rose-500 hover:bg-rose-500/10 transition-colors cursor-pointer"
-                                    title="Excluir"
-                                  >
-                                    <Trash2 className="w-3.5 h-3.5" />
-                                  </button>
-                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => handleRequestDeleteItem(item)}
+                                  className="p-1.5 rounded-lg text-muted-foreground hover:text-rose-500 hover:bg-rose-500/10 transition-colors cursor-pointer"
+                                  title="Excluir"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
                               </div>
                             </div>
                           </div>
@@ -3283,6 +3696,16 @@ export function PlanningCalendar() {
                                     {cardObj.name}
                                   </span>
                                 )}
+                                {item.isReserveTx && (
+                                  <span className="text-[9px] font-black text-amber-700 dark:text-amber-300 bg-amber-500/15 px-1.5 py-0.5 rounded">
+                                    🐷 {reserveLookup[item.rawTx?.reserve_id]?.name || 'Reserva'}
+                                  </span>
+                                )}
+                                {isAutoRenewRecurring(item.rawTx) && (
+                                  <span className="text-[9px] font-black text-indigo-700 dark:text-indigo-300 bg-indigo-500/12 px-1.5 py-0.5 rounded">
+                                    🔄 {getFrequencyShortLabel(item.rawTx?.recurrence_frequency)}
+                                  </span>
+                                )}
                                 <span className="text-[10px] font-bold text-muted-foreground truncate">
                                   {item.category}
                                 </span>
@@ -3347,16 +3770,14 @@ export function PlanningCalendar() {
                               >
                                 <Edit2 className="w-3 h-3" />
                               </button>
-                              {!item.isReserveTx && (
-                                <button
-                                  type="button"
-                                  onClick={() => handleRequestDeleteItem(item)}
-                                  className="p-1 rounded-lg text-muted-foreground hover:text-rose-500 hover:bg-rose-500/10 cursor-pointer"
-                                  title="Excluir"
-                                >
-                                  <Trash2 className="w-3 h-3" />
-                                </button>
-                              )}
+                              <button
+                                type="button"
+                                onClick={() => handleRequestDeleteItem(item)}
+                                className="p-1 rounded-lg text-muted-foreground hover:text-rose-500 hover:bg-rose-500/10 cursor-pointer"
+                                title="Excluir"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
                             </div>
                           </div>
                         </div>
@@ -3950,52 +4371,169 @@ export function PlanningCalendar() {
                   />
                 </div>
 
-                <label className="flex items-center gap-2 text-xs font-bold cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    checked={billRepeat}
-                    onChange={e => setBillRepeat(e.target.checked)}
-                    className="h-4 w-4 rounded accent-primary"
-                  />
-                  <span>
-                    {entryMode === 'income'
-                      ? 'Repetir receita periodicamente (recorrência)'
-                      : 'Repetir conta em meses/semanas futuras (recorrência)'}
-                  </span>
-                </label>
+                {/* Fonte de Pagamento: Caixa Livre vs Reserva (Apenas para Conta Planejada) */}
+                {entryMode === 'bill' && (
+                  <div className="p-3 rounded-xl border border-amber-500/30 bg-amber-500/[0.06] space-y-2.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[10.5px] font-extrabold uppercase tracking-wider text-foreground flex items-center gap-1.5">
+                        <PiggyBank className="w-3.5 h-3.5 text-amber-500" />
+                        Onde debitar quando pagar?
+                      </span>
+                      <div className="grid grid-cols-2 gap-1 p-0.5 rounded-lg bg-muted/60 border border-border/50">
+                        <button
+                          type="button"
+                          onClick={() => setBillUseReserve(false)}
+                          className={`px-2 py-1 rounded-md text-[10px] font-black transition-colors cursor-pointer ${
+                            !billUseReserve
+                              ? 'bg-card text-foreground shadow-xs'
+                              : 'text-muted-foreground hover:text-foreground'
+                          }`}
+                        >
+                          Caixa Livre
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => activeReserves.length > 0 && setBillUseReserve(true)}
+                          disabled={activeReserves.length === 0}
+                          className={`px-2 py-1 rounded-md text-[10px] font-black transition-colors cursor-pointer disabled:opacity-40 ${
+                            billUseReserve
+                              ? 'bg-amber-500 text-zinc-950 shadow-xs'
+                              : 'text-muted-foreground hover:text-foreground'
+                          }`}
+                        >
+                          Usar Reserva
+                        </button>
+                      </div>
+                    </div>
 
-                {billRepeat && (
-                  <div className="grid grid-cols-2 gap-3">
-                    <Select value={billFrequency} onValueChange={(v: RecurrenceFrequency) => setBillFrequency(v)}>
-                      <SelectTrigger className="h-10 rounded-xl text-xs font-bold">
-                        <SelectValue>
-                          {val => {
-                            switch (val) {
-                              case 'weekly': return 'Semanal';
-                              case 'biweekly': return 'Quinzenal';
-                              case 'monthly': return 'Mensal';
-                              default: return val || 'Mensal';
-                            }
-                          }}
-                        </SelectValue>
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="weekly">Semanal</SelectItem>
-                        <SelectItem value="biweekly">Quinzenal</SelectItem>
-                        <SelectItem value="monthly">Mensal</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <Input
-                      type="number"
-                      min={2}
-                      max={36}
-                      value={billRepeatCount}
-                      onChange={e => setBillRepeatCount(e.target.value)}
-                      placeholder="Qtd. repetições"
-                      className="h-10 rounded-xl text-xs font-bold tabular-nums"
-                    />
+                    {billUseReserve && activeReserves.length > 0 && (
+                      <div className="space-y-1.5 animate-fade-in">
+                        <Select value={billReserveId} onValueChange={setBillReserveId}>
+                          <SelectTrigger className="h-9 rounded-xl bg-card text-xs font-bold">
+                            <SelectValue placeholder="Selecione a reserva...">
+                              {val => {
+                                const found = activeReserves.find(r => r.id === val);
+                                return found
+                                  ? `${found.name} (Saldo: ${formatCurrency(found.saldo_atual || 0)})`
+                                  : 'Selecione a reserva...';
+                              }}
+                            </SelectValue>
+                          </SelectTrigger>
+                          <SelectContent>
+                            {activeReserves.map(r => (
+                              <SelectItem key={r.id} value={r.id}>
+                                {r.name} • Saldo: {formatCurrency(r.saldo_atual || 0)}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <p className="text-[10px] text-muted-foreground leading-snug">
+                          Fica pendente no calendário e, ao quitar, desconta diretamente do saldo da reserva escolhida.
+                        </p>
+                      </div>
+                    )}
                   </div>
                 )}
+
+                {/* Recorrência Auto-renovável vs Parcelada */}
+                <div className="p-3 rounded-xl border border-primary/20 bg-primary/[0.04] space-y-2.5">
+                  <label className="flex items-center gap-2 text-xs font-extrabold cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={billRepeat}
+                      onChange={e => setBillRepeat(e.target.checked)}
+                      className="h-4 w-4 rounded accent-primary cursor-pointer"
+                    />
+                    <Repeat className="w-3.5 h-3.5 text-primary shrink-0" />
+                    <span>
+                      {entryMode === 'income'
+                        ? 'Receita recorrente'
+                        : 'Conta recorrente (renovação automática)'}
+                    </span>
+                  </label>
+
+                  {billRepeat && (
+                    <div className="space-y-2.5 pt-2 border-t border-primary/15 animate-fade-in">
+                      <div className="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-muted/50 border border-border/50">
+                        <button
+                          type="button"
+                          onClick={() => setBillRecurrenceMode('auto')}
+                          className={`py-1.5 px-2 rounded-lg text-[10.5px] font-black transition-colors cursor-pointer ${
+                            billRecurrenceMode === 'auto'
+                              ? 'bg-primary text-primary-foreground shadow-xs'
+                              : 'text-muted-foreground hover:text-foreground'
+                          }`}
+                        >
+                          🔄 Auto-renovável
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setBillRecurrenceMode('fixed')}
+                          className={`py-1.5 px-2 rounded-lg text-[10.5px] font-black transition-colors cursor-pointer ${
+                            billRecurrenceMode === 'fixed'
+                              ? 'bg-primary text-primary-foreground shadow-xs'
+                              : 'text-muted-foreground hover:text-foreground'
+                          }`}
+                        >
+                          📑 Parcelas fixas (Nx)
+                        </button>
+                      </div>
+
+                      <div className={`grid gap-2.5 ${billRecurrenceMode === 'fixed' ? 'grid-cols-2' : 'grid-cols-1'}`}>
+                        <Select value={billFrequency} onValueChange={(v: RecurrenceFrequency) => setBillFrequency(v)}>
+                          <SelectTrigger className="h-10 rounded-xl bg-card text-xs font-bold">
+                            <SelectValue>
+                              {val => getFrequencyLabel(val as RecurrenceFrequency)}
+                            </SelectValue>
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="weekly">Semanal</SelectItem>
+                            <SelectItem value="biweekly">Quinzenal</SelectItem>
+                            <SelectItem value="monthly">Mensal</SelectItem>
+                            <SelectItem value="bimonthly">Bimestral</SelectItem>
+                            <SelectItem value="quarterly">Trimestral</SelectItem>
+                            <SelectItem value="semiannual">Semestral</SelectItem>
+                            <SelectItem value="yearly">Anual</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        {billRecurrenceMode === 'fixed' && (
+                          <Input
+                            type="number"
+                            min={2}
+                            max={36}
+                            value={billRepeatCount}
+                            onChange={e => setBillRepeatCount(e.target.value)}
+                            placeholder="Qtd. repetições"
+                            className="h-10 rounded-xl bg-card text-xs font-bold tabular-nums"
+                          />
+                        )}
+                      </div>
+
+                      {billRecurrenceMode === 'auto' ? (
+                        <p className="text-[10.5px] text-indigo-700 dark:text-indigo-300 font-semibold leading-snug bg-indigo-500/10 border border-indigo-500/20 rounded-lg p-2">
+                          Cria a conta pendente para{' '}
+                          <strong>
+                            {entryDate ? format(parseLocalDate(entryDate), 'dd/MM/yyyy') : 'a data escolhida'}
+                          </strong>
+                          . Assim que for quitada, o próximo lançamento é gerado automaticamente para{' '}
+                          <strong>
+                            {format(
+                              parseLocalDate(
+                                calculateNextOccurrence(entryDate || getTodayLocalDateStr(), billFrequency, 1)
+                              ),
+                              'dd/MM/yyyy'
+                            )}
+                          </strong>
+                          .
+                        </p>
+                      ) : (
+                        <p className="text-[10px] text-muted-foreground">
+                          Gera {Math.max(2, Math.min(36, Number(billRepeatCount) || 6))} lançamentos pendentes adiantados.
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
             )}
 
@@ -4140,7 +4678,7 @@ export function PlanningCalendar() {
               </div>
             </div>
 
-            {editingItem?.kind !== 'income' && !editingItem?.isReserveTx && cards.length > 0 && (
+            {editingItem?.kind !== 'income' && !editUseReserve && cards.length > 0 && (
               <div className="space-y-1.5">
                 <label className="text-[10.5px] font-extrabold uppercase tracking-wider text-muted-foreground">
                   Cartão Vinculado
@@ -4179,6 +4717,147 @@ export function PlanningCalendar() {
                     ))}
                   </SelectContent>
                 </Select>
+              </div>
+            )}
+
+            {/* Pagar usando Reserva (para despesas fora de cartão) */}
+            {editingItem?.kind === 'expense' && editCardId === '__none__' && activeReserves.length > 0 && (
+              <div className="p-3 rounded-xl border border-amber-500/30 bg-amber-500/[0.06] space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[10.5px] font-extrabold uppercase tracking-wider text-foreground flex items-center gap-1.5">
+                    <PiggyBank className="w-3.5 h-3.5 text-amber-500" />
+                    Forma de Pagamento
+                  </span>
+                  <div className="grid grid-cols-2 gap-1 p-0.5 rounded-lg bg-muted/60 border border-border/50">
+                    <button
+                      type="button"
+                      onClick={() => setEditUseReserve(false)}
+                      className={`px-2 py-1 rounded-md text-[10px] font-black transition-colors cursor-pointer ${
+                        !editUseReserve
+                          ? 'bg-card text-foreground shadow-xs'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      Caixa Livre
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEditUseReserve(true)}
+                      className={`px-2 py-1 rounded-md text-[10px] font-black transition-colors cursor-pointer ${
+                        editUseReserve
+                          ? 'bg-amber-500 text-zinc-950 shadow-xs'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      Usar Reserva
+                    </button>
+                  </div>
+                </div>
+                {editUseReserve && (
+                  <Select value={editReserveId} onValueChange={setEditReserveId}>
+                    <SelectTrigger className="h-9 rounded-xl bg-card text-xs font-bold">
+                      <SelectValue placeholder="Selecione a reserva...">
+                        {val => {
+                          const found = activeReserves.find(r => r.id === val);
+                          return found
+                            ? `${found.name} (Saldo: ${formatCurrency(found.saldo_atual || 0)})`
+                            : 'Selecione a reserva...';
+                        }}
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      {activeReserves.map(r => (
+                        <SelectItem key={r.id} value={r.id}>
+                          {r.name} • Saldo: {formatCurrency(r.saldo_atual || 0)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              </div>
+            )}
+
+            {/* Conta Recorrente (Auto-renovável) no Modal de Edição */}
+            {!editingItem?.isCard && editCardId === '__none__' && (
+              <div className="p-3 rounded-xl border border-primary/20 bg-primary/[0.04] space-y-2">
+                <label className="flex items-center gap-2 text-xs font-extrabold cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={editIsRecurring}
+                    onChange={e => {
+                      const checked = e.target.checked;
+                      setEditIsRecurring(checked);
+                      if (checked) setEditRecurrenceMode('auto');
+                    }}
+                    className="h-4 w-4 rounded accent-primary cursor-pointer"
+                  />
+                  <Repeat className="w-3.5 h-3.5 text-primary shrink-0" />
+                  <span>Conta Recorrente (Auto-renovável)</span>
+                </label>
+
+                {editIsRecurring && (
+                  <div className="space-y-2 pt-2 border-t border-primary/15">
+                    {(editingItem?.rawTx?.installment_total > 1 || editingItem?.rawTx?.recurrence_installments > 1) && (
+                      <div className="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-muted/50 border border-border/50">
+                        <button
+                          type="button"
+                          onClick={() => setEditRecurrenceMode('auto')}
+                          className={`py-1 px-2 rounded-lg text-[10px] font-black cursor-pointer ${
+                            editRecurrenceMode === 'auto'
+                              ? 'bg-primary text-primary-foreground'
+                              : 'text-muted-foreground'
+                          }`}
+                        >
+                          🔄 Auto-renovável
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setEditRecurrenceMode('fixed')}
+                          className={`py-1 px-2 rounded-lg text-[10px] font-black cursor-pointer ${
+                            editRecurrenceMode === 'fixed'
+                              ? 'bg-primary text-primary-foreground'
+                              : 'text-muted-foreground'
+                          }`}
+                        >
+                          📑 Parcelas fixas
+                        </button>
+                      </div>
+                    )}
+                    <Select
+                      value={editRecurrenceFrequency}
+                      onValueChange={(v: RecurrenceFrequency) => setEditRecurrenceFrequency(v)}
+                    >
+                      <SelectTrigger className="h-9 rounded-xl bg-card text-xs font-bold">
+                        <SelectValue>
+                          {val => getFrequencyLabel(val as RecurrenceFrequency)}
+                        </SelectValue>
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="weekly">Semanal</SelectItem>
+                        <SelectItem value="biweekly">Quinzenal</SelectItem>
+                        <SelectItem value="monthly">Mensal</SelectItem>
+                        <SelectItem value="bimonthly">Bimestral</SelectItem>
+                        <SelectItem value="quarterly">Trimestral</SelectItem>
+                        <SelectItem value="semiannual">Semestral</SelectItem>
+                        <SelectItem value="yearly">Anual</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    {editRecurrenceMode === 'auto' && (
+                      <p className="text-[10px] text-indigo-700 dark:text-indigo-300 font-semibold leading-snug">
+                        Ao quitar esta conta, a próxima será gerada automaticamente para{' '}
+                        <strong>
+                          {format(
+                            parseLocalDate(
+                              calculateNextOccurrence(editDate || getTodayLocalDateStr(), editRecurrenceFrequency, 1)
+                            ),
+                            'dd/MM/yyyy'
+                          )}
+                        </strong>
+                        .
+                      </p>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 
