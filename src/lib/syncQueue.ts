@@ -215,6 +215,22 @@ class SyncQueueManager {
                 error = null;
               }
             }
+          } else if (task.table === 'reserves') {
+            const optionalReserveKeys = [
+              'rule_history', 'regra_inicio_validade', 'require_category_on_use',
+              'default_use_category', 'regra_base', 'target_date',
+              'boost_ativo', 'boost_tipo', 'boost_valor', 'reset_suggestion_on_withdraw'
+            ];
+            const safeReserveInsert: Record<string, any> = {};
+            for (const k of Object.keys(payloadToInsert || {})) {
+              if (!optionalReserveKeys.includes(k)) {
+                safeReserveInsert[k] = payloadToInsert[k];
+              }
+            }
+            const { error: resFallbackErr } = await supabase.from('reserves').upsert(safeReserveInsert, { onConflict: 'id' });
+            if (!resFallbackErr) {
+              error = null;
+            }
           } else {
             const coreKeys = [
               'id', 'user_id', 'reserve_id', 'type', 'amount', 'date', 'description', 
@@ -334,7 +350,11 @@ class SyncQueueManager {
 
           // If still failing and table is reserves, strip newer non-core columns
           if (error && task.table === 'reserves') {
-            const optionalReserveKeys = ['rule_history', 'regra_inicio_validade', 'require_category_on_use', 'default_use_category', 'regra_base', 'target_date'];
+            const optionalReserveKeys = [
+              'rule_history', 'regra_inicio_validade', 'require_category_on_use',
+              'default_use_category', 'regra_base', 'target_date',
+              'boost_ativo', 'boost_tipo', 'boost_valor', 'reset_suggestion_on_withdraw'
+            ];
             const safeReserveUpdate: Record<string, any> = {};
             for (const k of Object.keys(task.payload || {})) {
               if (!optionalReserveKeys.includes(k)) {

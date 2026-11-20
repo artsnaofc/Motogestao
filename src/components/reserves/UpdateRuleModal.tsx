@@ -13,7 +13,8 @@ import {
   Layers, 
   AlertCircle,
   HelpCircle,
-  Zap
+  Zap,
+  Rocket
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -25,7 +26,8 @@ import {
   isTxInPeriod, 
   getPeriodDisplayLabel, 
   getTodayLocalDateStr,
-  toDateInputString
+  toDateInputString,
+  getDefaultBoostValue
 } from './reserveUtils';
 import { toast } from '@/lib/toast';
 
@@ -46,6 +48,10 @@ interface UpdateRuleModalProps {
     regra_inicio_validade?: string;
     require_category_on_use?: boolean;
     default_use_category?: string | null;
+    boost_ativo?: boolean;
+    boost_tipo?: 'increment' | 'multiplier' | null;
+    boost_valor?: number | null;
+    reset_suggestion_on_withdraw?: boolean;
   }) => Promise<void>;
 }
 
@@ -107,6 +113,10 @@ export function UpdateRuleModal({
   const [effectiveDate, setEffectiveDate] = useState<string>(getTodayLocalDateStr());
   const [requireCategoryOnUse, setRequireCategoryOnUse] = useState<boolean>(true);
   const [defaultUseCategory, setDefaultUseCategory] = useState<string>('');
+  const [boostAtivo, setBoostAtivo] = useState<boolean>(false);
+  const [boostTipo, setBoostTipo] = useState<'increment' | 'multiplier'>('increment');
+  const [boostValor, setBoostValor] = useState<string>('');
+  const [resetSuggestionOnWithdraw, setResetSuggestionOnWithdraw] = useState<boolean>(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Track open state & reserve id so we only initialize when modal opens or target reserve changes!
@@ -137,6 +147,16 @@ export function UpdateRuleModal({
             ? String(Math.round(Number(reserve.regra_valor) * 100) / 100)
             : ''
         );
+
+        const bType = (reserve.boost_tipo || 'increment') as 'increment' | 'multiplier';
+        setBoostAtivo(Boolean(reserve.boost_ativo));
+        setBoostTipo(bType);
+        setBoostValor(
+          reserve.boost_valor !== undefined && reserve.boost_valor !== null && Number(reserve.boost_valor) > 0
+            ? String(Number(reserve.boost_valor))
+            : String(getDefaultBoostValue(reserve.regra_tipo || 'km', bType))
+        );
+        setResetSuggestionOnWithdraw(reserve.reset_suggestion_on_withdraw !== false);
         
         const savedCats = reserve.regra_categorias && reserve.regra_categorias.length > 0
           ? reserve.regra_categorias
@@ -182,8 +202,22 @@ export function UpdateRuleModal({
   const simulatedSuggestion = () => {
     if (!regraAtiva || !regraTipo) return 0;
     const cleanStr = String(regraValor || '').replace(',', '.').trim();
-    const val = parseFloat(cleanStr);
-    if (isNaN(val) || val <= 0) return 0;
+    const baseVal = parseFloat(cleanStr);
+    if (isNaN(baseVal) || baseVal <= 0) return 0;
+
+    const cleanBoostStr = String(boostValor || '').replace(',', '.').trim();
+    const parsedBoost = parseFloat(cleanBoostStr);
+    let val = baseVal;
+    if (boostAtivo && !isNaN(parsedBoost)) {
+      if (boostTipo === 'multiplier' && parsedBoost > 1) {
+        val = baseVal * parsedBoost;
+      } else if (boostTipo === 'increment' && parsedBoost > 0) {
+        val = baseVal + parsedBoost;
+      }
+      if (regraTipo === 'bruto' || regraTipo === 'liquido') {
+        val = Math.min(100, val);
+      }
+    }
 
     const effDate = toDateInputString(effectiveDate);
     const periodTxs = (transactions || []).filter(t => {
@@ -241,6 +275,9 @@ export function UpdateRuleModal({
     const cleanStr = String(regraValor || '').replace(',', '.').trim();
     const parsedVal = cleanStr ? Math.round((parseFloat(cleanStr) || 0) * 100) / 100 : undefined;
 
+    const cleanBoostStr = String(boostValor || '').replace(',', '.').trim();
+    const parsedBoostVal = cleanBoostStr ? Math.round((parseFloat(cleanBoostStr) || 0) * 10000) / 10000 : 0;
+
     if (regraAtiva) {
       if (!regraTipo) {
         toast.error('Selecione o tipo de cálculo para a regra.');
@@ -257,6 +294,16 @@ export function UpdateRuleModal({
       if ((regraTipo === 'km' || regraTipo === 'bruto' || regraTipo === 'fixo') && regraCategorias.length === 0) {
         toast.error('Selecione ao menos uma categoria de receita elegível no seu perfil.');
         return;
+      }
+      if (boostAtivo) {
+        if (boostTipo === 'multiplier' && parsedBoostVal <= 1) {
+          toast.error('No Modo Boost por multiplicador, informe um fator maior que 1x.');
+          return;
+        }
+        if (boostTipo === 'increment' && parsedBoostVal <= 0) {
+          toast.error('Informe um valor de acréscimo válido para o Modo Boost.');
+          return;
+        }
       }
     }
 
@@ -276,7 +323,11 @@ export function UpdateRuleModal({
         regra_categorias: regraAtiva ? regraCategorias : [],
         regra_inicio_validade: toDateInputString(effectiveDate) || getTodayLocalDateStr(),
         require_category_on_use: requireCategoryOnUse,
-        default_use_category: !requireCategoryOnUse ? defaultUseCategory : null
+        default_use_category: !requireCategoryOnUse ? defaultUseCategory : null,
+        boost_ativo: regraAtiva ? boostAtivo : false,
+        boost_tipo: boostTipo,
+        boost_valor: parsedBoostVal > 0 ? parsedBoostVal : getDefaultBoostValue(regraTipo || 'km', boostTipo),
+        reset_suggestion_on_withdraw: resetSuggestionOnWithdraw,
       } as any);
 
       toast.success(`Regra de aporte de ${reserve.name} atualizada com sucesso!`);
@@ -539,6 +590,112 @@ export function UpdateRuleModal({
                 </p>
               </div>
 
+              {/* Modo Boost da Regra */}
+              <div className={`p-3 rounded-2xl border transition-all space-y-2.5 ${
+                boostAtivo
+                  ? 'bg-gradient-to-br from-amber-500/15 via-orange-500/5 to-transparent border-amber-500/40'
+                  : 'bg-muted/25 border-border/80'
+              }`}>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="space-y-0.5">
+                    <div className="flex items-center gap-1.5">
+                      <Rocket className={`w-3.5 h-3.5 ${boostAtivo ? 'text-amber-500' : 'text-muted-foreground'}`} />
+                      <span className="text-xs font-black text-foreground">Modo Boost (Acelerador)</span>
+                    </div>
+                    <p className="text-[10.5px] text-muted-foreground">
+                      Eleva temporariamente a regra sem alterar seu valor base.
+                    </p>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                    <input
+                      type="checkbox"
+                      checked={boostAtivo}
+                      onChange={e => setBoostAtivo(e.target.checked)}
+                      className="sr-only peer"
+                    />
+                    <div className="w-10 h-5.5 bg-muted rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4.5 after:w-4.5 after:transition-all peer-checked:bg-amber-500"></div>
+                  </label>
+                </div>
+
+                {boostAtivo && (
+                  <div className="flex flex-wrap items-center gap-2 pt-1.5 border-t border-amber-500/20">
+                    <div className="flex items-center bg-muted/60 p-0.5 rounded-lg border border-border/70 text-[10px] font-bold">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setBoostTipo('increment');
+                          setBoostValor(String(getDefaultBoostValue(regraTipo || 'km', 'increment')));
+                        }}
+                        className={`px-2 py-0.5 rounded-md cursor-pointer ${
+                          boostTipo === 'increment' ? 'bg-card text-foreground shadow-2xs' : 'text-muted-foreground'
+                        }`}
+                      >
+                        + Valor
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setBoostTipo('multiplier');
+                          setBoostValor('1.5');
+                        }}
+                        className={`px-2 py-0.5 rounded-md cursor-pointer ${
+                          boostTipo === 'multiplier' ? 'bg-card text-foreground shadow-2xs' : 'text-muted-foreground'
+                        }`}
+                      >
+                        Multi (x)
+                      </button>
+                    </div>
+
+                    <Input
+                      type="text"
+                      inputMode="decimal"
+                      value={boostValor}
+                      onChange={e => setBoostValor(e.target.value.replace(/[^0-9.,]/g, ''))}
+                      className="w-24 h-8 text-xs font-mono font-bold rounded-lg bg-card text-right"
+                    />
+                    <span className="text-[10.5px] font-bold text-amber-700 dark:text-amber-300">
+                      {boostTipo === 'multiplier'
+                        ? 'x sobre a regra'
+                        : regraTipo === 'km'
+                          ? '+ R$/km'
+                          : regraTipo === 'bruto' || regraTipo === 'liquido'
+                            ? '+ % na regra'
+                            : '+ R$/dia'}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* Opção: Zerar sugestão ao realizar resgate */}
+              <div className={`p-3 rounded-2xl border transition-all flex items-center justify-between gap-3 ${
+                resetSuggestionOnWithdraw
+                  ? 'bg-muted/35 border-border/80'
+                  : 'bg-indigo-500/10 border-indigo-500/30'
+              }`}>
+                <div className="space-y-0.5">
+                  <div className="flex items-center gap-1.5">
+                    <AlertCircle className={`w-3.5 h-3.5 ${resetSuggestionOnWithdraw ? 'text-amber-500' : 'text-indigo-500'}`} />
+                    <span className="text-xs font-black text-foreground">
+                      Zerar sugestão ao fazer resgate
+                    </span>
+                  </div>
+                  <p className="text-[10.5px] text-muted-foreground leading-snug">
+                    {resetSuggestionOnWithdraw
+                      ? 'Ativado: ao realizar um resgate pago, o acumulado da sugestão reinicia a partir da data do resgate.'
+                      : 'Desativado: seus resgates não zeram nem reiniciam a sugestão calculada pela regra.'}
+                  </p>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                  <input
+                    type="checkbox"
+                    checked={resetSuggestionOnWithdraw}
+                    onChange={e => setResetSuggestionOnWithdraw(e.target.checked)}
+                    className="sr-only peer"
+                  />
+                  <div className="w-10 h-5.5 bg-muted rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4.5 after:w-4.5 after:transition-all peer-checked:bg-indigo-600"></div>
+                </label>
+              </div>
+
               {/* Simulação em Tempo Real */}
               <div className="p-3 bg-gradient-to-r from-emerald-500/10 via-emerald-500/5 to-transparent rounded-2xl border border-emerald-500/20 flex items-center justify-between">
                 <div>
@@ -546,7 +703,7 @@ export function UpdateRuleModal({
                     Prévia Calculada ({getPeriodDisplayLabel(globalPeriod, customDateRange)})
                   </span>
                   <span className="text-xs font-bold text-foreground">
-                    Sugestão resultante no período:
+                    {boostAtivo ? 'Sugestão resultante (c/ Boost):' : 'Sugestão resultante no período:'}
                   </span>
                 </div>
                 <strong className="text-base font-black text-emerald-600 dark:text-emerald-400 font-mono">

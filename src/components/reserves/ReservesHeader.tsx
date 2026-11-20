@@ -10,7 +10,8 @@ import {
   Zap,
   ArrowUpRight,
   Eye,
-  EyeOff
+  EyeOff,
+  Rocket
 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -28,6 +29,8 @@ interface ReservesHeaderProps {
   setActiveTab: (tab: 'cards' | 'history') => void;
   onOpenCreate: () => void;
   onOpenMassAporte: () => void;
+  onOpenBoost?: () => void;
+  boostActiveCount?: number;
   hideValues?: boolean;
   setHideValues?: (hide: boolean) => void;
 }
@@ -44,6 +47,8 @@ export function ReservesHeader({
   setActiveTab,
   onOpenCreate,
   onOpenMassAporte,
+  onOpenBoost,
+  boostActiveCount = 0,
   hideValues,
   setHideValues
 }: ReservesHeaderProps) {
@@ -84,6 +89,24 @@ export function ReservesHeader({
               {hideValues ? <EyeOff className="w-4 h-4 text-amber-500" /> : <Eye className="w-4 h-4 text-primary" />}
               <span className="hidden sm:inline">{hideValues ? 'Oculto' : 'Visível'}</span>
             </button>
+          )}
+
+          {/* Modo Boost Button */}
+          {onOpenBoost && (
+            <Button
+              onClick={onOpenBoost}
+              size="sm"
+              variant={boostActiveCount > 0 ? 'default' : 'outline'}
+              className={`h-8 px-2.5 sm:px-3 text-xs font-black rounded-xl gap-1.5 transition-all active:scale-[0.98] cursor-pointer ${
+                boostActiveCount > 0
+                  ? 'bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700 text-white border-0 shadow-xs'
+                  : 'border-amber-500/40 text-amber-600 dark:text-amber-400 hover:bg-amber-500/10'
+              }`}
+              title="Ativar ou configurar Modo Boost nas regras de sugestão"
+            >
+              <Rocket className="w-3.5 h-3.5" />
+              <span>{boostActiveCount > 0 ? `Boost ON (${boostActiveCount})` : 'Modo Boost'}</span>
+            </Button>
           )}
 
           {/* Mass Aporte Trigger Button */}
@@ -191,11 +214,11 @@ export function ReservesHeader({
             <p className="text-[10px] text-muted-foreground font-medium mt-0.5 truncate">
               {totalPendingSuggestion > 0 ? (
                 <span className="text-amber-600 dark:text-amber-400 font-semibold">
-                  Aporte sugerido pendente
+                  {boostActiveCount > 0 ? `🚀 Boost ativo (${boostActiveCount}) • Aportar` : 'Aporte sugerido pendente'}
                 </span>
               ) : (
                 <span className="text-emerald-600 dark:text-emerald-400 font-semibold">
-                  Regras em dia
+                  {boostActiveCount > 0 ? `🚀 Boost ativo (${boostActiveCount}) • Em dia` : 'Regras em dia'}
                 </span>
               )}
             </p>

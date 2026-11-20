@@ -545,8 +545,34 @@ export function DataProvider({ children, userId: propUserId }: { children: React
               }
             }
 
-            setReserves(merged);
-            cacheManager.set(`reserves_${userId}`, merged, undefined, 'reserves');
+            // Hydrate client-side boost settings if Supabase table doesn't yet store boost_* columns
+            let localBoostMap: Record<string, any> = {};
+            try {
+              const rawBoost = localStorage.getItem(`reserve_boost_map_${userId}`);
+              localBoostMap = rawBoost ? JSON.parse(rawBoost) : (cacheManager.get(`reserve_boost_map_${userId}`) || {});
+            } catch {}
+
+            const hydratedMerged = merged.map(resItem => {
+              const b = localBoostMap[resItem.id];
+              if (!b) return resItem;
+              const nextItem = { ...resItem };
+              if (nextItem.boost_ativo === undefined && b.boost_ativo !== undefined) {
+                nextItem.boost_ativo = b.boost_ativo ?? false;
+              }
+              if (nextItem.boost_tipo === undefined && b.boost_tipo !== undefined) {
+                nextItem.boost_tipo = b.boost_tipo ?? 'increment';
+              }
+              if (nextItem.boost_valor === undefined && b.boost_valor !== undefined) {
+                nextItem.boost_valor = b.boost_valor ?? 0;
+              }
+              if (nextItem.reset_suggestion_on_withdraw === undefined && b.reset_suggestion_on_withdraw !== undefined) {
+                nextItem.reset_suggestion_on_withdraw = b.reset_suggestion_on_withdraw;
+              }
+              return nextItem;
+            });
+
+            setReserves(hydratedMerged);
+            cacheManager.set(`reserves_${userId}`, hydratedMerged, undefined, 'reserves');
             if (!hasSeeded) cacheManager.set(hasSeededKey, true, undefined, 'reserves');
           } else if (!hasSeeded) {
             const defaults = getDefaultReserves(userId);
@@ -594,8 +620,21 @@ export function DataProvider({ children, userId: propUserId }: { children: React
             }
           }
 
-          setReserveTransactions(merged);
-          cacheManager.set(`reserve_transactions_${userId}`, merged, undefined, 'reserves');
+          let boostExtraMap: Record<string, number> = {};
+          try {
+            const rawExtra = localStorage.getItem(`boost_aporte_extras_map_${userId}`);
+            boostExtraMap = rawExtra ? JSON.parse(rawExtra) : (cacheManager.get(`boost_aporte_extras_map_${userId}`) || {});
+          } catch {}
+
+          const hydratedRts = merged.map(rt => {
+            if (rt.boost_extra === undefined && boostExtraMap[rt.id] !== undefined) {
+              return { ...rt, boost_extra: boostExtraMap[rt.id] };
+            }
+            return rt;
+          });
+
+          setReserveTransactions(hydratedRts);
+          cacheManager.set(`reserve_transactions_${userId}`, hydratedRts, undefined, 'reserves');
         }
 
         // Process Investment Transactions

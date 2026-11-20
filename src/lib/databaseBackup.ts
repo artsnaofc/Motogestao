@@ -127,6 +127,7 @@ export const ALLOWED_TABLE_COLUMNS: Record<string, string[]> = {
     'saldo_atual', 'meta_objetivo', 'target_date', 'status', 'regra_tipo', 'regra_valor',
     'regra_categorias', 'regra_base', 'regra_ativa', 'require_category_on_use',
     'default_use_category', 'rule_history', 'is_paused', 'regra_inicio_validade',
+    'boost_ativo', 'boost_tipo', 'boost_valor', 'reset_suggestion_on_withdraw',
     'created_at', 'updated_at'
   ],
   reserve_transactions: [
@@ -812,6 +813,10 @@ CREATE TABLE IF NOT EXISTS public.reserves (
     rule_history JSONB DEFAULT '[]'::jsonb,
     is_paused BOOLEAN DEFAULT FALSE,
     regra_inicio_validade DATE,
+    boost_ativo BOOLEAN DEFAULT FALSE,
+    boost_tipo TEXT DEFAULT 'increment',
+    boost_valor NUMERIC DEFAULT 0,
+    reset_suggestion_on_withdraw BOOLEAN DEFAULT TRUE,
     
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -820,6 +825,10 @@ CREATE TABLE IF NOT EXISTS public.reserves (
 -- Garantir adição de coluna se a tabela já existir no Supabase
 ALTER TABLE public.reserves ADD COLUMN IF NOT EXISTS suggested_balance NUMERIC DEFAULT 0;
 ALTER TABLE public.reserves ADD COLUMN IF NOT EXISTS target_date TEXT;
+ALTER TABLE public.reserves ADD COLUMN IF NOT EXISTS boost_ativo BOOLEAN DEFAULT FALSE;
+ALTER TABLE public.reserves ADD COLUMN IF NOT EXISTS boost_tipo TEXT DEFAULT 'increment';
+ALTER TABLE public.reserves ADD COLUMN IF NOT EXISTS boost_valor NUMERIC DEFAULT 0;
+ALTER TABLE public.reserves ADD COLUMN IF NOT EXISTS reset_suggestion_on_withdraw BOOLEAN DEFAULT TRUE;
 
 CREATE INDEX IF NOT EXISTS idx_reserves_user_status ON public.reserves(user_id, status);
 

@@ -23,6 +23,9 @@ import {
   getEffectiveAportesInPeriod,
   calculateReserveGoalProjection,
   calculateReserveYieldStats,
+  isReserveBoostActive,
+  getRuleBoostDeltaLabel,
+  getBoostSpeedupComparison,
   parseLocalDate,
   generateUUID,
   calculateNextOccurrence,
@@ -39,6 +42,7 @@ import { ReserveHistoryTab } from '../components/reserves/ReserveHistoryTab';
 import { ReserveModal } from '../components/reserves/ReserveModal';
 import { UpdateRuleModal } from '../components/reserves/UpdateRuleModal';
 import { SuggestionAuditModal } from '../components/reserves/SuggestionAuditModal';
+import { ModoBoostModal } from '../components/reserves/ModoBoostModal';
 import { 
   AporteManualModal, 
   WithdrawModal, 
@@ -124,6 +128,9 @@ export function Reserves() {
   const [showUpdateRuleModal, setShowUpdateRuleModal] = useState(false);
   const [reserveToUpdateRule, setReserveToUpdateRule] = useState<Reserve | null>(null);
 
+  const [showModoBoostModal, setShowModoBoostModal] = useState(false);
+  const [boostFocusReserveId, setBoostFocusReserveId] = useState<string | null>(null);
+
   const [auditReserve, setAuditReserve] = useState<Reserve | null>(null);
 
   const [selectedReserveForAction, setSelectedReserveForAction] = useState<Reserve | null>(null);
@@ -152,6 +159,11 @@ export function Reserves() {
   // Paused reserves count (active status, paused automation)
   const pausedReservesCount = useMemo(() => {
     return activeReserves.filter(r => r.is_paused).length;
+  }, [activeReserves]);
+
+  // Boost active count
+  const boostActiveCount = useMemo(() => {
+    return activeReserves.filter(r => isReserveBoostActive(r)).length;
   }, [activeReserves]);
 
   // Overall consolidated metrics
@@ -341,7 +353,7 @@ export function Reserves() {
 
   // 1. Execute Batch Mass Aporte
   const handleExecuteBatch = async (batchData: {
-    items: { reserve_id: string; amount: number; name: string }[];
+    items: { reserve_id: string; amount: number; name: string; boostExtra?: number }[];
     date: string;
     description: string;
   }) => {
@@ -355,14 +367,24 @@ export function Reserves() {
         if (cleanAmount <= 0) continue;
         totalSum += cleanAmount;
 
+        const cleanBoostExtra =
+          item.boostExtra && item.boostExtra > 0
+            ? Math.round(item.boostExtra * 100) / 100
+            : 0;
+        const boostSuffix =
+          cleanBoostExtra > 0
+            ? ` • Boost +R$ ${cleanBoostExtra.toFixed(2).replace('.', ',')}`
+            : '';
+
         await addReserveTransaction({
           reserve_id: item.reserve_id,
           type: 'aporte',
           amount: cleanAmount,
           date: batchData.date,
-          description: `[Consolidador em Massa] ${batchData.description}`,
+          description: `[Consolidador em Massa] ${batchData.description}${boostSuffix}`,
           source: 'mass_contribution',
-          batch_id: batchId
+          batch_id: batchId,
+          ...(cleanBoostExtra > 0 ? { boost_extra: cleanBoostExtra } : {})
         }, { silent: true });
 
         // Update reserve balance
@@ -389,7 +411,10 @@ export function Reserves() {
   const handleApplyDirectSuggestion = (reserve: Reserve, amount: number) => {
     setSelectedReserveForAction(reserve);
     setAporteInitialAmount(Math.round(amount * 100) / 100);
-    setAporteInitialDesc(`[Aporte Sugerido] Regra calculada: ${reserve.name}`);
+    const boostNote = isReserveBoostActive(reserve)
+      ? ` • Modo Boost (${getRuleBoostDeltaLabel(reserve)})`
+      : '';
+    setAporteInitialDesc(`[Aporte Sugerido] Regra calculada: ${reserve.name}${boostNote}`);
     setIsSuggestionAporte(true);
     setActionModalType('aporte_manual');
   };
@@ -406,14 +431,45 @@ export function Reserves() {
     const cleanAmount = Math.round(data.amount * 100) / 100;
     const isSugg = Boolean(data.isSuggestion ?? isSuggestionAporte);
 
+    let boostExtra = 0;
+    if (isSugg && isReserveBoostActive(res)) {
+      const baseSug = calculateSuggestion(
+        res,
+        transactions,
+        reserveTransactions,
+        FIXED_SUGGESTION_PERIOD,
+        FIXED_CUSTOM_RANGE,
+        { ignoreBoost: true }
+      );
+      const baseEff = getEffectiveAportesInPeriod(
+        res,
+        reserveTransactions,
+        FIXED_SUGGESTION_PERIOD,
+        FIXED_CUSTOM_RANGE,
+        { ignoreBoost: true }
+      );
+      const basePending = Math.max(0, Math.round((baseSug - baseEff) * 100) / 100);
+      boostExtra = Math.max(0, Math.round((cleanAmount - basePending) * 100) / 100);
+    }
+
+    const baseDesc =
+      data.description ||
+      (isSugg ? `[Aporte Sugerido] ${res.name}` : `[Aporte Manual] ${res.name}`);
+    const hasBoostTag = /Boost\s*\+R\$/i.test(baseDesc);
+    const finalDesc =
+      boostExtra > 0 && !hasBoostTag
+        ? `${baseDesc} • Boost +R$ ${boostExtra.toFixed(2).replace('.', ',')}`
+        : baseDesc;
+
     await addReserveTransaction({
       reserve_id: res.id,
       type: 'aporte',
       amount: cleanAmount,
       date: data.date,
       category: isSugg ? 'Aporte Sugerido' : 'Aporte Manual',
-      description: data.description || (isSugg ? `[Aporte Sugerido] ${res.name}` : `[Aporte Manual] ${res.name}`),
-      source: isSugg ? 'automation' : 'manual'
+      description: finalDesc,
+      source: isSugg ? 'automation' : 'manual',
+      ...(boostExtra > 0 ? { boost_extra: boostExtra } : {})
     });
 
     const newBal = Math.round(((res.saldo_atual || 0) + cleanAmount) * 100) / 100;
@@ -669,6 +725,7 @@ export function Reserves() {
         saldo_inicial: initialBalance || 0,
         saldo_atual: initialBalance || 0,
         meta_objetivo: reserveData.meta_objetivo || 0,
+        target_date: reserveData.target_date ?? null,
         icon: reserveData.icon || 'PiggyBank',
         color: reserveData.color || '#6366f1',
         regra_ativa: !!reserveData.regra_ativa,
@@ -676,6 +733,10 @@ export function Reserves() {
         regra_valor: reserveData.regra_valor,
         regra_categorias: reserveData.regra_categorias || [],
         regra_inicio_validade: reserveData.regra_inicio_validade || getTodayLocalDateStr(),
+        boost_ativo: Boolean(reserveData.boost_ativo),
+        boost_tipo: reserveData.boost_tipo || 'increment',
+        boost_valor: reserveData.boost_valor ?? 0,
+        reset_suggestion_on_withdraw: reserveData.reset_suggestion_on_withdraw ?? true,
         require_category_on_use: reserveData.require_category_on_use,
         default_use_category: reserveData.default_use_category,
         status: 'active',
@@ -796,6 +857,86 @@ export function Reserves() {
     }
   };
 
+  // 7b. Toggle / Configure Modo Boost (never modifies regra_inicio_validade or rule_history)
+  const handleToggleBoost = async (res: Reserve) => {
+    if (isReserveBoostActive(res)) {
+      await updateReserve(res.id, { boost_ativo: false });
+      if (auditReserve?.id === res.id) {
+        setAuditReserve(prev => (prev ? { ...prev, boost_ativo: false } : null));
+      }
+      toast.success(`Modo Boost desativado em "${res.name}". Regras e sugestões normais mantidas.`, {
+        id: 'boost-toggle-toast'
+      });
+      return;
+    }
+
+    const boostType = (res.boost_tipo || 'increment') as 'increment' | 'multiplier';
+    const boostVal = Number(res.boost_valor || 0);
+    const hasConfiguredValue =
+      boostType === 'multiplier' ? boostVal > 1 : boostVal > 0;
+
+    if (hasConfiguredValue) {
+      const payload: Partial<Reserve> = {
+        boost_ativo: true,
+        boost_tipo: boostType,
+        boost_valor: boostVal,
+      };
+      await updateReserve(res.id, payload);
+      if (auditReserve?.id === res.id) {
+        setAuditReserve(prev => (prev ? { ...prev, ...payload } : null));
+      }
+      const simulated = { ...res, ...payload };
+      const speedup = getBoostSpeedupComparison(simulated, transactions, reserveTransactions);
+      const speedNote =
+        speedup.daysSaved && speedup.daysSaved > 0
+          ? ` Meta ${speedup.daysSaved} ${speedup.daysSaved === 1 ? 'dia' : 'dias'} mais rápida!`
+          : '';
+      toast.success(
+        `Modo Boost ativado em "${res.name}" (${getRuleBoostDeltaLabel(simulated)})!${speedNote}`,
+        { id: 'boost-toggle-toast' }
+      );
+      return;
+    }
+
+    setBoostFocusReserveId(res.id);
+    setShowModoBoostModal(true);
+  };
+
+  const handleUpdateReserveBoost = async (
+    reserveId: string,
+    payload: {
+      boost_ativo: boolean;
+      boost_tipo: 'increment' | 'multiplier';
+      boost_valor: number;
+    }
+  ) => {
+    await updateReserve(reserveId, payload);
+    if (auditReserve?.id === reserveId) {
+      setAuditReserve(prev => (prev ? { ...prev, ...payload } : null));
+    }
+  };
+
+  const handleBatchUpdateBoost = async (
+    updates: Array<{
+      reserveId: string;
+      boost_ativo: boolean;
+      boost_tipo: 'increment' | 'multiplier';
+      boost_valor: number;
+    }>
+  ) => {
+    for (const u of updates) {
+      const payload = {
+        boost_ativo: u.boost_ativo,
+        boost_tipo: u.boost_tipo,
+        boost_valor: u.boost_valor,
+      };
+      await updateReserve(u.reserveId, payload);
+      if (auditReserve?.id === u.reserveId) {
+        setAuditReserve(prev => (prev ? { ...prev, ...payload } : null));
+      }
+    }
+  };
+
   // 8. Finalize / Deactivate / Reactivate Reserve
   const handleFinalize = async (res: Reserve) => {
     if (res.status === 'inactive') {
@@ -865,6 +1006,11 @@ export function Reserves() {
           setShowCreateEditModal(true);
         }}
         onOpenMassAporte={() => setShowMassAporteModal(true)}
+        onOpenBoost={() => {
+          setBoostFocusReserveId(null);
+          setShowModoBoostModal(true);
+        }}
+        boostActiveCount={boostActiveCount}
         hideValues={hideValues}
         setHideValues={setHideValues}
       />
@@ -1047,6 +1193,11 @@ export function Reserves() {
                   onDelete={handleDeleteReserve}
                   onApplyDirectSuggestion={handleApplyDirectSuggestion}
                   onAuditSuggestion={r => setAuditReserve(r)}
+                  onToggleBoost={handleToggleBoost}
+                  onConfigureBoost={r => {
+                    setBoostFocusReserveId(r.id);
+                    setShowModoBoostModal(true);
+                  }}
                   hideValues={hideValues}
                 />
               ))}
@@ -1093,7 +1244,7 @@ export function Reserves() {
 
       {/* 1b. Modal Auditoria da Sugestão de Aportes */}
       <SuggestionAuditModal
-        key={auditReserve ? `${auditReserve.id}-${auditReserve.regra_inicio_validade}-${auditReserve.regra_valor}-${auditReserve.regra_tipo}` : 'audit-closed'}
+        key={auditReserve ? `${auditReserve.id}-${auditReserve.regra_inicio_validade}-${auditReserve.regra_valor}-${auditReserve.regra_tipo}-${auditReserve.boost_ativo}-${auditReserve.boost_tipo}-${auditReserve.boost_valor}-${auditReserve.reset_suggestion_on_withdraw}` : 'audit-closed'}
         isOpen={Boolean(auditReserve)}
         onClose={() => setAuditReserve(null)}
         reserve={auditReserve ? (reserves.find(r => r.id === auditReserve.id) || auditReserve) : null}
@@ -1102,6 +1253,28 @@ export function Reserves() {
         globalPeriod={FIXED_SUGGESTION_PERIOD}
         customDateRange={FIXED_CUSTOM_RANGE}
         onApplyAporte={(res, amt) => handleApplyDirectSuggestion(res, amt)}
+      />
+
+      {/* 1c. Modal Centro de Controle Modo Boost */}
+      <ModoBoostModal
+        isOpen={showModoBoostModal}
+        onClose={() => {
+          setShowModoBoostModal(false);
+          setBoostFocusReserveId(null);
+        }}
+        reserves={reserves}
+        transactions={transactions}
+        reserveTransactions={reserveTransactions}
+        globalPeriod={FIXED_SUGGESTION_PERIOD}
+        customDateRange={FIXED_CUSTOM_RANGE}
+        focusReserveId={boostFocusReserveId}
+        onUpdateReserveBoost={handleUpdateReserveBoost}
+        onBatchUpdateBoost={handleBatchUpdateBoost}
+        onOpenRuleModal={r => {
+          setShowModoBoostModal(false);
+          setReserveToUpdateRule(r);
+          setShowUpdateRuleModal(true);
+        }}
       />
 
       {/* 2. Modal Criar / Editar Reserva */}

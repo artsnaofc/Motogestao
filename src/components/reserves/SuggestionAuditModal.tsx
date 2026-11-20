@@ -14,10 +14,11 @@ import {
   ChevronUp, 
   ShieldCheck, 
   Layers,
-  Receipt
+  Receipt,
+  Rocket
 } from 'lucide-react';
 import { Reserve, Transaction, ReserveTransaction } from '../../types';
-import { getSuggestionAudit, SuggestionAuditResult, formatCurrency, calculateReserveGoalProjection } from './reserveUtils';
+import { getSuggestionAudit, SuggestionAuditResult, formatCurrency, calculateReserveGoalProjection, getRuleBoostDeltaLabel } from './reserveUtils';
 import { Button } from '@/components/ui/button';
 
 interface SuggestionAuditModalProps {
@@ -55,16 +56,17 @@ export function SuggestionAuditModal({
 
   const getRuleLabel = () => {
     if (!reserve.regra_ativa || !reserve.regra_tipo) return 'Sem Regra Ativa';
+    const val = audit.boostActive ? audit.effectiveRuleValue : audit.baseRuleValue;
     switch (reserve.regra_tipo as string) {
       case 'km':
-        return `R$ ${(reserve.regra_valor || 0).toFixed(2)} por KM`;
+        return `R$ ${val.toFixed(2)} por KM${audit.boostActive ? ` (${getRuleBoostDeltaLabel(reserve)})` : ''}`;
       case 'bruto':
-        return `${reserve.regra_valor}% do Faturamento Bruto`;
+        return `${val}% do Faturamento Bruto${audit.boostActive ? ` (${getRuleBoostDeltaLabel(reserve)})` : ''}`;
       case 'liquido':
-        return `${reserve.regra_valor}% do Lucro Líquido`;
+        return `${val}% do Lucro Líquido${audit.boostActive ? ` (${getRuleBoostDeltaLabel(reserve)})` : ''}`;
       case 'fixo':
       case 'fixo_diario':
-        return `R$ ${(reserve.regra_valor || 0).toFixed(2)} fixos por dia`;
+        return `R$ ${val.toFixed(2)} fixos por dia${audit.boostActive ? ` (${getRuleBoostDeltaLabel(reserve)})` : ''}`;
       default:
         return reserve.regra_tipo;
     }
@@ -205,6 +207,38 @@ export function SuggestionAuditModal({
             </div>
           </div>
 
+          {/* Boost Breakdown Notice */}
+          {audit.boostActive && !audit.isPaused && !audit.isGoalReached && (
+            <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-between gap-2 text-xs">
+              <div className="flex items-center gap-2 min-w-0">
+                <Rocket className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                <div>
+                  <span className="font-black text-amber-800 dark:text-amber-300 block">
+                    Modo Boost Ativo ({getRuleBoostDeltaLabel(reserve)})
+                  </span>
+                  <span className="text-[11px] text-muted-foreground">
+                    Regra base geraria {formatCurrency(audit.baseSuggested)} • Boost adicionou{' '}
+                    <strong className="text-amber-600 dark:text-amber-400 font-mono">
+                      +{formatCurrency(audit.boostSuggestedExtra)}
+                    </strong>
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {!audit.boostActive && audit.boostExtraAportes > 0 && (
+            <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/25 flex items-center justify-between text-xs">
+              <div className="flex items-center gap-1.5 text-emerald-800 dark:text-emerald-200 font-medium">
+                <Rocket className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                <span>Extras já aportados via Boost (isolados da regra normal):</span>
+              </div>
+              <span className="font-mono font-bold text-emerald-700 dark:text-emerald-300 shrink-0">
+                {formatCurrency(audit.boostExtraAportes)}
+              </span>
+            </div>
+          )}
+
           {/* Destaque para Aportes Manuais do Período */}
           {audit.manualAportes !== undefined && audit.manualAportes > 0 && (
             <div className="p-2.5 rounded-xl bg-muted/30 border border-border/80 flex items-center justify-between text-xs">
@@ -271,7 +305,14 @@ export function SuggestionAuditModal({
                   </span>
                 </li>
               )}
-              {audit.lastWithdrawalDate ? (
+              {!audit.resetOnWithdraw ? (
+                <li className="flex items-start gap-2 text-indigo-600 dark:text-indigo-400 font-semibold">
+                  <span className="font-bold">•</span>
+                  <span>
+                    <strong>Resgates não zeram a sugestão:</strong> opção configurada para manter os cálculos acumulados mesmo após realizar resgates.
+                  </span>
+                </li>
+              ) : audit.lastWithdrawalDate ? (
                 <li className="flex items-start gap-2 text-foreground">
                   <span className="text-amber-500 font-bold">•</span>
                   <span>

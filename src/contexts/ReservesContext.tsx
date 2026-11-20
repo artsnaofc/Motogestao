@@ -55,6 +55,53 @@ export function ReservesProvider({
     setReserveTransactions(initialReserveTransactions);
   }, [initialReserveTransactions]);
 
+  const persistBoostSetting = (userId: string, reserveId: string, fields: Partial<Reserve>) => {
+    if (
+      fields.boost_ativo === undefined &&
+      fields.boost_tipo === undefined &&
+      fields.boost_valor === undefined &&
+      fields.reset_suggestion_on_withdraw === undefined
+    ) {
+      return;
+    }
+    try {
+      const raw = localStorage.getItem(`reserve_boost_map_${userId}`);
+      const currentMap: Record<string, {
+        boost_ativo?: boolean;
+        boost_tipo?: Reserve['boost_tipo'];
+        boost_valor?: number | null;
+        reset_suggestion_on_withdraw?: boolean;
+      }> = raw ? JSON.parse(raw) : {};
+      const prevEntry = currentMap[reserveId] || {};
+      currentMap[reserveId] = {
+        boost_ativo: fields.boost_ativo !== undefined ? fields.boost_ativo : prevEntry.boost_ativo,
+        boost_tipo: fields.boost_tipo !== undefined ? fields.boost_tipo : prevEntry.boost_tipo,
+        boost_valor: fields.boost_valor !== undefined ? fields.boost_valor : prevEntry.boost_valor,
+        reset_suggestion_on_withdraw:
+          fields.reset_suggestion_on_withdraw !== undefined
+            ? fields.reset_suggestion_on_withdraw
+            : prevEntry.reset_suggestion_on_withdraw,
+      };
+      localStorage.setItem(`reserve_boost_map_${userId}`, JSON.stringify(currentMap));
+      cacheManager.set(`reserve_boost_map_${userId}`, currentMap, undefined, 'reserves');
+    } catch {}
+  };
+
+  const persistBoostExtra = (userId: string, rtId: string, boostExtra?: number) => {
+    if (boostExtra === undefined) return;
+    try {
+      const raw = localStorage.getItem(`boost_aporte_extras_map_${userId}`);
+      const currentMap: Record<string, number> = raw ? JSON.parse(raw) : {};
+      if (boostExtra > 0) {
+        currentMap[rtId] = Math.round(boostExtra * 100) / 100;
+      } else {
+        delete currentMap[rtId];
+      }
+      localStorage.setItem(`boost_aporte_extras_map_${userId}`, JSON.stringify(currentMap));
+      cacheManager.set(`boost_aporte_extras_map_${userId}`, currentMap, undefined, 'reserves');
+    } catch {}
+  };
+
   const addReserve = useCallback(async (newRes: Omit<Reserve, 'id' | 'user_id' | 'created_at' | 'updated_at'>) => {
     const userId = await getEffectiveUserId();
     if (!userId) return;
@@ -69,6 +116,7 @@ export function ReservesProvider({
     };
 
     const { saldo_atual, ...supabasePayload } = resObj;
+    persistBoostSetting(userId, resObj.id, resObj);
     
     setReserves(prev => {
       const existing = [...prev, resObj];
@@ -85,6 +133,7 @@ export function ReservesProvider({
     if (!userId) return;
 
     const { saldo_atual, ...supabasePayload } = updatedFields;
+    persistBoostSetting(userId, id, updatedFields);
     
     setReserves(prev => {
       const existing = prev.map(r => r.id === id ? { ...r, ...updatedFields, updated_at: new Date().toISOString() } : r);
@@ -101,6 +150,16 @@ export function ReservesProvider({
     if (!userId) return;
 
     const rtsToDelete = reserveTransactions.filter(rt => rt.reserve_id === id);
+
+    try {
+      const raw = localStorage.getItem(`reserve_boost_map_${userId}`);
+      if (raw) {
+        const currentMap = JSON.parse(raw);
+        delete currentMap[id];
+        localStorage.setItem(`reserve_boost_map_${userId}`, JSON.stringify(currentMap));
+        cacheManager.set(`reserve_boost_map_${userId}`, currentMap, undefined, 'reserves');
+      }
+    } catch {}
 
     setReserves(prev => {
       const existing = prev.filter(r => r.id !== id);
@@ -162,6 +221,10 @@ export function ReservesProvider({
     if (rtObj.installment_total !== undefined) supabasePayload.installment_total = rtObj.installment_total;
     if (rtObj.ignore_in_charts !== undefined) supabasePayload.ignore_in_charts = rtObj.ignore_in_charts;
 
+    if (rtObj.boost_extra && rtObj.boost_extra > 0) {
+      persistBoostExtra(userId, rtObj.id, rtObj.boost_extra);
+    }
+
     setReserveTransactions(prev => {
       const filtered = prev.filter(item => item.id !== rtObj.id);
       const existing = [rtObj, ...filtered];
@@ -212,6 +275,7 @@ export function ReservesProvider({
     }
 
     syncQueueManager.enqueue('reserve_transactions', 'delete', id);
+    persistBoostExtra(userId, id, 0);
     if (onDataChange) await onDataChange();
     if (!options?.silent) toast.success('Movimentação excluída com sucesso!', { id: 'reserve-action' });
   }, [reserveTransactions, onDataChange]);
@@ -219,6 +283,10 @@ export function ReservesProvider({
   const updateReserveTransaction = useCallback(async (id: string, updatedFields: Partial<ReserveTransaction>, options?: { silent?: boolean }) => {
     const userId = await getEffectiveUserId();
     if (!userId) return;
+
+    if (updatedFields.boost_extra !== undefined) {
+      persistBoostExtra(userId, id, updatedFields.boost_extra);
+    }
 
     // Optimistically update local state
     setReserveTransactions(prev => {
@@ -228,7 +296,7 @@ export function ReservesProvider({
     });
 
     // Sanitize payload for Supabase
-    const { source, batch_id, ...supabasePayload } = updatedFields as any;
+    const { source, batch_id, boost_extra, ...supabasePayload } = updatedFields as any;
 
     syncQueueManager.enqueue('reserve_transactions', 'update', id, supabasePayload);
     if (!options?.silent) toast.success('Movimentação de reserva atualizada!', { id: 'reserve-action' });

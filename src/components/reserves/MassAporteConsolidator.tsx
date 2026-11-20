@@ -14,7 +14,8 @@ import {
   SlidersHorizontal,
   Calculator,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  Rocket
 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -25,6 +26,8 @@ import {
   formatCurrency, 
   calculateSuggestion, 
   getEffectiveAportesInPeriod,
+  isReserveBoostActive,
+  getRuleBoostDeltaLabel,
   parseLocalDate,
   getTodayLocalDateStr
 } from './reserveUtils';
@@ -38,7 +41,7 @@ interface MassAporteConsolidatorProps {
   customDateRange: { start: string; end: string };
   isSubmitting: boolean;
   onExecuteBatch: (batchData: {
-    items: { reserve_id: string; amount: number; name: string }[];
+    items: { reserve_id: string; amount: number; name: string; boostExtra?: number }[];
     date: string;
     description: string;
   }) => Promise<void>;
@@ -85,15 +88,28 @@ export function MassAporteConsolidator({
       suggested: number;
       effectiveAportes: number;
       pending: number;
+      basePending: number;
+      boostActive: boolean;
+      boostLabel: string;
       currentBalance: number;
       goal: number;
       goalProgress: number;
     }> = {};
 
     activeReserves.forEach(r => {
+      const boostActive = isReserveBoostActive(r);
       const suggested = calculateSuggestion(r, transactions, reserveTransactions, globalPeriod, customDateRange);
       const effectiveAportes = getEffectiveAportesInPeriod(r, reserveTransactions, globalPeriod, customDateRange);
-      const pending = Math.max(0, suggested - effectiveAportes);
+      const pending = Math.max(0, Math.round((suggested - effectiveAportes) * 100) / 100);
+
+      const baseSugg = boostActive
+        ? calculateSuggestion(r, transactions, reserveTransactions, globalPeriod, customDateRange, { ignoreBoost: true })
+        : suggested;
+      const baseEff = boostActive
+        ? getEffectiveAportesInPeriod(r, reserveTransactions, globalPeriod, customDateRange, { ignoreBoost: true })
+        : effectiveAportes;
+      const basePending = Math.max(0, Math.round((baseSugg - baseEff) * 100) / 100);
+
       const currentBalance = r.saldo_atual || 0;
       const goal = r.meta_objetivo || 0;
       const goalProgress = goal > 0 ? Math.min(100, Math.round((currentBalance / goal) * 100)) : 0;
@@ -102,6 +118,9 @@ export function MassAporteConsolidator({
         suggested,
         effectiveAportes,
         pending,
+        basePending,
+        boostActive,
+        boostLabel: boostActive ? getRuleBoostDeltaLabel(r) : '',
         currentBalance,
         goal,
         goalProgress
@@ -283,11 +302,20 @@ export function MassAporteConsolidator({
 
     try {
       await onExecuteBatch({
-        items: selectedItems.map(i => ({
-          reserve_id: i.reserve_id,
-          amount: Math.round(i.amount * 100) / 100,
-          name: i.name
-        })),
+        items: selectedItems.map(i => {
+          const cleanAmt = Math.round(i.amount * 100) / 100;
+          const m = reserveMetrics[i.reserve_id];
+          const boostExtra =
+            m?.boostActive && cleanAmt > m.basePending
+              ? Math.round((cleanAmt - m.basePending) * 100) / 100
+              : 0;
+          return {
+            reserve_id: i.reserve_id,
+            amount: cleanAmt,
+            name: i.name,
+            boostExtra: boostExtra > 0 ? boostExtra : undefined,
+          };
+        }),
         date: batchDate,
         description: batchDesc || 'Aporte Consolidado de Reservas'
       });
@@ -578,11 +606,16 @@ export function MassAporteConsolidator({
 
                       {/* Name & Balance info */}
                       <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-1.5">
+                        <div className="flex items-center gap-1.5 flex-wrap">
                           <h4 className="text-xs font-bold text-foreground truncate">{r.name}</h4>
                           {r.meta_objetivo && r.meta_objetivo > 0 && (
                             <span className="text-[9px] font-bold px-1 py-0.2 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 shrink-0">
                               {metric.goalProgress}%
+                            </span>
+                          )}
+                          {metric.boostActive && (
+                            <span className="text-[9px] font-black px-1.5 py-0.2 rounded bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30 flex items-center gap-0.5 shrink-0">
+                              <Rocket className="w-2.5 h-2.5" /> {metric.boostLabel}
                             </span>
                           )}
                         </div>

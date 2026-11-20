@@ -24,7 +24,8 @@ import {
   Calculator,
   Info,
   Landmark,
-  Calendar
+  Calendar,
+  Rocket
 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -36,6 +37,10 @@ import {
   getEffectiveAportesInPeriod,
   calculateReserveGoalProjection,
   calculateReserveYieldStats,
+  isReserveBoostActive,
+  getEffectiveRuleValue,
+  getRuleBoostDeltaLabel,
+  getBoostSpeedupComparison,
   parseLocalDate 
 } from './reserveUtils';
 
@@ -57,6 +62,8 @@ interface ReserveCardProps {
   onApplyDirectSuggestion: (reserve: Reserve, amount: number) => void;
   onAuditSuggestion?: (reserve: Reserve) => void;
   onTransferToCash?: (reserve: Reserve) => void;
+  onToggleBoost?: (reserve: Reserve) => void;
+  onConfigureBoost?: (reserve: Reserve) => void;
   hideValues?: boolean;
 }
 
@@ -78,6 +85,8 @@ export function ReserveCard({
   onApplyDirectSuggestion,
   onAuditSuggestion,
   onTransferToCash,
+  onToggleBoost,
+  onConfigureBoost,
   hideValues
 }: ReserveCardProps) {
   const [showMenu, setShowMenu] = useState(false);
@@ -112,10 +121,18 @@ export function ReserveCard({
   const effectiveAportes = getEffectiveAportesInPeriod(reserve, reserveTransactions, globalPeriod, customDateRange);
   const pendingSuggestion = Math.round(Math.max(0, suggested - effectiveAportes) * 100) / 100;
 
+  const boostActive = isReserveBoostActive(reserve);
+  const effectiveRuleVal = getEffectiveRuleValue(reserve);
+  const boostDeltaLabel = getRuleBoostDeltaLabel(reserve);
+  const canUseBoost = Boolean(reserve.regra_ativa && reserve.regra_tipo && !isPaused && !isGoalReached);
+
   // Recent transactions count & Yield stats
   const yieldStats = calculateReserveYieldStats(reserve, reserveTransactions);
   const totalYield = yieldStats.yieldAmount;
   const projection = calculateReserveGoalProjection(reserve, transactions, reserveTransactions);
+  const boostSpeedup = boostActive
+    ? getBoostSpeedupComparison(reserve, transactions, reserveTransactions)
+    : null;
 
   const pendingCredits = Math.round(
     (reserveTransactions || [])
@@ -131,17 +148,18 @@ export function ReserveCard({
   // Rule label format
   const getRuleBadge = () => {
     if (!reserve.regra_ativa || !reserve.regra_tipo) return null;
+    const val = boostActive ? effectiveRuleVal : Number(reserve.regra_valor || 0);
     if (reserve.regra_tipo === 'km') {
-      return `🚗 R$ ${(reserve.regra_valor || 0).toFixed(2)}/km`;
+      return `🚗 R$ ${val.toFixed(2)}/km`;
     }
     if (reserve.regra_tipo === 'bruto') {
-      return `💰 ${reserve.regra_valor}% do Bruto`;
+      return `💰 ${Number(val.toFixed(2))}% do Bruto`;
     }
     if (reserve.regra_tipo === 'liquido') {
-      return `📈 ${reserve.regra_valor}% do Lucro`;
+      return `📈 ${Number(val.toFixed(2))}% do Lucro`;
     }
     if (reserve.regra_tipo === 'fixo' || (reserve.regra_tipo as string) === 'fixo_diario') {
-      return `📅 R$ ${(reserve.regra_valor || 0).toFixed(2)}/dia`;
+      return `📅 R$ ${val.toFixed(2)}/dia`;
     }
     return null;
   };
@@ -153,7 +171,9 @@ export function ReserveCard({
       className={`relative overflow-visible border transition-all duration-300 hover:shadow-lg text-left ${
         isPaused
           ? 'bg-muted/30 border-border/60 opacity-85'
-          : 'bg-gradient-to-br from-card via-card to-muted/20 border-border/80 hover:border-indigo-500/40'
+          : boostActive
+            ? 'bg-gradient-to-br from-card via-card to-amber-500/10 border-amber-500/50 hover:border-amber-500 shadow-xs'
+            : 'bg-gradient-to-br from-card via-card to-muted/20 border-border/80 hover:border-indigo-500/40'
       }`}
     >
       {/* Top Color Accent Line */}
@@ -189,6 +209,10 @@ export function ReserveCard({
                 ) : isGoalReached ? (
                   <span className="px-1.5 py-0.2 text-[9px] font-bold rounded-md bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 flex items-center gap-0.5">
                     <CheckCircle2 className="w-2.5 h-2.5" /> Meta
+                  </span>
+                ) : boostActive ? (
+                  <span className="px-1.5 py-0.2 text-[9px] font-black rounded-md bg-gradient-to-r from-amber-500 to-orange-600 text-white shadow-2xs flex items-center gap-0.5">
+                    <Rocket className="w-2.5 h-2.5" /> Boost
                   </span>
                 ) : null}
               </div>
@@ -240,6 +264,19 @@ export function ReserveCard({
                     className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left text-indigo-600 dark:text-indigo-400 font-bold hover:bg-indigo-500/10 transition-colors cursor-pointer"
                   >
                     <Sparkles className="w-3.5 h-3.5 text-indigo-600" /> Atualizar Regra
+                  </button>
+                )}
+
+                {onConfigureBoost && reserve.regra_ativa && reserve.regra_tipo && !isInactive && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowMenu(false);
+                      onConfigureBoost(reserve);
+                    }}
+                    className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left text-amber-600 dark:text-amber-400 font-bold hover:bg-amber-500/10 transition-colors cursor-pointer"
+                  >
+                    <Rocket className="w-3.5 h-3.5 text-amber-500" /> Configurar Modo Boost
                   </button>
                 )}
 
@@ -391,9 +428,12 @@ export function ReserveCard({
                     Faltam <strong className="text-foreground">{hideValues ? 'R$ •••' : formatCurrency(projection.remaining)}</strong>
                   </span>
                   {projection.estimatedDays !== null ? (
-                    <span className="inline-flex items-center gap-1 text-indigo-600 dark:text-indigo-400 font-bold shrink-0">
-                      <Clock className="w-2.5 h-2.5" />
-                      <span>{projection.timelineLabel}</span>
+                    <span className={`inline-flex items-center gap-1 font-bold shrink-0 ${boostActive ? 'text-amber-600 dark:text-amber-400' : 'text-indigo-600 dark:text-indigo-400'}`}>
+                      {boostActive ? <Rocket className="w-2.5 h-2.5" /> : <Clock className="w-2.5 h-2.5" />}
+                      <span>
+                        {projection.timelineLabel}
+                        {boostSpeedup?.daysSaved && boostSpeedup.daysSaved > 0 ? ` (-${boostSpeedup.daysSaved}d)` : ''}
+                      </span>
                     </span>
                   ) : (
                     <span className="text-[9.5px] opacity-70 shrink-0">Sem ritmo p/ prazo</span>
@@ -429,27 +469,59 @@ export function ReserveCard({
           )}
         </div>
 
-        {/* Automation Rule & Pending Suggestion Pill */}
+        {/* Automation Rule & Boost Pill */}
         <div className="flex flex-wrap items-center justify-between gap-1.5 pt-1.5 border-t border-border/60 text-xs">
-          {ruleBadgeText ? (
-            <button
-              type="button"
-              onClick={() => onUpdateRule && onUpdateRule(reserve)}
-              title="Clique para atualizar a regra de aporte"
-              className="px-2 py-0.5 rounded-md bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 font-bold text-[10px] border border-indigo-500/20 truncate max-w-[190px] flex items-center gap-1 cursor-pointer transition-colors"
-            >
-              <Sparkles className="w-2.5 h-2.5 shrink-0" />
-              <span className="truncate">{ruleBadgeText}</span>
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={() => onUpdateRule && onUpdateRule(reserve)}
-              className="text-[10px] text-muted-foreground hover:text-indigo-600 dark:hover:text-indigo-400 font-medium flex items-center gap-1 cursor-pointer transition-colors"
-            >
-              <span>+ Definir regra</span>
-            </button>
-          )}
+          <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
+            {ruleBadgeText ? (
+              <button
+                type="button"
+                onClick={() => onUpdateRule && onUpdateRule(reserve)}
+                title={
+                  boostActive
+                    ? `Regra elevada pelo Boost (Base: ${reserve.regra_valor} | Boost: ${boostDeltaLabel}). Clique para editar regra.`
+                    : 'Clique para atualizar a regra de aporte'
+                }
+                className={`px-2 py-0.5 rounded-md font-bold text-[10px] border truncate max-w-[180px] flex items-center gap-1 cursor-pointer transition-colors ${
+                  boostActive
+                    ? 'bg-amber-500/15 hover:bg-amber-500/25 text-amber-700 dark:text-amber-300 border-amber-500/35'
+                    : 'bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 border-indigo-500/20'
+                }`}
+              >
+                <Sparkles className="w-2.5 h-2.5 shrink-0" />
+                <span className="truncate">{ruleBadgeText}</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => onUpdateRule && onUpdateRule(reserve)}
+                className="text-[10px] text-muted-foreground hover:text-indigo-600 dark:hover:text-indigo-400 font-medium flex items-center gap-1 cursor-pointer transition-colors"
+              >
+                <span>+ Definir regra</span>
+              </button>
+            )}
+
+            {canUseBoost && onToggleBoost && (
+              <button
+                type="button"
+                onClick={() => onToggleBoost(reserve)}
+                title={
+                  boostActive
+                    ? `Desativar Modo Boost (${boostDeltaLabel})`
+                    : Number(reserve.boost_valor || 0) > 0
+                      ? `Ativar Modo Boost (${boostDeltaLabel})`
+                      : 'Configurar e ativar Modo Boost'
+                }
+                className={`px-2 py-0.5 rounded-md text-[10px] font-black border flex items-center gap-1 transition-all cursor-pointer ${
+                  boostActive
+                    ? 'bg-gradient-to-r from-amber-500 to-orange-600 text-white border-amber-500 shadow-2xs hover:opacity-90'
+                    : 'bg-muted/50 hover:bg-amber-500/15 text-muted-foreground hover:text-amber-600 dark:hover:text-amber-400 border-border/80'
+                }`}
+              >
+                <Rocket className="w-2.5 h-2.5 shrink-0" />
+                <span>{boostActive ? boostDeltaLabel : Number(reserve.boost_valor || 0) > 0 ? `Boost ${boostDeltaLabel}` : 'Boost'}</span>
+              </button>
+            )}
+          </div>
 
           {totalYield > 0 && (
             <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-1 font-mono">
@@ -466,12 +538,20 @@ export function ReserveCard({
 
         {/* Suggestion Callout (if pending) */}
         {!isPaused && pendingSuggestion > 0 && (
-          <div className="p-2 sm:p-2.5 bg-gradient-to-r from-amber-500/10 via-amber-500/5 to-transparent rounded-xl border border-amber-500/20 flex items-center justify-between gap-2">
+          <div className={`p-2 sm:p-2.5 rounded-xl border flex items-center justify-between gap-2 ${
+            boostActive
+              ? 'bg-gradient-to-r from-amber-500/15 via-orange-500/10 to-transparent border-amber-500/35'
+              : 'bg-gradient-to-r from-amber-500/10 via-amber-500/5 to-transparent border-amber-500/20'
+          }`}>
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-1">
-                <Sparkles className="w-3 h-3 text-amber-600 shrink-0" />
+                {boostActive ? (
+                  <Rocket className="w-3 h-3 text-amber-600 shrink-0" />
+                ) : (
+                  <Sparkles className="w-3 h-3 text-amber-600 shrink-0" />
+                )}
                 <span className="text-[10px] font-bold text-foreground truncate">
-                  Sugerido no período:
+                  {boostActive ? 'Sugerido c/ Boost:' : 'Sugerido no período:'}
                 </span>
                 {onAuditSuggestion && (
                   <button

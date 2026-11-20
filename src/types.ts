@@ -139,6 +139,10 @@ export interface Reserve {
   rule_history?: any[];
   is_paused?: boolean;
   regra_inicio_validade?: string;
+  boost_ativo?: boolean;
+  boost_tipo?: 'increment' | 'multiplier' | null;
+  boost_valor?: number | null;
+  reset_suggestion_on_withdraw?: boolean;
   created_at?: string;
   updated_at?: string;
 }
@@ -158,6 +162,7 @@ export interface ReserveTransaction {
   transaction_id?: string;
   source?: 'manual' | 'mass_contribution' | 'automation' | 'investment' | 'dividends';
   batch_id?: string;
+  boost_extra?: number;
 
   // Status de Pagamento e Vencimento
   payment_status?: PaymentStatus;

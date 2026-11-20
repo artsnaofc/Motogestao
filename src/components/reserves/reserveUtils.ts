@@ -455,6 +455,8 @@ export const getLatestWithdrawalDate = (
   res: Reserve,
   reserveTransactions: ReserveTransaction[]
 ): string | null => {
+  // Respeita a configuração da regra que define se resgates devem zerar/reiniciar a sugestão
+  if (res.reset_suggestion_on_withdraw === false) return null;
   // Only consider withdrawals (utilizações) that have already been marked as paid/settled
   const utilizacoes = (reserveTransactions || []).filter(
     rt => rt.reserve_id === res.id && 
@@ -495,12 +497,88 @@ export const getRuleCutoffTimestamp = (res: Reserve, ruleStartDate: string | nul
   return latestMs;
 };
 
+export const getDefaultBoostValue = (
+  regraTipo?: Reserve['regra_tipo'] | string | null,
+  boostTipo: 'increment' | 'multiplier' = 'increment'
+): number => {
+  if (boostTipo === 'multiplier') return 1.5;
+  if (regraTipo === 'km') return 0.1;
+  if (regraTipo === 'bruto' || regraTipo === 'liquido') return 5;
+  if (regraTipo === 'fixo' || regraTipo === 'fixo_diario') return 10;
+  return 5;
+};
+
+export const isReserveBoostActive = (res: Reserve): boolean => {
+  if (!res || res.status === 'inactive' || res.is_paused) return false;
+  if (!res.regra_ativa || !res.regra_tipo) return false;
+  if (!res.boost_ativo) return false;
+  const boostVal = Number(res.boost_valor || 0);
+  if ((res.boost_tipo || 'increment') === 'multiplier') {
+    return boostVal > 1;
+  }
+  return boostVal > 0;
+};
+
+export const getEffectiveRuleValue = (res: Reserve, ignoreBoost = false): number => {
+  const baseVal = Number(res.regra_valor) || 0;
+  if (!res.regra_ativa || !res.regra_tipo || baseVal <= 0) return 0;
+  if (ignoreBoost || !isReserveBoostActive(res)) {
+    return Math.round(baseVal * 10000) / 10000;
+  }
+  const boostVal = Number(res.boost_valor || 0);
+  const boostType = res.boost_tipo || 'increment';
+  let effective = boostType === 'multiplier' ? baseVal * boostVal : baseVal + boostVal;
+  if (res.regra_tipo === 'bruto' || res.regra_tipo === 'liquido') {
+    effective = Math.min(100, effective);
+  }
+  return Math.max(0, Math.round(effective * 10000) / 10000);
+};
+
+export const getRuleBoostDeltaLabel = (res: Reserve): string => {
+  const boostVal = Number(res.boost_valor || 0);
+  if (boostVal <= 0) return '';
+  if ((res.boost_tipo || 'increment') === 'multiplier') {
+    return `${Number(boostVal.toFixed(2))}x`;
+  }
+  if (res.regra_tipo === 'km') {
+    return `+R$ ${boostVal.toFixed(2).replace('.', ',')}/km`;
+  }
+  if (res.regra_tipo === 'bruto' || res.regra_tipo === 'liquido') {
+    return `+${Number(boostVal.toFixed(2))}%`;
+  }
+  if (res.regra_tipo === 'fixo' || (res.regra_tipo as string) === 'fixo_diario') {
+    return `+R$ ${boostVal.toFixed(2).replace('.', ',')}/dia`;
+  }
+  return `+${boostVal}`;
+};
+
+export const getBoostExtraFromRt = (rt: ReserveTransaction): number => {
+  if (!rt || rt.type !== 'aporte') return 0;
+  if (typeof rt.boost_extra === 'number' && !isNaN(rt.boost_extra) && rt.boost_extra > 0) {
+    return Math.round(rt.boost_extra * 100) / 100;
+  }
+  if (rt.description) {
+    const brlMatch = rt.description.match(/Boost\s*\+R\$\s*([\d.]+,\d{2})/i);
+    if (brlMatch && brlMatch[1]) {
+      const parsed = parseFloat(brlMatch[1].replace(/\./g, '').replace(',', '.'));
+      if (!isNaN(parsed) && parsed > 0) return Math.round(parsed * 100) / 100;
+    }
+    const rawMatch = rt.description.match(/\[Boost\s*\+([\d.]+)\]/i);
+    if (rawMatch && rawMatch[1]) {
+      const parsed = parseFloat(rawMatch[1]);
+      if (!isNaN(parsed) && parsed > 0) return Math.round(parsed * 100) / 100;
+    }
+  }
+  return 0;
+};
+
 export const calculateSuggestion = (
   res: Reserve,
   transactions: Transaction[],
   reserveTransactions: ReserveTransaction[],
   globalPeriod: string,
-  customDateRange: { start: string; end: string }
+  customDateRange: { start: string; end: string },
+  options?: { ignoreBoost?: boolean }
 ): number => {
   const roundedBalance = Math.round((res.saldo_atual || 0) * 100) / 100;
   const roundedGoal = Math.round((res.meta_objetivo || 0) * 100) / 100;
@@ -539,7 +617,7 @@ export const calculateSuggestion = (
   });
   
   const ruleCats = res.regra_categorias || [];
-  const ruleValue = Number(res.regra_valor) || 0;
+  const ruleValue = getEffectiveRuleValue(res, options?.ignoreBoost);
   const ruleType = res.regra_tipo as string;
 
   let totalSuggestion = 0;
@@ -597,7 +675,8 @@ export const calculateSuggestion = (
       res,
       reserveTransactions,
       globalPeriod,
-      customDateRange
+      customDateRange,
+      { ignoreBoost: options?.ignoreBoost }
     );
     const effectiveCap = Math.min(roundedGoal, Math.round((remainingToGoal + effectiveAportesInWindow) * 100) / 100);
     if (totalSuggestion > effectiveCap) {
@@ -605,12 +684,20 @@ export const calculateSuggestion = (
     }
   }
 
-  return Math.round(totalSuggestion * 100) / 100;
+  return Math.max(0, Math.round(totalSuggestion * 100) / 100);
 };
 
 export interface SuggestionAuditResult {
   ruleType: string;
   ruleValue: number;
+  baseRuleValue: number;
+  boostActive: boolean;
+  boostType: 'increment' | 'multiplier';
+  boostValue: number;
+  effectiveRuleValue: number;
+  baseSuggested: number;
+  boostSuggestedExtra: number;
+  boostExtraAportes: number;
   categories: string[];
   ruleStartDate: string | null;
   cutoffAt: string | null;
@@ -622,6 +709,7 @@ export interface SuggestionAuditResult {
   txCount: number;
   eligibleTxs: Array<{ id: string; date: string; description: string; category: string; amount: number; km?: number }>;
   lastWithdrawalDate: string | null;
+  resetOnWithdraw: boolean;
   pendingWithdrawalsIgnored: number;
   grossRevenue: number;
   totalExpense: number;
@@ -677,12 +765,23 @@ export const getSuggestionAudit = (
   const isGoalReached = Boolean(roundedGoal > 0 && roundedBalance >= roundedGoal);
   const isPaused = res.status === 'inactive' || Boolean(res.is_paused);
 
+  const boostActive = isReserveBoostActive(res);
+  const baseRuleValue = Number(res.regra_valor) || 0;
+  const effectiveRuleValue = getEffectiveRuleValue(res);
+  const boostType = (res.boost_tipo || 'increment') as 'increment' | 'multiplier';
+  const boostValue = Number(res.boost_valor || 0);
+
+  const baseCalculated = calculateSuggestion(res, transactions, reserveTransactions, globalPeriod, customDateRange, { ignoreBoost: true });
   const calculated = calculateSuggestion(res, transactions, reserveTransactions, globalPeriod, customDateRange);
-  const effectiveAportes = getEffectiveAportesInPeriod(res, reserveTransactions, globalPeriod, customDateRange);
+  const effectiveAportesAll = getEffectiveAportesInPeriod(res, reserveTransactions, globalPeriod, customDateRange, { includeBoostExtras: true });
+  const effectiveAportesBaseOnly = getEffectiveAportesInPeriod(res, reserveTransactions, globalPeriod, customDateRange, { ignoreBoost: true });
+  const boostExtraAportes = Math.max(0, Math.round((effectiveAportesAll - effectiveAportesBaseOnly) * 100) / 100);
+  const effectiveAportes = boostActive ? effectiveAportesAll : effectiveAportesBaseOnly;
   const rawPending = Math.round(Math.max(0, calculated - effectiveAportes) * 100) / 100;
   const pendingSuggestion = roundedGoal > 0
     ? Math.min(rawPending, Math.max(0, Math.round((roundedGoal - roundedBalance) * 100) / 100))
     : rawPending;
+  const boostSuggestedExtra = boostActive ? Math.max(0, Math.round((calculated - baseCalculated) * 100) / 100) : 0;
 
   // Total de aportes manuais no período (não abatem o motor de sugestão)
   const manualAportes = (reserveTransactions || [])
@@ -747,24 +846,30 @@ export const getSuggestionAudit = (
     details.push(`Meta de ${formatCurrency(res.meta_objetivo || 0)} atingida com sucesso.`);
     formulaExplanation = `Meta atingida: Saldo de ${formatCurrency(roundedBalance)} ≥ Meta de ${formatCurrency(roundedGoal)}.`;
   } else if (res.regra_tipo === 'km') {
-    const val = Number(res.regra_valor || 0);
-    details.push(`Regra: R$ ${val.toFixed(2)} por KM rodado (${totalKm.toLocaleString('pt-BR')} km apurados).`);
-    formulaExplanation = `${totalKm.toLocaleString('pt-BR')} km × R$ ${val.toFixed(2)} = ${formatCurrency(calculated)}`;
+    const boostSuffix = boostActive ? ` (Base R$ ${baseRuleValue.toFixed(2)} + Boost ${getRuleBoostDeltaLabel(res)})` : '';
+    details.push(`Regra: R$ ${effectiveRuleValue.toFixed(2)} por KM rodado${boostSuffix} (${totalKm.toLocaleString('pt-BR')} km apurados).`);
+    formulaExplanation = `${totalKm.toLocaleString('pt-BR')} km × R$ ${effectiveRuleValue.toFixed(2)} = ${formatCurrency(calculated)}`;
   } else if (res.regra_tipo === 'bruto') {
-    const val = Number(res.regra_valor || 0);
-    details.push(`Regra: ${val}% sobre o faturamento bruto elegível (${formatCurrency(grossRevenue)}).`);
-    formulaExplanation = `${formatCurrency(grossRevenue)} (Bruto) × ${val}% = ${formatCurrency(calculated)}`;
+    const boostSuffix = boostActive ? ` (Base ${baseRuleValue}% + Boost ${getRuleBoostDeltaLabel(res)})` : '';
+    details.push(`Regra: ${effectiveRuleValue}% sobre o faturamento bruto elegível${boostSuffix} (${formatCurrency(grossRevenue)}).`);
+    formulaExplanation = `${formatCurrency(grossRevenue)} (Bruto) × ${effectiveRuleValue}% = ${formatCurrency(calculated)}`;
   } else if (res.regra_tipo === 'liquido') {
-    const val = Number(res.regra_valor || 0);
-    details.push(`Regra: ${val}% sobre o lucro líquido do período (${formatCurrency(netProfit)}).`);
-    formulaExplanation = `Lucro Líquido (${formatCurrency(grossRevenue)} - ${formatCurrency(totalExpense)} = ${formatCurrency(netProfit)}) × ${val}% = ${formatCurrency(calculated)}`;
+    const boostSuffix = boostActive ? ` (Base ${baseRuleValue}% + Boost ${getRuleBoostDeltaLabel(res)})` : '';
+    details.push(`Regra: ${effectiveRuleValue}% sobre o lucro líquido do período${boostSuffix} (${formatCurrency(netProfit)}).`);
+    formulaExplanation = `Lucro Líquido (${formatCurrency(grossRevenue)} - ${formatCurrency(totalExpense)} = ${formatCurrency(netProfit)}) × ${effectiveRuleValue}% = ${formatCurrency(calculated)}`;
   } else if (res.regra_tipo === 'fixo' || (res.regra_tipo as string) === 'fixo_diario') {
-    const val = Number(res.regra_valor || 0);
-    details.push(`Regra: R$ ${val.toFixed(2)} fixos por dia trabalhado (${workedDays} dias com receitas).`);
-    formulaExplanation = `${workedDays} dia(s) com receita × R$ ${val.toFixed(2)} = ${formatCurrency(calculated)}`;
+    const boostSuffix = boostActive ? ` (Base R$ ${baseRuleValue.toFixed(2)} + Boost ${getRuleBoostDeltaLabel(res)})` : '';
+    details.push(`Regra: R$ ${effectiveRuleValue.toFixed(2)} fixos por dia trabalhado${boostSuffix} (${workedDays} dias com receitas).`);
+    formulaExplanation = `${workedDays} dia(s) com receita × R$ ${effectiveRuleValue.toFixed(2)} = ${formatCurrency(calculated)}`;
   } else {
     details.push('Nenhuma regra configurada ou ativa.');
     formulaExplanation = 'Sem regra de cálculo ativa.';
+  }
+
+  if (boostActive && !isPaused && !isGoalReached) {
+    details.push(`Modo Boost ATIVO (${getRuleBoostDeltaLabel(res)}): elevou a sugestão em +${formatCurrency(boostSuggestedExtra)} no período.`);
+  } else if (!boostActive && boostExtraAportes > 0) {
+    details.push(`Bônus de Boost já aportado (${formatCurrency(boostExtraAportes)}) fica isolado e não zera nem reduz suas sugestões futuras na regra normal.`);
   }
 
   if (ruleStartDate) {
@@ -775,7 +880,10 @@ export const getSuggestionAudit = (
     details.push(`Vigência da regra ativa: A partir de ${formattedRuleDate}${timeSuffix} (lançamentos anteriores desconsiderados).`);
   }
 
-  if (cleanLastWDate) {
+  const resetOnWithdraw = res.reset_suggestion_on_withdraw !== false;
+  if (!resetOnWithdraw) {
+    details.push('Reinício de sugestão ao resgatar DESATIVADO: resgates não zeram a sugestão atual.');
+  } else if (cleanLastWDate) {
     details.push(`Contagem reiniciada após o último resgate pago em ${new Date(cleanLastWDate + 'T00:00:00').toLocaleDateString('pt-BR')}.`);
   }
   if (pendingWithdrawalsIgnored > 0) {
@@ -788,7 +896,15 @@ export const getSuggestionAudit = (
 
   return {
     ruleType: res.regra_tipo || '',
-    ruleValue: Number(res.regra_valor) || 0,
+    ruleValue: effectiveRuleValue,
+    baseRuleValue,
+    boostActive,
+    boostType,
+    boostValue,
+    effectiveRuleValue,
+    baseSuggested: baseCalculated,
+    boostSuggestedExtra,
+    boostExtraAportes,
     categories: res.regra_categorias || [],
     ruleStartDate,
     cutoffAt: cutoffAtIso,
@@ -800,6 +916,7 @@ export const getSuggestionAudit = (
     txCount: eligibleTxs.length,
     eligibleTxs,
     lastWithdrawalDate: cleanLastWDate,
+    resetOnWithdraw,
     pendingWithdrawalsIgnored,
     grossRevenue,
     totalExpense,
@@ -857,12 +974,14 @@ export const getEffectiveAportesInPeriod = (
   res: Reserve,
   reserveTransactions: ReserveTransaction[],
   globalPeriod: string,
-  customDateRange: { start: string; end: string }
+  customDateRange: { start: string; end: string },
+  options?: { includeBoostExtras?: boolean; ignoreBoost?: boolean }
 ): number => {
   const lastWDate = getLatestWithdrawalDate(res, reserveTransactions);
   const cleanLastWDate = lastWDate ? toDateInputString(lastWDate) : null;
   const ruleStartDate = toDateInputString(res.regra_inicio_validade);
   const cutoffMs = getRuleCutoffTimestamp(res, ruleStartDate);
+  const treatAsBoostActive = options?.ignoreBoost ? false : isReserveBoostActive(res);
   const total = (reserveTransactions || [])
     .filter(rt => {
       const matches = rt.reserve_id === res.id && 
@@ -883,7 +1002,16 @@ export const getEffectiveAportesInPeriod = (
       if (isManualAporte(rt)) return false;
       return true;
     })
-    .reduce((sum, rt) => sum + Number(rt.amount || 0), 0);
+    .reduce((sum, rt) => {
+      const amt = Number(rt.amount || 0);
+      if (options?.includeBoostExtras || treatAsBoostActive) {
+        return sum + amt;
+      }
+      // Quando o Boost está desativado, o bônus extra de aportes feitos no modo Boost
+      // não cria crédito negativo nem zera as sugestões normais futuras
+      const boostExtra = getBoostExtraFromRt(rt);
+      return sum + Math.max(0, amt - boostExtra);
+    }, 0);
   return Math.round(total * 100) / 100;
 };
 
@@ -990,7 +1118,8 @@ export const formatEstimatedTimeline = (days: number): string => {
 export const calculateReserveGoalProjection = (
   res: Reserve,
   transactions: Transaction[],
-  reserveTransactions: ReserveTransaction[]
+  reserveTransactions: ReserveTransaction[],
+  options?: { ignoreBoost?: boolean }
 ): ReserveGoalProjection => {
   const balance = Math.round((res.saldo_atual || 0) * 100) / 100;
   const goal = Math.round((res.meta_objetivo || 0) * 100) / 100;
@@ -1066,7 +1195,8 @@ export const calculateReserveGoalProjection = (
   const windowEnd = endOfDay(now);
 
   let ruleDailyPace = 0;
-  if (res.regra_ativa && res.regra_tipo && Number(res.regra_valor || 0) > 0) {
+  const effectiveRuleVal = getEffectiveRuleValue(res, options?.ignoreBoost);
+  if (res.regra_ativa && res.regra_tipo && effectiveRuleVal > 0) {
     const recentTxs = (transactions || []).filter(t => {
       if (!t || t.ignore_in_charts) return false;
       if (t.payment_status === 'pending' || (t as any).status === 'pending') return false;
@@ -1075,7 +1205,7 @@ export const calculateReserveGoalProjection = (
     });
 
     const ruleCats = res.regra_categorias || [];
-    const ruleVal = Number(res.regra_valor || 0);
+    const ruleVal = effectiveRuleVal;
     const ruleType = res.regra_tipo as string;
     let total30d = 0;
 
@@ -1194,6 +1324,50 @@ export const calculateReserveGoalProjection = (
     requiredWeeklyForDeadline,
     isDeadlineExpired,
     isOnTrackForDeadline,
+  };
+};
+
+export interface BoostSpeedupComparison {
+  normalProjection: ReserveGoalProjection;
+  boostedProjection: ReserveGoalProjection;
+  daysSaved: number | null;
+  speedupPct: number | null;
+}
+
+export const getBoostSpeedupComparison = (
+  res: Reserve,
+  transactions: Transaction[],
+  reserveTransactions: ReserveTransaction[],
+  overrideBoost?: { boost_ativo?: boolean; boost_tipo?: 'increment' | 'multiplier' | null; boost_valor?: number | null }
+): BoostSpeedupComparison => {
+  const normalProjection = calculateReserveGoalProjection(res, transactions, reserveTransactions, { ignoreBoost: true });
+  const boostedReserve: Reserve = overrideBoost
+    ? {
+        ...res,
+        boost_ativo: overrideBoost.boost_ativo ?? res.boost_ativo,
+        boost_tipo: overrideBoost.boost_tipo ?? res.boost_tipo,
+        boost_valor: overrideBoost.boost_valor ?? res.boost_valor,
+      }
+    : res;
+  const boostedProjection = calculateReserveGoalProjection(boostedReserve, transactions, reserveTransactions, { ignoreBoost: false });
+
+  const daysSaved =
+    normalProjection.estimatedDays !== null &&
+    boostedProjection.estimatedDays !== null &&
+    normalProjection.estimatedDays > boostedProjection.estimatedDays
+      ? normalProjection.estimatedDays - boostedProjection.estimatedDays
+      : null;
+
+  const speedupPct =
+    daysSaved !== null && normalProjection.estimatedDays && normalProjection.estimatedDays > 0
+      ? Math.round((daysSaved / normalProjection.estimatedDays) * 100)
+      : null;
+
+  return {
+    normalProjection,
+    boostedProjection,
+    daysSaved,
+    speedupPct,
   };
 };
 
