@@ -24,6 +24,8 @@ import {
   CreditCardConfig,
   CreditCardBrand,
   CARD_BRAND_PRESETS,
+  computeAutoClosingDay,
+  getBankClosingOffsetDays,
   computeCardStatementDueDate,
   extractCardTagFromTransaction,
   getCardCycleStatus,
@@ -115,6 +117,8 @@ interface NormalizedPlannedItem {
   installmentNumber?: number | null;
   installmentTotal?: number | null;
   rawTx: any;
+  isProjectedRecurring?: boolean;
+  projectedFromItem?: NormalizedPlannedItem;
 }
 
 type MainViewMode = 'calendar' | 'list' | 'installments';
@@ -169,6 +173,7 @@ export function PlanningCalendar() {
   const [cardColor, setCardColor] = useState('#820ad1');
   const [cardClosingDay, setCardClosingDay] = useState('5');
   const [cardDueDay, setCardDueDay] = useState('12');
+  const [cardAutoClosing, setCardAutoClosing] = useState(true);
   const [cardLimit, setCardLimit] = useState('');
 
   // Purchase / Planned Bill / Planned Income Dialog
@@ -176,6 +181,7 @@ export function PlanningCalendar() {
   const [entryMode, setEntryMode] = useState<'card' | 'bill' | 'income'>('card');
   const [selectedCardId, setSelectedCardId] = useState<string>('');
   const [cardInvoiceTarget, setCardInvoiceTarget] = useState<CardInvoiceTarget>('auto');
+  const [cardRepeatAuto, setCardRepeatAuto] = useState<boolean>(false);
   const [entryDate, setEntryDate] = useState<string>(getTodayLocalDateStr());
   const [entryAmount, setEntryAmount] = useState<string>('');
   const [amountInputType, setAmountInputType] = useState<'total' | 'installment'>('total');
@@ -201,12 +207,45 @@ export function PlanningCalendar() {
   const [editIsRecurring, setEditIsRecurring] = useState<boolean>(false);
   const [editRecurrenceMode, setEditRecurrenceMode] = useState<'auto' | 'fixed'>('auto');
   const [editRecurrenceFrequency, setEditRecurrenceFrequency] = useState<RecurrenceFrequency>('monthly');
+  const [editInstallmentCount, setEditInstallmentCount] = useState<string>('6');
+  const [editInstallmentAmountMode, setEditInstallmentAmountMode] = useState<'installment' | 'total'>('installment');
+  const [editScope, setEditScope] = useState<'single' | 'future' | 'all'>('single');
   const [editUseReserve, setEditUseReserve] = useState<boolean>(false);
   const [editReserveId, setEditReserveId] = useState<string>('');
+  const [editOriginalDate, setEditOriginalDate] = useState<string>('');
   const [savingEdit, setSavingEdit] = useState(false);
 
-  // Delete Parcel Group Confirmation Dialog
+  // Settle Card Invoice Modal (Caixa Livre vs Reserva)
+  const [settleInvoiceModal, setSettleInvoiceModal] = useState<{
+    card: CreditCardConfig;
+    pendingItems: NormalizedPlannedItem[];
+    totalPending: number;
+  } | null>(null);
+  const [settleInvoiceDate, setSettleInvoiceDate] = useState<string>(getTodayLocalDateStr());
+  const [settleInvoiceReserveId, setSettleInvoiceReserveId] = useState<string>('__cash__');
+  const [settlingInvoice, setSettlingInvoice] = useState<boolean>(false);
+
+  // Delete Confirmation Dialog (Single Item or Parcel Group)
   const [deleteTargetItem, setDeleteTargetItem] = useState<NormalizedPlannedItem | null>(null);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleteCardTarget, setDeleteCardTarget] = useState<CreditCardConfig | null>(null);
+
+  // Settle / Reopen Confirmation Dialog (Single or Batch)
+  const [payConfirmTarget, setPayConfirmTarget] = useState<
+    | { mode: 'single'; item: NormalizedPlannedItem }
+    | {
+        mode: 'batch';
+        title: string;
+        subtitle: string;
+        items: NormalizedPlannedItem[];
+        successMsg: string;
+        clearSelection?: boolean;
+      }
+    | null
+  >(null);
+  const [payConfirmDate, setPayConfirmDate] = useState<string>(getTodayLocalDateStr());
+  const [payConfirmReserveId, setPayConfirmReserveId] = useState<string>('__cash__');
+  const [confirmingPay, setConfirmingPay] = useState(false);
 
   // Confirm Shift to Next Invoice / Next Month Dialog
   const [shiftConfirmTarget, setShiftConfirmTarget] = useState<
@@ -216,8 +255,19 @@ export function PlanningCalendar() {
   >(null);
   const [confirmingShift, setConfirmingShift] = useState(false);
 
-  // Confirm Duplicate to Next Month Dialog
-  const [duplicateConfirmItem, setDuplicateConfirmItem] = useState<NormalizedPlannedItem | null>(null);
+  // Confirm Duplicate to Next Invoice / Next Month Dialog
+  const [duplicateConfirmTarget, setDuplicateConfirmTarget] = useState<
+    | { mode: 'single'; item: NormalizedPlannedItem }
+    | {
+        mode: 'batch';
+        items: NormalizedPlannedItem[];
+        card?: CreditCardConfig;
+        title: string;
+        subtitle: string;
+        clearSelection?: boolean;
+      }
+    | null
+  >(null);
   const [confirmingDuplicate, setConfirmingDuplicate] = useState(false);
 
   // Category Budget Quick Modal
@@ -485,8 +535,15 @@ export function PlanningCalendar() {
       const dueStr = (rt.due_date || rt.date || '').split('T')[0];
       if (!dueStr) return;
       const status: 'paid' | 'pending' = rt.payment_status === 'pending' ? 'pending' : 'paid';
+      const cardId = extractCardTagFromTransaction(rt as any, txCardMap, cards);
+      const isCard = Boolean(
+        cardId ||
+          rt.description?.toLowerCase().includes('[cartão') ||
+          rt.description?.toLowerCase().includes('[cartao')
+      );
       const isPlanned =
         status === 'pending' ||
+        isCard ||
         Boolean(rt.is_recurring) ||
         Boolean(rt.recurrence_group_id) ||
         Boolean(rt.due_date && rt.date && rt.due_date !== rt.date);
@@ -506,8 +563,8 @@ export function PlanningCalendar() {
         category: rt.category || 'Reserva',
         description: rt.description || rt.category || 'Uso de Reserva',
         paymentStatus: status,
-        isCard: false,
-        cardId: null,
+        isCard,
+        cardId,
         isReserveTx: true,
         recurrenceGroupId: rt.recurrence_group_id,
         installmentNumber: rt.installment_number,
@@ -527,9 +584,89 @@ export function PlanningCalendar() {
     return map;
   }, [cards]);
 
+  // Virtual future provisions for active auto-renewing recurring accounts (visible across future calendar months
+  // without creating real DB records until the prior cycle is paid/settled)
+  const projectedRecurringItems = useMemo(() => {
+    const groups: Record<string, NormalizedPlannedItem[]> = {};
+    plannedItems.forEach(item => {
+      if (!isAutoRenewRecurring(item.rawTx)) return;
+      const gKey = item.recurrenceGroupId || item.id;
+      if (!groups[gKey]) groups[gKey] = [];
+      groups[gKey].push(item);
+    });
+
+    const minHorizon = addMonths(new Date(), 12);
+    const viewedHorizon = endOfWeek(endOfMonth(addMonths(currentMonth, 1)), { weekStartsOn: 0 });
+    const horizonEnd = viewedHorizon > minHorizon ? viewedHorizon : minHorizon;
+    const horizonEndStr = format(horizonEnd, 'yyyy-MM-dd');
+
+    const projected: NormalizedPlannedItem[] = [];
+
+    Object.entries(groups).forEach(([gKey, groupItems]) => {
+      const sortedDesc = [...groupItems].sort((a, b) => b.dateStr.localeCompare(a.dateStr));
+      const pendingDesc = sortedDesc.filter(i => i.paymentStatus === 'pending');
+      const anchor = pendingDesc[0] || sortedDesc[0];
+      if (!anchor || !isAutoRenewRecurring(anchor.rawTx)) return;
+
+      const freq = (anchor.rawTx?.recurrence_frequency as RecurrenceFrequency) || 'monthly';
+      const existingDates = new Set(groupItems.map(i => i.dateStr));
+      const existingMonths = new Set(groupItems.map(i => i.monthKey));
+      const useMonthDedupe = !['daily', 'weekly', 'biweekly'].includes(freq);
+      const anchorCard = anchor.cardId ? cardLookup[anchor.cardId] : null;
+
+      for (let step = 1; step <= 120; step++) {
+        let nextDateStr = calculateNextOccurrence(anchor.dateStr, freq, step);
+        // Preserve exact card dueDay even if anchor landed in February / shorter month
+        if (anchorCard && freq === 'monthly') {
+          const [ny, nm] = nextDateStr.split('-').map(Number);
+          if (ny && nm) {
+            const maxDay = endOfMonth(new Date(ny, nm - 1, 1, 12, 0, 0)).getDate();
+            const targetDay = Math.min(anchorCard.dueDay, maxDay);
+            nextDateStr = `${ny}-${String(nm).padStart(2, '0')}-${String(targetDay).padStart(2, '0')}`;
+          }
+        }
+
+        if (nextDateStr > horizonEndStr) break;
+
+        const nextMonthKey = nextDateStr.slice(0, 7);
+        if (existingDates.has(nextDateStr)) continue;
+        if (useMonthDedupe && existingMonths.has(nextMonthKey)) continue;
+
+        existingDates.add(nextDateStr);
+        existingMonths.add(nextMonthKey);
+
+        projected.push({
+          id: `proj_${anchor.id}_${nextDateStr}`,
+          kind: anchor.kind,
+          dateStr: nextDateStr,
+          monthKey: nextMonthKey,
+          amount: anchor.amount,
+          category: anchor.category,
+          description: anchor.description,
+          paymentStatus: 'pending',
+          isCard: anchor.isCard,
+          cardId: anchor.cardId,
+          isReserveTx: anchor.isReserveTx,
+          recurrenceGroupId: gKey,
+          installmentNumber: (anchor.installmentNumber || 1) + step,
+          installmentTotal: null,
+          rawTx: anchor.rawTx,
+          isProjectedRecurring: true,
+          projectedFromItem: anchor,
+        });
+      }
+    });
+
+    return projected;
+  }, [plannedItems, currentMonth, cardLookup]);
+
+  const calendarPlannedItems = useMemo(() => {
+    return [...plannedItems, ...projectedRecurringItems].sort((a, b) => a.dateStr.localeCompare(b.dateStr));
+  }, [plannedItems, projectedRecurringItems]);
+
   const filteredItems = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    return plannedItems.filter(item => {
+    return calendarPlannedItems.filter(item => {
       if (filterCardId === 'no_card' && item.isCard) return false;
       if (filterCardId !== 'all' && filterCardId !== 'no_card' && item.cardId !== filterCardId) {
         return false;
@@ -541,7 +678,10 @@ export function PlanningCalendar() {
 
       if (statusFilter === 'pending' && item.paymentStatus !== 'pending') return false;
       if (statusFilter === 'paid' && item.paymentStatus !== 'paid') return false;
-      if (statusFilter === 'overdue' && !(item.paymentStatus === 'pending' && item.dateStr < todayStr)) {
+      if (
+        statusFilter === 'overdue' &&
+        (item.isProjectedRecurring || !(item.paymentStatus === 'pending' && item.dateStr < todayStr))
+      ) {
         return false;
       }
 
@@ -553,7 +693,7 @@ export function PlanningCalendar() {
 
       return true;
     });
-  }, [plannedItems, filterCardId, kindFilter, statusFilter, searchQuery, todayStr, cardLookup]);
+  }, [calendarPlannedItems, filterCardId, kindFilter, statusFilter, searchQuery, todayStr, cardLookup]);
 
   const monthItems = useMemo(() => {
     return filteredItems.filter(item => item.monthKey === currentMonthKey);
@@ -561,15 +701,17 @@ export function PlanningCalendar() {
 
   const monthSummary = useMemo(() => {
     let cardsPending = 0;
+    let cashCardsPending = 0;
     let cardsPaid = 0;
     let cashBillsPending = 0;
     let reserveBillsPending = 0;
     let billsPaid = 0;
     let incomesPending = 0;
     let incomesPaid = 0;
+    let projectedCount = 0;
 
-    // Use items filtered by card/search but keep month totals accurate even if statusFilter is used
-    plannedItems
+    // Use calendar items filtered by card (including projected provisions for the viewed month)
+    calendarPlannedItems
       .filter(item => {
         if (item.monthKey !== currentMonthKey) return false;
         if (filterCardId === 'no_card') return !item.isCard;
@@ -577,12 +719,17 @@ export function PlanningCalendar() {
         return true;
       })
       .forEach(item => {
+        if (item.isProjectedRecurring) projectedCount += 1;
         if (item.kind === 'income') {
           if (item.paymentStatus === 'pending') incomesPending += item.amount;
           else incomesPaid += item.amount;
         } else if (item.isCard) {
-          if (item.paymentStatus === 'pending') cardsPending += item.amount;
-          else cardsPaid += item.amount;
+          if (item.paymentStatus === 'pending') {
+            cardsPending += item.amount;
+            if (!item.isReserveTx) cashCardsPending += item.amount;
+          } else {
+            cardsPaid += item.amount;
+          }
         } else {
           if (item.paymentStatus === 'pending') {
             if (item.isReserveTx) reserveBillsPending += item.amount;
@@ -595,7 +742,7 @@ export function PlanningCalendar() {
 
     const billsPending = cashBillsPending + reserveBillsPending;
     const totalPending = cardsPending + billsPending;
-    const cashPendingTotal = cardsPending + cashBillsPending;
+    const cashPendingTotal = cashCardsPending + cashBillsPending;
     const totalPaid = cardsPaid + billsPaid;
     const projectedBalanceAfterMonth = bancaLivre + incomesPending - cashPendingTotal;
 
@@ -610,16 +757,19 @@ export function PlanningCalendar() {
       incomesPending,
       incomesPaid,
       projectedBalanceAfterMonth,
+      projectedCount,
     };
-  }, [plannedItems, currentMonthKey, filterCardId, bancaLivre]);
+  }, [calendarPlannedItems, currentMonthKey, filterCardId, bancaLivre]);
 
-  // Global Pending Summary (Expenses & Overdue across all months)
+  // Global Pending Summary (Only REAL generated obligations across all months, never virtual provisions)
   const globalPendingExpenseItems = useMemo(() => {
-    return filteredItems.filter(item => item.kind === 'expense' && item.paymentStatus === 'pending');
+    return filteredItems.filter(
+      item => !item.isProjectedRecurring && item.kind === 'expense' && item.paymentStatus === 'pending'
+    );
   }, [filteredItems]);
 
   const globalPendingItemsAllKinds = useMemo(() => {
-    return filteredItems.filter(item => item.paymentStatus === 'pending');
+    return filteredItems.filter(item => !item.isProjectedRecurring && item.paymentStatus === 'pending');
   }, [filteredItems]);
 
   const scopedPendingList = useMemo(() => {
@@ -697,14 +847,16 @@ export function PlanningCalendar() {
       };
     });
 
-    plannedItems.forEach(item => {
+    calendarPlannedItems.forEach(item => {
       if (item.kind !== 'expense' || !item.cardId || !map[item.cardId]) return;
       const bucket = map[item.cardId];
       if (item.monthKey === currentMonthKey) {
         bucket.currentMonthTotal += item.amount;
         if (item.paymentStatus === 'pending') {
           bucket.currentMonthPending += item.amount;
-          bucket.currentMonthPendingIds.push(item.id);
+          if (!item.isProjectedRecurring) {
+            bucket.currentMonthPendingIds.push(item.id);
+          }
         } else {
           bucket.currentMonthPaid += item.amount;
         }
@@ -715,13 +867,13 @@ export function PlanningCalendar() {
           bucket.nextMonthPending += item.amount;
         }
       }
-      if (item.paymentStatus === 'pending') {
+      if (!item.isProjectedRecurring && item.paymentStatus === 'pending') {
         bucket.totalCommittedAllFuture += item.amount;
       }
     });
 
     return map;
-  }, [cards, plannedItems, currentMonthKey, nextMonthKey]);
+  }, [cards, calendarPlannedItems, currentMonthKey, nextMonthKey]);
 
   // Installment & Recurrence Groups Summary
   const installmentGroups = useMemo(() => {
@@ -835,7 +987,10 @@ export function PlanningCalendar() {
 
   const selectedDayItems = itemsByDay[selectedDayStr] || [];
   const selectedDayPendingExpenses = useMemo(
-    () => selectedDayItems.filter(i => i.kind === 'expense' && i.paymentStatus === 'pending'),
+    () =>
+      selectedDayItems.filter(
+        i => !i.isProjectedRecurring && i.kind === 'expense' && i.paymentStatus === 'pending'
+      ),
     [selectedDayItems]
   );
 
@@ -847,8 +1002,10 @@ export function PlanningCalendar() {
     let paidIncomes = 0;
     let pendingIncomes = 0;
     let overdueCount = 0;
+    let projectedCount = 0;
 
     selectedDayItems.forEach(item => {
+      if (item.isProjectedRecurring) projectedCount += 1;
       if (item.kind === 'income') {
         totalIncomes += item.amount;
         if (item.paymentStatus === 'paid') paidIncomes += item.amount;
@@ -858,13 +1015,17 @@ export function PlanningCalendar() {
         if (item.paymentStatus === 'paid') paidExpenses += item.amount;
         else {
           pendingExpenses += item.amount;
-          if (item.dateStr < todayStr) overdueCount += 1;
+          if (!item.isProjectedRecurring && item.dateStr < todayStr) overdueCount += 1;
         }
       }
     });
 
+    const realPendingCount = selectedDayItems.filter(
+      i => !i.isProjectedRecurring && i.paymentStatus === 'pending'
+    ).length;
     const pendingCount = selectedDayItems.filter(i => i.paymentStatus === 'pending').length;
-    const allSettled = selectedDayItems.length > 0 && pendingCount === 0;
+    const allSettled =
+      selectedDayItems.length > 0 && realPendingCount === 0 && projectedCount === 0;
     const netDay = totalIncomes - totalExpenses;
 
     return {
@@ -876,6 +1037,8 @@ export function PlanningCalendar() {
       pendingIncomes,
       overdueCount,
       pendingCount,
+      realPendingCount,
+      projectedCount,
       allSettled,
       netDay,
     };
@@ -888,8 +1051,9 @@ export function PlanningCalendar() {
     setCardName('');
     setCardBrand('nubank');
     setCardColor('#820ad1');
-    setCardClosingDay('5');
     setCardDueDay('12');
+    setCardAutoClosing(true);
+    setCardClosingDay(String(computeAutoClosingDay(12, 'nubank')));
     setCardLimit('');
     setShowCardModal(true);
   };
@@ -902,6 +1066,7 @@ export function PlanningCalendar() {
     setCardColor(card.color);
     setCardClosingDay(String(card.closingDay));
     setCardDueDay(String(card.dueDay));
+    setCardAutoClosing(card.closingDay === computeAutoClosingDay(card.dueDay, card.brand));
     setCardLimit(card.limit ? String(card.limit) : '');
     setShowCardModal(true);
   };
@@ -914,8 +1079,10 @@ export function PlanningCalendar() {
       return;
     }
 
-    const closing = Math.max(1, Math.min(31, Number(cardClosingDay) || 5));
     const due = Math.max(1, Math.min(31, Number(cardDueDay) || 12));
+    const closing = cardAutoClosing
+      ? computeAutoClosingDay(due, cardBrand)
+      : Math.max(1, Math.min(31, Number(cardClosingDay) || computeAutoClosingDay(due, cardBrand)));
     const parsedLimit = Number(cardLimit);
     const limitVal = !isNaN(parsedLimit) && parsedLimit > 0 ? parsedLimit : undefined;
 
@@ -969,6 +1136,7 @@ export function PlanningCalendar() {
     planningStorage.saveCards(effectiveUid, nextCards);
     if (selectedCardId === cardId) setSelectedCardId(nextCards[0]?.id || '');
     if (filterCardId === cardId) setFilterCardId('all');
+    setDeleteCardTarget(null);
     toast.success('Cartão removido das configurações.');
   };
 
@@ -986,12 +1154,12 @@ export function PlanningCalendar() {
 
   const cardPreview = useMemo(() => {
     if (entryMode !== 'card' || !selectedCardObj) return null;
-    const nInst = Math.max(1, Math.min(24, Number(installments) || 1));
+    const nInst = cardRepeatAuto ? 1 : Math.max(1, Math.min(24, Number(installments) || 1));
     const rawVal = Number(entryAmount) || 0;
     const perInstallment =
-      amountInputType === 'total' ? Math.round((rawVal / nInst) * 100) / 100 : rawVal;
+      cardRepeatAuto || amountInputType === 'installment' ? rawVal : Math.round((rawVal / nInst) * 100) / 100;
     const totalPurchase =
-      amountInputType === 'total' ? rawVal : Math.round(rawVal * nInst * 100) / 100;
+      cardRepeatAuto || amountInputType === 'total' ? rawVal : Math.round(rawVal * nInst * 100) / 100;
 
     const autoFirst = computeCardStatementDueDate(
       entryDate,
@@ -1018,6 +1186,9 @@ export function PlanningCalendar() {
       nInst,
       opts
     );
+    const nextRecurringDate = cardRepeatAuto
+      ? calculateNextOccurrence(first.statementDueDate, billFrequency, 1)
+      : null;
 
     return {
       nInst,
@@ -1026,11 +1197,14 @@ export function PlanningCalendar() {
       first,
       last,
       autoFirst,
+      nextRecurringDate,
       isAutoInDifferentMonthThanViewed: autoFirst.statementMonthKey !== currentMonthKey,
     };
   }, [
     entryMode,
     selectedCardObj,
+    cardRepeatAuto,
+    billFrequency,
     installments,
     entryAmount,
     amountInputType,
@@ -1062,6 +1236,7 @@ export function PlanningCalendar() {
     // If user clicked directly on a day inside the viewed month for a card purchase,
     // keep invoice target 'auto' by default so card rules apply, OR if they're launching for a past/closed month let them switch with 1 click
     setCardInvoiceTarget('auto');
+    setCardRepeatAuto(false);
     setEntryAmount('');
     setAmountInputType('total');
     setInstallments('1');
@@ -1084,7 +1259,7 @@ export function PlanningCalendar() {
     setBillFrequency('monthly');
     setBillRepeatCount('6');
     setBillUseReserve(false);
-    const matchingRes = mode === 'bill'
+    const matchingRes = mode !== 'income'
       ? findMatchingReserveForExpense(expenseCategories[0] || '', activeReserves)
       : null;
     setBillReserveId(matchingRes?.id || activeReserves[0]?.id || '');
@@ -1121,6 +1296,113 @@ export function PlanningCalendar() {
           setSavingEntry(false);
           return;
         }
+        const labelDesc = entryDescription.trim() || entryCategory || 'Compra no cartão';
+        const opts = forcedMonthKeyForCard
+          ? { forceFirstStatementMonthKey: forcedMonthKeyForCard }
+          : undefined;
+
+        if (cardRepeatAuto) {
+          const { statementDueDate } = computeCardStatementDueDate(
+            entryDate,
+            selectedCardObj.closingDay,
+            selectedCardObj.dueDay,
+            1,
+            opts
+          );
+          const groupId = generateUUID();
+
+          if (billUseReserve) {
+            const targetRes = activeReserves.find(r => r.id === billReserveId) || activeReserves[0];
+            if (!targetRes) {
+              toast.error('Selecione uma reserva válida para esta compra.');
+              setSavingEntry(false);
+              return;
+            }
+            const rtId = await addReserveTransaction(
+              {
+                reserve_id: targetRes.id,
+                type: 'utilizacao',
+                amount: rawVal,
+                date: statementDueDate,
+                due_date: statementDueDate,
+                category: entryCategory,
+                description: `[Cartão ${selectedCardObj.name}] ${labelDesc}`,
+                payment_status: 'pending',
+                payment_date: null,
+                is_recurring: true,
+                recurrence_frequency: billFrequency,
+                recurrence_installments: null,
+                recurrence_group_id: groupId,
+                installment_number: 1,
+                installment_total: null,
+                installment_index: 1,
+                total_installments: null,
+              },
+              { silent: true }
+            );
+            if (rtId) {
+              planningStorage.linkTxsToCard(effectiveUid, [rtId], selectedCardObj.id);
+              setTxCardMap(planningStorage.getTxCardMap(effectiveUid));
+            }
+            const [y, m] = statementDueDate.split('-').map(Number);
+            navigateToMonth(new Date(y, m - 1, 1, 12, 0, 0), statementDueDate);
+            setRightPanelTab('day');
+            const firstMonthLabel = format(new Date(statementDueDate + 'T12:00:00'), 'MMM/yyyy', { locale: ptBR });
+            toast.success(
+              `Recorrência (${getFrequencyLabel(billFrequency)}) lançada na fatura de ${firstMonthLabel} (${selectedCardObj.name} • Reserva ${targetRes.name})!`
+            );
+            setShowEntryModal(false);
+            return;
+          }
+
+          const recId = generateUUID();
+          const payload: Transaction = {
+            id: recId,
+            user_id: effectiveUid,
+            type: 'expense',
+            amount: rawVal,
+            date: statementDueDate,
+            due_date: statementDueDate,
+            category: entryCategory,
+            description: `[Cartão ${selectedCardObj.name}] ${labelDesc}`,
+            payment_status: 'pending',
+            payment_date: null,
+            is_recurring: true,
+            recurrence_frequency: billFrequency,
+            recurrence_installments: null,
+            recurrence_group_id: groupId,
+            installment_number: 1,
+            installment_total: null,
+            installment_index: 1,
+            total_installments: null,
+            card_id: selectedCardObj.id,
+            card_name: selectedCardObj.name,
+            card_installments: 1,
+            card_installment_index: 1,
+            created_at: new Date().toISOString(),
+          };
+          batch.push(payload);
+          syncQueueManager.enqueue('transactions', 'insert', recId, payload);
+          planningStorage.linkTxsToCard(effectiveUid, [recId], selectedCardObj.id);
+          setTxCardMap(planningStorage.getTxCardMap(effectiveUid));
+
+          const [y, m] = statementDueDate.split('-').map(Number);
+          navigateToMonth(new Date(y, m - 1, 1, 12, 0, 0), statementDueDate);
+          setRightPanelTab('day');
+          const firstMonthLabel = format(new Date(statementDueDate + 'T12:00:00'), 'MMM/yyyy', { locale: ptBR });
+          toast.success(
+            `Recorrência (${getFrequencyLabel(billFrequency)}) lançada na fatura de ${firstMonthLabel} (${selectedCardObj.name})!`
+          );
+          setTransactions(prev => {
+            const next = [...batch, ...prev];
+            cacheManager.set(`transactions_${effectiveUid}`, next, undefined, 'transactions');
+            cacheManager.set('last_known_transactions', next, undefined, 'transactions');
+            return next;
+          });
+          setShowEntryModal(false);
+          return;
+        }
+
         const nInst = Math.max(1, Math.min(24, Number(installments) || 1));
         const totalAmt =
           amountInputType === 'total' ? rawVal : Math.round(rawVal * nInst * 100) / 100;
@@ -1128,11 +1410,76 @@ export function PlanningCalendar() {
         const remainderCents = Math.round((totalAmt - baseInstAmt * nInst) * 100) / 100;
 
         const groupId = nInst > 1 ? generateUUID() : null;
-        const labelDesc = entryDescription.trim() || entryCategory || 'Compra no cartão';
         const batchIds: string[] = [];
-        const opts = forcedMonthKeyForCard
-          ? { forceFirstStatementMonthKey: forcedMonthKeyForCard }
-          : undefined;
+
+        if (billUseReserve) {
+          const targetRes = activeReserves.find(r => r.id === billReserveId) || activeReserves[0];
+          if (!targetRes) {
+            toast.error('Selecione uma reserva válida para esta compra.');
+            setSavingEntry(false);
+            return;
+          }
+
+          let firstDue: string | null = null;
+          for (let i = 1; i <= nInst; i++) {
+            const { statementDueDate } = computeCardStatementDueDate(
+              entryDate,
+              selectedCardObj.closingDay,
+              selectedCardObj.dueDay,
+              i,
+              opts
+            );
+            if (i === 1) firstDue = statementDueDate;
+            const instAmt =
+              i === 1 ? Math.round((baseInstAmt + remainderCents) * 100) / 100 : baseInstAmt;
+            const parcelSuffix = nInst > 1 ? ` (${i}/${nInst})` : '';
+            const rtId = await addReserveTransaction(
+              {
+                reserve_id: targetRes.id,
+                type: 'utilizacao',
+                amount: instAmt,
+                date: statementDueDate,
+                due_date: statementDueDate,
+                category: entryCategory,
+                description: `[Cartão ${selectedCardObj.name}] ${labelDesc}${parcelSuffix}`,
+                payment_status: 'pending',
+                payment_date: null,
+                is_recurring: nInst > 1,
+                recurrence_frequency: nInst > 1 ? 'monthly' : undefined,
+                recurrence_installments: nInst > 1 ? nInst : null,
+                recurrence_group_id: groupId,
+                installment_number: nInst > 1 ? i : null,
+                installment_total: nInst > 1 ? nInst : null,
+                installment_index: nInst > 1 ? i : null,
+                total_installments: nInst > 1 ? nInst : null,
+              },
+              { silent: true }
+            );
+            if (rtId) batchIds.push(rtId);
+          }
+
+          if (batchIds.length > 0) {
+            planningStorage.linkTxsToCard(effectiveUid, batchIds, selectedCardObj.id);
+            setTxCardMap(planningStorage.getTxCardMap(effectiveUid));
+          }
+
+          if (firstDue) {
+            const [y, m] = firstDue.split('-').map(Number);
+            navigateToMonth(new Date(y, m - 1, 1, 12, 0, 0), firstDue);
+            setRightPanelTab('day');
+          }
+
+          const firstMonthLabel = firstDue
+            ? format(new Date(firstDue + 'T12:00:00'), "MMM/yyyy", { locale: ptBR })
+            : '';
+          toast.success(
+            nInst > 1
+              ? `Compra ${nInst}x lançada na fatura de ${firstMonthLabel} (${selectedCardObj.name} • Reserva ${targetRes.name})!`
+              : `Compra lançada na fatura de ${firstMonthLabel} (${selectedCardObj.name} • Reserva ${targetRes.name})!`
+          );
+          setShowEntryModal(false);
+          return;
+        }
 
         for (let i = 1; i <= nInst; i++) {
           const { statementDueDate } = computeCardStatementDueDate(
@@ -1317,10 +1664,208 @@ export function PlanningCalendar() {
     }
   };
 
-  const handleTogglePayItem = async (item: NormalizedPlannedItem) => {
-    const newStatus = item.paymentStatus === 'pending' ? 'paid' : 'pending';
-    const newPayDate = newStatus === 'paid' ? getTodayLocalDateStr() : null;
+  const handleTogglePayItem = (item: NormalizedPlannedItem) => {
+    setPayConfirmDate(
+      item.paymentStatus === 'pending'
+        ? getTodayLocalDateStr()
+        : item.rawTx?.payment_date || item.dateStr
+    );
+    setPayConfirmReserveId(
+      item.isReserveTx && item.rawTx?.reserve_id ? item.rawTx.reserve_id : '__cash__'
+    );
+    setPayConfirmTarget({ mode: 'single', item });
+  };
+
+  const handleConfirmPayToggle = async () => {
+    if (!payConfirmTarget || confirmingPay) return;
+    const effectiveUid = userId || (await getEffectiveUserId()) || 'default';
+    const chosenPayDate = payConfirmDate || getTodayLocalDateStr();
+    setConfirmingPay(true);
+
     try {
+      if (payConfirmTarget.mode === 'batch') {
+        for (const item of payConfirmTarget.items) {
+          if (item.isReserveTx) {
+            await updateReserveTransaction(
+              item.id,
+              { payment_status: 'paid', payment_date: chosenPayDate },
+              { silent: true }
+            );
+          } else {
+            await updateTransaction(
+              item.id,
+              { payment_status: 'paid', payment_date: chosenPayDate },
+              { silent: true }
+            );
+          }
+        }
+        if (payConfirmTarget.clearSelection) {
+          setSelectedBatchIds([]);
+        }
+        toast.success(payConfirmTarget.successMsg);
+        setPayConfirmTarget(null);
+        return;
+      }
+
+      const { item } = payConfirmTarget;
+      const newStatus = item.paymentStatus === 'pending' ? 'paid' : 'pending';
+      const newPayDate = newStatus === 'paid' ? chosenPayDate : null;
+      const raw = item.rawTx || {};
+
+      // Allow switching Cash <-> Reserve when settling an expense
+      if (newStatus === 'paid' && item.kind === 'expense') {
+        const useReserve = payConfirmReserveId !== '__cash__';
+        const targetRes = useReserve
+          ? activeReserves.find(r => r.id === payConfirmReserveId) || activeReserves[0]
+          : null;
+        const linkedCard = item.cardId ? getCardById(item.cardId) : null;
+        const cleanDesc = (item.description || item.category || 'Despesa')
+          .replace(/^\[Cart[ãa]o [^\]]+\]\s*/i, '')
+          .trim();
+        const taggedDesc = linkedCard ? `[Cartão ${linkedCard.name}] ${cleanDesc}` : cleanDesc;
+
+        if (useReserve && targetRes) {
+          if (item.isReserveTx) {
+            await updateReserveTransaction(
+              item.id,
+              {
+                reserve_id: targetRes.id,
+                payment_status: 'paid',
+                payment_date: newPayDate,
+              },
+              { silent: true }
+            );
+          } else {
+            const newRtId = await addReserveTransaction(
+              {
+                reserve_id: targetRes.id,
+                type: 'utilizacao',
+                amount: item.amount,
+                date: item.dateStr,
+                due_date: item.dateStr,
+                category: item.category,
+                description: taggedDesc,
+                payment_status: 'paid',
+                payment_date: newPayDate,
+                vehicle_id: raw.vehicle_id || undefined,
+                ignore_in_charts: Boolean(raw.ignore_in_charts),
+                is_recurring: Boolean(raw.is_recurring),
+                recurrence_frequency: raw.recurrence_frequency,
+                recurrence_installments: raw.recurrence_installments ?? null,
+                recurrence_group_id: raw.recurrence_group_id ?? null,
+                installment_number: raw.installment_number ?? null,
+                installment_total: raw.installment_total ?? null,
+                installment_index: raw.installment_index ?? raw.installment_number ?? null,
+                total_installments: raw.total_installments ?? raw.installment_total ?? null,
+              },
+              { silent: true }
+            );
+            if (newRtId && linkedCard) {
+              planningStorage.linkTxsToCard(effectiveUid, [newRtId], linkedCard.id);
+            }
+            if (isAutoRenewRecurring(raw) && raw.recurrence_group_id) {
+              const nextDate = calculateNextOccurrence(
+                item.dateStr,
+                (raw.recurrence_frequency as RecurrenceFrequency) || 'monthly',
+                1
+              );
+              const nextRtSource: any = {
+                ...raw,
+                id: newRtId || item.id,
+                reserve_id: targetRes.id,
+                type: 'utilizacao',
+                date: item.dateStr,
+                due_date: item.dateStr,
+                description: taggedDesc,
+              };
+              if (!hasExistingNextOccurrence(reserveTransactions, nextRtSource, raw.recurrence_group_id, nextDate)) {
+                const nextRt = buildNextRecurringReserveTransaction(
+                  nextRtSource,
+                  nextDate,
+                  raw.recurrence_group_id,
+                  effectiveUid
+                );
+                setReserveTransactions(prev => {
+                  const nextState = [nextRt, ...prev];
+                  cacheManager.set(`reserve_transactions_${effectiveUid}`, nextState, undefined, 'reserves');
+                  return nextState;
+                });
+                syncQueueManager.enqueue('reserve_transactions', 'insert', nextRt.id, nextRt);
+              }
+            }
+            planningStorage.unlinkTxFromCard(effectiveUid, item.id);
+            await deleteTransaction(item.id, { silent: true });
+            setTxCardMap(planningStorage.getTxCardMap(effectiveUid));
+          }
+          toast.success(`Conta quitada na reserva "${targetRes.name}"!`);
+          setPayConfirmTarget(null);
+          return;
+        }
+
+        if (!useReserve && item.isReserveTx) {
+          const newTxId = generateUUID();
+          const newTxPayload: Transaction = {
+            id: newTxId,
+            user_id: effectiveUid,
+            type: 'expense',
+            amount: item.amount,
+            date: item.dateStr,
+            due_date: item.dateStr,
+            category: item.category,
+            description: taggedDesc,
+            payment_status: 'paid',
+            payment_date: newPayDate,
+            card_id: linkedCard ? linkedCard.id : null,
+            card_name: linkedCard ? linkedCard.name : null,
+            vehicle_id: raw.vehicle_id || null,
+            ignore_in_charts: Boolean(raw.ignore_in_charts),
+            is_recurring: Boolean(raw.is_recurring),
+            recurrence_frequency: raw.recurrence_frequency,
+            recurrence_installments: raw.recurrence_installments ?? null,
+            recurrence_group_id: raw.recurrence_group_id ?? null,
+            installment_number: raw.installment_number ?? null,
+            installment_total: raw.installment_total ?? null,
+            installment_index: raw.installment_index ?? raw.installment_number ?? null,
+            total_installments: raw.total_installments ?? raw.installment_total ?? null,
+            created_at: new Date().toISOString(),
+          };
+          const extraBatch: Transaction[] = [newTxPayload];
+          if (isAutoRenewRecurring(raw) && raw.recurrence_group_id) {
+            const nextDate = calculateNextOccurrence(
+              item.dateStr,
+              (raw.recurrence_frequency as RecurrenceFrequency) || 'monthly',
+              1
+            );
+            if (!hasExistingNextOccurrence(transactions, newTxPayload, raw.recurrence_group_id, nextDate)) {
+              const nextTx = buildNextRecurringTransaction(
+                newTxPayload,
+                nextDate,
+                raw.recurrence_group_id,
+                effectiveUid
+              );
+              extraBatch.push(nextTx);
+              syncQueueManager.enqueue('transactions', 'insert', nextTx.id, nextTx);
+            }
+          }
+          syncQueueManager.enqueue('transactions', 'insert', newTxId, newTxPayload);
+          setTransactions(prev => {
+            const next = [...extraBatch, ...prev];
+            cacheManager.set(`transactions_${effectiveUid}`, next, undefined, 'transactions');
+            cacheManager.set('last_known_transactions', next, undefined, 'transactions');
+            return next;
+          });
+          planningStorage.unlinkTxFromCard(effectiveUid, item.id);
+          if (linkedCard) {
+            planningStorage.linkTxsToCard(effectiveUid, [newTxId], linkedCard.id);
+          }
+          setTxCardMap(planningStorage.getTxCardMap(effectiveUid));
+          await deleteReserveTransaction(item.id, { silent: true });
+          toast.success('Conta quitada no Caixa Livre!');
+          setPayConfirmTarget(null);
+          return;
+        }
+      }
+
       if (item.isReserveTx) {
         await updateReserveTransaction(
           item.id,
@@ -1330,7 +1875,7 @@ export function PlanningCalendar() {
           },
           { silent: true }
         );
-        toast.success(newStatus === 'paid' ? 'Conta da reserva quitada!' : 'Conta marcada como pendente.');
+        toast.success(newStatus === 'paid' ? 'Conta da reserva quitada!' : 'Conta reaberta como pendente.');
       } else {
         await updateTransaction(
           item.id,
@@ -1338,13 +1883,16 @@ export function PlanningCalendar() {
           { silent: true }
         );
         if (item.kind === 'income') {
-          toast.success(newStatus === 'paid' ? 'Receita confirmada no caixa!' : 'Receita marcada como prevista.');
+          toast.success(newStatus === 'paid' ? 'Receita confirmada no caixa!' : 'Receita reaberta como prevista.');
         } else {
-          toast.success(newStatus === 'paid' ? 'Conta quitada!' : 'Conta marcada como pendente.');
+          toast.success(newStatus === 'paid' ? 'Conta quitada!' : 'Conta reaberta como pendente.');
         }
       }
+      setPayConfirmTarget(null);
     } catch {
       toast.error('Erro ao atualizar status.');
+    } finally {
+      setConfirmingPay(false);
     }
   };
 
@@ -1427,122 +1975,183 @@ export function PlanningCalendar() {
     }
   };
 
-  const handleDuplicateItemNextMonth = async (item: NormalizedPlannedItem) => {
-    if (item.isReserveTx) {
-      toast.info('Despesas de reserva devem ser duplicadas na aba Reservas.');
-      return;
-    }
+  const handleDuplicateItemNextMonth = async (
+    item: NormalizedPlannedItem,
+    opts?: { silent?: boolean }
+  ) => {
     const effectiveUid = userId || (await getEffectiveUserId()) || 'default';
     const nextDate = calculateNextOccurrence(item.dateStr, 'monthly', 1);
-    const newId = generateUUID();
-    const payload: Transaction = {
-      id: newId,
-      user_id: effectiveUid,
-      type: item.kind,
-      amount: item.amount,
-      date: nextDate,
-      due_date: nextDate,
-      category: item.category,
-      description: item.description.replace(/\s*\(\d+\/\d+\)\s*$/, ''),
-      payment_status: 'pending',
-      payment_date: null,
-      card_id: item.cardId,
-      card_name: item.cardId ? cardLookup[item.cardId]?.name || null : null,
-      created_at: new Date().toISOString(),
-    };
-    syncQueueManager.enqueue('transactions', 'insert', newId, payload);
-    if (item.cardId) {
-      planningStorage.linkTxsToCard(effectiveUid, [newId], item.cardId);
-      setTxCardMap(planningStorage.getTxCardMap(effectiveUid));
+    const raw = item.rawTx || {};
+    const linkedCard = item.cardId ? cardLookup[item.cardId] || null : null;
+    const baseCleanDesc = (item.description || item.category || 'Lançamento')
+      .replace(/\s*\(\d+\/\d+\)\s*$/, '')
+      .replace(/^\[Cart[ãa]o [^\]]+\]\s*/i, '')
+      .trim();
+    const finalDesc = linkedCard ? `[Cartão ${linkedCard.name}] ${baseCleanDesc}` : baseCleanDesc;
+
+    if (item.isReserveTx) {
+      const targetResId = raw.reserve_id || activeReserves[0]?.id;
+      if (!targetResId) {
+        if (!opts?.silent) toast.error('Reserva de origem não encontrada para copiar.');
+        return;
+      }
+      const newRtId = await addReserveTransaction(
+        {
+          reserve_id: targetResId,
+          type: 'utilizacao',
+          amount: item.amount,
+          date: nextDate,
+          due_date: nextDate,
+          category: item.category,
+          description: finalDesc,
+          payment_status: 'pending',
+          payment_date: null,
+          vehicle_id: raw.vehicle_id || undefined,
+          ignore_in_charts: Boolean(raw.ignore_in_charts),
+        },
+        { silent: true }
+      );
+      if (newRtId && linkedCard) {
+        planningStorage.linkTxsToCard(effectiveUid, [newRtId], linkedCard.id);
+        setTxCardMap(planningStorage.getTxCardMap(effectiveUid));
+      }
+    } else {
+      const newId = generateUUID();
+      const payload: Transaction = {
+        id: newId,
+        user_id: effectiveUid,
+        type: item.kind,
+        amount: item.amount,
+        date: nextDate,
+        due_date: nextDate,
+        category: item.category,
+        description: finalDesc,
+        payment_status: 'pending',
+        payment_date: null,
+        card_id: linkedCard ? linkedCard.id : null,
+        card_name: linkedCard ? linkedCard.name : null,
+        vehicle_id: raw.vehicle_id || null,
+        ignore_in_charts: Boolean(raw.ignore_in_charts),
+        created_at: new Date().toISOString(),
+      };
+      syncQueueManager.enqueue('transactions', 'insert', newId, payload);
+      if (linkedCard) {
+        planningStorage.linkTxsToCard(effectiveUid, [newId], linkedCard.id);
+        setTxCardMap(planningStorage.getTxCardMap(effectiveUid));
+      }
+      setTransactions(prev => {
+        const next = [payload, ...prev];
+        cacheManager.set(`transactions_${effectiveUid}`, next, undefined, 'transactions');
+        cacheManager.set('last_known_transactions', next, undefined, 'transactions');
+        return next;
+      });
     }
-    setTransactions(prev => {
-      const next = [payload, ...prev];
-      cacheManager.set(`transactions_${effectiveUid}`, next, undefined, 'transactions');
-      cacheManager.set('last_known_transactions', next, undefined, 'transactions');
-      return next;
+
+    if (!opts?.silent) {
+      toast.success(
+        linkedCard
+          ? `Copiado para a fatura de ${format(new Date(nextDate + 'T12:00:00'), 'dd/MM/yyyy')} (${linkedCard.name})!`
+          : `Copiado para ${format(new Date(nextDate + 'T12:00:00'), 'dd/MM/yyyy')}!`
+      );
+    }
+  };
+
+  const handleRequestDuplicateCardInvoice = (card: CreditCardConfig) => {
+    const invoiceItems = plannedItems.filter(
+      item =>
+        item.kind === 'expense' &&
+        item.cardId === card.id &&
+        item.monthKey === currentMonthKey
+    );
+    if (invoiceItems.length === 0) return;
+    setDuplicateConfirmTarget({
+      mode: 'batch',
+      items: invoiceItems,
+      card,
+      title: `Copiar Fatura (${card.name}) para Próxima Fatura?`,
+      subtitle: `Será criada uma cópia pendente de cada item de ${viewedMonthLabel} na fatura de ${nextMonthLabel}, mantendo a fatura atual intacta.`,
     });
-    toast.success(`Duplicado para ${format(new Date(nextDate + 'T12:00:00'), 'dd/MM/yyyy')}!`);
+  };
+
+  const handleRequestBatchDuplicateNextMonth = () => {
+    const targets = monthItems.filter(i => selectedBatchIds.includes(i.id));
+    if (targets.length === 0) return;
+    setDuplicateConfirmTarget({
+      mode: 'batch',
+      items: targets,
+      title: `Copiar ${targets.length} Lançamento(s) para o Próximo Mês?`,
+      subtitle: `Será criada uma nova cópia pendente no próximo mês/fatura para cada item selecionado, mantendo os originais intactos.`,
+      clearSelection: true,
+    });
   };
 
   const handleConfirmDuplicateNextMonth = async () => {
-    if (!duplicateConfirmItem || confirmingDuplicate) return;
+    if (!duplicateConfirmTarget || confirmingDuplicate) return;
     setConfirmingDuplicate(true);
     try {
-      await handleDuplicateItemNextMonth(duplicateConfirmItem);
-      setDuplicateConfirmItem(null);
+      if (duplicateConfirmTarget.mode === 'single') {
+        await handleDuplicateItemNextMonth(duplicateConfirmTarget.item);
+      } else {
+        for (const item of duplicateConfirmTarget.items) {
+          await handleDuplicateItemNextMonth(item, { silent: true });
+        }
+        if (duplicateConfirmTarget.clearSelection) {
+          setSelectedBatchIds([]);
+        }
+        toast.success(
+          duplicateConfirmTarget.card
+            ? `${duplicateConfirmTarget.items.length} item(ns) da fatura do ${duplicateConfirmTarget.card.name} copiado(s) para ${nextMonthLabel}!`
+            : `${duplicateConfirmTarget.items.length} lançamento(s) copiado(s) para o próximo mês!`
+        );
+      }
+      setDuplicateConfirmTarget(null);
     } catch {
-      toast.error('Erro ao copiar lançamento para o próximo mês.');
+      toast.error('Erro ao copiar lançamento para a próxima fatura/mês.');
     } finally {
       setConfirmingDuplicate(false);
     }
   };
 
-  const handleSettleDayPending = async () => {
+  const handleSettleDayPending = () => {
     if (selectedDayPendingExpenses.length === 0) return;
-    const payDate = getTodayLocalDateStr();
-    try {
-      for (const item of selectedDayPendingExpenses) {
-        if (item.isReserveTx) {
-          await updateReserveTransaction(item.id, {
-            payment_status: 'paid',
-            payment_date: payDate,
-          });
-        } else {
-          await updateTransaction(
-            item.id,
-            { payment_status: 'paid', payment_date: payDate },
-            { silent: true }
-          );
-        }
-      }
-      toast.success(`${selectedDayPendingExpenses.length} contas do dia quitadas!`);
-    } catch {
-      toast.error('Erro ao quitar contas do dia.');
-    }
+    setPayConfirmDate(getTodayLocalDateStr());
+    setPayConfirmReserveId('__cash__');
+    setPayConfirmTarget({
+      mode: 'batch',
+      title: `Quitar ${selectedDayPendingExpenses.length} Conta(s) do Dia?`,
+      subtitle: `Dia ${format(new Date(selectedDayStr + 'T12:00:00'), "dd 'de' MMMM", { locale: ptBR })}`,
+      items: selectedDayPendingExpenses,
+      successMsg: `${selectedDayPendingExpenses.length} contas do dia quitadas!`,
+    });
   };
 
-  const handleSettleAllOverdue = async () => {
+  const handleSettleAllOverdue = () => {
     const overdueItems = globalPendingExpenseItems.filter(i => i.dateStr < todayStr);
     if (overdueItems.length === 0) return;
-    const payDate = getTodayLocalDateStr();
-    try {
-      for (const item of overdueItems) {
-        if (item.isReserveTx) {
-          await updateReserveTransaction(item.id, {
-            payment_status: 'paid',
-            payment_date: payDate,
-          });
-        } else {
-          await updateTransaction(
-            item.id,
-            { payment_status: 'paid', payment_date: payDate },
-            { silent: true }
-          );
-        }
-      }
-      toast.success(`${overdueItems.length} contas vencidas quitadas!`);
-    } catch {
-      toast.error('Erro ao quitar contas vencidas.');
-    }
+    setPayConfirmDate(getTodayLocalDateStr());
+    setPayConfirmReserveId('__cash__');
+    setPayConfirmTarget({
+      mode: 'batch',
+      title: `Quitar ${overdueItems.length} Conta(s) Vencida(s)?`,
+      subtitle: 'Todas as despesas pendentes com vencimento anterior a hoje serão quitadas.',
+      items: overdueItems,
+      successMsg: `${overdueItems.length} contas vencidas quitadas!`,
+    });
   };
 
-  const handleBatchSettleSelected = async () => {
+  const handleBatchSettleSelected = () => {
     const targets = monthItems.filter(i => selectedBatchIds.includes(i.id) && i.paymentStatus === 'pending');
     if (targets.length === 0) return;
-    const payDate = getTodayLocalDateStr();
-    try {
-      for (const item of targets) {
-        if (item.isReserveTx) {
-          await updateReserveTransaction(item.id, { payment_status: 'paid', payment_date: payDate });
-        } else {
-          await updateTransaction(item.id, { payment_status: 'paid', payment_date: payDate }, { silent: true });
-        }
-      }
-      setSelectedBatchIds([]);
-      toast.success(`${targets.length} lançamento(s) quitado(s)!`);
-    } catch {
-      toast.error('Erro ao quitar itens selecionados.');
-    }
+    setPayConfirmDate(getTodayLocalDateStr());
+    setPayConfirmReserveId('__cash__');
+    setPayConfirmTarget({
+      mode: 'batch',
+      title: `Quitar ${targets.length} Lançamento(s) Selecionado(s)?`,
+      subtitle: 'Os itens selecionados pendentes serão marcados como quitados/recebidos.',
+      items: targets,
+      successMsg: `${targets.length} lançamento(s) quitado(s)!`,
+      clearSelection: true,
+    });
   };
 
   const handleRequestBatchShiftNextMonth = () => {
@@ -1551,59 +2160,260 @@ export function PlanningCalendar() {
     setShiftConfirmTarget({ mode: 'batch', items: targets, deltaMonths: 1 });
   };
 
-  const handleSettleCardInvoice = async (card: CreditCardConfig) => {
-    const inv = cardInvoices[card.id];
-    if (!inv || inv.currentMonthPendingIds.length === 0) return;
-    const payDate = getTodayLocalDateStr();
+  const handleSettleCardInvoice = (card: CreditCardConfig) => {
+    const pendingItems = plannedItems.filter(
+      item =>
+        item.kind === 'expense' &&
+        item.cardId === card.id &&
+        item.monthKey === currentMonthKey &&
+        item.paymentStatus === 'pending'
+    );
+    if (pendingItems.length === 0) return;
+
+    const totalPending = pendingItems.reduce((sum, item) => sum + item.amount, 0);
+    // If all pending items already point to the same reserve, prefill that reserve
+    const firstReserveId = pendingItems[0]?.rawTx?.reserve_id;
+    const allSameReserve =
+      pendingItems.every(i => i.isReserveTx && i.rawTx?.reserve_id === firstReserveId) &&
+      Boolean(firstReserveId);
+
+    setSettleInvoiceModal({ card, pendingItems, totalPending });
+    setSettleInvoiceDate(getTodayLocalDateStr());
+    setSettleInvoiceReserveId(allSameReserve && firstReserveId ? firstReserveId : '__cash__');
+  };
+
+  const handleConfirmSettleCardInvoice = async () => {
+    if (!settleInvoiceModal || settlingInvoice) return;
+    const { card, pendingItems } = settleInvoiceModal;
+    if (pendingItems.length === 0) return;
+
+    const effectiveUid = userId || (await getEffectiveUserId()) || 'default';
+    const payDate = settleInvoiceDate || getTodayLocalDateStr();
+    const useReserve = settleInvoiceReserveId !== '__cash__';
+    const targetRes = useReserve
+      ? activeReserves.find(r => r.id === settleInvoiceReserveId) || activeReserves[0]
+      : null;
+
+    if (useReserve && !targetRes) {
+      toast.error('Selecione uma reserva válida para quitar a fatura.');
+      return;
+    }
+
+    setSettlingInvoice(true);
     try {
-      for (const txId of inv.currentMonthPendingIds) {
-        await updateTransaction(
-          txId,
-          { payment_status: 'paid', payment_date: payDate },
-          { silent: true }
-        );
+      for (const item of pendingItems) {
+        const raw = item.rawTx || {};
+        const cleanDesc = (item.description || item.category || 'Compra no cartão')
+          .replace(/^\[Cart[ãa]o [^\]]+\]\s*/i, '')
+          .trim();
+        const cardTaggedDesc = `[Cartão ${card.name}] ${cleanDesc}`;
+
+        if (useReserve && targetRes) {
+          if (item.isReserveTx) {
+            await updateReserveTransaction(
+              item.id,
+              {
+                reserve_id: targetRes.id,
+                description: cardTaggedDesc,
+                payment_status: 'paid',
+                payment_date: payDate,
+              },
+              { silent: true }
+            );
+            planningStorage.linkTxsToCard(effectiveUid, [item.id], card.id);
+          } else {
+            const newRtId = await addReserveTransaction(
+              {
+                reserve_id: targetRes.id,
+                type: 'utilizacao',
+                amount: item.amount,
+                date: item.dateStr,
+                due_date: item.dateStr,
+                category: item.category,
+                description: cardTaggedDesc,
+                payment_status: 'paid',
+                payment_date: payDate,
+                vehicle_id: raw.vehicle_id || undefined,
+                ignore_in_charts: Boolean(raw.ignore_in_charts),
+                is_recurring: Boolean(raw.is_recurring),
+                recurrence_frequency: raw.recurrence_frequency,
+                recurrence_installments: raw.recurrence_installments ?? null,
+                recurrence_group_id: raw.recurrence_group_id ?? null,
+                installment_number: raw.installment_number ?? null,
+                installment_total: raw.installment_total ?? null,
+                installment_index: raw.installment_index ?? raw.installment_number ?? null,
+                total_installments: raw.total_installments ?? raw.installment_total ?? null,
+              },
+              { silent: true }
+            );
+            if (newRtId) {
+              planningStorage.linkTxsToCard(effectiveUid, [newRtId], card.id);
+            }
+            if (isAutoRenewRecurring(raw) && raw.recurrence_group_id) {
+              const nextDate = calculateNextOccurrence(
+                item.dateStr,
+                (raw.recurrence_frequency as RecurrenceFrequency) || 'monthly',
+                1
+              );
+              const nextRtSource: any = {
+                ...raw,
+                id: newRtId || item.id,
+                reserve_id: targetRes.id,
+                type: 'utilizacao',
+                date: item.dateStr,
+                due_date: item.dateStr,
+                description: cardTaggedDesc,
+              };
+              if (!hasExistingNextOccurrence(reserveTransactions, nextRtSource, raw.recurrence_group_id, nextDate)) {
+                const nextRt = buildNextRecurringReserveTransaction(
+                  nextRtSource,
+                  nextDate,
+                  raw.recurrence_group_id,
+                  effectiveUid
+                );
+                setReserveTransactions(prev => {
+                  const nextState = [nextRt, ...prev];
+                  cacheManager.set(`reserve_transactions_${effectiveUid}`, nextState, undefined, 'reserves');
+                  return nextState;
+                });
+                syncQueueManager.enqueue('reserve_transactions', 'insert', nextRt.id, nextRt);
+                planningStorage.linkTxsToCard(effectiveUid, [nextRt.id], card.id);
+              }
+            }
+            planningStorage.unlinkTxFromCard(effectiveUid, item.id);
+            await deleteTransaction(item.id, { silent: true });
+          }
+        } else {
+          if (item.isReserveTx) {
+            const newTxId = generateUUID();
+            const newTxPayload: Transaction = {
+              id: newTxId,
+              user_id: effectiveUid,
+              type: 'expense',
+              amount: item.amount,
+              date: item.dateStr,
+              due_date: item.dateStr,
+              category: item.category,
+              description: cardTaggedDesc,
+              payment_status: 'paid',
+              payment_date: payDate,
+              card_id: card.id,
+              card_name: card.name,
+              vehicle_id: raw.vehicle_id || null,
+              ignore_in_charts: Boolean(raw.ignore_in_charts),
+              is_recurring: Boolean(raw.is_recurring),
+              recurrence_frequency: raw.recurrence_frequency,
+              recurrence_installments: raw.recurrence_installments ?? null,
+              recurrence_group_id: raw.recurrence_group_id ?? null,
+              installment_number: raw.installment_number ?? null,
+              installment_total: raw.installment_total ?? null,
+              installment_index: raw.installment_index ?? raw.installment_number ?? null,
+              total_installments: raw.total_installments ?? raw.installment_total ?? null,
+              created_at: new Date().toISOString(),
+            };
+            const extraBatch: Transaction[] = [newTxPayload];
+            const cardLinkIds: string[] = [newTxId];
+            if (isAutoRenewRecurring(raw) && raw.recurrence_group_id) {
+              const nextDate = calculateNextOccurrence(
+                item.dateStr,
+                (raw.recurrence_frequency as RecurrenceFrequency) || 'monthly',
+                1
+              );
+              if (!hasExistingNextOccurrence(transactions, newTxPayload, raw.recurrence_group_id, nextDate)) {
+                const nextTx = buildNextRecurringTransaction(
+                  newTxPayload,
+                  nextDate,
+                  raw.recurrence_group_id,
+                  effectiveUid
+                );
+                extraBatch.push(nextTx);
+                cardLinkIds.push(nextTx.id);
+                syncQueueManager.enqueue('transactions', 'insert', nextTx.id, nextTx);
+              }
+            }
+            syncQueueManager.enqueue('transactions', 'insert', newTxId, newTxPayload);
+            setTransactions(prev => {
+              const next = [...extraBatch, ...prev];
+              cacheManager.set(`transactions_${effectiveUid}`, next, undefined, 'transactions');
+              cacheManager.set('last_known_transactions', next, undefined, 'transactions');
+              return next;
+            });
+            planningStorage.linkTxsToCard(effectiveUid, cardLinkIds, card.id);
+            planningStorage.unlinkTxFromCard(effectiveUid, item.id);
+            await deleteReserveTransaction(item.id, { silent: true });
+          } else {
+            await updateTransaction(
+              item.id,
+              { payment_status: 'paid', payment_date: payDate },
+              { silent: true }
+            );
+          }
+        }
       }
-      toast.success(`Fatura do ${card.name} quitada (${inv.currentMonthPendingIds.length} itens)!`);
+
+      setTxCardMap(planningStorage.getTxCardMap(effectiveUid));
+      toast.success(
+        useReserve && targetRes
+          ? `Fatura do ${card.name} quitada com a reserva "${targetRes.name}" (${pendingItems.length} itens)!`
+          : `Fatura do ${card.name} quitada no Caixa Livre (${pendingItems.length} itens)!`
+      );
+      setSettleInvoiceModal(null);
     } catch {
       toast.error('Erro ao quitar fatura do cartão.');
+    } finally {
+      setSettlingInvoice(false);
     }
   };
 
-  const handleSettleInstallmentGroup = async (groupId: string) => {
+  const handleSettleInstallmentGroup = (groupId: string) => {
     const targets = plannedItems.filter(
       p => p.recurrenceGroupId === groupId && p.paymentStatus === 'pending'
     );
     if (targets.length === 0) return;
-    const payDate = getTodayLocalDateStr();
-    try {
-      for (const item of targets) {
-        if (item.isReserveTx) {
-          await updateReserveTransaction(item.id, { payment_status: 'paid', payment_date: payDate });
-        } else {
-          await updateTransaction(item.id, { payment_status: 'paid', payment_date: payDate }, { silent: true });
-        }
-      }
-      toast.success(`${targets.length} parcela(s) quitada(s) com sucesso!`);
-    } catch {
-      toast.error('Erro ao antecipar/quitar parcelas.');
-    }
+    setPayConfirmDate(getTodayLocalDateStr());
+    setPayConfirmReserveId('__cash__');
+    setPayConfirmTarget({
+      mode: 'batch',
+      title: `Antecipar / Quitar ${targets.length} Parcela(s) Restante(s)?`,
+      subtitle: 'Todas as parcelas pendentes deste grupo serão marcadas como pagas.',
+      items: targets,
+      successMsg: `${targets.length} parcela(s) quitada(s) com sucesso!`,
+    });
   };
+
+  const editingGroupSiblings = useMemo(() => {
+    if (!editingItem?.recurrenceGroupId) return [];
+    const gid = editingItem.recurrenceGroupId;
+    return plannedItems
+      .filter(p => p.recurrenceGroupId === gid)
+      .sort((a, b) => {
+        const ia = Number(a.installmentNumber || a.rawTx?.installment_number || a.rawTx?.installment_index || 0);
+        const ib = Number(b.installmentNumber || b.rawTx?.installment_number || b.rawTx?.installment_index || 0);
+        if (ia !== ib && ia > 0 && ib > 0) return ia - ib;
+        return a.dateStr.localeCompare(b.dateStr);
+      });
+  }, [editingItem, plannedItems]);
 
   const handleOpenEditItem = (item: NormalizedPlannedItem) => {
     setEditingItem(item);
     setEditAmount(String(item.amount));
     setEditDate(item.dateStr);
+    setEditOriginalDate(item.dateStr);
     setEditCategory(item.category);
-    setEditDescription(item.description);
+    setEditDescription((item.description || '').replace(/^\[Cart[ãa]o [^\]]+\]\s*/i, '').trim());
     setEditStatus(item.paymentStatus);
     setEditCardId(item.cardId || '__none__');
 
     const raw = item.rawTx || {};
     const isRec = Boolean(raw.is_recurring);
     const isAuto = isAutoRenewRecurring(raw);
+    const existingTotal = Number(raw.installment_total || raw.recurrence_installments || raw.total_installments || 0);
     setEditIsRecurring(isRec);
     setEditRecurrenceMode(isRec ? (isAuto ? 'auto' : 'fixed') : 'auto');
     setEditRecurrenceFrequency((raw.recurrence_frequency as RecurrenceFrequency) || 'monthly');
+    setEditInstallmentCount(existingTotal > 1 ? String(existingTotal) : '6');
+    setEditInstallmentAmountMode('installment');
+    setEditScope('single');
 
     setEditUseReserve(item.isReserveTx);
     if (item.isReserveTx && raw.reserve_id) {
@@ -1626,284 +2436,268 @@ export function PlanningCalendar() {
     setSavingEdit(true);
     try {
       const raw = editingItem.rawTx || {};
+      const hasMultiGroup = editingGroupSiblings.length > 1;
       const shouldAutoRenew = editIsRecurring && editRecurrenceMode === 'auto';
+      const isConvertingSingleToFixed =
+        editIsRecurring && editRecurrenceMode === 'fixed' && !hasMultiGroup;
+
       const existingGroupId = raw.recurrence_group_id || (editIsRecurring ? generateUUID() : null);
       const existingInstNum = raw.installment_number || raw.installment_index || 1;
       const existingInstTotal = raw.installment_total || raw.recurrence_installments || raw.total_installments || null;
       const payDateVal = editStatus === 'paid' ? (raw.payment_date || getTodayLocalDateStr()) : null;
 
-      let cleanedBaseDesc = editDescription.trim() || editCategory;
-      if (shouldAutoRenew) {
-        cleanedBaseDesc = stripRecurrenceSuffix(cleanedBaseDesc) || editCategory;
+      const chosenCard =
+        editingItem.kind === 'expense' && editCardId !== '__none__'
+          ? cards.find(c => c.id === editCardId) || null
+          : null;
+      const targetUseReserve = editingItem.kind === 'expense' && editUseReserve;
+      const targetRes = targetUseReserve
+        ? activeReserves.find(r => r.id === editReserveId) || activeReserves[0]
+        : null;
+
+      if (targetUseReserve && !targetRes) {
+        toast.error('Selecione uma reserva válida.');
+        setSavingEdit(false);
+        return;
       }
 
-      const recurrencePatch = editIsRecurring
-        ? shouldAutoRenew
-          ? {
-              is_recurring: true,
-              recurrence_frequency: editRecurrenceFrequency,
-              recurrence_installments: null,
-              recurrence_group_id: existingGroupId,
-              installment_number: existingInstNum,
-              installment_total: null,
-              installment_index: existingInstNum,
-              total_installments: null,
-            }
-          : {
-              is_recurring: true,
-              recurrence_frequency: editRecurrenceFrequency,
-              recurrence_installments: existingInstTotal,
-              recurrence_group_id: existingGroupId,
-              installment_number: existingInstNum,
-              installment_total: existingInstTotal,
-              installment_index: existingInstNum,
-              total_installments: existingInstTotal,
-            }
-        : {
-            is_recurring: false,
-            recurrence_frequency: undefined,
-            recurrence_installments: null,
-            recurrence_group_id: null,
-            installment_number: null,
-            installment_total: null,
-            installment_index: null,
-            total_installments: null,
-          };
+      const rawBaseDesc =
+        (editDescription.trim() || editCategory).replace(/^\[Cart[ãa]o [^\]]+\]\s*/i, '').trim() || editCategory;
+      const cleanBaseDescNoSuffix = stripRecurrenceSuffix(rawBaseDesc) || editCategory;
 
-      const targetUseReserve =
-        editingItem.kind === 'expense' &&
-        editUseReserve &&
-        (editCardId === '__none__' || editingItem.isReserveTx);
-
-      // Case 1: Converting Cash -> Reserve
-      if (!editingItem.isReserveTx && targetUseReserve) {
-        const targetRes = activeReserves.find(r => r.id === editReserveId) || activeReserves[0];
-        if (!targetRes) {
-          toast.error('Selecione uma reserva válida.');
-          setSavingEdit(false);
-          return;
+      // Helper to apply updates or Cash <-> Reserve conversion for a single NormalizedPlannedItem
+      const persistSingleEditTarget = async (
+        targetItem: NormalizedPlannedItem,
+        opts: {
+          amount: number;
+          date: string;
+          description: string;
+          status: 'paid' | 'pending';
+          payDate: string | null;
+          recPatch: Partial<Transaction>;
+          spawnAutoNextIfPaid?: boolean;
         }
-        const pureDesc = cleanedBaseDesc.replace(/^\[Cart[ãa]o [^\]]+\]\s*/i, '').trim() || editCategory;
-        const newRtId = await addReserveTransaction(
-          {
-            reserve_id: targetRes.id,
-            type: 'utilizacao',
-            amount: parsedAmt,
-            date: editDate,
-            due_date: editDate,
-            category: editCategory,
-            description: pureDesc,
-            payment_status: editStatus,
-            payment_date: payDateVal,
-            vehicle_id: raw.vehicle_id || undefined,
-            ignore_in_charts: Boolean(raw.ignore_in_charts),
-            is_recurring: recurrencePatch.is_recurring,
-            recurrence_frequency: recurrencePatch.recurrence_frequency,
-            recurrence_installments: recurrencePatch.recurrence_installments,
-            recurrence_group_id: recurrencePatch.recurrence_group_id,
-            installment_number: recurrencePatch.installment_number,
-            installment_total: recurrencePatch.installment_total,
-            installment_index: recurrencePatch.installment_index,
-            total_installments: recurrencePatch.total_installments,
-          },
-          { silent: true }
-        );
+      ) => {
+        const tRaw = targetItem.rawTx || {};
+        const finalCardTaggedDesc = chosenCard
+          ? `[Cartão ${chosenCard.name}] ${opts.description}`
+          : opts.description;
 
-        await deleteTransaction(editingItem.id, { silent: true });
-        planningStorage.unlinkTxFromCard(effectiveUid, editingItem.id);
-        setTxCardMap(planningStorage.getTxCardMap(effectiveUid));
+        if (!targetItem.isReserveTx && targetUseReserve && targetRes) {
+          const newRtId = await addReserveTransaction(
+            {
+              reserve_id: targetRes.id,
+              type: 'utilizacao',
+              amount: opts.amount,
+              date: opts.date,
+              due_date: opts.date,
+              category: editCategory,
+              description: finalCardTaggedDesc,
+              payment_status: opts.status,
+              payment_date: opts.payDate,
+              vehicle_id: tRaw.vehicle_id || undefined,
+              ignore_in_charts: Boolean(tRaw.ignore_in_charts),
+              is_recurring: Boolean(opts.recPatch.is_recurring),
+              recurrence_frequency: opts.recPatch.recurrence_frequency,
+              recurrence_installments: opts.recPatch.recurrence_installments ?? null,
+              recurrence_group_id: opts.recPatch.recurrence_group_id ?? null,
+              installment_number: opts.recPatch.installment_number ?? null,
+              installment_total: opts.recPatch.installment_total ?? null,
+              installment_index: opts.recPatch.installment_index ?? null,
+              total_installments: opts.recPatch.total_installments ?? null,
+            },
+            { silent: true }
+          );
+          await deleteTransaction(targetItem.id, { silent: true });
+          planningStorage.unlinkTxFromCard(effectiveUid, targetItem.id);
+          if (chosenCard && newRtId) {
+            planningStorage.linkTxsToCard(effectiveUid, [newRtId], chosenCard.id);
+          }
 
-        if (editStatus === 'paid' && shouldAutoRenew && existingGroupId) {
-          const nextDate = calculateNextOccurrence(editDate, editRecurrenceFrequency, 1);
-          const syntheticSource: any = {
-            id: newRtId || editingItem.id,
+          if (opts.spawnAutoNextIfPaid && opts.status === 'paid' && opts.recPatch.recurrence_group_id) {
+            const nextDate = calculateNextOccurrence(opts.date, editRecurrenceFrequency, 1);
+            const syntheticSource: any = {
+              id: newRtId || targetItem.id,
+              user_id: effectiveUid,
+              reserve_id: targetRes.id,
+              type: 'utilizacao',
+              amount: opts.amount,
+              date: opts.date,
+              due_date: opts.date,
+              category: editCategory,
+              description: finalCardTaggedDesc,
+              is_recurring: true,
+              recurrence_frequency: editRecurrenceFrequency,
+              recurrence_group_id: opts.recPatch.recurrence_group_id,
+              installment_number: opts.recPatch.installment_number || 1,
+            };
+            if (!hasExistingNextOccurrence(reserveTransactions, syntheticSource, opts.recPatch.recurrence_group_id, nextDate)) {
+              const nextRt = buildNextRecurringReserveTransaction(syntheticSource, nextDate, opts.recPatch.recurrence_group_id, effectiveUid);
+              setReserveTransactions(prev => {
+                const nextState = [nextRt, ...prev];
+                cacheManager.set(`reserve_transactions_${effectiveUid}`, nextState, undefined, 'reserves');
+                return nextState;
+              });
+              syncQueueManager.enqueue('reserve_transactions', 'insert', nextRt.id, nextRt);
+              if (chosenCard) {
+                planningStorage.linkTxsToCard(effectiveUid, [nextRt.id], chosenCard.id);
+              }
+            }
+          }
+          return newRtId || targetItem.id;
+        }
+
+        if (targetItem.isReserveTx && !targetUseReserve) {
+          const newTxId = generateUUID();
+          const newTxPayload: Transaction = {
+            id: newTxId,
             user_id: effectiveUid,
-            reserve_id: targetRes.id,
-            type: 'utilizacao',
-            amount: parsedAmt,
-            date: editDate,
-            due_date: editDate,
+            type: 'expense',
+            amount: opts.amount,
+            date: opts.date,
+            due_date: opts.date,
             category: editCategory,
-            description: pureDesc,
-            is_recurring: true,
-            recurrence_frequency: editRecurrenceFrequency,
-            recurrence_group_id: existingGroupId,
-            installment_number: existingInstNum,
+            description: finalCardTaggedDesc,
+            payment_status: opts.status,
+            payment_date: opts.payDate,
+            card_id: chosenCard ? chosenCard.id : null,
+            card_name: chosenCard ? chosenCard.name : null,
+            vehicle_id: tRaw.vehicle_id || null,
+            ignore_in_charts: Boolean(tRaw.ignore_in_charts),
+            ...opts.recPatch,
+            created_at: new Date().toISOString(),
           };
-          if (!hasExistingNextOccurrence(reserveTransactions, syntheticSource, existingGroupId, nextDate)) {
-            const nextRt = buildNextRecurringReserveTransaction(syntheticSource, nextDate, existingGroupId, effectiveUid);
-            setReserveTransactions(prev => {
-              const nextState = [nextRt, ...prev];
-              cacheManager.set(`reserve_transactions_${effectiveUid}`, nextState, undefined, 'reserves');
-              return nextState;
-            });
-            syncQueueManager.enqueue('reserve_transactions', 'insert', nextRt.id, nextRt);
-            toast.info(`Próxima conta recorrente agendada para ${format(parseLocalDate(nextDate), 'dd/MM/yyyy')}!`);
+
+          const extraBatch: Transaction[] = [newTxPayload];
+          const linkIds: string[] = chosenCard ? [newTxId] : [];
+          if (opts.spawnAutoNextIfPaid && opts.status === 'paid' && opts.recPatch.recurrence_group_id) {
+            const nextDate = calculateNextOccurrence(opts.date, editRecurrenceFrequency, 1);
+            if (!hasExistingNextOccurrence(transactions, newTxPayload, opts.recPatch.recurrence_group_id, nextDate)) {
+              const nextTx = buildNextRecurringTransaction(newTxPayload, nextDate, opts.recPatch.recurrence_group_id, effectiveUid);
+              extraBatch.push(nextTx);
+              if (chosenCard) linkIds.push(nextTx.id);
+              syncQueueManager.enqueue('transactions', 'insert', nextTx.id, nextTx);
+            }
           }
+
+          syncQueueManager.enqueue('transactions', 'insert', newTxId, newTxPayload);
+          setTransactions(prev => {
+            const next = [...extraBatch, ...prev];
+            cacheManager.set(`transactions_${effectiveUid}`, next, undefined, 'transactions');
+            cacheManager.set('last_known_transactions', next, undefined, 'transactions');
+            return next;
+          });
+          planningStorage.unlinkTxFromCard(effectiveUid, targetItem.id);
+          if (chosenCard && linkIds.length > 0) {
+            planningStorage.linkTxsToCard(effectiveUid, linkIds, chosenCard.id);
+          }
+          await deleteReserveTransaction(targetItem.id, { silent: true });
+          return newTxId;
         }
 
-        toast.success(`Conta transferida para a reserva "${targetRes.name}"!`);
-        setEditingItem(null);
-        return;
-      }
-
-      // Case 2: Converting Reserve -> Cash
-      if (editingItem.isReserveTx && !targetUseReserve) {
-        const chosenCard = editCardId !== '__none__' ? cards.find(c => c.id === editCardId) || null : null;
-        const cleanDesc = cleanedBaseDesc.replace(/^\[Cart[ãa]o [^\]]+\]\s*/i, '').trim();
-        const finalDesc = chosenCard ? `[Cartão ${chosenCard.name}] ${cleanDesc}` : cleanDesc;
-        const newTxId = generateUUID();
-        const newTxPayload: Transaction = {
-          id: newTxId,
-          user_id: effectiveUid,
-          type: 'expense',
-          amount: parsedAmt,
-          date: editDate,
-          due_date: editDate,
-          category: editCategory,
-          description: finalDesc,
-          payment_status: editStatus,
-          payment_date: payDateVal,
-          card_id: chosenCard ? chosenCard.id : null,
-          card_name: chosenCard ? chosenCard.name : null,
-          vehicle_id: raw.vehicle_id || null,
-          ignore_in_charts: Boolean(raw.ignore_in_charts),
-          ...recurrencePatch,
-          created_at: new Date().toISOString(),
-        };
-
-        const extraBatch: Transaction[] = [newTxPayload];
-        if (editStatus === 'paid' && shouldAutoRenew && existingGroupId) {
-          const nextDate = calculateNextOccurrence(editDate, editRecurrenceFrequency, 1);
-          if (!hasExistingNextOccurrence(transactions, newTxPayload, existingGroupId, nextDate)) {
-            const nextTx = buildNextRecurringTransaction(newTxPayload, nextDate, existingGroupId, effectiveUid);
-            extraBatch.push(nextTx);
-            syncQueueManager.enqueue('transactions', 'insert', nextTx.id, nextTx);
-            toast.info(`Próxima conta recorrente agendada para ${format(parseLocalDate(nextDate), 'dd/MM/yyyy')}!`);
+        if (targetItem.isReserveTx && targetRes) {
+          if (chosenCard) {
+            planningStorage.linkTxsToCard(effectiveUid, [targetItem.id], chosenCard.id);
+          } else {
+            planningStorage.unlinkTxFromCard(effectiveUid, targetItem.id);
           }
+          await updateReserveTransaction(
+            targetItem.id,
+            {
+              reserve_id: targetRes.id,
+              amount: opts.amount,
+              date: opts.date,
+              due_date: opts.date,
+              category: editCategory,
+              description: finalCardTaggedDesc,
+              payment_status: opts.status,
+              payment_date: opts.payDate,
+              is_recurring: Boolean(opts.recPatch.is_recurring),
+              recurrence_frequency: opts.recPatch.recurrence_frequency,
+              recurrence_installments: opts.recPatch.recurrence_installments ?? null,
+              recurrence_group_id: opts.recPatch.recurrence_group_id ?? null,
+              installment_number: opts.recPatch.installment_number ?? null,
+              installment_total: opts.recPatch.installment_total ?? null,
+              installment_index: opts.recPatch.installment_index ?? null,
+              total_installments: opts.recPatch.total_installments ?? null,
+            },
+            { silent: true }
+          );
+          if (opts.spawnAutoNextIfPaid && opts.status === 'paid' && opts.recPatch.recurrence_group_id) {
+            const nextDate = calculateNextOccurrence(opts.date, editRecurrenceFrequency, 1);
+            const mergedSource: any = {
+              ...tRaw,
+              id: targetItem.id,
+              reserve_id: targetRes.id,
+              type: 'utilizacao',
+              amount: opts.amount,
+              date: opts.date,
+              due_date: opts.date,
+              category: editCategory,
+              description: finalCardTaggedDesc,
+              is_recurring: true,
+              recurrence_frequency: editRecurrenceFrequency,
+              recurrence_group_id: opts.recPatch.recurrence_group_id,
+              installment_number: opts.recPatch.installment_number || 1,
+            };
+            if (!hasExistingNextOccurrence(reserveTransactions, mergedSource, opts.recPatch.recurrence_group_id, nextDate)) {
+              const nextRt = buildNextRecurringReserveTransaction(mergedSource, nextDate, opts.recPatch.recurrence_group_id, effectiveUid);
+              setReserveTransactions(prev => {
+                const nextState = [nextRt, ...prev];
+                cacheManager.set(`reserve_transactions_${effectiveUid}`, nextState, undefined, 'reserves');
+                return nextState;
+              });
+              syncQueueManager.enqueue('reserve_transactions', 'insert', nextRt.id, nextRt);
+              if (chosenCard) {
+                planningStorage.linkTxsToCard(effectiveUid, [nextRt.id], chosenCard.id);
+              }
+            }
+          }
+          return targetItem.id;
         }
 
-        syncQueueManager.enqueue('transactions', 'insert', newTxId, newTxPayload);
-        setTransactions(prev => {
-          const next = [...extraBatch, ...prev];
-          cacheManager.set(`transactions_${effectiveUid}`, next, undefined, 'transactions');
-          cacheManager.set('last_known_transactions', next, undefined, 'transactions');
-          return next;
-        });
-
+        // Staying in Cash / Card
         if (chosenCard) {
-          planningStorage.linkTxsToCard(effectiveUid, [newTxId], chosenCard.id);
-          setTxCardMap(planningStorage.getTxCardMap(effectiveUid));
-        }
-
-        await deleteReserveTransaction(editingItem.id, { silent: true });
-        toast.success('Conta movida da reserva para o Caixa Livre!');
-        setEditingItem(null);
-        return;
-      }
-
-      // Case 3: Staying in Reserve
-      if (editingItem.isReserveTx) {
-        const targetResId = editReserveId || raw.reserve_id;
-        await updateReserveTransaction(
-          editingItem.id,
-          {
-            reserve_id: targetResId,
-            amount: parsedAmt,
-            date: editDate,
-            due_date: editDate,
-            category: editCategory,
-            description: cleanedBaseDesc,
-            payment_status: editStatus,
-            payment_date: payDateVal,
-            ...recurrencePatch,
-          },
-          { silent: true }
-        );
-
-        // If already paid & newly marked auto-renewing, ensure next occurrence exists
-        if (editingItem.paymentStatus === 'paid' && editStatus === 'paid' && shouldAutoRenew && existingGroupId) {
-          const nextDate = calculateNextOccurrence(editDate, editRecurrenceFrequency, 1);
-          const mergedSource: any = {
-            ...raw,
-            id: editingItem.id,
-            reserve_id: targetResId,
-            type: 'utilizacao',
-            amount: parsedAmt,
-            date: editDate,
-            due_date: editDate,
-            category: editCategory,
-            description: cleanedBaseDesc,
-            is_recurring: true,
-            recurrence_frequency: editRecurrenceFrequency,
-            recurrence_group_id: existingGroupId,
-            installment_number: existingInstNum,
-          };
-          if (!hasExistingNextOccurrence(reserveTransactions, mergedSource, existingGroupId, nextDate)) {
-            const nextRt = buildNextRecurringReserveTransaction(mergedSource, nextDate, existingGroupId, effectiveUid);
-            setReserveTransactions(prev => {
-              const nextState = [nextRt, ...prev];
-              cacheManager.set(`reserve_transactions_${effectiveUid}`, nextState, undefined, 'reserves');
-              return nextState;
-            });
-            syncQueueManager.enqueue('reserve_transactions', 'insert', nextRt.id, nextRt);
-            toast.info(`Próxima conta recorrente agendada para ${format(parseLocalDate(nextDate), 'dd/MM/yyyy')}!`);
-          }
-        }
-      } else {
-        // Case 4: Staying in Cash / Card
-        const chosenCard =
-          editingItem.kind === 'expense' && editCardId !== '__none__'
-            ? cards.find(c => c.id === editCardId) || null
-            : null;
-
-        let finalDesc = cleanedBaseDesc.replace(/^\[Cart[ãa]o [^\]]+\]\s*/i, '').trim();
-        if (chosenCard) {
-          finalDesc = `[Cartão ${chosenCard.name}] ${finalDesc}`;
-          planningStorage.linkTxsToCard(effectiveUid, [editingItem.id], chosenCard.id);
+          planningStorage.linkTxsToCard(effectiveUid, [targetItem.id], chosenCard.id);
         } else {
-          planningStorage.unlinkTxFromCard(effectiveUid, editingItem.id);
+          planningStorage.unlinkTxFromCard(effectiveUid, targetItem.id);
         }
-        setTxCardMap(planningStorage.getTxCardMap(effectiveUid));
-
         await updateTransaction(
-          editingItem.id,
+          targetItem.id,
           {
-            amount: parsedAmt,
-            date: editDate,
-            due_date: editDate,
+            amount: opts.amount,
+            date: opts.date,
+            due_date: opts.date,
             category: editCategory,
-            description: finalDesc,
-            payment_status: editStatus,
-            payment_date: payDateVal,
+            description: finalCardTaggedDesc,
+            payment_status: opts.status,
+            payment_date: opts.payDate,
             card_id: chosenCard ? chosenCard.id : null,
             card_name: chosenCard ? chosenCard.name : null,
-            ...recurrencePatch,
+            ...opts.recPatch,
           },
           { silent: true }
         );
-
-        // If already paid & newly marked auto-renewing, ensure next occurrence exists
-        if (editingItem.paymentStatus === 'paid' && editStatus === 'paid' && shouldAutoRenew && existingGroupId) {
-          const nextDate = calculateNextOccurrence(editDate, editRecurrenceFrequency, 1);
+        if (opts.spawnAutoNextIfPaid && opts.status === 'paid' && opts.recPatch.recurrence_group_id) {
+          const nextDate = calculateNextOccurrence(opts.date, editRecurrenceFrequency, 1);
           const mergedSource: any = {
-            ...raw,
-            id: editingItem.id,
-            type: editingItem.kind,
-            amount: parsedAmt,
-            date: editDate,
-            due_date: editDate,
+            ...tRaw,
+            id: targetItem.id,
+            type: targetItem.kind,
+            amount: opts.amount,
+            date: opts.date,
+            due_date: opts.date,
             category: editCategory,
-            description: finalDesc,
+            description: finalCardTaggedDesc,
             is_recurring: true,
             recurrence_frequency: editRecurrenceFrequency,
-            recurrence_group_id: existingGroupId,
-            installment_number: existingInstNum,
+            recurrence_group_id: opts.recPatch.recurrence_group_id,
+            installment_number: opts.recPatch.installment_number || 1,
             card_id: chosenCard ? chosenCard.id : null,
             card_name: chosenCard ? chosenCard.name : null,
           };
-          if (!hasExistingNextOccurrence(transactions, mergedSource, existingGroupId, nextDate)) {
-            const nextTx = buildNextRecurringTransaction(mergedSource, nextDate, existingGroupId, effectiveUid);
+          if (!hasExistingNextOccurrence(transactions, mergedSource, opts.recPatch.recurrence_group_id, nextDate)) {
+            const nextTx = buildNextRecurringTransaction(mergedSource, nextDate, opts.recPatch.recurrence_group_id, effectiveUid);
             setTransactions(prev => {
               const nextState = [nextTx, ...prev];
               cacheManager.set(`transactions_${effectiveUid}`, nextState, undefined, 'transactions');
@@ -1911,12 +2705,228 @@ export function PlanningCalendar() {
               return nextState;
             });
             syncQueueManager.enqueue('transactions', 'insert', nextTx.id, nextTx);
-            toast.info(`Próxima conta recorrente agendada para ${format(parseLocalDate(nextDate), 'dd/MM/yyyy')}!`);
+            if (chosenCard) {
+              planningStorage.linkTxsToCard(effectiveUid, [nextTx.id], chosenCard.id);
+            }
           }
         }
+        return targetItem.id;
+      };
+
+      // SCENARIO 1: Converting a single/common launch into Fixed Installments (Nx)
+      if (isConvertingSingleToFixed) {
+        const nInst = Math.max(2, Math.min(36, Number(editInstallmentCount) || 6));
+        const baseInstAmt =
+          editInstallmentAmountMode === 'total'
+            ? Math.floor((parsedAmt / nInst) * 100) / 100
+            : parsedAmt;
+        const remainderCents =
+          editInstallmentAmountMode === 'total'
+            ? Math.round((parsedAmt - baseInstAmt * nInst) * 100) / 100
+            : 0;
+        const firstInstAmt = Math.round((baseInstAmt + remainderCents) * 100) / 100;
+        const newGroupId = existingGroupId || generateUUID();
+
+        await persistSingleEditTarget(editingItem, {
+          amount: firstInstAmt,
+          date: editDate,
+          description: `${cleanBaseDescNoSuffix} (1/${nInst})`,
+          status: editStatus,
+          payDate: payDateVal,
+          recPatch: {
+            is_recurring: true,
+            recurrence_frequency: editRecurrenceFrequency,
+            recurrence_installments: nInst,
+            recurrence_group_id: newGroupId,
+            installment_number: 1,
+            installment_total: nInst,
+            installment_index: 1,
+            total_installments: nInst,
+            ...(chosenCard ? { card_installments: nInst, card_installment_index: 1 } : {}),
+          },
+        });
+
+        const generatedCardIds: string[] = [];
+        if (targetUseReserve && targetRes) {
+          for (let i = 2; i <= nInst; i++) {
+            const instDate = calculateNextOccurrence(editDate, editRecurrenceFrequency, i - 1);
+            const parcelDesc = chosenCard
+              ? `[Cartão ${chosenCard.name}] ${cleanBaseDescNoSuffix} (${i}/${nInst})`
+              : `${cleanBaseDescNoSuffix} (${i}/${nInst})`;
+            const rtId = await addReserveTransaction(
+              {
+                reserve_id: targetRes.id,
+                type: 'utilizacao',
+                amount: baseInstAmt,
+                date: instDate,
+                due_date: instDate,
+                category: editCategory,
+                description: parcelDesc,
+                payment_status: 'pending',
+                payment_date: null,
+                vehicle_id: raw.vehicle_id || undefined,
+                ignore_in_charts: Boolean(raw.ignore_in_charts),
+                is_recurring: true,
+                recurrence_frequency: editRecurrenceFrequency,
+                recurrence_installments: nInst,
+                recurrence_group_id: newGroupId,
+                installment_number: i,
+                installment_total: nInst,
+                installment_index: i,
+                total_installments: nInst,
+              },
+              { silent: true }
+            );
+            if (rtId && chosenCard) generatedCardIds.push(rtId);
+          }
+        } else {
+          const futureBatch: Transaction[] = [];
+          for (let i = 2; i <= nInst; i++) {
+            const instDate = calculateNextOccurrence(editDate, editRecurrenceFrequency, i - 1);
+            const instId = generateUUID();
+            if (chosenCard) generatedCardIds.push(instId);
+            const parcelDesc = chosenCard
+              ? `[Cartão ${chosenCard.name}] ${cleanBaseDescNoSuffix} (${i}/${nInst})`
+              : `${cleanBaseDescNoSuffix} (${i}/${nInst})`;
+            const instPayload: Transaction = {
+              id: instId,
+              user_id: effectiveUid,
+              type: editingItem.kind,
+              amount: baseInstAmt,
+              date: instDate,
+              due_date: instDate,
+              category: editCategory,
+              description: parcelDesc,
+              payment_status: 'pending',
+              payment_date: null,
+              card_id: chosenCard ? chosenCard.id : null,
+              card_name: chosenCard ? chosenCard.name : null,
+              card_installments: chosenCard ? nInst : null,
+              card_installment_index: chosenCard ? i : null,
+              vehicle_id: raw.vehicle_id || null,
+              ignore_in_charts: Boolean(raw.ignore_in_charts),
+              is_recurring: true,
+              recurrence_frequency: editRecurrenceFrequency,
+              recurrence_installments: nInst,
+              recurrence_group_id: newGroupId,
+              installment_number: i,
+              installment_total: nInst,
+              installment_index: i,
+              total_installments: nInst,
+              created_at: new Date().toISOString(),
+            };
+            futureBatch.push(instPayload);
+            syncQueueManager.enqueue('transactions', 'insert', instId, instPayload);
+          }
+          if (futureBatch.length > 0) {
+            setTransactions(prev => {
+              const next = [...futureBatch, ...prev];
+              cacheManager.set(`transactions_${effectiveUid}`, next, undefined, 'transactions');
+              cacheManager.set('last_known_transactions', next, undefined, 'transactions');
+              return next;
+            });
+          }
+        }
+
+        if (chosenCard && generatedCardIds.length > 0) {
+          planningStorage.linkTxsToCard(effectiveUid, generatedCardIds, chosenCard.id);
+        }
+        setTxCardMap(planningStorage.getTxCardMap(effectiveUid));
+        toast.success(`Lançamento convertido em ${nInst}x parcelas (${getFrequencyLabel(editRecurrenceFrequency)})!`);
+        setEditingItem(null);
+        return;
       }
 
-      toast.success('Lançamento atualizado!');
+      // SCENARIO 2: Editing an existing group with scope ('single' | 'future' | 'all') or single update
+      const currentOrderIdx = hasMultiGroup
+        ? editingGroupSiblings.findIndex(s => s.id === editingItem.id)
+        : 0;
+      const targetItems: NormalizedPlannedItem[] =
+        hasMultiGroup && editScope !== 'single'
+          ? editScope === 'all'
+            ? editingGroupSiblings
+            : editingGroupSiblings.filter((_, idx) => idx >= currentOrderIdx)
+          : [editingItem];
+
+      const groupTotalForFixed =
+        existingInstTotal || (hasMultiGroup ? editingGroupSiblings.length : null);
+      const dateChanged = editDate !== editOriginalDate;
+
+      for (const target of targetItems) {
+        const isCurrentEdited = target.id === editingItem.id;
+        const tRaw = target.rawTx || {};
+        const tInstNum = Number(tRaw.installment_number || tRaw.installment_index || target.installmentNumber || 1);
+        const tOrderIdx = hasMultiGroup ? editingGroupSiblings.findIndex(s => s.id === target.id) : 0;
+        const targetDate = isCurrentEdited
+          ? editDate
+          : dateChanged
+            ? calculateNextOccurrence(editDate, editRecurrenceFrequency, tOrderIdx - currentOrderIdx)
+            : target.dateStr;
+
+        const targetStatus = isCurrentEdited ? editStatus : target.paymentStatus;
+        const targetPayDate = isCurrentEdited
+          ? payDateVal
+          : tRaw.payment_date || (target.paymentStatus === 'paid' ? targetDate : null);
+
+        const recPatch: Partial<Transaction> = editIsRecurring
+          ? shouldAutoRenew
+            ? {
+                is_recurring: true,
+                recurrence_frequency: editRecurrenceFrequency,
+                recurrence_installments: null,
+                recurrence_group_id: existingGroupId,
+                installment_number: isCurrentEdited ? existingInstNum : tInstNum,
+                installment_total: null,
+                installment_index: isCurrentEdited ? existingInstNum : tInstNum,
+                total_installments: null,
+              }
+            : {
+                is_recurring: true,
+                recurrence_frequency: editRecurrenceFrequency,
+                recurrence_installments: groupTotalForFixed,
+                recurrence_group_id: existingGroupId,
+                installment_number: isCurrentEdited ? existingInstNum : tInstNum,
+                installment_total: groupTotalForFixed,
+                installment_index: isCurrentEdited ? existingInstNum : tInstNum,
+                total_installments: groupTotalForFixed,
+              }
+          : {
+              is_recurring: false,
+              recurrence_frequency: undefined,
+              recurrence_installments: null,
+              recurrence_group_id: null,
+              installment_number: null,
+              installment_total: null,
+              installment_index: null,
+              total_installments: null,
+            };
+
+        const descForTarget =
+          editIsRecurring && editRecurrenceMode === 'fixed' && groupTotalForFixed && groupTotalForFixed > 1
+            ? `${cleanBaseDescNoSuffix} (${tInstNum}/${groupTotalForFixed})`
+            : cleanBaseDescNoSuffix;
+
+        await persistSingleEditTarget(target, {
+          amount: parsedAmt,
+          date: targetDate,
+          description: descForTarget,
+          status: targetStatus,
+          payDate: targetPayDate,
+          recPatch,
+          spawnAutoNextIfPaid: isCurrentEdited && shouldAutoRenew,
+        });
+      }
+
+      setTxCardMap(planningStorage.getTxCardMap(effectiveUid));
+      if (targetItems.length > 1) {
+        toast.success(
+          editScope === 'all'
+            ? `Todas as ${targetItems.length} parcelas do grupo foram atualizadas!`
+            : `Este lançamento e mais ${targetItems.length - 1} parcela(s) futura(s) foram atualizados!`
+        );
+      } else {
+        toast.success('Lançamento atualizado!');
+      }
       setEditingItem(null);
     } catch {
       toast.error('Erro ao atualizar lançamento.');
@@ -1926,18 +2936,18 @@ export function PlanningCalendar() {
   };
 
   const handleRequestDeleteItem = (item: NormalizedPlannedItem) => {
-    if (item.recurrenceGroupId) {
-      setDeleteTargetItem(item);
-      return;
-    }
-    executeDeleteSingleItem(item);
+    setDeleteTargetItem(item);
   };
 
   const executeDeleteSingleItem = async (item: NormalizedPlannedItem) => {
+    if (confirmingDelete) return;
     const effectiveUid = userId || (await getEffectiveUserId()) || 'default';
+    setConfirmingDelete(true);
     try {
       if (item.isReserveTx) {
         await deleteReserveTransaction(item.id, { silent: true });
+        planningStorage.unlinkTxFromCard(effectiveUid, item.id);
+        setTxCardMap(planningStorage.getTxCardMap(effectiveUid));
         toast.success('Conta da reserva excluída!');
       } else {
         await deleteTransaction(item.id);
@@ -1947,21 +2957,25 @@ export function PlanningCalendar() {
       setDeleteTargetItem(null);
     } catch {
       toast.error('Erro ao remover lançamento.');
+    } finally {
+      setConfirmingDelete(false);
     }
   };
 
   const executeDeleteGroupPending = async (item: NormalizedPlannedItem) => {
-    if (!item.recurrenceGroupId) return;
+    if (!item.recurrenceGroupId || confirmingDelete) return;
     const effectiveUid = userId || (await getEffectiveUserId()) || 'default';
     const targets = plannedItems.filter(
       p =>
         p.recurrenceGroupId === item.recurrenceGroupId &&
         (p.paymentStatus === 'pending' || p.id === item.id)
     );
+    setConfirmingDelete(true);
     try {
       for (const t of targets) {
         if (t.isReserveTx) {
           await deleteReserveTransaction(t.id, { silent: true });
+          planningStorage.unlinkTxFromCard(effectiveUid, t.id);
         } else {
           await deleteTransaction(t.id, { silent: true });
           planningStorage.unlinkTxFromCard(effectiveUid, t.id);
@@ -1972,6 +2986,8 @@ export function PlanningCalendar() {
       toast.success(`${targets.length} lançamento(s) do grupo removido(s)!`);
     } catch {
       toast.error('Erro ao remover parcelas do grupo.');
+    } finally {
+      setConfirmingDelete(false);
     }
   };
 
@@ -2010,10 +3026,11 @@ export function PlanningCalendar() {
   };
 
   const toggleAllMonthBatch = () => {
-    if (selectedBatchIds.length === monthItems.length && monthItems.length > 0) {
+    const selectable = monthItems.filter(i => !i.isProjectedRecurring);
+    if (selectedBatchIds.length === selectable.length && selectable.length > 0) {
       setSelectedBatchIds([]);
     } else {
-      setSelectedBatchIds(monthItems.map(i => i.id));
+      setSelectedBatchIds(selectable.map(i => i.id));
     }
   };
 
@@ -2380,7 +3397,7 @@ export function PlanningCalendar() {
                         </button>
                         <button
                           type="button"
-                          onClick={() => handleDeleteCard(card.id)}
+                          onClick={() => setDeleteCardTarget(card)}
                           className="p-1.5 rounded-lg text-muted-foreground hover:text-rose-500 hover:bg-rose-500/10 transition-colors cursor-pointer"
                           title="Excluir cartão"
                         >
@@ -2446,18 +3463,33 @@ export function PlanningCalendar() {
                       </div>
                     )}
 
-                    {inv.currentMonthPending > 0 && (
-                      <div onClick={e => e.stopPropagation()} className="pt-1">
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          onClick={() => handleSettleCardInvoice(card)}
-                          className="w-full h-8 rounded-xl text-[11px] font-extrabold border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 cursor-pointer"
-                        >
-                          <CheckCircle2 className="w-3.5 h-3.5 mr-1.5" />
-                          Quitar Fatura ({formatCurrency(inv.currentMonthPending)})
-                        </Button>
+                    {(inv.currentMonthPendingIds.length > 0 || inv.currentMonthTotal > 0) && (
+                      <div onClick={e => e.stopPropagation()} className="pt-1 flex items-center gap-1.5">
+                        {inv.currentMonthPendingIds.length > 0 && (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleSettleCardInvoice(card)}
+                            className="flex-1 h-8 rounded-xl text-[11px] font-extrabold border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 cursor-pointer"
+                          >
+                            <CheckCircle2 className="w-3.5 h-3.5 mr-1.5" />
+                            Quitar Fatura ({formatCurrency(inv.currentMonthPending)})
+                          </Button>
+                        )}
+                        {inv.currentMonthTotal > 0 && plannedItems.some(i => i.kind === 'expense' && i.cardId === card.id && i.monthKey === currentMonthKey) && (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleRequestDuplicateCardInvoice(card)}
+                            className={`${inv.currentMonthPendingIds.length > 0 ? 'shrink-0 px-2.5' : 'w-full'} h-8 rounded-xl text-[11px] font-bold cursor-pointer`}
+                            title={`Copiar lançamentos da fatura de ${viewedMonthLabel} para a próxima fatura (${nextMonthLabel})`}
+                          >
+                            <Copy className="w-3.5 h-3.5 mr-1" />
+                            {inv.currentMonthPendingIds.length > 0 ? 'Copiar Fatura' : `Copiar p/ Próx. Fatura (${nextMonthLabel})`}
+                          </Button>
+                        )}
                       </div>
                     )}
                   </div>
@@ -2658,18 +3690,26 @@ export function PlanningCalendar() {
                     const isSelected = dStr === selectedDayStr && rightPanelTab === 'day';
                     const dayItems = itemsByDay[dStr] || [];
 
+                    const confirmedIncomeTotal = dayItems
+                      .filter(i => i.kind === 'income' && !i.isProjectedRecurring)
+                      .reduce((s, i) => s + i.amount, 0);
+                    const projectedIncomeTotal = dayItems
+                      .filter(i => i.kind === 'income' && i.isProjectedRecurring)
+                      .reduce((s, i) => s + i.amount, 0);
                     const pendingExpenseTotal = dayItems
-                      .filter(i => i.kind === 'expense' && i.paymentStatus === 'pending')
+                      .filter(i => i.kind === 'expense' && i.paymentStatus === 'pending' && !i.isProjectedRecurring)
+                      .reduce((s, i) => s + i.amount, 0);
+                    const projectedExpenseTotal = dayItems
+                      .filter(i => i.kind === 'expense' && i.isProjectedRecurring)
                       .reduce((s, i) => s + i.amount, 0);
                     const paidExpenseTotal = dayItems
-                      .filter(i => i.kind === 'expense' && i.paymentStatus === 'paid')
-                      .reduce((s, i) => s + i.amount, 0);
-                    const incomeTotal = dayItems
-                      .filter(i => i.kind === 'income')
+                      .filter(i => i.kind === 'expense' && i.paymentStatus === 'paid' && !i.isProjectedRecurring)
                       .reduce((s, i) => s + i.amount, 0);
                     const hasOverdue = dayItems.some(
-                      i => i.kind === 'expense' && i.paymentStatus === 'pending' && dStr < todayStr
+                      i => !i.isProjectedRecurring && i.kind === 'expense' && i.paymentStatus === 'pending' && dStr < todayStr
                     );
+                    const realDayCount = dayItems.filter(i => !i.isProjectedRecurring).length;
+                    const projectedDayCount = dayItems.filter(i => i.isProjectedRecurring).length;
 
                     const daysInThisMonth = endOfMonth(day).getDate();
                     const cardsClosingThisDay = inMonth
@@ -2745,12 +3785,20 @@ export function PlanningCalendar() {
                         </div>
 
                         <div className="space-y-0.5 w-full">
-                          {incomeTotal > 0 && (
+                          {confirmedIncomeTotal > 0 && (
                             <div
                               className="text-[9px] sm:text-[10px] font-mono tabular-nums font-black px-1 py-0.5 rounded bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 border border-emerald-500/35 truncate"
-                              title={`Receitas: +${formatCurrency(incomeTotal)}`}
+                              title={`Receitas: +${formatCurrency(confirmedIncomeTotal)}`}
                             >
-                              {hideValues ? '•••' : `↑ +${Math.round(incomeTotal)}`}
+                              {hideValues ? '•••' : `↑ +${Math.round(confirmedIncomeTotal)}`}
+                            </div>
+                          )}
+                          {projectedIncomeTotal > 0 && (
+                            <div
+                              className="text-[9px] sm:text-[10px] font-mono tabular-nums font-black px-1 py-0.5 rounded border border-dashed border-teal-500/55 bg-teal-500/12 text-teal-700 dark:text-teal-300 truncate"
+                              title={`Provisão recorrente de receita: +${formatCurrency(projectedIncomeTotal)}`}
+                            >
+                              {hideValues ? '•••' : `🔄 +${Math.round(projectedIncomeTotal)}`}
                             </div>
                           )}
                           {pendingExpenseTotal > 0 && (
@@ -2765,6 +3813,14 @@ export function PlanningCalendar() {
                               {hideValues ? '•••' : `${hasOverdue ? '! ' : ''}-${Math.round(pendingExpenseTotal)}`}
                             </div>
                           )}
+                          {projectedExpenseTotal > 0 && (
+                            <div
+                              className="text-[9px] sm:text-[10px] font-mono tabular-nums font-black px-1 py-0.5 rounded border border-dashed border-violet-500/55 bg-violet-500/12 text-violet-700 dark:text-violet-300 truncate"
+                              title={`Provisão recorrente prevista: -${formatCurrency(projectedExpenseTotal)} (gerada ao quitar o ciclo anterior)`}
+                            >
+                              {hideValues ? '•••' : `🔄 -${Math.round(projectedExpenseTotal)}`}
+                            </div>
+                          )}
                           {paidExpenseTotal > 0 && (
                             <div
                               className="text-[9px] font-mono tabular-nums font-bold px-1 py-0.5 rounded bg-slate-500/15 text-slate-700 dark:text-slate-300 border border-slate-500/25 truncate"
@@ -2775,7 +3831,11 @@ export function PlanningCalendar() {
                           )}
                           {dayItems.length > 0 && (
                             <p className="text-[8.5px] font-bold text-muted-foreground truncate px-0.5 tabular-nums">
-                              {dayItems.length} {dayItems.length === 1 ? 'item' : 'itens'}
+                              {realDayCount > 0 && projectedDayCount > 0
+                                ? `${realDayCount} • ${projectedDayCount} prov.`
+                                : projectedDayCount > 0
+                                  ? `${projectedDayCount} ${projectedDayCount === 1 ? 'provisão' : 'provisões'}`
+                                  : `${realDayCount} ${realDayCount === 1 ? 'item' : 'itens'}`}
                             </p>
                           )}
                         </div>
@@ -2800,6 +3860,9 @@ export function PlanningCalendar() {
                     </span>
                     <span className="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30 font-extrabold">
                       - A Pagar
+                    </span>
+                    <span className="px-1.5 py-0.5 rounded bg-violet-500/12 text-violet-700 dark:text-violet-300 border border-dashed border-violet-500/55 font-extrabold">
+                      🔄 Provisão Recorrente
                     </span>
                     <span className="px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-700 dark:text-rose-300 border border-rose-500/35 font-extrabold">
                       ! - Vencida
@@ -2841,6 +3904,15 @@ export function PlanningCalendar() {
                       <Button
                         type="button"
                         size="sm"
+                        variant="outline"
+                        onClick={handleRequestBatchDuplicateNextMonth}
+                        className="h-7 rounded-lg text-[11px] font-bold cursor-pointer"
+                      >
+                        <Copy className="w-3.5 h-3.5 mr-1" /> Copiar p/ Próx. Mês/Fatura
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
                         variant="ghost"
                         onClick={() => setSelectedBatchIds([])}
                         className="h-7 rounded-lg text-[11px] font-bold cursor-pointer"
@@ -2875,7 +3947,8 @@ export function PlanningCalendar() {
                         onClick={toggleAllMonthBatch}
                         className="inline-flex items-center gap-2 hover:text-foreground cursor-pointer"
                       >
-                        {selectedBatchIds.length === monthItems.length && monthItems.length > 0 ? (
+                        {selectedBatchIds.length > 0 &&
+                        selectedBatchIds.length === monthItems.filter(i => !i.isProjectedRecurring).length ? (
                           <CheckSquare className="w-3.5 h-3.5 text-primary" />
                         ) : (
                           <Square className="w-3.5 h-3.5" />
@@ -2888,39 +3961,56 @@ export function PlanningCalendar() {
                     <div className="divide-y divide-border/40 max-h-[520px] overflow-y-auto custom-scrollbar">
                       {monthItems.map(item => {
                         const cardObj = getCardById(item.cardId);
+                        const isProjected = Boolean(item.isProjectedRecurring);
                         const isOverdue =
+                          !isProjected &&
                           item.kind === 'expense' &&
                           item.paymentStatus === 'pending' &&
                           item.dateStr < todayStr;
-                        const isChecked = selectedBatchIds.includes(item.id);
+                        const isChecked = !isProjected && selectedBatchIds.includes(item.id);
 
                         return (
                           <div
                             key={item.id}
                             className={`flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-3 py-2.5 text-xs transition-colors ${
-                              isChecked ? 'bg-indigo-500/[0.06]' : 'hover:bg-muted/25'
+                              isProjected
+                                ? 'bg-violet-500/[0.04] border-l-2 border-l-violet-500'
+                                : isChecked
+                                  ? 'bg-indigo-500/[0.06]'
+                                  : 'hover:bg-muted/25'
                             }`}
                           >
                             <div className="flex items-center gap-2.5 min-w-0">
-                              <button
-                                type="button"
-                                onClick={() => toggleBatchItem(item.id)}
-                                className="text-muted-foreground hover:text-primary shrink-0 cursor-pointer"
-                              >
-                                {isChecked ? (
-                                  <CheckSquare className="w-4 h-4 text-primary" />
-                                ) : (
-                                  <Square className="w-4 h-4" />
-                                )}
-                              </button>
+                              {isProjected ? (
+                                <span
+                                  className="w-4 h-4 flex items-center justify-center text-violet-500 shrink-0"
+                                  title="Provisão recorrente futura (aguardando pagamento do ciclo anterior)"
+                                >
+                                  <Repeat className="w-3.5 h-3.5" />
+                                </span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => toggleBatchItem(item.id)}
+                                  className="text-muted-foreground hover:text-primary shrink-0 cursor-pointer"
+                                >
+                                  {isChecked ? (
+                                    <CheckSquare className="w-4 h-4 text-primary" />
+                                  ) : (
+                                    <Square className="w-4 h-4" />
+                                  )}
+                                </button>
+                              )}
 
                               <button
                                 type="button"
                                 onClick={() => jumpToDate(item.dateStr)}
                                 className={`font-mono tabular-nums text-[11px] font-black px-1.5 py-0.5 rounded shrink-0 cursor-pointer ${
-                                  isOverdue
-                                    ? 'bg-rose-500/15 text-rose-600 dark:text-rose-400'
-                                    : 'bg-muted text-foreground'
+                                  isProjected
+                                    ? 'bg-violet-500/15 text-violet-700 dark:text-violet-300 border border-dashed border-violet-500/40'
+                                    : isOverdue
+                                      ? 'bg-rose-500/15 text-rose-600 dark:text-rose-400'
+                                      : 'bg-muted text-foreground'
                                 }`}
                                 title="Selecionar dia"
                               >
@@ -2929,6 +4019,11 @@ export function PlanningCalendar() {
 
                               <div className="min-w-0">
                                 <div className="flex items-center gap-1.5 flex-wrap">
+                                  {isProjected && (
+                                    <span className="text-[9px] font-black text-violet-700 dark:text-violet-300 bg-violet-500/15 border border-dashed border-violet-500/45 px-1.5 py-0.2 rounded inline-flex items-center gap-0.5">
+                                      ⏳ Provisão
+                                    </span>
+                                  )}
                                   {cardObj && (
                                     <span
                                       className="text-[9px] font-black text-white px-1.5 py-0.2 rounded"
@@ -2960,20 +4055,24 @@ export function PlanningCalendar() {
                                   {item.category} •{' '}
                                   <span
                                     className={
-                                      item.paymentStatus === 'paid'
-                                        ? 'text-emerald-600 dark:text-emerald-400'
-                                        : isOverdue
-                                          ? 'text-rose-600 dark:text-rose-400'
-                                          : 'text-amber-600 dark:text-amber-400'
+                                      isProjected
+                                        ? 'text-violet-600 dark:text-violet-400'
+                                        : item.paymentStatus === 'paid'
+                                          ? 'text-emerald-600 dark:text-emerald-400'
+                                          : isOverdue
+                                            ? 'text-rose-600 dark:text-rose-400'
+                                            : 'text-amber-600 dark:text-amber-400'
                                     }
                                   >
-                                    {item.paymentStatus === 'paid'
-                                      ? item.kind === 'income'
-                                        ? 'Recebida'
-                                        : 'Quitada'
-                                      : isOverdue
-                                        ? 'Vencida'
-                                        : 'Pendente'}
+                                    {isProjected
+                                      ? `Provisão (gerada após pagar ${format(parseLocalDate(item.projectedFromItem?.dateStr || item.dateStr), 'dd/MM')})`
+                                      : item.paymentStatus === 'paid'
+                                        ? item.kind === 'income'
+                                          ? 'Recebida'
+                                          : 'Quitada'
+                                        : isOverdue
+                                          ? 'Vencida'
+                                          : 'Pendente'}
                                   </span>
                                 </p>
                               </div>
@@ -2982,52 +4081,88 @@ export function PlanningCalendar() {
                             <div className="flex items-center justify-between sm:justify-end gap-2 shrink-0 pl-6 sm:pl-0">
                               <span
                                 className={`font-mono tabular-nums font-black text-xs sm:text-sm ${
-                                  item.kind === 'income'
-                                    ? 'text-emerald-600 dark:text-emerald-400'
-                                    : item.paymentStatus === 'paid'
-                                      ? 'text-muted-foreground line-through'
-                                      : 'text-rose-600 dark:text-rose-400'
+                                  isProjected
+                                    ? item.kind === 'income'
+                                      ? 'text-teal-600 dark:text-teal-400'
+                                      : 'text-violet-600 dark:text-violet-400'
+                                    : item.kind === 'income'
+                                      ? 'text-emerald-600 dark:text-emerald-400'
+                                      : item.paymentStatus === 'paid'
+                                        ? 'text-muted-foreground line-through'
+                                        : 'text-rose-600 dark:text-rose-400'
                                 }`}
                               >
                                 {item.kind === 'income' ? '+' : '-'}
                                 {formatCurrency(item.amount)}
                               </span>
 
-                              <div className="flex items-center gap-1">
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => handleTogglePayItem(item)}
-                                  className={`h-7 px-2 rounded-lg text-[10px] font-extrabold cursor-pointer ${
-                                    item.paymentStatus === 'pending'
-                                      ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
-                                      : 'text-muted-foreground'
-                                  }`}
-                                >
-                                  {item.paymentStatus === 'pending'
-                                    ? item.kind === 'income'
-                                      ? 'Receber'
-                                      : 'Quitar'
-                                    : 'Reabrir'}
-                                </Button>
-                                <button
-                                  type="button"
-                                  onClick={() => handleOpenEditItem(item)}
-                                  className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted cursor-pointer"
-                                  title="Editar"
-                                >
-                                  <Edit2 className="w-3.5 h-3.5" />
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => handleRequestDeleteItem(item)}
-                                  className="p-1.5 rounded-lg text-muted-foreground hover:text-rose-500 hover:bg-rose-500/10 cursor-pointer"
-                                  title="Excluir"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                              </div>
+                              {isProjected ? (
+                                <div className="flex items-center gap-1">
+                                  {item.projectedFromItem && (
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => jumpToDate(item.projectedFromItem!.dateStr)}
+                                      className="h-7 px-2 rounded-lg text-[10px] font-extrabold border-violet-500/35 bg-violet-500/10 text-violet-700 dark:text-violet-300 cursor-pointer"
+                                    >
+                                      Ir p/ atual
+                                    </Button>
+                                  )}
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenEditItem(item.projectedFromItem || item)}
+                                    className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted cursor-pointer"
+                                    title="Editar regra recorrente"
+                                  >
+                                    <Edit2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              ) : (
+                                <div className="flex items-center gap-1">
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => handleTogglePayItem(item)}
+                                    className={`h-7 px-2 rounded-lg text-[10px] font-extrabold cursor-pointer ${
+                                      item.paymentStatus === 'pending'
+                                        ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+                                        : 'text-muted-foreground'
+                                    }`}
+                                  >
+                                    {item.paymentStatus === 'pending'
+                                      ? item.kind === 'income'
+                                        ? 'Receber'
+                                        : 'Quitar'
+                                      : 'Reabrir'}
+                                  </Button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setDuplicateConfirmTarget({ mode: 'single', item })}
+                                    className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted cursor-pointer"
+                                    title={item.isCard ? 'Copiar para próxima fatura (+1 mês)' : 'Copiar para o próximo mês'}
+                                  >
+                                    <Copy className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenEditItem(item)}
+                                    className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted cursor-pointer"
+                                    title="Editar"
+                                  >
+                                    <Edit2 className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRequestDeleteItem(item)}
+                                    className="p-1.5 rounded-lg text-muted-foreground hover:text-rose-500 hover:bg-rose-500/10 cursor-pointer"
+                                    title="Excluir"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              )}
                             </div>
                           </div>
                         );
@@ -3346,7 +4481,9 @@ export function PlanningCalendar() {
                               ? 'text-sky-600 dark:text-sky-400'
                               : selectedDaySummary.overdueCount > 0
                                 ? 'text-rose-600 dark:text-rose-400'
-                                : 'text-amber-600 dark:text-amber-400'
+                                : selectedDaySummary.realPendingCount === 0 && selectedDaySummary.projectedCount > 0
+                                  ? 'text-violet-600 dark:text-violet-400'
+                                  : 'text-amber-600 dark:text-amber-400'
                           }`}
                         >
                           {selectedDaySummary.allSettled ? (
@@ -3355,11 +4492,16 @@ export function PlanningCalendar() {
                             </>
                           ) : selectedDaySummary.overdueCount > 0 ? (
                             <>
-                              <AlertTriangle className="w-3.5 h-3.5" /> {selectedDaySummary.pendingCount} pendência(s) em atraso
+                              <AlertTriangle className="w-3.5 h-3.5" /> {selectedDaySummary.realPendingCount} pendência(s) em atraso
+                            </>
+                          ) : selectedDaySummary.realPendingCount === 0 && selectedDaySummary.projectedCount > 0 ? (
+                            <>
+                              <Repeat className="w-3.5 h-3.5" /> {selectedDaySummary.projectedCount} provisão(ões) recorrente(s)
                             </>
                           ) : (
                             <>
-                              <Clock className="w-3.5 h-3.5" /> {selectedDaySummary.pendingCount} de {selectedDayItems.length} pendente(s)
+                              <Clock className="w-3.5 h-3.5" /> {selectedDaySummary.realPendingCount} de {selectedDayItems.length - selectedDaySummary.projectedCount} pendente(s)
+                              {selectedDaySummary.projectedCount > 0 ? ` + ${selectedDaySummary.projectedCount} prov.` : ''}
                             </>
                           )}
                         </span>
@@ -3435,13 +4577,16 @@ export function PlanningCalendar() {
                     <div className="rounded-xl border border-border/70 bg-card divide-y divide-border/50 max-h-[390px] overflow-y-auto custom-scrollbar">
                       {selectedDayItems.map(item => {
                         const cardObj = getCardById(item.cardId);
+                        const isProjected = Boolean(item.isProjectedRecurring);
                         const isOverdue =
+                          !isProjected &&
                           item.kind === 'expense' &&
                           item.paymentStatus === 'pending' &&
                           item.dateStr < todayStr;
-                        const isPaid = item.paymentStatus === 'paid';
-                        const stripeClass =
-                          item.kind === 'income'
+                        const isPaid = !isProjected && item.paymentStatus === 'paid';
+                        const stripeClass = isProjected
+                          ? 'border-l-violet-500 bg-violet-500/[0.05]'
+                          : item.kind === 'income'
                             ? 'border-l-emerald-500 bg-emerald-500/[0.04]'
                             : isPaid
                               ? 'border-l-slate-400 dark:border-l-slate-500'
@@ -3457,6 +4602,11 @@ export function PlanningCalendar() {
                             <div className="flex items-start justify-between gap-2.5">
                               <div className="min-w-0 flex-1 space-y-0.5">
                                 <div className="flex items-center gap-1.5 flex-wrap text-[10px]">
+                                  {isProjected && (
+                                    <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded border border-dashed border-violet-500/50 bg-violet-500/15 text-violet-700 dark:text-violet-300 font-black text-[9px]">
+                                      ⏳ Provisão Recorrente
+                                    </span>
+                                  )}
                                   {item.kind === 'income' ? (
                                     <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 font-extrabold text-[9.5px]">
                                       ↑ Receita
@@ -3489,7 +4639,7 @@ export function PlanningCalendar() {
                                   <span className="font-semibold text-muted-foreground truncate">
                                     {item.category}
                                   </span>
-                                  {item.installmentNumber && item.installmentTotal && (
+                                  {!isProjected && item.installmentNumber && item.installmentTotal && (
                                     <span className="font-mono tabular-nums text-[9.5px] font-bold text-muted-foreground bg-muted/60 px-1 rounded">
                                       {item.installmentNumber}/{item.installmentTotal}
                                     </span>
@@ -3499,16 +4649,27 @@ export function PlanningCalendar() {
                                 <p className="text-xs font-black text-foreground leading-snug break-words">
                                   {item.description}
                                 </p>
+
+                                {isProjected && item.projectedFromItem && (
+                                  <p className="text-[10px] text-violet-700 dark:text-violet-300 font-semibold leading-snug">
+                                    Previsão automática — será gerada ao quitar a conta de{' '}
+                                    <strong>{format(parseLocalDate(item.projectedFromItem.dateStr), 'dd/MM/yyyy')}</strong>.
+                                  </p>
+                                )}
                               </div>
 
                               <div className="text-right shrink-0 space-y-0.5">
                                 <span
                                   className={`block text-sm font-black font-mono tabular-nums ${
-                                    item.kind === 'income'
-                                      ? 'text-emerald-600 dark:text-emerald-400'
-                                      : isPaid
-                                        ? 'text-slate-600 dark:text-slate-300'
-                                        : 'text-rose-600 dark:text-rose-400'
+                                    isProjected
+                                      ? item.kind === 'income'
+                                        ? 'text-teal-600 dark:text-teal-400'
+                                        : 'text-violet-600 dark:text-violet-400'
+                                      : item.kind === 'income'
+                                        ? 'text-emerald-600 dark:text-emerald-400'
+                                        : isPaid
+                                          ? 'text-slate-600 dark:text-slate-300'
+                                          : 'text-rose-600 dark:text-rose-400'
                                   }`}
                                 >
                                   {item.kind === 'income' ? '+' : '-'}
@@ -3516,16 +4677,22 @@ export function PlanningCalendar() {
                                 </span>
                                 <span
                                   className={`inline-flex items-center gap-1 text-[9.5px] font-extrabold ${
-                                    item.kind === 'income'
-                                      ? 'text-emerald-600 dark:text-emerald-400'
-                                      : isPaid
-                                        ? 'text-slate-600 dark:text-slate-300'
-                                        : isOverdue
-                                          ? 'text-rose-600 dark:text-rose-400'
-                                          : 'text-amber-600 dark:text-amber-400'
+                                    isProjected
+                                      ? 'text-violet-600 dark:text-violet-400'
+                                      : item.kind === 'income'
+                                        ? 'text-emerald-600 dark:text-emerald-400'
+                                        : isPaid
+                                          ? 'text-slate-600 dark:text-slate-300'
+                                          : isOverdue
+                                            ? 'text-rose-600 dark:text-rose-400'
+                                            : 'text-amber-600 dark:text-amber-400'
                                   }`}
                                 >
-                                  {isPaid ? (
+                                  {isProjected ? (
+                                    <>
+                                      <Repeat className="w-2.5 h-2.5" /> Previsão
+                                    </>
+                                  ) : isPaid ? (
                                     <>
                                       <CheckCircle2 className="w-2.5 h-2.5" />
                                       {item.kind === 'income' ? 'Recebida' : 'Quitado'}
@@ -3544,68 +4711,90 @@ export function PlanningCalendar() {
                               </div>
                             </div>
 
-                            <div className="flex items-center justify-between gap-2 pt-2 mt-2 border-t border-border/35">
-                              <Button
-                                type="button"
-                                size="sm"
-                                variant="outline"
-                                onClick={() => handleTogglePayItem(item)}
-                                className={`h-7 px-2.5 rounded-lg text-[10.5px] font-extrabold cursor-pointer ${
-                                  item.paymentStatus === 'pending'
-                                    ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20'
-                                    : 'text-muted-foreground hover:text-foreground'
-                                }`}
-                              >
-                                {item.paymentStatus === 'pending'
-                                  ? item.kind === 'income'
-                                    ? 'Confirmar Entrada'
-                                    : 'Quitar'
-                                  : 'Reabrir'}
-                              </Button>
-
-                              <div className="flex items-center gap-0.5">
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    setShiftConfirmTarget({ mode: 'single', item, deltaMonths: 1 })
-                                  }
-                                  className="p-1.5 rounded-lg text-muted-foreground hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-500/10 transition-colors cursor-pointer"
-                                  title={
-                                    item.isCard
-                                      ? 'Mandar para próxima fatura (+1 mês)'
-                                      : 'Adiar para próximo mês (+1 mês)'
-                                  }
-                                >
-                                  <CalendarPlus className="w-3.5 h-3.5" />
-                                </button>
-                                {!item.isReserveTx && (
-                                  <button
+                            {isProjected ? (
+                              <div className="flex items-center justify-between gap-2 pt-2 mt-2 border-t border-dashed border-violet-500/25">
+                                {item.projectedFromItem && (
+                                  <Button
                                     type="button"
-                                    onClick={() => setDuplicateConfirmItem(item)}
-                                    className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer"
-                                    title="Duplicar para o próximo mês"
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => jumpToDate(item.projectedFromItem!.dateStr)}
+                                    className="h-7 px-2.5 rounded-lg text-[10.5px] font-extrabold border-violet-500/35 bg-violet-500/10 text-violet-700 dark:text-violet-300 hover:bg-violet-500/20 cursor-pointer"
                                   >
-                                    <Copy className="w-3.5 h-3.5" />
-                                  </button>
+                                    Ir p/ Lançamento Atual ({format(parseLocalDate(item.projectedFromItem.dateStr), 'dd/MM')})
+                                  </Button>
                                 )}
                                 <button
                                   type="button"
-                                  onClick={() => handleOpenEditItem(item)}
-                                  className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer"
-                                  title="Editar"
+                                  onClick={() => handleOpenEditItem(item.projectedFromItem || item)}
+                                  className="px-2 py-1 rounded-lg text-[10.5px] font-bold text-muted-foreground hover:text-foreground hover:bg-muted transition-colors inline-flex items-center gap-1 cursor-pointer ml-auto"
+                                  title="Editar recorrência"
                                 >
-                                  <Edit2 className="w-3.5 h-3.5" />
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => handleRequestDeleteItem(item)}
-                                  className="p-1.5 rounded-lg text-muted-foreground hover:text-rose-500 hover:bg-rose-500/10 transition-colors cursor-pointer"
-                                  title="Excluir"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
+                                  <Edit2 className="w-3 h-3" /> Editar regra
                                 </button>
                               </div>
-                            </div>
+                            ) : (
+                              <div className="flex items-center justify-between gap-2 pt-2 mt-2 border-t border-border/35">
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => handleTogglePayItem(item)}
+                                  className={`h-7 px-2.5 rounded-lg text-[10.5px] font-extrabold cursor-pointer ${
+                                    item.paymentStatus === 'pending'
+                                      ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20'
+                                      : 'text-muted-foreground hover:text-foreground'
+                                  }`}
+                                >
+                                  {item.paymentStatus === 'pending'
+                                    ? item.kind === 'income'
+                                      ? 'Confirmar Entrada'
+                                      : 'Quitar'
+                                    : 'Reabrir'}
+                                </Button>
+
+                                <div className="flex items-center gap-0.5">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setShiftConfirmTarget({ mode: 'single', item, deltaMonths: 1 })
+                                    }
+                                    className="p-1.5 rounded-lg text-muted-foreground hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-500/10 transition-colors cursor-pointer"
+                                    title={
+                                      item.isCard
+                                        ? 'Mandar para próxima fatura (+1 mês)'
+                                        : 'Adiar para próximo mês (+1 mês)'
+                                    }
+                                  >
+                                    <CalendarPlus className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setDuplicateConfirmTarget({ mode: 'single', item })}
+                                    className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer"
+                                    title={item.isCard ? 'Copiar para próxima fatura (+1 mês)' : 'Copiar para o próximo mês'}
+                                  >
+                                    <Copy className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenEditItem(item)}
+                                    className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer"
+                                    title="Editar"
+                                  >
+                                    <Edit2 className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRequestDeleteItem(item)}
+                                    className="p-1.5 rounded-lg text-muted-foreground hover:text-rose-500 hover:bg-rose-500/10 transition-colors cursor-pointer"
+                                    title="Excluir"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </div>
+                            )}
                           </div>
                         );
                       })}
@@ -3764,6 +4953,14 @@ export function PlanningCalendar() {
                               </Button>
                               <button
                                 type="button"
+                                onClick={() => setDuplicateConfirmTarget({ mode: 'single', item })}
+                                className="p-1 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted cursor-pointer"
+                                title={item.isCard ? 'Copiar para próxima fatura (+1 mês)' : 'Copiar para o próximo mês'}
+                              >
+                                <Copy className="w-3 h-3" />
+                              </button>
+                              <button
+                                type="button"
                                 onClick={() => handleOpenEditItem(item)}
                                 className="p-1 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted cursor-pointer"
                                 title="Editar"
@@ -3883,7 +5080,7 @@ export function PlanningCalendar() {
               {editingCard ? 'Editar Cartão de Crédito' : 'Novo Cartão de Crédito'}
             </DialogTitle>
             <DialogDescription className="text-xs">
-              Informe o dia de fechamento e o dia de vencimento da fatura.
+              Escolha o banco e o dia fixo do vencimento — o dia de fechamento é calculado automaticamente.
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={handleSaveCard} className="space-y-4 pt-1">
@@ -3899,6 +5096,9 @@ export function PlanningCalendar() {
                   if (preset) {
                     setCardColor(preset.color);
                     if (!cardName.trim()) setCardName(preset.label);
+                  }
+                  if (cardAutoClosing) {
+                    setCardClosingDay(String(computeAutoClosingDay(Number(cardDueDay) || 12, v)));
                   }
                 }}
               >
@@ -3961,31 +5161,24 @@ export function PlanningCalendar() {
               </div>
             </div>
 
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <label className="text-[10.5px] font-extrabold uppercase tracking-wider text-muted-foreground">
-                  Dia Fechamento
-                </label>
-                <Input
-                  type="number"
-                  min={1}
-                  max={31}
-                  value={cardClosingDay}
-                  onChange={e => setCardClosingDay(e.target.value)}
-                  className="h-10 rounded-xl text-xs font-bold tabular-nums"
-                  required
-                />
-              </div>
-              <div className="space-y-1.5">
-                <label className="text-[10.5px] font-extrabold uppercase tracking-wider text-muted-foreground">
-                  Dia Vencimento
+                  Dia Fixo do Vencimento
                 </label>
                 <Input
                   type="number"
                   min={1}
                   max={31}
                   value={cardDueDay}
-                  onChange={e => setCardDueDay(e.target.value)}
+                  onChange={e => {
+                    const val = e.target.value;
+                    setCardDueDay(val);
+                    if (cardAutoClosing) {
+                      const parsed = Math.max(1, Math.min(31, Number(val) || 12));
+                      setCardClosingDay(String(computeAutoClosingDay(parsed, cardBrand)));
+                    }
+                  }}
                   className="h-10 rounded-xl text-xs font-bold tabular-nums"
                   required
                 />
@@ -4002,6 +5195,71 @@ export function PlanningCalendar() {
                 />
               </div>
             </div>
+
+            {(() => {
+              const parsedDue = Math.max(1, Math.min(31, Number(cardDueDay) || 12));
+              const autoClosing = computeAutoClosingDay(parsedDue, cardBrand);
+              const offsetDays = getBankClosingOffsetDays(cardBrand);
+              const brandLabel = CARD_BRAND_PRESETS.find(p => p.value === cardBrand)?.label || 'Banco';
+              const shownClosing = cardAutoClosing
+                ? autoClosing
+                : Math.max(1, Math.min(31, Number(cardClosingDay) || autoClosing));
+
+              return (
+                <div className="p-3 rounded-xl border border-purple-500/25 bg-purple-500/[0.06] space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="space-y-0.5">
+                      <span className="text-[10px] font-extrabold uppercase tracking-wider text-purple-700 dark:text-purple-300 flex items-center gap-1.5">
+                        <Sparkles className="w-3.5 h-3.5" />
+                        Fechamento {cardAutoClosing ? 'Automático do Banco' : 'Manual'}
+                      </span>
+                      <p className="text-xs font-black text-foreground">
+                        Fecha todo dia <span className="text-purple-600 dark:text-purple-400">dia {shownClosing}</span>
+                        {cardAutoClosing && (
+                          <span className="text-[10.5px] font-semibold text-muted-foreground ml-1">
+                            ({offsetDays} dias antes do vencimento • padrão {brandLabel})
+                          </span>
+                        )}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const nextAuto = !cardAutoClosing;
+                        setCardAutoClosing(nextAuto);
+                        if (nextAuto) {
+                          setCardClosingDay(String(autoClosing));
+                        }
+                      }}
+                      className="text-[10.5px] font-extrabold text-primary hover:underline cursor-pointer shrink-0"
+                    >
+                      {cardAutoClosing ? 'Ajustar manual' : `Usar automático (dia ${autoClosing})`}
+                    </button>
+                  </div>
+
+                  {!cardAutoClosing && (
+                    <div className="pt-1 flex items-center gap-2">
+                      <label className="text-[10.5px] font-bold text-muted-foreground shrink-0">
+                        Dia do fechamento:
+                      </label>
+                      <Input
+                        type="number"
+                        min={1}
+                        max={31}
+                        value={cardClosingDay}
+                        onChange={e => setCardClosingDay(e.target.value)}
+                        className="h-8 w-24 rounded-lg text-xs font-bold tabular-nums bg-card"
+                        required
+                      />
+                    </div>
+                  )}
+
+                  <p className="text-[10px] text-muted-foreground leading-snug">
+                    Compras feitas a partir do dia <strong>{shownClosing}</strong> entram automaticamente na fatura do mês seguinte.
+                  </p>
+                </div>
+              );
+            })()}
 
             <div className="flex justify-end gap-2 pt-2">
               <Button
@@ -4249,62 +5507,128 @@ export function PlanningCalendar() {
 
             {entryMode === 'card' ? (
               <div className="space-y-3">
-                <div className="grid grid-cols-3 gap-3">
-                  <div className="col-span-2 space-y-1.5">
-                    <label className="text-[10.5px] font-extrabold uppercase tracking-wider text-muted-foreground">
-                      {amountInputType === 'total' ? 'Valor Total da Compra (R$)' : 'Valor de Cada Parcela (R$)'}
-                    </label>
-                    <CurrencyInput
-                      value={entryAmount}
-                      onChange={setEntryAmount}
-                      placeholder="0,00"
-                      className="h-10 rounded-xl font-bold"
-                      required
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <label className="text-[10.5px] font-extrabold uppercase tracking-wider text-muted-foreground">
-                      Parcelas
-                    </label>
-                    <Select value={installments} onValueChange={setInstallments}>
-                      <SelectTrigger className="h-10 rounded-xl text-xs font-bold">
-                        <SelectValue>{val => (val ? `${val}x` : '1x')}</SelectValue>
-                      </SelectTrigger>
-                      <SelectContent>
-                        {Array.from({ length: 24 }, (_, idx) => String(idx + 1)).map(n => (
-                          <SelectItem key={n} value={n}>
-                            {n}x
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
+                {/* Tipo de Lançamento no Cartão: À vista / Parcelado vs Recorrente Auto */}
+                <div className="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-muted/50 border border-border/50">
+                  <button
+                    type="button"
+                    onClick={() => setCardRepeatAuto(false)}
+                    className={`py-1.5 px-2 rounded-lg text-[10.5px] font-black transition-colors cursor-pointer ${
+                      !cardRepeatAuto
+                        ? 'bg-indigo-600 text-white shadow-xs'
+                        : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    💳 À vista / Parcelado
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCardRepeatAuto(true)}
+                    className={`py-1.5 px-2 rounded-lg text-[10.5px] font-black transition-colors cursor-pointer ${
+                      cardRepeatAuto
+                        ? 'bg-indigo-600 text-white shadow-xs'
+                        : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    🔄 Recorrente (Auto)
+                  </button>
                 </div>
 
-                {Number(installments) > 1 && (
-                  <div className="flex items-center gap-2 text-[11px] font-bold">
-                    <button
-                      type="button"
-                      onClick={() => setAmountInputType('total')}
-                      className={`px-2.5 py-1 rounded-lg border cursor-pointer ${
-                        amountInputType === 'total'
-                          ? 'bg-primary text-primary-foreground border-primary'
-                          : 'bg-muted/30 border-border/60 text-muted-foreground'
-                      }`}
-                    >
-                      Valor é o Total
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setAmountInputType('installment')}
-                      className={`px-2.5 py-1 rounded-lg border cursor-pointer ${
-                        amountInputType === 'installment'
-                          ? 'bg-primary text-primary-foreground border-primary'
-                          : 'bg-muted/30 border-border/60 text-muted-foreground'
-                      }`}
-                    >
-                      Valor é da Parcela
-                    </button>
+                {!cardRepeatAuto ? (
+                  <>
+                    <div className="grid grid-cols-3 gap-3">
+                      <div className="col-span-2 space-y-1.5">
+                        <label className="text-[10.5px] font-extrabold uppercase tracking-wider text-muted-foreground">
+                          {amountInputType === 'total' ? 'Valor Total da Compra (R$)' : 'Valor de Cada Parcela (R$)'}
+                        </label>
+                        <CurrencyInput
+                          value={entryAmount}
+                          onChange={setEntryAmount}
+                          placeholder="0,00"
+                          className="h-10 rounded-xl font-bold"
+                          required
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-[10.5px] font-extrabold uppercase tracking-wider text-muted-foreground">
+                          Parcelas
+                        </label>
+                        <Select value={installments} onValueChange={setInstallments}>
+                          <SelectTrigger className="h-10 rounded-xl text-xs font-bold">
+                            <SelectValue>{val => (val ? `${val}x` : '1x')}</SelectValue>
+                          </SelectTrigger>
+                          <SelectContent>
+                            {Array.from({ length: 24 }, (_, idx) => String(idx + 1)).map(n => (
+                              <SelectItem key={n} value={n}>
+                                {n}x
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+
+                    {Number(installments) > 1 && (
+                      <div className="flex items-center gap-2 text-[11px] font-bold">
+                        <button
+                          type="button"
+                          onClick={() => setAmountInputType('total')}
+                          className={`px-2.5 py-1 rounded-lg border cursor-pointer ${
+                            amountInputType === 'total'
+                              ? 'bg-primary text-primary-foreground border-primary'
+                              : 'bg-muted/30 border-border/60 text-muted-foreground'
+                          }`}
+                        >
+                          Valor é o Total
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setAmountInputType('installment')}
+                          className={`px-2.5 py-1 rounded-lg border cursor-pointer ${
+                            amountInputType === 'installment'
+                              ? 'bg-primary text-primary-foreground border-primary'
+                              : 'bg-muted/30 border-border/60 text-muted-foreground'
+                          }`}
+                        >
+                          Valor é da Parcela
+                        </button>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <label className="text-[10.5px] font-extrabold uppercase tracking-wider text-muted-foreground">
+                        Valor por Ciclo (R$)
+                      </label>
+                      <CurrencyInput
+                        value={entryAmount}
+                        onChange={setEntryAmount}
+                        placeholder="0,00"
+                        className="h-10 rounded-xl font-bold"
+                        required
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[10.5px] font-extrabold uppercase tracking-wider text-muted-foreground">
+                        Frequência
+                      </label>
+                      <Select value={billFrequency} onValueChange={(v: RecurrenceFrequency) => setBillFrequency(v)}>
+                        <SelectTrigger className="h-10 rounded-xl text-xs font-bold">
+                          <SelectValue>
+                            {val => getFrequencyLabel(val as RecurrenceFrequency)}
+                          </SelectValue>
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="weekly">Semanal</SelectItem>
+                          <SelectItem value="biweekly">Quinzenal</SelectItem>
+                          <SelectItem value="monthly">Mensal</SelectItem>
+                          <SelectItem value="bimonthly">Bimestral</SelectItem>
+                          <SelectItem value="quarterly">Trimestral</SelectItem>
+                          <SelectItem value="semiannual">Semestral</SelectItem>
+                          <SelectItem value="yearly">Anual</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
                 )}
 
@@ -4322,21 +5646,43 @@ export function PlanningCalendar() {
                       </span>
                     </div>
 
-                    {Number(entryAmount) > 0 && (
-                      <p className="text-foreground font-semibold tabular-nums">
-                        {cardPreview.nInst}x de{' '}
-                        <strong className="font-mono">{formatCurrency(cardPreview.perInstallment)}</strong>{' '}
-                        (Total: {formatCurrency(cardPreview.totalPurchase)})
-                      </p>
-                    )}
+                    {cardRepeatAuto ? (
+                      <div className="space-y-1 text-foreground">
+                        {Number(entryAmount) > 0 && (
+                          <p className="font-semibold tabular-nums">
+                            Assinatura / Recorrência {getFrequencyLabel(billFrequency)} de{' '}
+                            <strong className="font-mono">{formatCurrency(Number(entryAmount))}</strong>
+                          </p>
+                        )}
+                        {cardPreview.nextRecurringDate && (
+                          <p className="text-[10.5px] text-indigo-700 dark:text-indigo-300 font-semibold leading-snug">
+                            Ao quitar a fatura, renova automaticamente para{' '}
+                            <strong>
+                              {format(parseLocalDate(cardPreview.nextRecurringDate), 'dd/MM/yyyy')}
+                            </strong>
+                            .
+                          </p>
+                        )}
+                      </div>
+                    ) : (
+                      <>
+                        {Number(entryAmount) > 0 && (
+                          <p className="text-foreground font-semibold tabular-nums">
+                            {cardPreview.nInst}x de{' '}
+                            <strong className="font-mono">{formatCurrency(cardPreview.perInstallment)}</strong>{' '}
+                            (Total: {formatCurrency(cardPreview.totalPurchase)})
+                          </p>
+                        )}
 
-                    {cardPreview.nInst > 1 && (
-                      <p className="text-muted-foreground tabular-nums">
-                        Última parcela em{' '}
-                        <strong>
-                          {format(new Date(cardPreview.last.statementDueDate + 'T12:00:00'), 'dd/MM/yyyy')}
-                        </strong>
-                      </p>
+                        {cardPreview.nInst > 1 && (
+                          <p className="text-muted-foreground tabular-nums">
+                            Última parcela em{' '}
+                            <strong>
+                              {format(new Date(cardPreview.last.statementDueDate + 'T12:00:00'), 'dd/MM/yyyy')}
+                            </strong>
+                          </p>
+                        )}
+                      </>
                     )}
 
                     {cardInvoiceTarget === 'auto' && cardPreview.isAutoInDifferentMonthThanViewed && (
@@ -4351,6 +5697,68 @@ export function PlanningCalendar() {
                         >
                           Usar {viewedMonthLabel} <ArrowRight className="w-3 h-3" />
                         </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {activeReserves.length > 0 && (
+                  <div className="p-3 rounded-xl border border-amber-500/30 bg-amber-500/[0.06] space-y-2.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[10.5px] font-extrabold uppercase tracking-wider text-foreground flex items-center gap-1.5">
+                        <PiggyBank className="w-3.5 h-3.5 text-amber-500" />
+                        Onde debitar quando pagar?
+                      </span>
+                      <div className="grid grid-cols-2 gap-1 p-0.5 rounded-lg bg-muted/60 border border-border/50">
+                        <button
+                          type="button"
+                          onClick={() => setBillUseReserve(false)}
+                          className={`px-2 py-1 rounded-md text-[10px] font-black transition-colors cursor-pointer ${
+                            !billUseReserve
+                              ? 'bg-card text-foreground shadow-xs'
+                              : 'text-muted-foreground hover:text-foreground'
+                          }`}
+                        >
+                          Caixa Livre
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setBillUseReserve(true)}
+                          className={`px-2 py-1 rounded-md text-[10px] font-black transition-colors cursor-pointer ${
+                            billUseReserve
+                              ? 'bg-amber-500 text-zinc-950 shadow-xs'
+                              : 'text-muted-foreground hover:text-foreground'
+                          }`}
+                        >
+                          Usar Reserva
+                        </button>
+                      </div>
+                    </div>
+
+                    {billUseReserve && (
+                      <div className="space-y-1.5 animate-fade-in">
+                        <Select value={billReserveId} onValueChange={setBillReserveId}>
+                          <SelectTrigger className="h-9 rounded-xl bg-card text-xs font-bold">
+                            <SelectValue placeholder="Selecione a reserva...">
+                              {val => {
+                                const found = activeReserves.find(r => r.id === val);
+                                return found
+                                  ? `${found.name} (Saldo: ${formatCurrency(found.saldo_atual || 0)})`
+                                  : 'Selecione a reserva...';
+                              }}
+                            </SelectValue>
+                          </SelectTrigger>
+                          <SelectContent>
+                            {activeReserves.map(r => (
+                              <SelectItem key={r.id} value={r.id}>
+                                {r.name} • Saldo: {formatCurrency(r.saldo_atual || 0)}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <p className="text-[10px] text-muted-foreground leading-snug">
+                          Fica na fatura do cartão como pendente e, ao quitar, desconta direto da reserva sem sair do Caixa Livre.
+                        </p>
                       </div>
                     )}
                   </div>
@@ -4588,17 +5996,69 @@ export function PlanningCalendar() {
 
       {/* Modal: Editar Lançamento / Fatura */}
       <Dialog open={editingItem !== null} onOpenChange={open => !open && setEditingItem(null)}>
-        <DialogContent className="max-w-md rounded-3xl">
+        <DialogContent className="max-w-md rounded-3xl max-h-[92vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="text-lg font-black flex items-center gap-2">
               <Edit2 className="w-4 h-4 text-primary" />
               {editingItem?.kind === 'income' ? 'Editar Receita Prevista' : 'Editar Conta / Fatura'}
             </DialogTitle>
             <DialogDescription className="text-xs">
-              Altere valor, data de vencimento, descrição, cartão ou status.
+              Altere valor, data de vencimento, descrição, cartão, parcelamento ou recorrência.
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={handleSaveEditItem} className="space-y-4 pt-1">
+            {editingGroupSiblings.length > 1 && (
+              <div className="p-3 rounded-xl border border-indigo-500/30 bg-indigo-500/[0.06] space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[10.5px] font-extrabold uppercase tracking-wider text-indigo-700 dark:text-indigo-300">
+                    Escopo da Edição ({editingGroupSiblings.length} lançamentos no grupo)
+                  </span>
+                </div>
+                <div className="grid grid-cols-3 gap-1.5 p-1 rounded-xl bg-muted/60 border border-border/50">
+                  <button
+                    type="button"
+                    onClick={() => setEditScope('single')}
+                    className={`py-1.5 px-1.5 rounded-lg text-[10.5px] font-black transition-colors cursor-pointer ${
+                      editScope === 'single'
+                        ? 'bg-indigo-600 text-white shadow-xs'
+                        : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    Só este
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEditScope('future')}
+                    className={`py-1.5 px-1.5 rounded-lg text-[10.5px] font-black transition-colors cursor-pointer ${
+                      editScope === 'future'
+                        ? 'bg-indigo-600 text-white shadow-xs'
+                        : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    Este e próximos
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEditScope('all')}
+                    className={`py-1.5 px-1.5 rounded-lg text-[10.5px] font-black transition-colors cursor-pointer ${
+                      editScope === 'all'
+                        ? 'bg-indigo-600 text-white shadow-xs'
+                        : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    Todos ({editingGroupSiblings.length})
+                  </button>
+                </div>
+                <p className="text-[10px] text-muted-foreground leading-snug">
+                  {editScope === 'single'
+                    ? 'Aplica as mudanças somente neste lançamento, mantendo as outras parcelas intactas.'
+                    : editScope === 'future'
+                      ? 'Atualiza este lançamento e todas as parcelas seguintes do grupo.'
+                      : `Aplica valor, descrição, categoria, cartão e reserva para todas as ${editingGroupSiblings.length} parcelas do grupo.`}
+                </p>
+              </div>
+            )}
+
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <label className="text-[10.5px] font-extrabold uppercase tracking-wider text-muted-foreground">
@@ -4678,19 +6138,84 @@ export function PlanningCalendar() {
               </div>
             </div>
 
-            {editingItem?.kind !== 'income' && !editUseReserve && cards.length > 0 && (
-              <div className="space-y-1.5">
-                <label className="text-[10.5px] font-extrabold uppercase tracking-wider text-muted-foreground">
-                  Cartão Vinculado
-                </label>
-                <Select value={editCardId} onValueChange={setEditCardId}>
-                  <SelectTrigger className="h-10 rounded-xl text-xs font-bold">
-                    <SelectValue placeholder="Nenhum (Conta avulsa)">
-                      {val => {
-                        if (val === '__none__' || !val) return 'Nenhum (Conta avulsa)';
-                        const c = cards.find(card => card.id === val);
-                        if (!c) return 'Nenhum (Conta avulsa)';
-                        return (
+            {editingItem?.kind !== 'income' && cards.length > 0 && (() => {
+              const selectedEditCardObj = editCardId !== '__none__' ? cards.find(c => c.id === editCardId) || null : null;
+              const cycleDueDate = selectedEditCardObj
+                ? computeCardStatementDueDate(
+                    editOriginalDate || editDate || getTodayLocalDateStr(),
+                    selectedEditCardObj.closingDay,
+                    selectedEditCardObj.dueDay,
+                    1
+                  ).statementDueDate
+                : null;
+              const viewedMonthDueDate = selectedEditCardObj
+                ? computeCardStatementDueDate(
+                    editOriginalDate || editDate || getTodayLocalDateStr(),
+                    selectedEditCardObj.closingDay,
+                    selectedEditCardObj.dueDay,
+                    1,
+                    { forceFirstStatementMonthKey: currentMonthKey }
+                  ).statementDueDate
+                : null;
+              const nextMonthDueDate = selectedEditCardObj
+                ? computeCardStatementDueDate(
+                    editOriginalDate || editDate || getTodayLocalDateStr(),
+                    selectedEditCardObj.closingDay,
+                    selectedEditCardObj.dueDay,
+                    1,
+                    { forceFirstStatementMonthKey: nextMonthKey }
+                  ).statementDueDate
+                : null;
+
+              return (
+                <div className="space-y-2">
+                  <label className="text-[10.5px] font-extrabold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                    <CreditCard className="w-3.5 h-3.5 text-indigo-500" />
+                    Cartão Vinculado (Fatura)
+                  </label>
+                  <Select
+                    value={editCardId}
+                    onValueChange={newCardId => {
+                      const prevCardId = editCardId;
+                      setEditCardId(newCardId);
+                      if (newCardId !== '__none__' && prevCardId === '__none__') {
+                        const targetCard = cards.find(c => c.id === newCardId);
+                        if (targetCard) {
+                          const { statementDueDate } = computeCardStatementDueDate(
+                            editOriginalDate || editDate || getTodayLocalDateStr(),
+                            targetCard.closingDay,
+                            targetCard.dueDay,
+                            1
+                          );
+                          setEditDate(statementDueDate);
+                        }
+                      } else if (newCardId === '__none__' && editOriginalDate) {
+                        setEditDate(editOriginalDate);
+                      }
+                    }}
+                  >
+                    <SelectTrigger className="h-10 rounded-xl text-xs font-bold">
+                      <SelectValue placeholder="Nenhum (Conta avulsa)">
+                        {val => {
+                          if (val === '__none__' || !val) return 'Nenhum (Conta avulsa)';
+                          const c = cards.find(card => card.id === val);
+                          if (!c) return 'Nenhum (Conta avulsa)';
+                          return (
+                            <div className="flex items-center gap-2">
+                              <span
+                                className="w-2.5 h-2.5 rounded-full shrink-0"
+                                style={{ backgroundColor: c.color }}
+                              />
+                              <span>{c.name}</span>
+                            </div>
+                          );
+                        }}
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">Nenhum (Conta avulsa)</SelectItem>
+                      {cards.map(c => (
+                        <SelectItem key={c.id} value={c.id}>
                           <div className="flex items-center gap-2">
                             <span
                               className="w-2.5 h-2.5 rounded-full shrink-0"
@@ -4698,30 +6223,73 @@ export function PlanningCalendar() {
                             />
                             <span>{c.name}</span>
                           </div>
-                        );
-                      }}
-                    </SelectValue>
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__none__">Nenhum (Conta avulsa)</SelectItem>
-                    {cards.map(c => (
-                      <SelectItem key={c.id} value={c.id}>
-                        <div className="flex items-center gap-2">
-                          <span
-                            className="w-2.5 h-2.5 rounded-full shrink-0"
-                            style={{ backgroundColor: c.color }}
-                          />
-                          <span>{c.name}</span>
-                        </div>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
 
-            {/* Pagar usando Reserva (para despesas fora de cartão) */}
-            {editingItem?.kind === 'expense' && editCardId === '__none__' && activeReserves.length > 0 && (
+                  {selectedEditCardObj && (
+                    <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                      {cycleDueDate && (
+                        <button
+                          type="button"
+                          onClick={() => setEditDate(cycleDueDate)}
+                          className={`px-2 py-1 rounded-lg border text-[10px] font-bold cursor-pointer transition-colors ${
+                            editDate === cycleDueDate
+                              ? 'border-indigo-500 bg-indigo-500/15 text-indigo-600 dark:text-indigo-400'
+                              : 'border-border/60 bg-muted/20 text-muted-foreground hover:text-foreground'
+                          }`}
+                        >
+                          Ciclo ({format(parseLocalDate(cycleDueDate), 'dd/MM')})
+                        </button>
+                      )}
+                      {viewedMonthDueDate && viewedMonthDueDate !== cycleDueDate && (
+                        <button
+                          type="button"
+                          onClick={() => setEditDate(viewedMonthDueDate)}
+                          className={`px-2 py-1 rounded-lg border text-[10px] font-bold cursor-pointer capitalize transition-colors ${
+                            editDate === viewedMonthDueDate
+                              ? 'border-indigo-500 bg-indigo-500/15 text-indigo-600 dark:text-indigo-400'
+                              : 'border-border/60 bg-muted/20 text-muted-foreground hover:text-foreground'
+                          }`}
+                        >
+                          Fatura {viewedMonthLabel} ({format(parseLocalDate(viewedMonthDueDate), 'dd/MM')})
+                        </button>
+                      )}
+                      {nextMonthDueDate && nextMonthDueDate !== cycleDueDate && (
+                        <button
+                          type="button"
+                          onClick={() => setEditDate(nextMonthDueDate)}
+                          className={`px-2 py-1 rounded-lg border text-[10px] font-bold cursor-pointer capitalize transition-colors ${
+                            editDate === nextMonthDueDate
+                              ? 'border-indigo-500 bg-indigo-500/15 text-indigo-600 dark:text-indigo-400'
+                              : 'border-border/60 bg-muted/20 text-muted-foreground hover:text-foreground'
+                          }`}
+                        >
+                          Próx. {nextMonthLabel} ({format(parseLocalDate(nextMonthDueDate), 'dd/MM')})
+                        </button>
+                      )}
+                      {editOriginalDate && editOriginalDate !== cycleDueDate && (
+                        <button
+                          type="button"
+                          onClick={() => setEditDate(editOriginalDate)}
+                          className={`px-2 py-1 rounded-lg border text-[10px] font-bold cursor-pointer transition-colors ${
+                            editDate === editOriginalDate
+                              ? 'border-indigo-500 bg-indigo-500/15 text-indigo-600 dark:text-indigo-400'
+                              : 'border-border/60 bg-muted/20 text-muted-foreground hover:text-foreground'
+                          }`}
+                        >
+                          Original ({format(parseLocalDate(editOriginalDate), 'dd/MM')})
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
+            {/* Pagar usando Reserva (para contas comuns e faturas de cartão) */}
+            {editingItem?.kind === 'expense' && activeReserves.length > 0 && (
               <div className="p-3 rounded-xl border border-amber-500/30 bg-amber-500/[0.06] space-y-2">
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-[10.5px] font-extrabold uppercase tracking-wider text-foreground flex items-center gap-1.5">
@@ -4754,75 +6322,95 @@ export function PlanningCalendar() {
                   </div>
                 </div>
                 {editUseReserve && (
-                  <Select value={editReserveId} onValueChange={setEditReserveId}>
-                    <SelectTrigger className="h-9 rounded-xl bg-card text-xs font-bold">
-                      <SelectValue placeholder="Selecione a reserva...">
-                        {val => {
-                          const found = activeReserves.find(r => r.id === val);
-                          return found
-                            ? `${found.name} (Saldo: ${formatCurrency(found.saldo_atual || 0)})`
-                            : 'Selecione a reserva...';
-                        }}
-                      </SelectValue>
-                    </SelectTrigger>
-                    <SelectContent>
-                      {activeReserves.map(r => (
-                        <SelectItem key={r.id} value={r.id}>
-                          {r.name} • Saldo: {formatCurrency(r.saldo_atual || 0)}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <div className="space-y-1.5">
+                    <Select value={editReserveId} onValueChange={setEditReserveId}>
+                      <SelectTrigger className="h-9 rounded-xl bg-card text-xs font-bold">
+                        <SelectValue placeholder="Selecione a reserva...">
+                          {val => {
+                            const found = activeReserves.find(r => r.id === val);
+                            return found
+                              ? `${found.name} (Saldo: ${formatCurrency(found.saldo_atual || 0)})`
+                              : 'Selecione a reserva...';
+                          }}
+                        </SelectValue>
+                      </SelectTrigger>
+                      <SelectContent>
+                        {activeReserves.map(r => (
+                          <SelectItem key={r.id} value={r.id}>
+                            {r.name} • Saldo: {formatCurrency(r.saldo_atual || 0)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {editCardId !== '__none__' && (
+                      <p className="text-[10px] text-muted-foreground leading-snug">
+                        O item continua aparecendo na fatura do cartão, porém o valor sai do saldo desta reserva ao quitar.
+                      </p>
+                    )}
+                  </div>
                 )}
               </div>
             )}
 
-            {/* Conta Recorrente (Auto-renovável) no Modal de Edição */}
-            {!editingItem?.isCard && editCardId === '__none__' && (
-              <div className="p-3 rounded-xl border border-primary/20 bg-primary/[0.04] space-y-2">
-                <label className="flex items-center gap-2 text-xs font-extrabold cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    checked={editIsRecurring}
-                    onChange={e => {
-                      const checked = e.target.checked;
-                      setEditIsRecurring(checked);
-                      if (checked) setEditRecurrenceMode('auto');
-                    }}
-                    className="h-4 w-4 rounded accent-primary cursor-pointer"
-                  />
-                  <Repeat className="w-3.5 h-3.5 text-primary shrink-0" />
-                  <span>Conta Recorrente (Auto-renovável)</span>
-                </label>
+            {/* Recorrência / Parcelamento no Modal de Edição */}
+            <div className="p-3 rounded-xl border border-primary/20 bg-primary/[0.04] space-y-2.5">
+              <label className="flex items-center gap-2 text-xs font-extrabold cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={editIsRecurring}
+                  onChange={e => {
+                    const checked = e.target.checked;
+                    setEditIsRecurring(checked);
+                    if (checked && !editIsRecurring) {
+                      setEditRecurrenceMode(
+                        editingGroupSiblings.length > 1 ||
+                          Number(editingItem?.rawTx?.installment_total || editingItem?.rawTx?.recurrence_installments || 0) > 1
+                          ? 'fixed'
+                          : 'auto'
+                      );
+                    }
+                  }}
+                  className="h-4 w-4 rounded accent-primary cursor-pointer"
+                />
+                <Repeat className="w-3.5 h-3.5 text-primary shrink-0" />
+                <span>
+                  {editingGroupSiblings.length > 1
+                    ? 'Parcelamento / Recorrência ativa'
+                    : 'Converter em Recorrente ou Parcelado'}
+                </span>
+              </label>
 
-                {editIsRecurring && (
-                  <div className="space-y-2 pt-2 border-t border-primary/15">
-                    {(editingItem?.rawTx?.installment_total > 1 || editingItem?.rawTx?.recurrence_installments > 1) && (
-                      <div className="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-muted/50 border border-border/50">
-                        <button
-                          type="button"
-                          onClick={() => setEditRecurrenceMode('auto')}
-                          className={`py-1 px-2 rounded-lg text-[10px] font-black cursor-pointer ${
-                            editRecurrenceMode === 'auto'
-                              ? 'bg-primary text-primary-foreground'
-                              : 'text-muted-foreground'
-                          }`}
-                        >
-                          🔄 Auto-renovável
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setEditRecurrenceMode('fixed')}
-                          className={`py-1 px-2 rounded-lg text-[10px] font-black cursor-pointer ${
-                            editRecurrenceMode === 'fixed'
-                              ? 'bg-primary text-primary-foreground'
-                              : 'text-muted-foreground'
-                          }`}
-                        >
-                          📑 Parcelas fixas
-                        </button>
-                      </div>
-                    )}
+              {editIsRecurring && (
+                <div className="space-y-2.5 pt-2 border-t border-primary/15">
+                  <div className="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-muted/50 border border-border/50">
+                    <button
+                      type="button"
+                      onClick={() => setEditRecurrenceMode('auto')}
+                      className={`py-1.5 px-2 rounded-lg text-[10px] font-black transition-colors cursor-pointer ${
+                        editRecurrenceMode === 'auto'
+                          ? 'bg-primary text-primary-foreground shadow-xs'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      🔄 Recorrente (Auto)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEditRecurrenceMode('fixed')}
+                      className={`py-1.5 px-2 rounded-lg text-[10px] font-black transition-colors cursor-pointer ${
+                        editRecurrenceMode === 'fixed'
+                          ? 'bg-primary text-primary-foreground shadow-xs'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      📑 Parcelas fixas (Nx)
+                    </button>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">
+                      Frequência
+                    </label>
                     <Select
                       value={editRecurrenceFrequency}
                       onValueChange={(v: RecurrenceFrequency) => setEditRecurrenceFrequency(v)}
@@ -4842,24 +6430,110 @@ export function PlanningCalendar() {
                         <SelectItem value="yearly">Anual</SelectItem>
                       </SelectContent>
                     </Select>
-                    {editRecurrenceMode === 'auto' && (
-                      <p className="text-[10px] text-indigo-700 dark:text-indigo-300 font-semibold leading-snug">
-                        Ao quitar esta conta, a próxima será gerada automaticamente para{' '}
-                        <strong>
-                          {format(
-                            parseLocalDate(
-                              calculateNextOccurrence(editDate || getTodayLocalDateStr(), editRecurrenceFrequency, 1)
-                            ),
-                            'dd/MM/yyyy'
-                          )}
-                        </strong>
-                        .
-                      </p>
-                    )}
                   </div>
-                )}
-              </div>
-            )}
+
+                  {editRecurrenceMode === 'fixed' && editingGroupSiblings.length <= 1 && (() => {
+                    const nInst = Math.max(2, Math.min(36, Number(editInstallmentCount) || 6));
+                    const rawVal = Number(editAmount) || 0;
+                    const perInst =
+                      editInstallmentAmountMode === 'total'
+                        ? Math.floor((rawVal / nInst) * 100) / 100
+                        : rawVal;
+                    const totalAmt =
+                      editInstallmentAmountMode === 'total' ? rawVal : Math.round(rawVal * nInst * 100) / 100;
+                    const lastInstDate = calculateNextOccurrence(
+                      editDate || getTodayLocalDateStr(),
+                      editRecurrenceFrequency,
+                      nInst - 1
+                    );
+                    return (
+                      <div className="space-y-2 pt-1">
+                        <div className="flex items-center justify-between gap-2">
+                          <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">
+                            Qtd. de Parcelas
+                          </label>
+                          <div className="flex items-center gap-1">
+                            {['2', '3', '6', '12'].map(preset => (
+                              <button
+                                key={preset}
+                                type="button"
+                                onClick={() => setEditInstallmentCount(preset)}
+                                className={`px-2 py-0.5 rounded-md text-[10px] font-black border cursor-pointer transition-colors ${
+                                  editInstallmentCount === preset
+                                    ? 'bg-primary text-primary-foreground border-primary'
+                                    : 'bg-card border-border/60 text-muted-foreground hover:text-foreground'
+                                }`}
+                              >
+                                {preset}x
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-3 gap-2">
+                          <Input
+                            type="number"
+                            min={2}
+                            max={36}
+                            value={editInstallmentCount}
+                            onChange={e => setEditInstallmentCount(e.target.value)}
+                            className="h-9 rounded-xl bg-card text-xs font-bold tabular-nums"
+                          />
+                          <div className="col-span-2 grid grid-cols-2 gap-1 p-0.5 rounded-xl bg-muted/60 border border-border/50">
+                            <button
+                              type="button"
+                              onClick={() => setEditInstallmentAmountMode('installment')}
+                              className={`px-1.5 py-1 rounded-lg text-[10px] font-black cursor-pointer transition-colors ${
+                                editInstallmentAmountMode === 'installment'
+                                  ? 'bg-card text-foreground shadow-xs'
+                                  : 'text-muted-foreground hover:text-foreground'
+                              }`}
+                            >
+                              Valor da Parcela
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setEditInstallmentAmountMode('total')}
+                              className={`px-1.5 py-1 rounded-lg text-[10px] font-black cursor-pointer transition-colors ${
+                                editInstallmentAmountMode === 'total'
+                                  ? 'bg-card text-foreground shadow-xs'
+                                  : 'text-muted-foreground hover:text-foreground'
+                              }`}
+                            >
+                              Dividir Total em {nInst}x
+                            </button>
+                          </div>
+                        </div>
+
+                        {rawVal > 0 && (
+                          <p className="text-[10.5px] text-indigo-700 dark:text-indigo-300 font-semibold leading-snug bg-indigo-500/10 border border-indigo-500/20 rounded-lg p-2">
+                            Gera <strong>{nInst}x</strong> de{' '}
+                            <strong className="font-mono">{formatCurrency(perInst)}</strong> (Total:{' '}
+                            <strong className="font-mono">{formatCurrency(totalAmt)}</strong>) • última em{' '}
+                            <strong>{format(parseLocalDate(lastInstDate), 'dd/MM/yyyy')}</strong>.
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })()}
+
+                  {editRecurrenceMode === 'auto' && (
+                    <p className="text-[10px] text-indigo-700 dark:text-indigo-300 font-semibold leading-snug">
+                      Ao quitar este lançamento, o próximo será gerado automaticamente para{' '}
+                      <strong>
+                        {format(
+                          parseLocalDate(
+                            calculateNextOccurrence(editDate || getTodayLocalDateStr(), editRecurrenceFrequency, 1)
+                          ),
+                          'dd/MM/yyyy'
+                        )}
+                      </strong>
+                      .
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
 
             <div className="space-y-1.5">
               <label className="text-[10.5px] font-extrabold uppercase tracking-wider text-muted-foreground">
@@ -4889,42 +6563,105 @@ export function PlanningCalendar() {
         </DialogContent>
       </Dialog>
 
-      {/* Modal: Excluir Parcela Individual vs Grupo Recorrente */}
-      <Dialog open={deleteTargetItem !== null} onOpenChange={open => !open && setDeleteTargetItem(null)}>
+      {/* Modal: Confirmação de Exclusão (Item Individual ou Grupo Recorrente/Parcelado) */}
+      <Dialog open={deleteTargetItem !== null} onOpenChange={open => !open && !confirmingDelete && setDeleteTargetItem(null)}>
         <DialogContent className="max-w-sm rounded-3xl">
           <DialogHeader>
             <DialogTitle className="text-base font-black flex items-center gap-2 text-rose-500">
-              <Trash2 className="w-4 h-4" /> Excluir Lançamento Parcelado
+              <Trash2 className="w-4 h-4" />
+              {deleteTargetItem?.recurrenceGroupId ? 'Excluir Lançamento Parcelado' : 'Confirmar Exclusão'}
             </DialogTitle>
             <DialogDescription className="text-xs">
-              Este item faz parte de um parcelamento ou recorrência ({deleteTargetItem?.description}). Deseja excluir somente esta parcela ou todas as pendentes do grupo?
+              {deleteTargetItem?.recurrenceGroupId
+                ? `Este item faz parte de um parcelamento ou recorrência (${deleteTargetItem?.description}). Deseja excluir somente esta parcela ou todas as pendentes do grupo?`
+                : 'Tem certeza que deseja excluir este lançamento da agenda? Esta ação não pode ser desfeita.'}
             </DialogDescription>
           </DialogHeader>
-          <div className="flex flex-col gap-2 pt-2">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => deleteTargetItem && executeDeleteSingleItem(deleteTargetItem)}
-              className="rounded-xl text-xs font-extrabold cursor-pointer justify-start"
-            >
-              Excluir apenas esta parcela ({formatCurrency(deleteTargetItem?.amount || 0)})
-            </Button>
-            <Button
-              type="button"
-              onClick={() => deleteTargetItem && executeDeleteGroupPending(deleteTargetItem)}
-              className="rounded-xl text-xs font-black bg-rose-600 hover:bg-rose-700 text-white cursor-pointer justify-start"
-            >
-              Excluir todas as parcelas pendentes deste grupo
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={() => setDeleteTargetItem(null)}
-              className="rounded-xl text-xs font-bold cursor-pointer"
-            >
-              Cancelar
-            </Button>
-          </div>
+
+          {deleteTargetItem && !deleteTargetItem.recurrenceGroupId && (() => {
+            const cardObj = getCardById(deleteTargetItem.cardId);
+            const resObj = deleteTargetItem.isReserveTx
+              ? reserveLookup[deleteTargetItem.rawTx?.reserve_id]
+              : null;
+            return (
+              <div className="p-3 rounded-2xl border border-rose-500/25 bg-rose-500/5 space-y-1.5 text-xs">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-black text-foreground truncate">
+                    {deleteTargetItem.description || deleteTargetItem.category}
+                  </span>
+                  <span className={`font-mono font-black shrink-0 ${deleteTargetItem.kind === 'income' ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+                    {deleteTargetItem.kind === 'income' ? '+' : '-'}{formatCurrency(deleteTargetItem.amount)}
+                  </span>
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5 text-[10.5px] text-muted-foreground font-semibold">
+                  <span>{format(new Date(deleteTargetItem.dateStr + 'T12:00:00'), 'dd/MM/yyyy')}</span>
+                  <span>•</span>
+                  <span>{deleteTargetItem.category}</span>
+                  {cardObj && (
+                    <span className="px-1.5 py-0.5 rounded text-[9.5px] font-black text-white" style={{ backgroundColor: cardObj.color }}>
+                      {cardObj.name}
+                    </span>
+                  )}
+                  {resObj && (
+                    <span className="px-1.5 py-0.5 rounded text-[9.5px] font-black bg-amber-500/15 text-amber-700 dark:text-amber-300">
+                      🐷 {resObj.name}
+                    </span>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
+
+          {deleteTargetItem?.recurrenceGroupId ? (
+            <div className="flex flex-col gap-2 pt-2">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={confirmingDelete}
+                onClick={() => deleteTargetItem && executeDeleteSingleItem(deleteTargetItem)}
+                className="rounded-xl text-xs font-extrabold cursor-pointer justify-start"
+              >
+                Excluir apenas esta parcela ({formatCurrency(deleteTargetItem?.amount || 0)})
+              </Button>
+              <Button
+                type="button"
+                disabled={confirmingDelete}
+                onClick={() => deleteTargetItem && executeDeleteGroupPending(deleteTargetItem)}
+                className="rounded-xl text-xs font-black bg-rose-600 hover:bg-rose-700 text-white cursor-pointer justify-start"
+              >
+                {confirmingDelete ? 'Excluindo...' : 'Excluir todas as parcelas pendentes deste grupo'}
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={confirmingDelete}
+                onClick={() => setDeleteTargetItem(null)}
+                className="rounded-xl text-xs font-bold cursor-pointer"
+              >
+                Cancelar
+              </Button>
+            </div>
+          ) : (
+            <div className="flex justify-end gap-2 pt-2">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={confirmingDelete}
+                onClick={() => setDeleteTargetItem(null)}
+                className="rounded-xl text-xs font-bold cursor-pointer"
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="button"
+                disabled={confirmingDelete}
+                onClick={() => deleteTargetItem && executeDeleteSingleItem(deleteTargetItem)}
+                className="rounded-xl text-xs font-black bg-rose-600 hover:bg-rose-700 text-white cursor-pointer"
+              >
+                {confirmingDelete ? 'Excluindo...' : 'Confirmar Exclusão'}
+              </Button>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
 
@@ -5046,26 +6783,35 @@ export function PlanningCalendar() {
         </DialogContent>
       </Dialog>
 
-      {/* Modal: Confirmação de Cópia para o Próximo Mês */}
+      {/* Modal: Confirmação de Cópia para a Próxima Fatura / Próximo Mês */}
       <Dialog
-        open={duplicateConfirmItem !== null}
-        onOpenChange={open => !open && !confirmingDuplicate && setDuplicateConfirmItem(null)}
+        open={duplicateConfirmTarget !== null}
+        onOpenChange={open => !open && !confirmingDuplicate && setDuplicateConfirmTarget(null)}
       >
         <DialogContent className="max-w-md rounded-3xl">
           <DialogHeader>
             <DialogTitle className="text-base font-black flex items-center gap-2 text-primary">
               <Copy className="w-5 h-5" />
-              Copiar Lançamento para o Próximo Mês?
+              {duplicateConfirmTarget?.mode === 'batch'
+                ? duplicateConfirmTarget.title
+                : duplicateConfirmTarget?.item.isCard
+                  ? 'Copiar para a Próxima Fatura?'
+                  : 'Copiar Lançamento para o Próximo Mês?'}
             </DialogTitle>
             <DialogDescription className="text-xs">
-              Será criada uma nova cópia pendente no próximo mês, mantendo este lançamento original intacto.
+              {duplicateConfirmTarget?.mode === 'batch'
+                ? duplicateConfirmTarget.subtitle
+                : duplicateConfirmTarget?.item.isCard
+                  ? 'Será criada uma nova cópia pendente na fatura do próximo mês, mantendo este lançamento original intacto.'
+                  : 'Será criada uma nova cópia pendente no próximo mês, mantendo este lançamento original intacto.'}
             </DialogDescription>
           </DialogHeader>
 
-          {duplicateConfirmItem && (() => {
-            const target = duplicateConfirmItem;
+          {duplicateConfirmTarget?.mode === 'single' && (() => {
+            const target = duplicateConfirmTarget.item;
             const nextDateStr = calculateNextOccurrence(target.dateStr, 'monthly', 1);
             const cardObj = getCardById(target.cardId);
+            const resObj = target.isReserveTx ? reserveLookup[target.rawTx?.reserve_id] : null;
             return (
               <div className="rounded-xl border border-border/70 bg-muted/20 p-3.5 space-y-2.5 text-xs">
                 <div className="flex items-start justify-between gap-2">
@@ -5086,6 +6832,11 @@ export function PlanningCalendar() {
                           style={{ backgroundColor: cardObj.color }}
                         >
                           {cardObj.name}
+                        </span>
+                      )}
+                      {resObj && (
+                        <span className="inline-block text-[9px] font-black px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-700 dark:text-amber-300">
+                          🐷 {resObj.name}
                         </span>
                       )}
                     </div>
@@ -5115,7 +6866,9 @@ export function PlanningCalendar() {
                   </div>
                   <ArrowRight className="w-4 h-4 text-primary shrink-0" />
                   <div className="text-right">
-                    <span className="text-[9.5px] uppercase text-primary block">Nova Cópia (Pendente)</span>
+                    <span className="text-[9.5px] uppercase text-primary block">
+                      {target.isCard ? 'Nova Cópia (Próx. Fatura)' : 'Nova Cópia (Pendente)'}
+                    </span>
                     <span className="font-mono tabular-nums text-primary font-black">
                       {format(new Date(nextDateStr + 'T12:00:00'), "dd/MM/yyyy (MMM)", { locale: ptBR })}
                     </span>
@@ -5125,12 +6878,38 @@ export function PlanningCalendar() {
             );
           })()}
 
+          {duplicateConfirmTarget?.mode === 'batch' && (
+            <div className="rounded-xl border border-border/70 bg-muted/20 p-3.5 space-y-2 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-muted-foreground">Itens a copiar (como pendentes):</span>
+                <span className="font-black font-mono text-primary">
+                  {duplicateConfirmTarget.items.length} ({formatCurrency(duplicateConfirmTarget.items.reduce((s, i) => s + i.amount, 0))})
+                </span>
+              </div>
+              <div className="max-h-36 overflow-y-auto space-y-1 pr-1 custom-scrollbar">
+                {duplicateConfirmTarget.items.slice(0, 6).map(item => (
+                  <div key={item.id} className="flex items-center justify-between text-[11px] text-foreground">
+                    <span className="truncate max-w-[230px]">
+                      • {item.description.replace(/\s*\(\d+\/\d+\)\s*$/, '') || item.category}
+                    </span>
+                    <span className="font-mono font-bold shrink-0">{formatCurrency(item.amount)}</span>
+                  </div>
+                ))}
+                {duplicateConfirmTarget.items.length > 6 && (
+                  <p className="text-[10.5px] text-muted-foreground font-semibold">
+                    + {duplicateConfirmTarget.items.length - 6} outro(s) item(ns)
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+
           <div className="flex justify-end gap-2 pt-2">
             <Button
               type="button"
               variant="outline"
               disabled={confirmingDuplicate}
-              onClick={() => setDuplicateConfirmItem(null)}
+              onClick={() => setDuplicateConfirmTarget(null)}
               className="rounded-xl text-xs font-bold cursor-pointer"
             >
               Cancelar
@@ -5141,7 +6920,13 @@ export function PlanningCalendar() {
               onClick={handleConfirmDuplicateNextMonth}
               className="rounded-xl text-xs font-black bg-primary hover:bg-primary/90 text-primary-foreground cursor-pointer"
             >
-              {confirmingDuplicate ? 'Copiando...' : 'Confirmar Cópia'}
+              {confirmingDuplicate
+                ? 'Copiando...'
+                : duplicateConfirmTarget?.mode === 'batch' && duplicateConfirmTarget.card
+                  ? 'Confirmar Cópia da Fatura'
+                  : duplicateConfirmTarget?.mode === 'single' && duplicateConfirmTarget.item.isCard
+                    ? 'Confirmar Cópia p/ Fatura'
+                    : 'Confirmar Cópia'}
             </Button>
           </div>
         </DialogContent>
@@ -5185,6 +6970,400 @@ export function PlanningCalendar() {
               </Button>
             </div>
           </form>
+        </DialogContent>
+      </Dialog>
+      {/* Modal: Quitar Fatura do Cartão (Caixa Livre ou Reserva) */}
+      <Dialog
+        open={settleInvoiceModal !== null}
+        onOpenChange={open => !open && !settlingInvoice && setSettleInvoiceModal(null)}
+      >
+        <DialogContent className="max-w-md rounded-3xl">
+          <DialogHeader>
+            <DialogTitle className="text-base font-black flex items-center gap-2">
+              <CheckCircle2 className="w-5 h-5 text-emerald-500" />
+              Quitar Fatura — {settleInvoiceModal?.card.name}
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              Escolha a data de quitação e se o pagamento sairá do Caixa Livre ou do saldo de alguma Reserva.
+            </DialogDescription>
+          </DialogHeader>
+
+          {settleInvoiceModal && (
+            <div className="space-y-4 pt-1">
+              <div className="p-3.5 rounded-xl border border-border/70 bg-muted/25 flex items-center justify-between gap-2">
+                <div>
+                  <div className="flex items-center gap-1.5">
+                    <span
+                      className="w-2.5 h-2.5 rounded-full shrink-0"
+                      style={{ backgroundColor: settleInvoiceModal.card.color }}
+                    />
+                    <span className="text-xs font-black text-foreground capitalize">
+                      Fatura {viewedMonthLabel}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground font-semibold mt-0.5">
+                    {settleInvoiceModal.pendingItems.length}{' '}
+                    {settleInvoiceModal.pendingItems.length === 1 ? 'lançamento pendente' : 'lançamentos pendentes'}
+                  </p>
+                </div>
+                <span className="text-base font-black font-mono tabular-nums text-foreground">
+                  {formatCurrency(settleInvoiceModal.totalPending)}
+                </span>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-[10.5px] font-extrabold uppercase tracking-wider text-muted-foreground">
+                  Data do Pagamento
+                </label>
+                <Input
+                  type="date"
+                  value={settleInvoiceDate}
+                  onChange={e => setSettleInvoiceDate(e.target.value)}
+                  className="h-10 rounded-xl text-xs font-bold tabular-nums"
+                  required
+                />
+              </div>
+
+              {activeReserves.length > 0 && (
+                <div className="space-y-1.5">
+                  <label className="text-[10.5px] font-extrabold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                    <PiggyBank className="w-3.5 h-3.5 text-amber-500" />
+                    Origem do Pagamento
+                  </label>
+                  <Select value={settleInvoiceReserveId} onValueChange={setSettleInvoiceReserveId}>
+                    <SelectTrigger className="h-10 rounded-xl text-xs font-bold bg-card">
+                      <SelectValue>
+                        {val => {
+                          if (!val || val === '__cash__') return '💵 Caixa Livre (Banca Livre)';
+                          const found = activeReserves.find(r => r.id === val);
+                          return found
+                            ? `🐷 ${found.name} (Saldo: ${formatCurrency(found.saldo_atual || 0)})`
+                            : '💵 Caixa Livre';
+                        }}
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__cash__">💵 Caixa Livre (Banca Livre)</SelectItem>
+                      {activeReserves.map(r => (
+                        <SelectItem key={r.id} value={r.id}>
+                          🐷 {r.name} • Saldo: {formatCurrency(r.saldo_atual || 0)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {settleInvoiceReserveId !== '__cash__' && (() => {
+                    const selRes = activeReserves.find(r => r.id === settleInvoiceReserveId);
+                    if (!selRes) return null;
+                    const exceeds = settleInvoiceModal.totalPending > Number(selRes.saldo_atual || 0);
+                    return (
+                      <p className={`text-[10.5px] leading-snug ${exceeds ? 'text-amber-600 dark:text-amber-400 font-bold' : 'text-muted-foreground'}`}>
+                        {exceeds
+                          ? `Atenção: o valor da fatura excede o saldo atual de ${selRes.name} (${formatCurrency(selRes.saldo_atual || 0)}).`
+                          : `O valor será abatido da reserva "${selRes.name}" sem descontar do seu Caixa Livre.`}
+                      </p>
+                    );
+                  })()}
+                </div>
+              )}
+
+              <div className="flex justify-end gap-2 pt-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={settlingInvoice}
+                  onClick={() => setSettleInvoiceModal(null)}
+                  className="rounded-xl text-xs font-bold cursor-pointer"
+                >
+                  Cancelar
+                </Button>
+                <Button
+                  type="button"
+                  disabled={settlingInvoice}
+                  onClick={handleConfirmSettleCardInvoice}
+                  className="rounded-xl text-xs font-black bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer"
+                >
+                  {settlingInvoice ? 'Quitando...' : 'Confirmar Quitação'}
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal: Confirmação de Quitar / Receber / Reabrir Lançamento */}
+      <Dialog
+        open={payConfirmTarget !== null}
+        onOpenChange={open => !open && !confirmingPay && setPayConfirmTarget(null)}
+      >
+        <DialogContent className="max-w-md rounded-3xl">
+          <DialogHeader>
+            <DialogTitle
+              className={`text-base font-black flex items-center gap-2 ${
+                payConfirmTarget?.mode === 'single' && payConfirmTarget.item.paymentStatus === 'paid'
+                  ? 'text-amber-600 dark:text-amber-400'
+                  : 'text-emerald-600 dark:text-emerald-400'
+              }`}
+            >
+              {payConfirmTarget?.mode === 'single' && payConfirmTarget.item.paymentStatus === 'paid' ? (
+                <>
+                  <RotateCcw className="w-4 h-4" />
+                  {payConfirmTarget.item.kind === 'income' ? 'Reabrir Receita?' : 'Reabrir Lançamento?'}
+                </>
+              ) : (
+                <>
+                  <CheckCircle2 className="w-4 h-4" />
+                  {payConfirmTarget?.mode === 'batch'
+                    ? payConfirmTarget.title
+                    : payConfirmTarget?.item.kind === 'income'
+                      ? 'Confirmar Recebimento?'
+                      : 'Confirmar Quitação?'}
+                </>
+              )}
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              {payConfirmTarget?.mode === 'batch'
+                ? payConfirmTarget.subtitle
+                : payConfirmTarget?.item.paymentStatus === 'paid'
+                  ? 'O lançamento voltará para o status Pendente e deixará de constar como quitado/efetuado no saldo.'
+                  : payConfirmTarget?.item.kind === 'income'
+                    ? 'Confirme os dados para marcar esta receita prevista como recebida no caixa.'
+                    : 'Confirme os dados e a forma de pagamento para marcar este lançamento como quitado.'}
+            </DialogDescription>
+          </DialogHeader>
+
+          {payConfirmTarget?.mode === 'single' && (() => {
+            const target = payConfirmTarget.item;
+            const isReopening = target.paymentStatus === 'paid';
+            const cardObj = getCardById(target.cardId);
+            const curResObj = target.isReserveTx ? reserveLookup[target.rawTx?.reserve_id] : null;
+            const showReserveSelector = !isReopening && target.kind === 'expense' && activeReserves.length > 0;
+
+            return (
+              <div className="space-y-4">
+                <div
+                  className={`p-3 rounded-2xl border space-y-1.5 text-xs ${
+                    isReopening
+                      ? 'border-amber-500/30 bg-amber-500/5'
+                      : 'border-emerald-500/30 bg-emerald-500/5'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-black text-foreground truncate">
+                      {target.description || target.category}
+                    </span>
+                    <span
+                      className={`font-mono font-black shrink-0 ${
+                        target.kind === 'income'
+                          ? 'text-emerald-600 dark:text-emerald-400'
+                          : 'text-rose-600 dark:text-rose-400'
+                      }`}
+                    >
+                      {target.kind === 'income' ? '+' : '-'}{formatCurrency(target.amount)}
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1.5 text-[10.5px] text-muted-foreground font-semibold">
+                    <span>Vencimento: {format(new Date(target.dateStr + 'T12:00:00'), 'dd/MM/yyyy')}</span>
+                    <span>•</span>
+                    <span>{target.category}</span>
+                    {cardObj && (
+                      <span
+                        className="px-1.5 py-0.5 rounded text-[9.5px] font-black text-white"
+                        style={{ backgroundColor: cardObj.color }}
+                      >
+                        {cardObj.name}
+                      </span>
+                    )}
+                    {curResObj && (
+                      <span className="px-1.5 py-0.5 rounded text-[9.5px] font-black bg-amber-500/15 text-amber-700 dark:text-amber-300">
+                        🐷 {curResObj.name}
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {!isReopening && (
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">
+                      {target.kind === 'income' ? 'Data do Recebimento' : 'Data do Pagamento'}
+                    </label>
+                    <Input
+                      type="date"
+                      value={payConfirmDate}
+                      onChange={e => setPayConfirmDate(e.target.value)}
+                      className="h-9 rounded-xl text-xs font-bold"
+                    />
+                  </div>
+                )}
+
+                {showReserveSelector && (
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                      <PiggyBank className="w-3.5 h-3.5 text-amber-500" /> Pagar Com
+                    </label>
+                    <Select value={payConfirmReserveId} onValueChange={setPayConfirmReserveId}>
+                      <SelectTrigger className="h-9 rounded-xl text-xs font-bold">
+                        <SelectValue>
+                          {val => {
+                            if (!val || val === '__cash__') return '💵 Caixa Livre (Saldo Principal)';
+                            const r = activeReserves.find(res => res.id === val);
+                            return r ? `🐷 ${r.name} (${formatCurrency(r.saldo_atual || 0)})` : 'Selecione a reserva...';
+                          }}
+                        </SelectValue>
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__cash__">💵 Caixa Livre (Saldo Principal)</SelectItem>
+                        {activeReserves.map(r => (
+                          <SelectItem key={r.id} value={r.id}>
+                            🐷 {r.name} — Saldo: {formatCurrency(r.saldo_atual || 0)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {payConfirmReserveId !== '__cash__' && (() => {
+                      const selRes = activeReserves.find(r => r.id === payConfirmReserveId);
+                      if (!selRes) return null;
+                      const exceeds = target.amount > Number(selRes.saldo_atual || 0);
+                      return (
+                        <p className={`text-[10.5px] leading-snug ${exceeds ? 'text-amber-600 dark:text-amber-400 font-bold' : 'text-muted-foreground'}`}>
+                          {exceeds
+                            ? `Atenção: o valor excede o saldo atual de ${selRes.name} (${formatCurrency(selRes.saldo_atual || 0)}).`
+                            : `O valor será abatido da reserva "${selRes.name}" sem descontar do Caixa Livre.`}
+                        </p>
+                      );
+                    })()}
+                  </div>
+                )}
+
+                {!isReopening && isAutoRenewRecurring(target.rawTx) && (
+                  <p className="text-[11px] font-semibold text-indigo-600 dark:text-indigo-400 bg-indigo-500/10 border border-indigo-500/20 rounded-xl p-2.5">
+                    Conta recorrente: ao quitar, o próximo vencimento será agendado automaticamente.
+                  </p>
+                )}
+
+                <div className="flex justify-end gap-2 pt-1">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={confirmingPay}
+                    onClick={() => setPayConfirmTarget(null)}
+                    className="rounded-xl text-xs font-bold cursor-pointer"
+                  >
+                    Cancelar
+                  </Button>
+                  <Button
+                    type="button"
+                    disabled={confirmingPay}
+                    onClick={handleConfirmPayToggle}
+                    className={`rounded-xl text-xs font-black text-white cursor-pointer ${
+                      isReopening
+                        ? 'bg-amber-600 hover:bg-amber-700'
+                        : 'bg-emerald-600 hover:bg-emerald-700'
+                    }`}
+                  >
+                    {confirmingPay
+                      ? 'Processando...'
+                      : isReopening
+                        ? 'Confirmar Reabertura'
+                        : target.kind === 'income'
+                          ? 'Confirmar Recebimento'
+                          : 'Confirmar Quitação'}
+                  </Button>
+                </div>
+              </div>
+            );
+          })()}
+
+          {payConfirmTarget?.mode === 'batch' && (
+            <div className="space-y-4">
+              <div className="p-3 rounded-2xl border border-emerald-500/30 bg-emerald-500/5 space-y-2 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-muted-foreground">Itens selecionados:</span>
+                  <span className="font-black font-mono text-emerald-600 dark:text-emerald-400">
+                    {payConfirmTarget.items.length} ({formatCurrency(payConfirmTarget.items.reduce((s, i) => s + i.amount, 0))})
+                  </span>
+                </div>
+                <div className="max-h-32 overflow-y-auto space-y-1 pr-1 custom-scrollbar">
+                  {payConfirmTarget.items.slice(0, 6).map(item => (
+                    <div key={item.id} className="flex items-center justify-between text-[11px] text-foreground">
+                      <span className="truncate max-w-[230px]">• {item.description || item.category}</span>
+                      <span className="font-mono font-bold shrink-0">{formatCurrency(item.amount)}</span>
+                    </div>
+                  ))}
+                  {payConfirmTarget.items.length > 6 && (
+                    <p className="text-[10.5px] text-muted-foreground font-semibold">
+                      + {payConfirmTarget.items.length - 6} outro(s) item(ns)
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">
+                  Data da Quitação
+                </label>
+                <Input
+                  type="date"
+                  value={payConfirmDate}
+                  onChange={e => setPayConfirmDate(e.target.value)}
+                  className="h-9 rounded-xl text-xs font-bold"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-1">
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={confirmingPay}
+                  onClick={() => setPayConfirmTarget(null)}
+                  className="rounded-xl text-xs font-bold cursor-pointer"
+                >
+                  Cancelar
+                </Button>
+                <Button
+                  type="button"
+                  disabled={confirmingPay}
+                  onClick={handleConfirmPayToggle}
+                  className="rounded-xl text-xs font-black bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer"
+                >
+                  {confirmingPay ? 'Quitando...' : 'Confirmar Quitação'}
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal: Confirmação de Exclusão de Cartão */}
+      <Dialog
+        open={deleteCardTarget !== null}
+        onOpenChange={open => !open && setDeleteCardTarget(null)}
+      >
+        <DialogContent className="max-w-sm rounded-3xl">
+          <DialogHeader>
+            <DialogTitle className="text-base font-black flex items-center gap-2 text-rose-500">
+              <Trash2 className="w-4 h-4" /> Excluir Cartão?
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              Deseja remover o cartão <strong className="text-foreground">{deleteCardTarget?.name}</strong> das suas configurações? Os lançamentos já registrados no histórico não serão apagados.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setDeleteCardTarget(null)}
+              className="rounded-xl text-xs font-bold cursor-pointer"
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              onClick={() => deleteCardTarget && handleDeleteCard(deleteCardTarget.id)}
+              className="rounded-xl text-xs font-black bg-rose-600 hover:bg-rose-700 text-white cursor-pointer"
+            >
+              Confirmar Exclusão
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

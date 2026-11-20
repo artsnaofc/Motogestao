@@ -11,11 +11,23 @@ import {
   Zap,
   Tag,
   Archive,
+  ArchiveRestore,
   ArrowUpDown,
-  PauseCircle
+  PauseCircle,
+  PlayCircle,
+  Rocket,
+  Trash2,
+  AlertTriangle
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from '@/components/ui/dialog';
 import { Reserve, ReserveTransaction, Transaction } from '../types';
 import { 
   formatCurrency, 
@@ -141,6 +153,12 @@ export function Reserves() {
   const [isSuggestionAporte, setIsSuggestionAporte] = useState<boolean>(false);
 
   const [isSubmittingBatch, setIsSubmittingBatch] = useState(false);
+
+  const [confirmReserveAction, setConfirmReserveAction] = useState<{
+    type: 'deactivate' | 'reactivate' | 'pause' | 'unpause' | 'boost_on' | 'boost_off' | 'delete';
+    reserve: Reserve;
+  } | null>(null);
+  const [confirmingReserveAction, setConfirmingReserveAction] = useState(false);
 
   // Active non-archived reserves
   const activeReserves = useMemo(() => {
@@ -815,58 +833,18 @@ export function Reserves() {
     if (refreshData) await refreshData(true);
   };
 
-  // 7. Toggle Pause/Play automation
-  const handleTogglePause = async (res: Reserve) => {
-    const isNowPaused = !res.is_paused;
-    if (!isNowPaused) {
-      // Unpausing: anchor baseline to today + current timestamp so old/paused days don't accumulate
-      const todayStr = getTodayLocalDateStr();
-      const nowIso = new Date().toISOString();
-      const updatedHistory = Array.isArray(res.rule_history) ? [...res.rule_history] : [];
-      const rawPrev = res.regra_inicio_validade || res.created_at || todayStr;
-      const prevStartDate = toDateInputString(rawPrev) || todayStr;
-
-      if (res.regra_tipo) {
-        updatedHistory.push({
-          start_date: prevStartDate,
-          end_date: todayStr,
-          cutoff_rule_start: todayStr,
-          cutoff_at: nowIso,
-          action_type: 'unpause',
-          regra_tipo: res.regra_tipo,
-          regra_valor: res.regra_valor ?? 0,
-          regra_categorias: res.regra_categorias || [],
-          regra_ativa: Boolean(res.regra_ativa),
-          updated_at: nowIso,
-          description: 'Automação retomada após pausa (base de sugestão reiniciada)'
-        });
-      }
-
-      const payload: Partial<Reserve> = {
-        is_paused: false,
-        ...(res.regra_tipo ? { regra_inicio_validade: todayStr, rule_history: updatedHistory } : {})
-      };
-      await updateReserve(res.id, payload);
-      if (auditReserve?.id === res.id) {
-        setAuditReserve(prev => prev ? { ...prev, ...payload } : null);
-      }
-      toast.success(`Automação de "${res.name}" reativada! Sugestões recalculadas a partir de agora.`);
-    } else {
-      await updateReserve(res.id, { is_paused: true });
-      toast.success(`Automação de "${res.name}" pausada.`);
-    }
+  // 7. Toggle Pause/Play automation (with confirmation modal)
+  const handleTogglePause = (res: Reserve) => {
+    setConfirmReserveAction({
+      type: res.is_paused ? 'unpause' : 'pause',
+      reserve: res,
+    });
   };
 
   // 7b. Toggle / Configure Modo Boost (never modifies regra_inicio_validade or rule_history)
-  const handleToggleBoost = async (res: Reserve) => {
+  const handleToggleBoost = (res: Reserve) => {
     if (isReserveBoostActive(res)) {
-      await updateReserve(res.id, { boost_ativo: false });
-      if (auditReserve?.id === res.id) {
-        setAuditReserve(prev => (prev ? { ...prev, boost_ativo: false } : null));
-      }
-      toast.success(`Modo Boost desativado em "${res.name}". Regras e sugestões normais mantidas.`, {
-        id: 'boost-toggle-toast'
-      });
+      setConfirmReserveAction({ type: 'boost_off', reserve: res });
       return;
     }
 
@@ -876,25 +854,7 @@ export function Reserves() {
       boostType === 'multiplier' ? boostVal > 1 : boostVal > 0;
 
     if (hasConfiguredValue) {
-      const payload: Partial<Reserve> = {
-        boost_ativo: true,
-        boost_tipo: boostType,
-        boost_valor: boostVal,
-      };
-      await updateReserve(res.id, payload);
-      if (auditReserve?.id === res.id) {
-        setAuditReserve(prev => (prev ? { ...prev, ...payload } : null));
-      }
-      const simulated = { ...res, ...payload };
-      const speedup = getBoostSpeedupComparison(simulated, transactions, reserveTransactions);
-      const speedNote =
-        speedup.daysSaved && speedup.daysSaved > 0
-          ? ` Meta ${speedup.daysSaved} ${speedup.daysSaved === 1 ? 'dia' : 'dias'} mais rápida!`
-          : '';
-      toast.success(
-        `Modo Boost ativado em "${res.name}" (${getRuleBoostDeltaLabel(simulated)})!${speedNote}`,
-        { id: 'boost-toggle-toast' }
-      );
+      setConfirmReserveAction({ type: 'boost_on', reserve: res });
       return;
     }
 
@@ -937,10 +897,94 @@ export function Reserves() {
     }
   };
 
-  // 8. Finalize / Deactivate / Reactivate Reserve
-  const handleFinalize = async (res: Reserve) => {
-    if (res.status === 'inactive') {
-      if (confirm(`Deseja reativar a reserva "${res.name}"?`)) {
+  // 8. Finalize / Deactivate / Reactivate Reserve (with confirmation modal, no window.confirm)
+  const handleFinalize = (res: Reserve) => {
+    setConfirmReserveAction({
+      type: res.status === 'inactive' ? 'reactivate' : 'deactivate',
+      reserve: res,
+    });
+  };
+
+  // 9. Delete Reserve (with confirmation modal, no window.confirm)
+  const handleDeleteReserve = (res: Reserve) => {
+    setConfirmReserveAction({ type: 'delete', reserve: res });
+  };
+
+  const handleExecuteConfirmedReserveAction = async () => {
+    if (!confirmReserveAction || confirmingReserveAction) return;
+    const { type, reserve: res } = confirmReserveAction;
+    setConfirmingReserveAction(true);
+
+    try {
+      if (type === 'pause') {
+        await updateReserve(res.id, { is_paused: true });
+        toast.success(`Automação de "${res.name}" pausada.`);
+      } else if (type === 'unpause') {
+        const todayStr = getTodayLocalDateStr();
+        const nowIso = new Date().toISOString();
+        const updatedHistory = Array.isArray(res.rule_history) ? [...res.rule_history] : [];
+        const rawPrev = res.regra_inicio_validade || res.created_at || todayStr;
+        const prevStartDate = toDateInputString(rawPrev) || todayStr;
+
+        if (res.regra_tipo) {
+          updatedHistory.push({
+            start_date: prevStartDate,
+            end_date: todayStr,
+            cutoff_rule_start: todayStr,
+            cutoff_at: nowIso,
+            action_type: 'unpause',
+            regra_tipo: res.regra_tipo,
+            regra_valor: res.regra_valor ?? 0,
+            regra_categorias: res.regra_categorias || [],
+            regra_ativa: Boolean(res.regra_ativa),
+            updated_at: nowIso,
+            description: 'Automação retomada após pausa (base de sugestão reiniciada)'
+          });
+        }
+
+        const payload: Partial<Reserve> = {
+          is_paused: false,
+          ...(res.regra_tipo ? { regra_inicio_validade: todayStr, rule_history: updatedHistory } : {})
+        };
+        await updateReserve(res.id, payload);
+        if (auditReserve?.id === res.id) {
+          setAuditReserve(prev => prev ? { ...prev, ...payload } : null);
+        }
+        toast.success(`Automação de "${res.name}" reativada! Sugestões recalculadas a partir de agora.`);
+      } else if (type === 'boost_off') {
+        await updateReserve(res.id, { boost_ativo: false });
+        if (auditReserve?.id === res.id) {
+          setAuditReserve(prev => (prev ? { ...prev, boost_ativo: false } : null));
+        }
+        toast.success(`Modo Boost desativado em "${res.name}". Regras e sugestões normais mantidas.`, {
+          id: 'boost-toggle-toast'
+        });
+      } else if (type === 'boost_on') {
+        const boostType = (res.boost_tipo || 'increment') as 'increment' | 'multiplier';
+        const boostVal = Number(res.boost_valor || 0);
+        const payload: Partial<Reserve> = {
+          boost_ativo: true,
+          boost_tipo: boostType,
+          boost_valor: boostVal,
+        };
+        await updateReserve(res.id, payload);
+        if (auditReserve?.id === res.id) {
+          setAuditReserve(prev => (prev ? { ...prev, ...payload } : null));
+        }
+        const simulated = { ...res, ...payload };
+        const speedup = getBoostSpeedupComparison(simulated, transactions, reserveTransactions);
+        const speedNote =
+          speedup.daysSaved && speedup.daysSaved > 0
+            ? ` Meta ${speedup.daysSaved} ${speedup.daysSaved === 1 ? 'dia' : 'dias'} mais rápida!`
+            : '';
+        toast.success(
+          `Modo Boost ativado em "${res.name}" (${getRuleBoostDeltaLabel(simulated)})!${speedNote}`,
+          { id: 'boost-toggle-toast' }
+        );
+      } else if (type === 'deactivate') {
+        await updateReserve(res.id, { status: 'inactive', is_paused: true });
+        toast.success(`Reserva "${res.name}" inativada! Você pode acessá-la na aba "Inativas".`);
+      } else if (type === 'reactivate') {
         const todayStr = getTodayLocalDateStr();
         const nowIso = new Date().toISOString();
         const updatedHistory = Array.isArray(res.rule_history) ? [...res.rule_history] : [];
@@ -969,22 +1013,16 @@ export function Reserves() {
           ...(res.regra_ativa && res.regra_tipo ? { regra_inicio_validade: todayStr, rule_history: updatedHistory } : {})
         });
         toast.success(`Reserva "${res.name}" reativada com sucesso!`);
-        if (refreshData) await refreshData(true);
+      } else if (type === 'delete') {
+        await deleteReserve(res.id);
+        toast.success(`Reserva "${res.name}" excluída.`);
       }
-    } else {
-      if (confirm(`Deseja pausar/inativar a reserva "${res.name}"?`)) {
-        await updateReserve(res.id, { status: 'inactive', is_paused: true });
-        toast.success(`Reserva "${res.name}" inativada.`);
-        if (refreshData) await refreshData(true);
-      }
-    }
-  };
 
-  // 9. Delete Reserve
-  const handleDeleteReserve = async (res: Reserve) => {
-    if (confirm(`ATENÇÃO: Deseja realmente excluir a reserva "${res.name}" e todo o histórico vinculado?`)) {
-      await deleteReserve(res.id);
-      toast.success(`Reserva "${res.name}" excluída.`);
+      setConfirmReserveAction(null);
+    } catch {
+      toast.error('Erro ao executar ação na reserva. Tente novamente.');
+    } finally {
+      setConfirmingReserveAction(false);
     }
   };
 
@@ -1362,6 +1400,162 @@ export function Reserves() {
         globalPeriod={FIXED_SUGGESTION_PERIOD}
         customDateRange={FIXED_CUSTOM_RANGE}
       />
+
+      {/* 7. Modal de Confirmação: Inativar/Reativar, Pausar/Retomar, Boost ON/OFF, Excluir */}
+      <Dialog
+        open={confirmReserveAction !== null}
+        onOpenChange={open => !open && !confirmingReserveAction && setConfirmReserveAction(null)}
+      >
+        <DialogContent className="max-w-md rounded-3xl">
+          {confirmReserveAction && (() => {
+            const { type, reserve: targetRes } = confirmReserveAction;
+            const simulatedBoostRes: Reserve = {
+              ...targetRes,
+              boost_ativo: true,
+              boost_tipo: (targetRes.boost_tipo || 'increment') as 'increment' | 'multiplier',
+              boost_valor: Number(targetRes.boost_valor || 0),
+            };
+            const deltaLabel = getRuleBoostDeltaLabel(
+              type === 'boost_off' ? targetRes : simulatedBoostRes
+            );
+            const speedup =
+              type === 'boost_on'
+                ? getBoostSpeedupComparison(simulatedBoostRes, transactions, reserveTransactions)
+                : null;
+
+            const config = (() => {
+              switch (type) {
+                case 'deactivate':
+                  return {
+                    title: `Inativar "${targetRes.name}"?`,
+                    desc: 'A reserva ficará oculta da lista principal (acessível na aba "Inativas") e suas automações serão suspensas. Todo o saldo e histórico continuam salvos.',
+                    btnLabel: 'Confirmar Inativação',
+                    btnClass: 'bg-amber-600 hover:bg-amber-700 text-white',
+                    titleClass: 'text-amber-600 dark:text-amber-400',
+                    Icon: Archive,
+                  };
+                case 'reactivate':
+                  return {
+                    title: `Reativar "${targetRes.name}"?`,
+                    desc: 'A reserva voltará para a lista ativa e, se possuir regra configurada, a base de sugestão será reiniciada a partir de hoje para não acumular o período inativo.',
+                    btnLabel: 'Confirmar Reativação',
+                    btnClass: 'bg-emerald-600 hover:bg-emerald-700 text-white',
+                    titleClass: 'text-emerald-600 dark:text-emerald-400',
+                    Icon: ArchiveRestore,
+                  };
+                case 'pause':
+                  return {
+                    title: `Pausar Automação de "${targetRes.name}"?`,
+                    desc: 'Enquanto pausada, esta reserva não irá gerar novas sugestões automáticas de aporte.',
+                    btnLabel: 'Confirmar Pausa',
+                    btnClass: 'bg-amber-600 hover:bg-amber-700 text-white',
+                    titleClass: 'text-amber-600 dark:text-amber-400',
+                    Icon: PauseCircle,
+                  };
+                case 'unpause':
+                  return {
+                    title: `Retomar Automação de "${targetRes.name}"?`,
+                    desc: 'As sugestões voltarão a ser geradas com a base reiniciada a partir de hoje (sem acumular os dias em pausa).',
+                    btnLabel: 'Retomar Automação',
+                    btnClass: 'bg-emerald-600 hover:bg-emerald-700 text-white',
+                    titleClass: 'text-emerald-600 dark:text-emerald-400',
+                    Icon: PlayCircle,
+                  };
+                case 'boost_on':
+                  return {
+                    title: `Ativar Modo Boost em "${targetRes.name}"?`,
+                    desc: `A regra e as próximas sugestões serão elevadas imediatamente (${deltaLabel}) para acelerar a sua meta. Você pode desativar quando quiser.`,
+                    btnLabel: 'Ativar Modo Boost',
+                    btnClass: 'bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700 text-white',
+                    titleClass: 'text-amber-600 dark:text-amber-400',
+                    Icon: Rocket,
+                  };
+                case 'boost_off':
+                  return {
+                    title: `Desativar Modo Boost em "${targetRes.name}"?`,
+                    desc: `A regra e as sugestões voltarão imediatamente ao valor normal configurado, mantendo seu ajuste de Boost (${deltaLabel}) salvo para quando quiser reativar.`,
+                    btnLabel: 'Desativar Boost',
+                    btnClass: 'bg-zinc-700 hover:bg-zinc-800 text-white',
+                    titleClass: 'text-foreground',
+                    Icon: Rocket,
+                  };
+                case 'delete':
+                  return {
+                    title: `Excluir "${targetRes.name}"?`,
+                    desc: 'ATENÇÃO: Essa ação remove a reserva e todo o histórico de movimentações vinculado permanentemente.',
+                    btnLabel: 'Confirmar Exclusão',
+                    btnClass: 'bg-rose-600 hover:bg-rose-700 text-white',
+                    titleClass: 'text-rose-600 dark:text-rose-400',
+                    Icon: Trash2,
+                  };
+              }
+            })();
+
+            const IconComp = config.Icon;
+
+            return (
+              <>
+                <DialogHeader>
+                  <DialogTitle className={`text-base font-black flex items-center gap-2 ${config.titleClass}`}>
+                    <IconComp className="w-5 h-5 shrink-0" />
+                    {config.title}
+                  </DialogTitle>
+                  <DialogDescription className="text-xs leading-relaxed">
+                    {config.desc}
+                  </DialogDescription>
+                </DialogHeader>
+
+                <div className="p-3 rounded-2xl border border-border/70 bg-muted/20 space-y-1.5 text-xs">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-bold text-muted-foreground">Reserva:</span>
+                    <span className="font-black text-foreground">{targetRes.name}</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-bold text-muted-foreground">Saldo atual:</span>
+                    <span className="font-mono font-black text-foreground">
+                      {hideValues ? 'R$ •••••' : formatCurrency(targetRes.saldo_atual || 0)}
+                    </span>
+                  </div>
+                  {type === 'boost_on' && speedup?.daysSaved && speedup.daysSaved > 0 && (
+                    <div className="flex items-center justify-between gap-2 text-emerald-600 dark:text-emerald-400 pt-1 border-t border-border/50">
+                      <span className="font-bold">Impacto estimado:</span>
+                      <span className="font-black">
+                        Meta {speedup.daysSaved} {speedup.daysSaved === 1 ? 'dia' : 'dias'} mais rápida!
+                      </span>
+                    </div>
+                  )}
+                  {type === 'delete' && (
+                    <p className="text-[11px] font-bold text-rose-600 dark:text-rose-400 flex items-center gap-1.5 pt-1 border-t border-border/50">
+                      <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                      Esta ação não pode ser desfeita.
+                    </p>
+                  )}
+                </div>
+
+                <div className="flex justify-end gap-2 pt-1">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={confirmingReserveAction}
+                    onClick={() => setConfirmReserveAction(null)}
+                    className="rounded-xl text-xs font-bold cursor-pointer"
+                  >
+                    Cancelar
+                  </Button>
+                  <Button
+                    type="button"
+                    disabled={confirmingReserveAction}
+                    onClick={handleExecuteConfirmedReserveAction}
+                    className={`rounded-xl text-xs font-black cursor-pointer ${config.btnClass}`}
+                  >
+                    {confirmingReserveAction ? 'Processando...' : config.btnLabel}
+                  </Button>
+                </div>
+              </>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

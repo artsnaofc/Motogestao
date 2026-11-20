@@ -15,6 +15,7 @@ import {
   parseLocalDate,
 } from '../lib/recurrenceUtils';
 import { format } from 'date-fns';
+import { planningStorage } from '../lib/planningStorage';
 
 export interface TransactionsContextType {
   transactions: Transaction[];
@@ -171,6 +172,16 @@ export function TransactionsProvider({
 
     if (nextRecurringTx) {
       syncQueueManager.enqueue('transactions', 'insert', nextRecurringTx.id, nextRecurringTx);
+      const effectiveUidForMap = userId || nextRecurringTx.user_id;
+      const linkedCardId =
+        nextRecurringTx.card_id ||
+        (effectiveUidForMap ? planningStorage.getTxCardMap(effectiveUidForMap)[id] : undefined);
+      if (effectiveUidForMap && linkedCardId) {
+        planningStorage.linkTxsToCard(effectiveUidForMap, [nextRecurringTx.id], linkedCardId);
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('planning_data_synced', { detail: { userId: effectiveUidForMap } }));
+        }
+      }
       const nextLabel = format(parseLocalDate(nextRecurringTx.date), 'dd/MM/yyyy');
       toast.info(`Próxima conta recorrente agendada para ${nextLabel}!`, { id: 'recurring-next-bill' });
     }

@@ -82,6 +82,26 @@ export function ModoBoostModal({
   const [globalPctInc, setGlobalPctInc] = useState<string>('5');
   const [globalFixedInc, setGlobalFixedInc] = useState<string>('10');
   const [isSaving, setIsSaving] = useState(false);
+  const [pendingBoostConfirm, setPendingBoostConfirm] = useState<
+    | {
+        kind: 'single';
+        reserve: Reserve;
+        nextActive: boolean;
+        tipo: 'increment' | 'multiplier';
+        safeVal: number;
+      }
+    | {
+        kind: 'batch';
+        activateAll: boolean;
+        updates: Array<{
+          reserveId: string;
+          boost_ativo: boolean;
+          boost_tipo: 'increment' | 'multiplier';
+          boost_valor: number;
+        }>;
+      }
+    | null
+  >(null);
 
   const eligibleReserves = useMemo(() => {
     return (reserves || []).filter(
@@ -96,7 +116,10 @@ export function ModoBoostModal({
   }, [reserves]);
 
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen) {
+      setPendingBoostConfirm(null);
+      return;
+    }
     const nextDrafts: Record<string, DraftBoostRow> = {};
     eligibleReserves.forEach(r => {
       const tipo = (r.boost_tipo || 'increment') as 'increment' | 'multiplier';
@@ -184,7 +207,7 @@ export function ModoBoostModal({
     return String(val);
   };
 
-  const handleToggleSingleBoost = async (r: Reserve) => {
+  const handleToggleSingleBoost = (r: Reserve) => {
     const draft = drafts[r.id];
     const tipo = draft?.boost_tipo || (r.boost_tipo as 'increment' | 'multiplier') || 'increment';
     const rawVal = parseNum(
@@ -201,32 +224,16 @@ export function ModoBoostModal({
           ? rawVal
           : getDefaultBoostValue(r.regra_tipo, 'increment');
 
-    setDrafts(prev => ({
-      ...prev,
-      [r.id]: {
-        boost_ativo: nextActive,
-        boost_tipo: tipo,
-        boost_valor: String(safeVal),
-      },
-    }));
-
-    try {
-      await onUpdateReserveBoost(r.id, {
-        boost_ativo: nextActive,
-        boost_tipo: tipo,
-        boost_valor: safeVal,
-      });
-      toast.success(
-        nextActive
-          ? `Modo Boost ativado em "${r.name}"!`
-          : `Modo Boost desativado em "${r.name}". Sugestões normais preservadas.`
-      );
-    } catch (err: any) {
-      toast.error('Erro ao atualizar Modo Boost: ' + (err?.message || 'Tente novamente.'));
-    }
+    setPendingBoostConfirm({
+      kind: 'single',
+      reserve: r,
+      nextActive,
+      tipo,
+      safeVal,
+    });
   };
 
-  const handleApplyGlobalPreset = async (activateAll: boolean) => {
+  const handleApplyGlobalPreset = (activateAll: boolean) => {
     if (eligibleReserves.length === 0) return;
 
     const updates = eligibleReserves.map(r => {
@@ -268,27 +275,58 @@ export function ModoBoostModal({
       };
     });
 
-    // Update drafts optimistically
-    const nextDrafts = { ...drafts };
-    updates.forEach(u => {
-      nextDrafts[u.reserveId] = {
-        boost_ativo: u.boost_ativo,
-        boost_tipo: u.boost_tipo,
-        boost_valor: String(u.boost_valor),
-      };
+    setPendingBoostConfirm({
+      kind: 'batch',
+      activateAll,
+      updates,
     });
-    setDrafts(nextDrafts);
+  };
 
+  const handleExecutePendingBoostConfirm = async () => {
+    if (!pendingBoostConfirm || isSaving) return;
+    setIsSaving(true);
     try {
-      setIsSaving(true);
-      await onBatchUpdateBoost(updates);
-      toast.success(
-        activateAll
-          ? `🚀 Modo Boost ativado em ${updates.length} reservas!`
-          : 'Modo Boost desativado em todas as reservas.'
-      );
+      if (pendingBoostConfirm.kind === 'single') {
+        const { reserve: r, nextActive, tipo, safeVal } = pendingBoostConfirm;
+        setDrafts(prev => ({
+          ...prev,
+          [r.id]: {
+            boost_ativo: nextActive,
+            boost_tipo: tipo,
+            boost_valor: String(safeVal),
+          },
+        }));
+        await onUpdateReserveBoost(r.id, {
+          boost_ativo: nextActive,
+          boost_tipo: tipo,
+          boost_valor: safeVal,
+        });
+        toast.success(
+          nextActive
+            ? `Modo Boost ativado em "${r.name}"!`
+            : `Modo Boost desativado em "${r.name}". Sugestões normais preservadas.`
+        );
+      } else {
+        const { activateAll, updates } = pendingBoostConfirm;
+        const nextDrafts = { ...drafts };
+        updates.forEach(u => {
+          nextDrafts[u.reserveId] = {
+            boost_ativo: u.boost_ativo,
+            boost_tipo: u.boost_tipo,
+            boost_valor: String(u.boost_valor),
+          };
+        });
+        setDrafts(nextDrafts);
+        await onBatchUpdateBoost(updates);
+        toast.success(
+          activateAll
+            ? `🚀 Modo Boost ativado em ${updates.length} reservas!`
+            : 'Modo Boost desativado em todas as reservas.'
+        );
+      }
+      setPendingBoostConfirm(null);
     } catch (err: any) {
-      toast.error('Erro ao aplicar Modo Boost em lote: ' + (err?.message || 'Tente novamente.'));
+      toast.error('Erro ao atualizar Modo Boost: ' + (err?.message || 'Tente novamente.'));
     } finally {
       setIsSaving(false);
     }
@@ -851,6 +889,69 @@ export function ModoBoostModal({
           </div>
         </div>
       </div>
+
+      {/* Confirmation overlay for single/batch Boost activation/deactivation */}
+      {pendingBoostConfirm && (
+        <div className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-card w-full max-w-sm rounded-3xl border border-border p-5 space-y-4 shadow-2xl animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-start gap-3">
+              <div className="w-9 h-9 rounded-xl bg-amber-500/15 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
+                <Rocket className="w-5 h-5" />
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-sm font-black text-foreground">
+                  {pendingBoostConfirm.kind === 'single'
+                    ? pendingBoostConfirm.nextActive
+                      ? `Ativar Boost em "${pendingBoostConfirm.reserve.name}"?`
+                      : `Desativar Boost em "${pendingBoostConfirm.reserve.name}"?`
+                    : pendingBoostConfirm.activateAll
+                      ? `Ativar Boost em ${pendingBoostConfirm.updates.length} Reservas?`
+                      : `Desativar Boost em Todas as Reservas?`}
+                </h3>
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  {pendingBoostConfirm.kind === 'single'
+                    ? pendingBoostConfirm.nextActive
+                      ? 'As regras e próximas sugestões desta reserva serão elevadas imediatamente pelo valor configurado.'
+                      : 'As sugestões desta reserva voltarão imediatamente para a regra normal configurada.'
+                    : pendingBoostConfirm.activateAll
+                      ? `Todas as ${pendingBoostConfirm.updates.length} reservas elegíveis terão o Modo Boost ativado com o ajuste selecionado.`
+                      : 'Todas as reservas voltarão imediatamente para as sugestões normais sem perder os valores salvos.'}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-1">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={isSaving}
+                onClick={() => setPendingBoostConfirm(null)}
+                className="rounded-xl text-xs font-bold cursor-pointer"
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                disabled={isSaving}
+                onClick={handleExecutePendingBoostConfirm}
+                className={`rounded-xl text-xs font-black cursor-pointer text-white ${
+                  (pendingBoostConfirm.kind === 'single' ? pendingBoostConfirm.nextActive : pendingBoostConfirm.activateAll)
+                    ? 'bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700'
+                    : 'bg-zinc-700 hover:bg-zinc-800'
+                }`}
+              >
+                {isSaving
+                  ? 'Aplicando...'
+                  : (pendingBoostConfirm.kind === 'single' ? pendingBoostConfirm.nextActive : pendingBoostConfirm.activateAll)
+                    ? 'Confirmar Ativação'
+                    : 'Confirmar Desativação'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

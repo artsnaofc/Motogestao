@@ -169,8 +169,10 @@ export function ReserveCard({
   return (
     <Card 
       className={`relative overflow-visible border transition-all duration-300 hover:shadow-lg text-left ${
+        showMenu ? 'z-50' : 'z-0'
+      } ${
         isPaused
-          ? 'bg-muted/30 border-border/60 opacity-85'
+          ? `bg-muted/30 border-border/60 ${showMenu ? 'opacity-100' : 'opacity-85'}`
           : boostActive
             ? 'bg-gradient-to-br from-card via-card to-amber-500/10 border-amber-500/50 hover:border-amber-500 shadow-xs'
             : 'bg-gradient-to-br from-card via-card to-muted/20 border-border/80 hover:border-indigo-500/40'
@@ -237,7 +239,7 @@ export function ReserveCard({
             </Button>
 
             {showMenu && (
-              <div className="absolute right-0 top-8 z-30 w-52 bg-card border border-border/80 rounded-xl shadow-xl p-1 text-xs font-semibold animate-in fade-in zoom-in-95 duration-150">
+              <div className="absolute right-0 top-8 z-50 w-52 bg-card border border-border/80 rounded-xl shadow-xl p-1 text-xs font-semibold animate-in fade-in zoom-in-95 duration-150">
                 <button
                   type="button"
                   onClick={() => {

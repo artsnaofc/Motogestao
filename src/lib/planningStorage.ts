@@ -677,3 +677,35 @@ export const CARD_BRAND_PRESETS: { value: CreditCardBrand; label: string; color:
   { value: 'caixa', label: 'Caixa', color: '#005ca9' },
   { value: 'outro', label: 'Outro Cartão', color: '#6366f1' },
 ];
+
+/**
+ * Returns how many days before the fixed due date each bank typically closes its invoice in Brazil.
+ */
+export function getBankClosingOffsetDays(brand: CreditCardBrand = 'outro'): number {
+  switch (brand) {
+    case 'santander':
+    case 'bradesco':
+    case 'bb':
+    case 'caixa':
+      return 10;
+    case 'nubank':
+    case 'inter':
+    case 'itau':
+    case 'c6':
+    case 'mercadopago':
+    case 'outro':
+    default:
+      return 7;
+  }
+}
+
+/**
+ * Automatically derives the statement closing day (1..31) from the user's fixed due day and bank brand.
+ */
+export function computeAutoClosingDay(dueDay: number, brand: CreditCardBrand = 'outro'): number {
+  const safeDue = Math.max(1, Math.min(31, Math.round(Number(dueDay)) || 12));
+  const offset = getBankClosingOffsetDays(brand);
+  const diff = safeDue - offset;
+  if (diff >= 1) return diff;
+  return Math.max(1, Math.min(31, 30 + diff));
+}

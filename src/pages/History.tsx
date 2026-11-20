@@ -68,11 +68,18 @@ import {
   RotateCcw,
   Globe,
   Landmark,
-  EyeOff
+  EyeOff,
+  CreditCard
 } from 'lucide-react';
 import { ExecutiveReportModal } from '../components/ExecutiveReportModal';
 import { TransactionDetailView } from '../components/history/TransactionDetailView';
-import { isOperationalCategory, getActiveRuleForDate, iconOptions } from '../components/reserves/reserveUtils';
+import { isOperationalCategory, getActiveRuleForDate, iconOptions, findMatchingReserveForExpense } from '../components/reserves/reserveUtils';
+import {
+  planningStorage,
+  CreditCardConfig,
+  computeCardStatementDueDate,
+  extractCardTagFromTransaction,
+} from '../lib/planningStorage';
 import { 
   getPaymentStatusMeta, 
   formatRecurrenceFrequency, 
@@ -424,6 +431,31 @@ export function History() {
   const highlightId = searchParams.get('highlight');
   const hasHighlightedRef = React.useRef<string | null>(null);
 
+  const [historyUserId, setHistoryUserId] = useState<string>('');
+  const [cards, setCards] = useState<CreditCardConfig[]>([]);
+  const [txCardMap, setTxCardMap] = useState<Record<string, string>>({});
+
+  React.useEffect(() => {
+    let activeUid = '';
+    const hydrateCards = (uid: string) => {
+      setCards(planningStorage.getCards(uid));
+      setTxCardMap(planningStorage.getTxCardMap(uid));
+    };
+    getEffectiveUserId().then(uid => {
+      const effectiveUid = uid || 'default';
+      activeUid = effectiveUid;
+      setHistoryUserId(effectiveUid);
+      hydrateCards(effectiveUid);
+    });
+    const handleSync = (e: Event) => {
+      const detailUid = (e as CustomEvent)?.detail?.userId;
+      const targetUid = detailUid || activeUid || 'default';
+      hydrateCards(targetUid);
+    };
+    window.addEventListener('planning_data_synced', handleSync);
+    return () => window.removeEventListener('planning_data_synced', handleSync);
+  }, []);
+
   // Saved filters from localStorage
   const savedFilters = useMemo(() => loadSavedFilters(), []);
 
@@ -475,25 +507,85 @@ export function History() {
   const handleOpenSettle = (t: Transaction) => {
     setSettleItem(t);
     setSettlePaymentDate(getTodayLocalDateStr());
-    setSettleReserveId('__cash__');
+    if ((t as any).isReserveTx && (t as any).reserveId) {
+      setSettleReserveId((t as any).reserveId);
+    } else {
+      setSettleReserveId('__cash__');
+    }
   };
 
   const handleConfirmSettle = async () => {
     if (!settleItem || isSettling) return;
     setIsSettling(true);
     try {
-      const isReserveTx = (settleItem as any).isReserveTx;
+      const effectiveUid = historyUserId || (await getEffectiveUserId()) || settleItem.user_id || 'local';
+      const isReserveTx = Boolean((settleItem as any).isReserveTx);
       const finalPaymentDate = settlePaymentDate || getTodayLocalDateStr();
-      
+      const matchedCardId = extractCardTagFromTransaction(settleItem as any, txCardMap, cards);
+      const matchedCardObj = matchedCardId ? cards.find(c => c.id === matchedCardId) || null : null;
+      const rawDesc = ((settleItem as any).rawDescription || settleItem.description || settleItem.category || '').trim();
+      const cleanDesc = rawDesc.replace(/^\[Cart[ãa]o [^\]]+\]\s*/i, '').trim() || settleItem.category || 'Conta quitada';
+      const cardTaggedDesc = matchedCardObj ? `[Cartão ${matchedCardObj.name}] ${cleanDesc}` : rawDesc || cleanDesc;
+
       if (isReserveTx) {
-        await updateReserveTransaction(settleItem.id, {
-          payment_status: 'paid',
-          payment_date: finalPaymentDate,
-        });
+        if (settleReserveId !== '__cash__') {
+          const targetResId = settleReserveId || (settleItem as any).reserveId;
+          await updateReserveTransaction(settleItem.id, {
+            reserve_id: targetResId,
+            description: cardTaggedDesc,
+            payment_status: 'paid',
+            payment_date: finalPaymentDate,
+          });
+          if (matchedCardId) {
+            planningStorage.linkTxsToCard(effectiveUid, [settleItem.id], matchedCardId);
+            setTxCardMap(planningStorage.getTxCardMap(effectiveUid));
+          }
+        } else {
+          // Convert ReserveTx -> Cash/Card Transaction upon settling with Caixa Livre
+          const newTxId = generateUUID();
+          const baseDate = ((settleItem.due_date || settleItem.date || finalPaymentDate) as string).split('T')[0];
+          const newTxPayload: Transaction = {
+            id: newTxId,
+            user_id: effectiveUid,
+            type: 'expense',
+            amount: Number(settleItem.amount),
+            date: baseDate,
+            due_date: settleItem.due_date || baseDate,
+            category: (settleItem as any).originalCategory || settleItem.category || 'Outros',
+            description: cardTaggedDesc,
+            payment_status: 'paid',
+            payment_date: finalPaymentDate,
+            card_id: matchedCardObj ? matchedCardObj.id : null,
+            card_name: matchedCardObj ? matchedCardObj.name : null,
+            is_recurring: Boolean(settleItem.is_recurring),
+            recurrence_frequency: settleItem.recurrence_frequency,
+            recurrence_installments: settleItem.recurrence_installments ?? null,
+            recurrence_group_id: settleItem.recurrence_group_id ?? null,
+            installment_number: settleItem.installment_number ?? null,
+            installment_total: settleItem.installment_total ?? null,
+            installment_index: (settleItem as any).installment_index ?? null,
+            total_installments: (settleItem as any).total_installments ?? null,
+            vehicle_id: settleItem.vehicle_id || null,
+            ignore_in_charts: Boolean(settleItem.ignore_in_charts),
+            created_at: new Date().toISOString(),
+          };
+          syncQueueManager.enqueue('transactions', 'insert', newTxId, newTxPayload);
+          setTransactions(prev => {
+            const next = [newTxPayload, ...prev];
+            cacheManager.set(`transactions_${effectiveUid}`, next, undefined, 'transactions');
+            cacheManager.set('last_known_transactions', next, undefined, 'transactions');
+            return next;
+          });
+          if (matchedCardObj) {
+            planningStorage.linkTxsToCard(effectiveUid, [newTxId], matchedCardObj.id);
+          }
+          planningStorage.unlinkTxFromCard(effectiveUid, settleItem.id);
+          setTxCardMap(planningStorage.getTxCardMap(effectiveUid));
+          await deleteReserveTransaction(settleItem.id, { silent: true });
+        }
       } else if (settleItem.type === 'expense' && settleReserveId !== '__cash__') {
         const chosenReserve = (reserves || []).find(r => r.id === settleReserveId);
         const groupId = settleItem.recurrence_group_id || (isAutoRenewRecurring(settleItem) ? generateUUID() : null);
-        const rawDesc = (settleItem as any).rawDescription || settleItem.description || settleItem.category || 'Conta paga via reserva';
         const newRtId = await addReserveTransaction(
           {
             reserve_id: settleReserveId,
@@ -502,7 +594,7 @@ export function History() {
             date: settleItem.date,
             due_date: settleItem.due_date || settleItem.date,
             category: settleItem.category,
-            description: rawDesc,
+            description: cardTaggedDesc,
             payment_status: 'paid',
             payment_date: finalPaymentDate,
             is_recurring: Boolean(settleItem.is_recurring),
@@ -519,6 +611,12 @@ export function History() {
           { silent: true }
         );
 
+        if (matchedCardId && newRtId) {
+          planningStorage.linkTxsToCard(effectiveUid, [newRtId], matchedCardId);
+        }
+        planningStorage.unlinkTxFromCard(effectiveUid, settleItem.id);
+        setTxCardMap(planningStorage.getTxCardMap(effectiveUid));
+
         await deleteTransaction(settleItem.id, { silent: true });
 
         if (isAutoRenewRecurring(settleItem) && groupId) {
@@ -526,7 +624,7 @@ export function History() {
           const freq = settleItem.recurrence_frequency || 'monthly';
           const nextDate = calculateNextOccurrence(baseDate, freq, 1);
           const nextNum = (Number(settleItem.installment_number || (settleItem as any).installment_index || 1) || 1) + 1;
-          await addReserveTransaction(
+          const nextRtId = await addReserveTransaction(
             {
               reserve_id: settleReserveId,
               type: 'utilizacao',
@@ -534,7 +632,7 @@ export function History() {
               date: nextDate,
               due_date: nextDate,
               category: settleItem.category,
-              description: stripRecurrenceSuffix(rawDesc) || settleItem.category,
+              description: stripRecurrenceSuffix(cardTaggedDesc) || settleItem.category,
               payment_status: 'pending',
               payment_date: null,
               is_recurring: true,
@@ -550,6 +648,10 @@ export function History() {
             },
             { silent: true }
           );
+          if (matchedCardId && nextRtId) {
+            planningStorage.linkTxsToCard(effectiveUid, [nextRtId], matchedCardId);
+            setTxCardMap(planningStorage.getTxCardMap(effectiveUid));
+          }
           if (newRtId) {
             toast.info(`Próxima conta recorrente agendada na reserva para ${format(parseLocalDate(nextDate), 'dd/MM/yyyy')}!`);
           }
@@ -693,7 +795,8 @@ export function History() {
   const [editRecurrenceFrequency, setEditRecurrenceFrequency] = useState<RecurrenceFrequency>('monthly');
   const [editRecurrenceInstallments, setEditRecurrenceInstallments] = useState('12');
   const [editGenerateFuture, setEditGenerateFuture] = useState(true);
-  const [editApplyToFuture, setEditApplyToFuture] = useState(true);
+  const [editApplyScope, setEditApplyScope] = useState<'single' | 'future' | 'all'>('single');
+  const [editRecurrenceAmountMode, setEditRecurrenceAmountMode] = useState<'installment' | 'total'>('installment');
   
   const [editStartKm, setEditStartKm] = useState('');
   const [editEndKm, setEditEndKm] = useState('');
@@ -745,13 +848,31 @@ export function History() {
     setVisibleGroupsCount(10);
   }, [searchTerm, filterType, filterCategory, filterStatus, minAmount, maxAmount, sortBy, includeCash, includeReserves, includeInvestments, filterReserveId, filterTicker, globalPeriod]);
 
-  // States for Editing Reserve Transactions
+  // States for Editing Reserve Transactions & Card Linkage
   const [editIsReserve, setEditIsReserve] = useState(false);
   const [editReserveId, setEditReserveId] = useState('');
   const [editReserveTxType, setEditReserveTxType] = useState<'aporte' | 'utilizacao' | 'rendimento'>('aporte');
   const [editReserveCategory, setEditReserveCategory] = useState('');
+  const [editUseReserve, setEditUseReserve] = useState(false);
+  const [editCardId, setEditCardId] = useState<string>('__none__');
+  const [editOriginalDate, setEditOriginalDate] = useState<string>('');
 
   const selectedReserve = (reserves || []).find(r => r.id === editReserveId);
+  const activeReservesList = useMemo(() => (reserves || []).filter(r => r.status !== 'inactive'), [reserves]);
+
+  const editGroupSiblings = useMemo(() => {
+    const gid = editItem?.recurrence_group_id;
+    if (!gid) return [];
+    const pool: any[] = editIsReserve ? (reserveTransactions || []) : (transactions || []);
+    return pool
+      .filter(item => item.recurrence_group_id === gid)
+      .sort((a, b) => {
+        const ia = Number(a.installment_number || a.installment_index || 0);
+        const ib = Number(b.installment_number || b.installment_index || 0);
+        if (ia !== ib && ia > 0 && ib > 0) return ia - ib;
+        return String(a.due_date || a.date || '').localeCompare(String(b.due_date || b.date || ''));
+      });
+  }, [editItem, editIsReserve, reserveTransactions, transactions]);
 
   // Custom Deletion Confirmation State
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
@@ -786,17 +907,24 @@ export function History() {
     setEditRecurrenceFrequency((t.recurrence_frequency as RecurrenceFrequency) || 'monthly');
     setEditRecurrenceInstallments(String(t.recurrence_installments || (t as any).total_installments || (t as any).installment_total || 12));
     setEditGenerateFuture(!isRecurring);
-    setEditApplyToFuture(true);
+    setEditApplyScope('single');
+    setEditRecurrenceAmountMode('installment');
+
+    const detectedCardId = extractCardTagFromTransaction(t as any, txCardMap, cards) || '__none__';
+    setEditCardId(detectedCardId);
+    setEditOriginalDate(initDue || initDate);
+    const cleanedDescForEdit = String(tDescription || '').replace(/^\[Cart[ãa]o [^\]]+\]\s*/i, '').trim();
 
     if (isRt) {
       setEditIsReserve(true);
+      setEditUseReserve(true);
       setEditItem(t);
-      setEditReserveId((t as any).reserveId || '');
+      setEditReserveId((t as any).reserveId || activeReservesList[0]?.id || '');
       setEditReserveTxType((t as any).reserveTxType || 'aporte');
       setEditAmount(tAmount.toString());
       setEditDate(t.date);
-      setEditDesc(tDescription || '');
-      setEditReserveCategory((t as any).reserveCategory || '');
+      setEditDesc(cleanedDescForEdit);
+      setEditReserveCategory((t as any).reserveCategory || (t as any).originalCategory || '');
       setEditVehicleId((t as any).vehicle_id || '');
       setEditIgnoreInCharts(false);
       setShowEditVehicleSelect(false);
@@ -810,6 +938,7 @@ export function History() {
         setEditPaymentStatus(rtStatus);
         setEditPaymentDate(rtPay || rtBaseDate);
         setEditDueDate(rtDue || rtBaseDate);
+        setEditOriginalDate(rtDue || rtBaseDate);
         setEditCustomSecondaryDate(
           (matchRt.type === 'utilizacao' || (t as any).reserveTxType === 'utilizacao') &&
           (rtStatus === 'pending' ? Boolean(rtDue && rtDue !== rtBaseDate) : Boolean(rtPay && rtPay !== rtBaseDate))
@@ -823,7 +952,7 @@ export function History() {
         setEditRecurrenceFrequency((matchRt.recurrence_frequency || t.recurrence_frequency || 'monthly') as RecurrenceFrequency);
         setEditRecurrenceInstallments(String(matchRt.recurrence_installments || t.recurrence_installments || (t as any).total_installments || (t as any).installment_total || 12));
         setEditGenerateFuture(!isRec);
-        setEditApplyToFuture(true);
+        setEditApplyScope('single');
         setEditIgnoreInCharts(Boolean(matchRt.ignore_in_charts ?? t.ignore_in_charts));
       } else {
         setEditIgnoreInCharts(Boolean(t.ignore_in_charts));
@@ -836,6 +965,7 @@ export function History() {
       );
       if (matchRt) {
         setEditIsReserve(true);
+        setEditUseReserve(true);
         // Create virtual item with the correct matched ReserveTransaction ID so updateReserveTransaction works perfectly
         setEditItem({
           ...t,
@@ -843,6 +973,7 @@ export function History() {
           is_recurring: matchRt.is_recurring,
           recurrence_frequency: matchRt.recurrence_frequency,
           recurrence_installments: matchRt.recurrence_installments,
+          recurrence_group_id: matchRt.recurrence_group_id,
           installment_number: matchRt.installment_number || (matchRt as any).installment_index,
           installment_total: matchRt.installment_total || (matchRt as any).total_installments,
           payment_status: matchRt.payment_status,
@@ -853,7 +984,11 @@ export function History() {
         setEditReserveTxType('utilizacao');
         setEditAmount(matchRt.amount.toString());
         setEditDate(matchRt.date);
-        setEditDesc(matchRt.description ? matchRt.description.replace(/^\[Reserva\]\s*/, '') : '');
+        setEditDesc(
+          matchRt.description
+            ? matchRt.description.replace(/^\[Reserva\]\s*/, '').replace(/^\[Cart[ãa]o [^\]]+\]\s*/i, '').trim()
+            : ''
+        );
         setEditReserveCategory(matchRt.category || '');
         setEditVehicleId(t.vehicle_id || (matchRt as any).vehicle_id || '');
         setShowEditVehicleSelect(false);
@@ -865,6 +1000,7 @@ export function History() {
         setEditPaymentStatus(rtStatus);
         setEditPaymentDate(rtPay || rtBaseDate);
         setEditDueDate(rtDue || rtBaseDate);
+        setEditOriginalDate(rtDue || rtBaseDate);
         setEditCustomSecondaryDate(
           rtStatus === 'pending' ? Boolean(rtDue && rtDue !== rtBaseDate) : Boolean(rtPay && rtPay !== rtBaseDate)
         );
@@ -874,16 +1010,19 @@ export function History() {
         setEditRecurrenceFrequency((matchRt.recurrence_frequency || t.recurrence_frequency || 'monthly') as RecurrenceFrequency);
         setEditRecurrenceInstallments(String(matchRt.recurrence_installments || t.recurrence_installments || (t as any).total_installments || (t as any).installment_total || 12));
         setEditGenerateFuture(!isRec);
-        setEditApplyToFuture(true);
+        setEditApplyScope('single');
         setEditIgnoreInCharts(Boolean(matchRt.ignore_in_charts ?? t.ignore_in_charts));
       } else {
         // Fallback to normal transaction edit if no matching reserve transaction was found
         setEditIsReserve(false);
+        setEditUseReserve(false);
+        const matchRes = t.type === 'expense' ? findMatchingReserveForExpense(t.category, activeReservesList) : null;
+        setEditReserveId(matchRes?.id || activeReservesList[0]?.id || '');
         setEditItem(t);
         setEditType(t.type);
         setEditAmount(tAmount.toString());
         setEditCategory(t.category);
-        setEditDesc(tDescription || '');
+        setEditDesc(cleanedDescForEdit);
         setEditDate(t.date);
         setEditStartKm(t.start_km?.toString() || '');
         setEditEndKm(t.end_km?.toString() || '');
@@ -895,11 +1034,14 @@ export function History() {
       }
     } else {
       setEditIsReserve(false);
+      setEditUseReserve(false);
+      const matchRes = t.type === 'expense' ? findMatchingReserveForExpense(t.category, activeReservesList) : null;
+      setEditReserveId(matchRes?.id || activeReservesList[0]?.id || '');
       setEditItem(t);
       setEditType(t.type);
       setEditAmount(tAmount.toString());
       setEditCategory(t.category);
-      setEditDesc(tDescription || '');
+      setEditDesc(cleanedDescForEdit);
       setEditDate(t.date);
       setEditStartKm(t.start_km?.toString() || '');
       setEditEndKm(t.end_km?.toString() || '');
@@ -953,11 +1095,166 @@ export function History() {
           ? undefined
           : editVehicleId.trim();
 
+        const effectiveUid = historyUserId || (await getEffectiveUserId()) || oldRt?.user_id || 'local';
+        const chosenCard =
+          editReserveTxType === 'utilizacao' && editCardId !== '__none__'
+            ? cards.find(c => c.id === editCardId) || null
+            : null;
+        const withCardDesc = (baseText: string) => {
+          const clean = baseText.replace(/^\[Cart[ãa]o [^\]]+\]\s*/i, '').trim() || finalReserveCat || 'Despesa';
+          return chosenCard ? `[Cartão ${chosenCard.name}] ${clean}` : clean;
+        };
+
+        // Reserve -> Caixa Livre / Cartão conversion
+        if (editReserveTxType === 'utilizacao' && !editUseReserve) {
+          const newTxId = generateUUID();
+          const shouldAuto = editIsRecurring && editRecurrenceMode === 'auto';
+          const isConvertingToFixed = !oldRt?.is_recurring && editIsRecurring && editRecurrenceMode === 'fixed';
+          const numInstallments = Math.max(2, Math.min(60, Number(editRecurrenceInstallments) || 12));
+          const currentGroup = oldRt?.recurrence_group_id || (editIsRecurring ? generateUUID() : null);
+          const currentInstNum = isConvertingToFixed ? 1 : (oldRt?.installment_number || (oldRt as any)?.installment_index || 1);
+          const baseInstAmt =
+            isConvertingToFixed && editRecurrenceAmountMode === 'total'
+              ? Math.floor((finalAmt / numInstallments) * 100) / 100
+              : finalAmt;
+          const remCents =
+            isConvertingToFixed && editRecurrenceAmountMode === 'total'
+              ? Math.round((finalAmt - baseInstAmt * numInstallments) * 100) / 100
+              : 0;
+          const firstInstAmt = Math.round((baseInstAmt + remCents) * 100) / 100;
+
+          const cleanLabelNoSuffix = stripRecurrenceSuffix(editDesc.trim()) || defaultDesc;
+          const firstDescText = isConvertingToFixed
+            ? `${cleanLabelNoSuffix} (1/${numInstallments})`
+            : shouldAuto
+              ? cleanLabelNoSuffix
+              : (editDesc.trim() || defaultDesc);
+
+          const newTxPayload: Transaction = {
+            id: newTxId,
+            user_id: effectiveUid,
+            type: 'expense',
+            amount: isConvertingToFixed ? firstInstAmt : finalAmt,
+            date: editDate,
+            due_date: effectiveDueDate || editDate,
+            category: finalReserveCat || matchedRes?.default_use_category || 'Outras Despesas',
+            description: withCardDesc(firstDescText),
+            payment_status: effectivePaymentStatus,
+            payment_date: effectivePaymentDate,
+            card_id: chosenCard ? chosenCard.id : null,
+            card_name: chosenCard ? chosenCard.name : null,
+            card_installments: isConvertingToFixed && chosenCard ? numInstallments : undefined,
+            card_installment_index: isConvertingToFixed && chosenCard ? 1 : undefined,
+            vehicle_id: finalVehicleId || null,
+            ignore_in_charts: editIgnoreInCharts,
+            is_recurring: editIsRecurring,
+            recurrence_frequency: editIsRecurring ? editRecurrenceFrequency : undefined,
+            recurrence_installments: editIsRecurring && !shouldAuto ? numInstallments : null,
+            recurrence_group_id: currentGroup,
+            installment_number: editIsRecurring ? currentInstNum : null,
+            installment_total: editIsRecurring && !shouldAuto ? numInstallments : null,
+            installment_index: editIsRecurring ? currentInstNum : null,
+            total_installments: editIsRecurring && !shouldAuto ? numInstallments : null,
+            created_at: new Date().toISOString(),
+          };
+
+          const createdCashTxs: Transaction[] = [newTxPayload];
+          const cardLinkIds: string[] = chosenCard ? [newTxId] : [];
+          syncQueueManager.enqueue('transactions', 'insert', newTxId, newTxPayload);
+
+          if (isConvertingToFixed && editGenerateFuture && numInstallments > 1 && currentGroup) {
+            for (let i = 2; i <= numInstallments; i++) {
+              const instId = generateUUID();
+              const instDate = calculateNextOccurrence(editDate, editRecurrenceFrequency, i - 1);
+              const instDueDate = effectivePaymentStatus === 'pending' && effectiveDueDate
+                ? calculateNextOccurrence(effectiveDueDate, editRecurrenceFrequency, i - 1)
+                : instDate;
+              const instPayload: Transaction = {
+                id: instId,
+                user_id: effectiveUid,
+                type: 'expense',
+                amount: baseInstAmt,
+                date: instDate,
+                due_date: instDueDate,
+                category: finalReserveCat || matchedRes?.default_use_category || 'Outras Despesas',
+                description: withCardDesc(`${cleanLabelNoSuffix} (${i}/${numInstallments})`),
+                payment_status: 'pending',
+                payment_date: null,
+                card_id: chosenCard ? chosenCard.id : null,
+                card_name: chosenCard ? chosenCard.name : null,
+                card_installments: chosenCard ? numInstallments : null,
+                card_installment_index: chosenCard ? i : null,
+                vehicle_id: finalVehicleId || null,
+                ignore_in_charts: editIgnoreInCharts,
+                is_recurring: true,
+                recurrence_frequency: editRecurrenceFrequency,
+                recurrence_installments: numInstallments,
+                recurrence_group_id: currentGroup,
+                installment_number: i,
+                installment_total: numInstallments,
+                installment_index: i,
+                total_installments: numInstallments,
+                created_at: new Date().toISOString(),
+              };
+              createdCashTxs.push(instPayload);
+              if (chosenCard) cardLinkIds.push(instId);
+              syncQueueManager.enqueue('transactions', 'insert', instId, instPayload);
+            }
+          }
+
+          setTransactions(prev => {
+            const next = [...createdCashTxs, ...prev];
+            cacheManager.set(`transactions_${effectiveUid}`, next, undefined, 'transactions');
+            cacheManager.set('last_known_transactions', next, undefined, 'transactions');
+            return next;
+          });
+
+          planningStorage.unlinkTxFromCard(effectiveUid, editItem.id);
+          if (chosenCard && cardLinkIds.length > 0) {
+            planningStorage.linkTxsToCard(effectiveUid, cardLinkIds, chosenCard.id);
+          }
+          setTxCardMap(planningStorage.getTxCardMap(effectiveUid));
+          await deleteReserveTransaction(editItem.id, { silent: true });
+
+          toast.success(
+            isConvertingToFixed && editGenerateFuture
+              ? `Movido para o Caixa Livre e convertido em ${numInstallments}x parcelas!`
+              : chosenCard
+                ? `Movido para a fatura do ${chosenCard.name} (Caixa Livre)!`
+                : 'Lançamento movido da reserva para o Caixa Livre!'
+          );
+          setEditItem(null);
+          await refreshData(true);
+          setSaving(false);
+          return;
+        }
+
         if (editReserveTxType === 'utilizacao') {
+          if (chosenCard) {
+            planningStorage.linkTxsToCard(effectiveUid, [editItem.id], chosenCard.id);
+          } else {
+            planningStorage.unlinkTxFromCard(effectiveUid, editItem.id);
+          }
+          setTxCardMap(planningStorage.getTxCardMap(effectiveUid));
+
+          const existingSiblings = editGroupSiblings.length > 0 ? editGroupSiblings : (oldRt ? [oldRt] : []);
+          const currentInstNumForScope = oldRt?.installment_number || (oldRt as any)?.installment_index || 1;
+          const currentOrderIdx = existingSiblings.findIndex(r => r.id === editItem.id);
+          const siblingsToAlsoUpdate =
+            oldRt?.recurrence_group_id && editApplyScope !== 'single'
+              ? editApplyScope === 'all'
+                ? existingSiblings.filter(r => r.id !== editItem.id)
+                : existingSiblings.filter((r, idx) =>
+                    currentOrderIdx >= 0
+                      ? idx > currentOrderIdx
+                      : (r.installment_number || (r as any).installment_index || 0) > currentInstNumForScope
+                  )
+              : [];
+
           if (editIsRecurring && editRecurrenceMode === 'auto') {
             const currentGroup = oldRt?.recurrence_group_id || generateUUID();
             const currentInstNum = oldRt?.installment_number || (oldRt as any)?.installment_index || 1;
-            const cleanBaseDesc = stripRecurrenceSuffix(editDesc.trim()) || defaultDesc;
+            const cleanBaseDesc = withCardDesc(stripRecurrenceSuffix(editDesc.trim()) || defaultDesc);
 
             await updateReserveTransaction(editItem.id, {
               reserve_id: editReserveId,
@@ -981,8 +1278,48 @@ export function History() {
               ignore_in_charts: editIgnoreInCharts,
             }, { silent: true });
 
+            if (siblingsToAlsoUpdate.length > 0) {
+              const sibIds = siblingsToAlsoUpdate.map(r => r.id);
+              if (chosenCard) {
+                planningStorage.linkTxsToCard(effectiveUid, sibIds, chosenCard.id);
+              } else {
+                sibIds.forEach(sid => planningStorage.unlinkTxFromCard(effectiveUid, sid));
+              }
+              setTxCardMap(planningStorage.getTxCardMap(effectiveUid));
+              const sibIdSet = new Set(sibIds);
+              setReserveTransactions(prev => {
+                const updated = prev.map(rt =>
+                  sibIdSet.has(rt.id)
+                    ? {
+                        ...rt,
+                        reserve_id: editReserveId,
+                        amount: finalAmt,
+                        category: finalReserveCat || undefined,
+                        description: cleanBaseDesc,
+                        vehicle_id: finalVehicleId,
+                        recurrence_frequency: editRecurrenceFrequency,
+                        ignore_in_charts: editIgnoreInCharts,
+                      }
+                    : rt
+                );
+                cacheManager.set(`reserve_transactions_${effectiveUid}`, updated, undefined, 'reserves');
+                return updated;
+              });
+              siblingsToAlsoUpdate.forEach(rt => {
+                syncQueueManager.enqueue('reserve_transactions', 'update', rt.id, {
+                  reserve_id: editReserveId,
+                  amount: finalAmt,
+                  category: finalReserveCat || undefined,
+                  description: cleanBaseDesc,
+                  vehicle_id: finalVehicleId,
+                  recurrence_frequency: editRecurrenceFrequency,
+                  ignore_in_charts: editIgnoreInCharts,
+                });
+              });
+            }
+
             if (effectivePaymentStatus === 'paid' && oldRt?.payment_status !== 'pending') {
-              const userId = (await getEffectiveUserId()) || oldRt?.user_id || 'local';
+              const userId = effectiveUid;
               const baseDate = (effectiveDueDate || editDate || getTodayLocalDateStr()).split('T')[0];
               const nextDate = calculateNextOccurrence(baseDate, editRecurrenceFrequency, 1);
               const syntheticSource: ReserveTransaction = {
@@ -1006,6 +1343,10 @@ export function History() {
               };
               if (!hasExistingNextOccurrence(reserveTransactions || [], syntheticSource, currentGroup, nextDate)) {
                 const nextRt = buildNextRecurringReserveTransaction(syntheticSource, nextDate, currentGroup, userId);
+                if (chosenCard) {
+                  planningStorage.linkTxsToCard(userId, [nextRt.id], chosenCard.id);
+                  setTxCardMap(planningStorage.getTxCardMap(userId));
+                }
                 setReserveTransactions(prev => {
                   const newState = [nextRt, ...prev];
                   cacheManager.set(`reserve_transactions_${userId}`, newState, undefined, 'reserves');
@@ -1015,20 +1356,31 @@ export function History() {
                 toast.info(`Próxima conta recorrente agendada para ${format(parseLocalDate(nextDate), 'dd/MM/yyyy')}!`);
               }
             }
-            toast.success('Conta recorrente (auto-renovável) atualizada!');
+            toast.success(
+              siblingsToAlsoUpdate.length > 0
+                ? `Atualizado este e mais ${siblingsToAlsoUpdate.length} lançamento(s) do grupo!`
+                : 'Conta recorrente (auto-renovável) atualizada!'
+            );
           } else if (editIsRecurring) {
             const numInstallments = Math.max(2, Math.min(60, Number(editRecurrenceInstallments) || 12));
 
             if (!oldRt?.is_recurring) {
-              // Convert single reserve use to recurring
+              // Convert single reserve use to recurring fixed installments
               const recurrenceGroupId = generateUUID();
-              const baseDesc = editDesc.trim() || defaultDesc;
-              const inst1Desc = baseDesc.includes('(1/') ? baseDesc : `${baseDesc} (1/${numInstallments})`;
+              const cleanLabelNoSuffix = stripRecurrenceSuffix(editDesc.trim()) || defaultDesc;
+              const baseInstAmt = editRecurrenceAmountMode === 'total'
+                ? Math.floor((finalAmt / numInstallments) * 100) / 100
+                : finalAmt;
+              const remCents = editRecurrenceAmountMode === 'total'
+                ? Math.round((finalAmt - baseInstAmt * numInstallments) * 100) / 100
+                : 0;
+              const firstInstAmt = Math.round((baseInstAmt + remCents) * 100) / 100;
+              const inst1Desc = withCardDesc(`${cleanLabelNoSuffix} (1/${numInstallments})`);
 
               await updateReserveTransaction(editItem.id, {
                 reserve_id: editReserveId,
                 type: 'utilizacao',
-                amount: finalAmt,
+                amount: firstInstAmt,
                 date: editDate,
                 category: finalReserveCat || undefined,
                 description: inst1Desc,
@@ -1049,7 +1401,7 @@ export function History() {
 
               if (editGenerateFuture && numInstallments > 1) {
                 const futureBatch: ReserveTransaction[] = [];
-                const userId = (await getEffectiveUserId()) || oldRt?.user_id || 'local';
+                const userId = effectiveUid;
 
                 for (let i = 2; i <= numInstallments; i++) {
                   const instId = generateUUID();
@@ -1057,14 +1409,14 @@ export function History() {
                   const instDueDate = effectivePaymentStatus === 'pending' && effectiveDueDate
                     ? calculateNextOccurrence(effectiveDueDate, editRecurrenceFrequency, i - 1)
                     : instDate;
-                  const instDesc = `${baseDesc} (${i}/${numInstallments})`;
+                  const instDesc = withCardDesc(`${cleanLabelNoSuffix} (${i}/${numInstallments})`);
 
                   const instPayload: ReserveTransaction = {
                     id: instId,
                     user_id: userId,
                     reserve_id: editReserveId,
                     type: 'utilizacao',
-                    amount: finalAmt,
+                    amount: baseInstAmt,
                     date: instDate,
                     category: finalReserveCat || undefined,
                     description: instDesc,
@@ -1086,6 +1438,13 @@ export function History() {
 
                   futureBatch.push(instPayload);
                   syncQueueManager.enqueue('reserve_transactions', 'insert', instId, instPayload);
+                  if (chosenCard) {
+                    planningStorage.linkTxsToCard(userId, [instId], chosenCard.id);
+                  }
+                }
+
+                if (chosenCard) {
+                  setTxCardMap(planningStorage.getTxCardMap(userId));
                 }
 
                 if (futureBatch.length > 0) {
@@ -1101,8 +1460,12 @@ export function History() {
               }
             } else {
               // Existing recurring series
-              const currentGroup = oldRt.recurrence_group_id;
               const currentInstNumber = oldRt.installment_number || (oldRt as any).installment_index || 1;
+              const effectiveTotal = oldRt.installment_total || oldRt.recurrence_installments || existingSiblings.length || numInstallments;
+              const cleanBaseNoSuffix = stripRecurrenceSuffix(editDesc.trim()) || defaultDesc;
+              const currentDesc = editDesc.includes(`(${currentInstNumber}/`)
+                ? withCardDesc(editDesc)
+                : withCardDesc(`${cleanBaseNoSuffix} (${currentInstNumber}/${effectiveTotal})`);
 
               await updateReserveTransaction(editItem.id, {
                 reserve_id: editReserveId,
@@ -1110,69 +1473,74 @@ export function History() {
                 amount: finalAmt,
                 date: editDate,
                 category: finalReserveCat || undefined,
-                description: editDesc || defaultDesc,
+                description: currentDesc,
                 payment_status: effectivePaymentStatus,
                 payment_date: effectivePaymentDate,
                 due_date: effectiveDueDate,
                 vehicle_id: finalVehicleId,
                 is_recurring: true,
                 recurrence_frequency: editRecurrenceFrequency,
-                recurrence_installments: numInstallments,
+                recurrence_installments: effectiveTotal,
                 installment_number: currentInstNumber,
-                installment_total: numInstallments,
+                installment_total: effectiveTotal,
                 installment_index: currentInstNumber,
-                total_installments: numInstallments,
+                total_installments: effectiveTotal,
                 ignore_in_charts: editIgnoreInCharts,
               });
 
-              if (editApplyToFuture && currentGroup) {
-                const futureSeries = (reserveTransactions || []).filter(
-                  rt => rt.recurrence_group_id === currentGroup && 
-                        (rt.installment_number || (rt as any).installment_index || 0) > currentInstNumber
-                );
+              if (siblingsToAlsoUpdate.length > 0) {
+                const sibIds = siblingsToAlsoUpdate.map(r => r.id);
+                if (chosenCard) {
+                  planningStorage.linkTxsToCard(effectiveUid, sibIds, chosenCard.id);
+                } else {
+                  sibIds.forEach(sid => planningStorage.unlinkTxFromCard(effectiveUid, sid));
+                }
+                setTxCardMap(planningStorage.getTxCardMap(effectiveUid));
 
-                if (futureSeries.length > 0) {
-                  const updatedIds = new Set(futureSeries.map(r => r.id));
-                  setReserveTransactions(prev => {
-                    const updated = prev.map(rt => {
-                      if (!updatedIds.has(rt.id)) return rt;
-                      const instNum = rt.installment_number || (rt as any).installment_index || 1;
-                      const baseDesc = editDesc.replace(/\s*\(\d+\/\d+\)$/, '').trim() || defaultDesc;
-                      const instDesc = `${baseDesc} (${instNum}/${numInstallments})`;
-                      return {
-                        ...rt,
-                        amount: finalAmt,
-                        category: finalReserveCat || undefined,
-                        description: instDesc,
-                        recurrence_frequency: editRecurrenceFrequency,
-                        recurrence_installments: numInstallments,
-                        installment_total: numInstallments,
-                        total_installments: numInstallments,
-                      };
-                    });
-                    const uid = oldRt?.user_id || 'local';
-                    cacheManager.set(`reserve_transactions_${uid}`, updated, undefined, 'reserves');
-                    return updated;
-                  });
-
-                  futureSeries.forEach(rt => {
+                const updatedIds = new Set(sibIds);
+                setReserveTransactions(prev => {
+                  const updated = prev.map(rt => {
+                    if (!updatedIds.has(rt.id)) return rt;
                     const instNum = rt.installment_number || (rt as any).installment_index || 1;
-                    const baseDesc = editDesc.replace(/\s*\(\d+\/\d+\)$/, '').trim() || defaultDesc;
-                    const instDesc = `${baseDesc} (${instNum}/${numInstallments})`;
-                    syncQueueManager.enqueue('reserve_transactions', 'update', rt.id, {
+                    const instDesc = withCardDesc(`${cleanBaseNoSuffix} (${instNum}/${effectiveTotal})`);
+                    return {
+                      ...rt,
+                      reserve_id: editReserveId,
                       amount: finalAmt,
                       category: finalReserveCat || undefined,
                       description: instDesc,
+                      vehicle_id: finalVehicleId,
                       recurrence_frequency: editRecurrenceFrequency,
-                      recurrence_installments: numInstallments,
-                      installment_total: numInstallments,
+                      recurrence_installments: effectiveTotal,
+                      installment_total: effectiveTotal,
+                      total_installments: effectiveTotal,
                       ignore_in_charts: editIgnoreInCharts,
-                    });
+                    };
                   });
-                  toast.success(`Alterações aplicadas a esta e a mais ${futureSeries.length} parcelas futuras!`);
-                } else {
-                  toast.success('Parcela atualizada com sucesso!');
-                }
+                  cacheManager.set(`reserve_transactions_${effectiveUid}`, updated, undefined, 'reserves');
+                  return updated;
+                });
+
+                siblingsToAlsoUpdate.forEach(rt => {
+                  const instNum = rt.installment_number || (rt as any).installment_index || 1;
+                  const instDesc = withCardDesc(`${cleanBaseNoSuffix} (${instNum}/${effectiveTotal})`);
+                  syncQueueManager.enqueue('reserve_transactions', 'update', rt.id, {
+                    reserve_id: editReserveId,
+                    amount: finalAmt,
+                    category: finalReserveCat || undefined,
+                    description: instDesc,
+                    vehicle_id: finalVehicleId,
+                    recurrence_frequency: editRecurrenceFrequency,
+                    recurrence_installments: effectiveTotal,
+                    installment_total: effectiveTotal,
+                    ignore_in_charts: editIgnoreInCharts,
+                  });
+                });
+                toast.success(
+                  editApplyScope === 'all'
+                    ? `Alterações aplicadas a todas as ${siblingsToAlsoUpdate.length + 1} parcelas do grupo!`
+                    : `Alterações aplicadas a esta e a mais ${siblingsToAlsoUpdate.length} parcela(s) futura(s)!`
+                );
               } else {
                 toast.success('Parcela atualizada com sucesso!');
               }
@@ -1185,7 +1553,7 @@ export function History() {
               amount: finalAmt,
               date: editDate,
               category: finalReserveCat || undefined,
-              description: editDesc || defaultDesc,
+              description: withCardDesc(editDesc || defaultDesc),
               payment_status: effectivePaymentStatus,
               payment_date: effectivePaymentDate,
               due_date: effectiveDueDate,
@@ -1200,7 +1568,11 @@ export function History() {
               total_installments: undefined,
               ignore_in_charts: editIgnoreInCharts,
             });
-            toast.success('Resgate atualizado (recorrência desativada).');
+            toast.success(
+              chosenCard
+                ? `Lançamento da reserva vinculado ao ${chosenCard.name}!`
+                : 'Resgate atualizado.'
+            );
           }
         } else {
           // Aporte or rendimento
@@ -1247,6 +1619,16 @@ export function History() {
     }
 
     const oldTx = transactions.find(t => t.id === editItem.id);
+    const effectiveUid = historyUserId || (await getEffectiveUserId()) || oldTx?.user_id || 'local';
+    const chosenNormalCard =
+      editType === 'expense' && editCardId !== '__none__'
+        ? cards.find(c => c.id === editCardId) || null
+        : null;
+    const tagDescWithCard = (rawDesc: string) => {
+      const clean = rawDesc.replace(/^\[Cart[ãa]o [^\]]+\]\s*/i, '').trim() || editCategory || 'Despesa';
+      return chosenNormalCard ? `[Cartão ${chosenNormalCard.name}] ${clean}` : clean;
+    };
+
     const finalVehicleId = editVehicleId === '__none__' || !editVehicleId.trim()
       ? null
       : editVehicleId.trim();
@@ -1259,69 +1641,163 @@ export function History() {
       ? ((editCustomSecondaryDate ? editDueDate : editDate) || editDate)
       : editDate;
 
-    // Recurrence logic handling
+    // Recurrence logic handling (works for both expense and income!)
     let recurrenceFields: Partial<Transaction> = {};
+    let extraFixedInstallmentsForReserve: Array<{
+      amount: number;
+      date: string;
+      dueDate: string;
+      description: string;
+      instNum: number;
+      numInstallments: number;
+      groupId: string;
+    }> = [];
 
-    if (editType === 'expense') {
-      if (editIsRecurring && editRecurrenceMode === 'auto') {
-        const currentGroup = oldTx?.recurrence_group_id || generateUUID();
-        const currentInstNum = oldTx?.installment_number || (oldTx as any)?.installment_index || 1;
-        const cleanBaseDesc = stripRecurrenceSuffix(editDesc.trim()) || editCategory || 'Despesa';
+    const existingNormalSiblings = editGroupSiblings.length > 0 ? editGroupSiblings : (oldTx ? [oldTx] : []);
+    const currentNormalInstNum = oldTx?.installment_number || (oldTx as any)?.installment_index || 1;
+    const currentNormalIdx = existingNormalSiblings.findIndex(t => t.id === editItem.id);
+    const normalSiblingsToUpdate =
+      oldTx?.recurrence_group_id && editApplyScope !== 'single'
+        ? editApplyScope === 'all'
+          ? existingNormalSiblings.filter(t => t.id !== editItem.id)
+          : existingNormalSiblings.filter((t, idx) =>
+              currentNormalIdx >= 0
+                ? idx > currentNormalIdx
+                : (t.installment_number || (t as any).installment_index || 0) > currentNormalInstNum
+            )
+        : [];
+
+    if (editIsRecurring && editRecurrenceMode === 'auto') {
+      const currentGroup = oldTx?.recurrence_group_id || generateUUID();
+      const cleanBaseDesc = stripRecurrenceSuffix(editDesc.trim()) || editCategory || (editType === 'income' ? 'Receita' : 'Despesa');
+
+      recurrenceFields = {
+        is_recurring: true,
+        recurrence_frequency: editRecurrenceFrequency,
+        recurrence_installments: null as any,
+        recurrence_group_id: currentGroup,
+        installment_number: currentNormalInstNum,
+        installment_total: null as any,
+        installment_index: currentNormalInstNum,
+        total_installments: null as any,
+        description: cleanBaseDesc,
+      };
+
+      if (normalSiblingsToUpdate.length > 0) {
+        const sibIds = normalSiblingsToUpdate.map(t => t.id);
+        if (chosenNormalCard) {
+          planningStorage.linkTxsToCard(effectiveUid, sibIds, chosenNormalCard.id);
+        } else {
+          sibIds.forEach(sid => planningStorage.unlinkTxFromCard(effectiveUid, sid));
+        }
+        const taggedSibDesc = editType === 'expense' ? tagDescWithCard(cleanBaseDesc) : cleanBaseDesc;
+        const sibIdSet = new Set(sibIds);
+        setTransactions(prev => {
+          const newState = prev.map(item =>
+            sibIdSet.has(item.id)
+              ? {
+                  ...item,
+                  amount: finalAmount,
+                  category: editCategory,
+                  description: taggedSibDesc,
+                  card_id: chosenNormalCard ? chosenNormalCard.id : null,
+                  card_name: chosenNormalCard ? chosenNormalCard.name : null,
+                  vehicle_id: finalVehicleId || undefined,
+                  ignore_in_charts: editIgnoreInCharts,
+                  recurrence_frequency: editRecurrenceFrequency,
+                }
+              : item
+          );
+          cacheManager.set(`transactions_${effectiveUid}`, newState, undefined, 'transactions');
+          return newState;
+        });
+        normalSiblingsToUpdate.forEach(subTx => {
+          syncQueueManager.enqueue('transactions', 'update', subTx.id, {
+            amount: finalAmount,
+            category: editCategory,
+            description: taggedSibDesc,
+            card_id: chosenNormalCard ? chosenNormalCard.id : null,
+            card_name: chosenNormalCard ? chosenNormalCard.name : null,
+            vehicle_id: finalVehicleId || undefined,
+            ignore_in_charts: editIgnoreInCharts,
+            recurrence_frequency: editRecurrenceFrequency,
+          });
+        });
+      }
+    } else if (editIsRecurring) {
+      const numInstallments = Math.max(2, Math.min(60, Number(editRecurrenceInstallments) || 12));
+
+      // Scenario A: Converting from single non-recurring to fixed installments (Nx)
+      if (!oldTx?.is_recurring) {
+        const recurrenceGroupId = generateUUID();
+        const cleanLabelNoSuffix = stripRecurrenceSuffix(editDesc.trim()) || editCategory || (editType === 'income' ? 'Receita' : 'Despesa');
+        const baseInstAmt = editRecurrenceAmountMode === 'total'
+          ? Math.floor((finalAmount / numInstallments) * 100) / 100
+          : finalAmount;
+        const remCents = editRecurrenceAmountMode === 'total'
+          ? Math.round((finalAmount - baseInstAmt * numInstallments) * 100) / 100
+          : 0;
+        const firstInstAmt = Math.round((baseInstAmt + remCents) * 100) / 100;
+        finalAmount = firstInstAmt;
 
         recurrenceFields = {
           is_recurring: true,
           recurrence_frequency: editRecurrenceFrequency,
-          recurrence_installments: null as any,
-          recurrence_group_id: currentGroup,
-          installment_number: currentInstNum,
-          installment_total: null as any,
-          installment_index: currentInstNum,
-          total_installments: null as any,
-          description: cleanBaseDesc,
+          recurrence_installments: numInstallments,
+          recurrence_group_id: recurrenceGroupId,
+          installment_number: 1,
+          installment_total: numInstallments,
+          installment_index: 1,
+          total_installments: numInstallments,
+          description: `${cleanLabelNoSuffix} (1/${numInstallments})`,
+          ...(chosenNormalCard ? { card_installments: numInstallments, card_installment_index: 1 } : {}),
         };
-      } else if (editIsRecurring) {
-        const numInstallments = Math.max(2, Math.min(60, Number(editRecurrenceInstallments) || 12));
-        
-        // Scenario A: Converting from single non-recurring to recurring
-        if (!oldTx?.is_recurring) {
-          const recurrenceGroupId = generateUUID();
-          const baseDesc = editDesc.trim() || editCategory || 'Despesa';
-          const inst1Desc = baseDesc.includes('(1/') ? baseDesc : `${baseDesc} (1/${numInstallments})`;
 
-          recurrenceFields = {
-            is_recurring: true,
-            recurrence_frequency: editRecurrenceFrequency,
-            recurrence_installments: numInstallments,
-            recurrence_group_id: recurrenceGroupId,
-            installment_number: 1,
-            installment_total: numInstallments,
-            installment_index: 1,
-            total_installments: numInstallments,
-            description: inst1Desc,
-          };
-
-          // Generate remaining (N - 1) future installments if requested
-          if (editGenerateFuture && numInstallments > 1) {
-            const futureBatch: Transaction[] = [];
+        if (editGenerateFuture && numInstallments > 1) {
+          if (editType === 'expense' && editUseReserve) {
             for (let i = 2; i <= numInstallments; i++) {
-              const instId = generateUUID();
               const instDate = calculateNextOccurrence(editDate, editRecurrenceFrequency, i - 1);
               const instDueDate = editPaymentStatus === 'pending' && effectiveDueDate
                 ? calculateNextOccurrence(effectiveDueDate, editRecurrenceFrequency, i - 1)
                 : instDate;
-              const instDesc = `${baseDesc} (${i}/${numInstallments})`;
+              extraFixedInstallmentsForReserve.push({
+                amount: baseInstAmt,
+                date: instDate,
+                dueDate: instDueDate,
+                description: tagDescWithCard(`${cleanLabelNoSuffix} (${i}/${numInstallments})`),
+                instNum: i,
+                numInstallments,
+                groupId: recurrenceGroupId,
+              });
+            }
+          } else {
+            const futureBatch: Transaction[] = [];
+            const futureCardIds: string[] = [];
+            for (let i = 2; i <= numInstallments; i++) {
+              const instId = generateUUID();
+              if (chosenNormalCard) futureCardIds.push(instId);
+              const instDate = calculateNextOccurrence(editDate, editRecurrenceFrequency, i - 1);
+              const instDueDate = editPaymentStatus === 'pending' && effectiveDueDate
+                ? calculateNextOccurrence(effectiveDueDate, editRecurrenceFrequency, i - 1)
+                : instDate;
+              const rawParcelDesc = `${cleanLabelNoSuffix} (${i}/${numInstallments})`;
+              const instDesc = editType === 'expense' ? tagDescWithCard(rawParcelDesc) : rawParcelDesc;
 
               const instPayload: Transaction = {
                 id: instId,
-                user_id: oldTx?.user_id || 'local',
-                type: 'expense',
-                amount: finalAmount,
+                user_id: effectiveUid,
+                type: editType,
+                amount: baseInstAmt,
                 date: instDate,
                 category: editCategory,
                 description: instDesc,
                 payment_status: 'pending',
                 payment_date: null,
                 due_date: instDueDate,
+                card_id: chosenNormalCard ? chosenNormalCard.id : null,
+                card_name: chosenNormalCard ? chosenNormalCard.name : null,
+                card_installments: chosenNormalCard ? numInstallments : null,
+                card_installment_index: chosenNormalCard ? i : null,
                 is_recurring: true,
                 recurrence_frequency: editRecurrenceFrequency,
                 recurrence_installments: numInstallments,
@@ -1343,105 +1819,216 @@ export function History() {
               syncQueueManager.enqueue('transactions', 'insert', instId, instPayload);
             }
 
+            if (chosenNormalCard && futureCardIds.length > 0) {
+              planningStorage.linkTxsToCard(effectiveUid, futureCardIds, chosenNormalCard.id);
+            }
+
             if (futureBatch.length > 0) {
               setTransactions(prev => {
                 const newState = [...futureBatch, ...prev];
-                cacheManager.set(`transactions_${oldTx?.user_id || 'local'}`, newState, undefined, 'transactions');
+                cacheManager.set(`transactions_${effectiveUid}`, newState, undefined, 'transactions');
                 return newState;
               });
             }
-            toast.success(`Despesa convertida em recorrente com ${numInstallments} parcelas geradas!`);
-          } else {
-            toast.success('Despesa configurada como recorrente.');
+            toast.success(`Lançamento convertido em ${numInstallments}x parcelas (${getFrequencyLabel(editRecurrenceFrequency)})!`);
           }
         } else {
-          // Scenario B: Updating an existing recurring series
-          const currentGroup = oldTx.recurrence_group_id;
-          const currentInstNumber = oldTx.installment_number || (oldTx as any).installment_index || 1;
-          
-          recurrenceFields = {
+          toast.success('Lançamento configurado como recorrente.');
+        }
+      } else {
+        // Scenario B: Updating an existing recurring series
+        const effectiveTotal = oldTx.installment_total || oldTx.recurrence_installments || existingNormalSiblings.length || numInstallments;
+        const cleanBaseDesc = stripRecurrenceSuffix(editDesc.trim()) || editCategory || (editType === 'income' ? 'Receita' : 'Despesa');
+        const currentParcelDesc = editDesc.includes(`(${currentNormalInstNum}/`)
+          ? editDesc.replace(/^\[Cart[ãa]o [^\]]+\]\s*/i, '').trim()
+          : `${cleanBaseDesc} (${currentNormalInstNum}/${effectiveTotal})`;
+
+        recurrenceFields = {
+          is_recurring: true,
+          recurrence_frequency: editRecurrenceFrequency,
+          recurrence_installments: effectiveTotal,
+          installment_number: currentNormalInstNum,
+          installment_total: effectiveTotal,
+          installment_index: currentNormalInstNum,
+          total_installments: effectiveTotal,
+          description: currentParcelDesc,
+        };
+
+        if (normalSiblingsToUpdate.length > 0) {
+          const sibIds = normalSiblingsToUpdate.map(t => t.id);
+          if (chosenNormalCard) {
+            planningStorage.linkTxsToCard(effectiveUid, sibIds, chosenNormalCard.id);
+          } else {
+            sibIds.forEach(sid => planningStorage.unlinkTxFromCard(effectiveUid, sid));
+          }
+
+          const updatedSubsequent = normalSiblingsToUpdate.map(subTx => {
+            const subInstNumber = subTx.installment_number || (subTx as any).installment_index || 1;
+            const rawSubDesc = `${cleanBaseDesc} (${subInstNumber}/${effectiveTotal})`;
+            const subDesc = editType === 'expense' ? tagDescWithCard(rawSubDesc) : rawSubDesc;
+
+            const updatedSub: Transaction = {
+              ...subTx,
+              amount: finalAmount,
+              category: editCategory,
+              description: subDesc,
+              card_id: chosenNormalCard ? chosenNormalCard.id : null,
+              card_name: chosenNormalCard ? chosenNormalCard.name : null,
+              vehicle_id: finalVehicleId || undefined,
+              ignore_in_charts: editIgnoreInCharts,
+              recurrence_frequency: editRecurrenceFrequency,
+              recurrence_installments: effectiveTotal,
+              installment_total: effectiveTotal,
+              total_installments: effectiveTotal,
+            };
+
+            syncQueueManager.enqueue('transactions', 'update', subTx.id, {
+              amount: finalAmount,
+              category: editCategory,
+              description: subDesc,
+              card_id: chosenNormalCard ? chosenNormalCard.id : null,
+              card_name: chosenNormalCard ? chosenNormalCard.name : null,
+              vehicle_id: finalVehicleId || undefined,
+              ignore_in_charts: editIgnoreInCharts,
+              recurrence_frequency: editRecurrenceFrequency,
+              recurrence_installments: effectiveTotal,
+              installment_total: effectiveTotal,
+              total_installments: effectiveTotal,
+            });
+
+            return updatedSub;
+          });
+
+          setTransactions(prev => {
+            const mapUpdated = new Map(updatedSubsequent.map(u => [u.id, u]));
+            const newState = prev.map(item => mapUpdated.get(item.id) || item);
+            cacheManager.set(`transactions_${effectiveUid}`, newState, undefined, 'transactions');
+            return newState;
+          });
+
+          toast.success(
+            editApplyScope === 'all'
+              ? `Todas as ${normalSiblingsToUpdate.length + 1} parcelas do grupo foram atualizadas!`
+              : `Atualizada esta e mais ${normalSiblingsToUpdate.length} parcela(s) futura(s) do grupo!`
+          );
+        }
+      }
+    } else if (oldTx?.is_recurring) {
+      // Scenario C: Turning recurrence off
+      recurrenceFields = {
+        is_recurring: false,
+        recurrence_frequency: null as any,
+        recurrence_installments: null as any,
+        recurrence_group_id: null as any,
+        installment_number: null as any,
+        installment_total: null as any,
+        installment_index: null as any,
+        total_installments: null as any,
+      };
+      toast.success('Recorrência desativada para este lançamento.');
+    }
+
+    const rawDescForCard = (recurrenceFields.description || editDesc || '').replace(/^\[Cart[ãa]o [^\]]+\]\s*/i, '').trim() || editCategory || 'Despesa';
+    const finalCardDesc = chosenNormalCard ? `[Cartão ${chosenNormalCard.name}] ${rawDescForCard}` : rawDescForCard;
+
+    // Cash -> Reserve conversion (with or without Card and with or without Fixed Nx!)
+    if (editType === 'expense' && editUseReserve) {
+      const targetRes = activeReservesList.find(r => r.id === editReserveId) || activeReservesList[0];
+      if (!targetRes) {
+        toast.error('Selecione uma reserva válida.');
+        setSaving(false);
+        return;
+      }
+
+      const cardIdsToLink: string[] = [];
+      const newRtId = await addReserveTransaction(
+        {
+          reserve_id: targetRes.id,
+          type: 'utilizacao',
+          amount: finalAmount,
+          date: editDate,
+          due_date: effectiveDueDate || editDate,
+          category: editCategory,
+          description: finalCardDesc,
+          payment_status: effectivePaymentStatus,
+          payment_date: effectivePaymentDate,
+          vehicle_id: finalVehicleId || undefined,
+          ignore_in_charts: editIgnoreInCharts,
+          is_recurring: Boolean(recurrenceFields.is_recurring),
+          recurrence_frequency: recurrenceFields.recurrence_frequency,
+          recurrence_installments: recurrenceFields.recurrence_installments ?? null,
+          recurrence_group_id: recurrenceFields.recurrence_group_id ?? null,
+          installment_number: recurrenceFields.installment_number ?? null,
+          installment_total: recurrenceFields.installment_total ?? null,
+          installment_index: (recurrenceFields as any).installment_index ?? null,
+          total_installments: (recurrenceFields as any).total_installments ?? null,
+        },
+        { silent: true }
+      );
+      if (chosenNormalCard && newRtId) cardIdsToLink.push(newRtId);
+
+      for (const futureInst of extraFixedInstallmentsForReserve) {
+        const futureRtId = await addReserveTransaction(
+          {
+            reserve_id: targetRes.id,
+            type: 'utilizacao',
+            amount: futureInst.amount,
+            date: futureInst.date,
+            due_date: futureInst.dueDate,
+            category: editCategory,
+            description: futureInst.description,
+            payment_status: 'pending',
+            payment_date: null,
+            vehicle_id: finalVehicleId || undefined,
+            ignore_in_charts: editIgnoreInCharts,
             is_recurring: true,
             recurrence_frequency: editRecurrenceFrequency,
-            recurrence_installments: numInstallments,
-            installment_number: currentInstNumber,
-            installment_total: numInstallments,
-            installment_index: currentInstNumber,
-            total_installments: numInstallments,
-          };
-
-          // Apply changes to subsequent installments in group if requested
-          if (editApplyToFuture && currentGroup) {
-            const subsequentTxs = transactions.filter(
-              t => t.recurrence_group_id === currentGroup && 
-                   t.id !== oldTx.id && 
-                   (t.installment_number || (t as any).installment_index || 0) > currentInstNumber
-            );
-
-            if (subsequentTxs.length > 0) {
-              const updatedSubsequent = subsequentTxs.map(subTx => {
-                const subInstNumber = subTx.installment_number || (subTx as any).installment_index || 2;
-                const cleanBaseDesc = (editDesc.trim() || editCategory || 'Despesa').replace(/\s*\(\d+\/\d+\)$/, '');
-                const subDesc = `${cleanBaseDesc} (${subInstNumber}/${numInstallments})`;
-
-                const updatedSub: Transaction = {
-                  ...subTx,
-                  amount: finalAmount,
-                  category: editCategory,
-                  description: subDesc,
-                  vehicle_id: finalVehicleId || undefined,
-                  ignore_in_charts: editIgnoreInCharts,
-                  recurrence_frequency: editRecurrenceFrequency,
-                  recurrence_installments: numInstallments,
-                  installment_total: numInstallments,
-                  total_installments: numInstallments,
-                };
-
-                syncQueueManager.enqueue('transactions', 'update', subTx.id, {
-                  amount: finalAmount,
-                  category: editCategory,
-                  description: subDesc,
-                  vehicle_id: finalVehicleId || undefined,
-                  ignore_in_charts: editIgnoreInCharts,
-                  recurrence_frequency: editRecurrenceFrequency,
-                  recurrence_installments: numInstallments,
-                  installment_total: numInstallments,
-                  total_installments: numInstallments,
-                });
-
-                return updatedSub;
-              });
-
-              setTransactions(prev => {
-                const mapUpdated = new Map(updatedSubsequent.map(u => [u.id, u]));
-                const newState = prev.map(item => mapUpdated.get(item.id) || item);
-                cacheManager.set(`transactions_${oldTx?.user_id || 'local'}`, newState, undefined, 'transactions');
-                return newState;
-              });
-
-              toast.success(`Atualizada esta e mais ${subsequentTxs.length} parcelas futuras do grupo!`);
-            }
-          }
-        }
-      } else if (oldTx?.is_recurring) {
-        // Scenario C: Turning recurrence off
-        recurrenceFields = {
-          is_recurring: false,
-          recurrence_frequency: null as any,
-          recurrence_installments: null as any,
-          recurrence_group_id: null as any,
-          installment_number: null as any,
-          installment_total: null as any,
-          installment_index: null as any,
-          total_installments: null as any,
-        };
-        toast.success('Recorrência desativada para este lançamento.');
+            recurrence_installments: futureInst.numInstallments,
+            recurrence_group_id: futureInst.groupId,
+            installment_number: futureInst.instNum,
+            installment_total: futureInst.numInstallments,
+            installment_index: futureInst.instNum,
+            total_installments: futureInst.numInstallments,
+          },
+          { silent: true }
+        );
+        if (chosenNormalCard && futureRtId) cardIdsToLink.push(futureRtId);
       }
+
+      await deleteTransaction(editItem.id, { silent: true });
+      planningStorage.unlinkTxFromCard(effectiveUid, editItem.id);
+      if (chosenNormalCard && cardIdsToLink.length > 0) {
+        planningStorage.linkTxsToCard(effectiveUid, cardIdsToLink, chosenNormalCard.id);
+      }
+      setTxCardMap(planningStorage.getTxCardMap(effectiveUid));
+
+      toast.success(
+        extraFixedInstallmentsForReserve.length > 0
+          ? `Transferido para a reserva "${targetRes.name}" em ${extraFixedInstallmentsForReserve.length + 1}x parcelas!`
+          : chosenNormalCard
+            ? `Lançamento vinculado ao ${chosenNormalCard.name} e transferido para a reserva "${targetRes.name}"!`
+            : `Conta transferida para a reserva "${targetRes.name}"!`
+      );
+      setEditItem(null);
+      setEditVehicleId('');
+      setEditIgnoreInCharts(false);
+      setShowEditVehicleSelect(false);
+      await refreshData(true);
+      setSaving(false);
+      return;
     }
+
+    if (chosenNormalCard) {
+      planningStorage.linkTxsToCard(effectiveUid, [editItem.id], chosenNormalCard.id);
+    } else {
+      planningStorage.unlinkTxFromCard(effectiveUid, editItem.id);
+    }
+    setTxCardMap(planningStorage.getTxCardMap(effectiveUid));
 
     const txUpdatePayload = {
       amount: finalAmount,
       category: editCategory,
-      description: recurrenceFields.description || editDesc,
+      description: editType === 'expense' ? finalCardDesc : (recurrenceFields.description || editDesc),
       type: editType,
       date: editDate,
       start_km: editStartKm ? Number(editStartKm) : null,
@@ -1451,6 +2038,8 @@ export function History() {
       payment_status: effectivePaymentStatus,
       payment_date: effectivePaymentDate,
       due_date: effectiveDueDate,
+      card_id: chosenNormalCard ? chosenNormalCard.id : null,
+      card_name: chosenNormalCard ? chosenNormalCard.name : null,
       vehicle_id: finalVehicleId,
       ignore_in_charts: editIgnoreInCharts,
       ...recurrenceFields,
@@ -1460,21 +2049,20 @@ export function History() {
 
     // If edited while already 'paid' and newly configured as auto-renewing, spawn next pending occurrence
     if (
-      editType === 'expense' &&
       editIsRecurring &&
       editRecurrenceMode === 'auto' &&
       effectivePaymentStatus === 'paid' &&
       oldTx?.payment_status !== 'pending' &&
       recurrenceFields.recurrence_group_id
     ) {
-      const uid = (await getEffectiveUserId()) || oldTx?.user_id || 'local';
+      const uid = effectiveUid;
       const baseDate = (effectiveDueDate || editDate || getTodayLocalDateStr()).split('T')[0];
       const nextDate = calculateNextOccurrence(baseDate, editRecurrenceFrequency, 1);
       const mergedSource: Transaction = {
         ...(oldTx || ({} as Transaction)),
         id: editItem.id,
         user_id: uid,
-        type: 'expense',
+        type: editType,
         amount: finalAmount,
         date: editDate,
         due_date: effectiveDueDate,
@@ -1482,6 +2070,8 @@ export function History() {
         description: txUpdatePayload.description || editCategory,
         payment_status: 'paid',
         payment_date: effectivePaymentDate,
+        card_id: chosenNormalCard ? chosenNormalCard.id : null,
+        card_name: chosenNormalCard ? chosenNormalCard.name : null,
         vehicle_id: finalVehicleId || undefined,
         ignore_in_charts: editIgnoreInCharts,
         is_recurring: true,
@@ -1498,6 +2088,10 @@ export function History() {
           return newState;
         });
         syncQueueManager.enqueue('transactions', 'insert', nextTx.id, nextTx);
+        if (chosenNormalCard) {
+          planningStorage.linkTxsToCard(uid, [nextTx.id], chosenNormalCard.id);
+          setTxCardMap(planningStorage.getTxCardMap(uid));
+        }
         toast.info(`Próxima conta recorrente agendada para ${format(parseLocalDate(nextDate), 'dd/MM/yyyy')}!`);
       }
     }
@@ -1787,6 +2381,8 @@ export function History() {
                 : (isUtilizacao
                     ? (rt.category || matchedRes?.default_use_category || 'Manutenção')
                     : 'Aporte Reserva'));
+        const linkedCardId = extractCardTagFromTransaction(rt as any, txCardMap, cards);
+        const linkedCardObj = linkedCardId ? cards.find(c => c.id === linkedCardId) || null : null;
         return {
           id: rt.id,
           user_id: rt.user_id,
@@ -1810,6 +2406,8 @@ export function History() {
           created_at: rt.created_at,
           originalCategory: rt.category,
           linkedInvestmentId: rt.linked_investment_id,
+          card_id: linkedCardId,
+          card_name: linkedCardObj?.name || null,
           payment_status: isSaleSettlement ? (isSettlementPending ? 'pending' : 'paid') : (rt.payment_status || 'paid'),
           payment_date: rt.payment_date,
           due_date: isSaleSettlement ? settlementDate : rt.due_date,
@@ -1913,7 +2511,7 @@ export function History() {
       });
 
     return [...transactions, ...reserveTxsAsVirtual, ...investmentTxsAsVirtual, ...dividendTxsAsVirtual];
-  }, [transactions, reserveTransactions, reserves, investmentTransactions, dividends]);
+  }, [transactions, reserveTransactions, reserves, investmentTransactions, dividends, cards, txCardMap]);
 
   const allTransactionsAdjusted = useMemo(() => {
     const base = adjustTransactionsForReserves(allTransactions);
@@ -4056,6 +4654,21 @@ export function History() {
                     Uso Cofrinho
                   </span>
                 )}
+
+                {(() => {
+                  const rowCardId = extractCardTagFromTransaction(t as any, txCardMap, cards);
+                  const rowCardObj = rowCardId ? cards.find(c => c.id === rowCardId) : null;
+                  if (!rowCardObj) return null;
+                  return (
+                    <span
+                      className="text-[9px] font-black px-1.5 py-0.5 rounded-md text-white inline-flex items-center gap-1"
+                      style={{ backgroundColor: rowCardObj.color }}
+                    >
+                      <CreditCard className="w-2.5 h-2.5" />
+                      <span>{rowCardObj.name}</span>
+                    </span>
+                  );
+                })()}
 
                 {(t as any).isInvestmentTx && !isSaleSettlement && (
                   <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-md uppercase tracking-wider ${
@@ -6547,45 +7160,84 @@ export function History() {
                 </div>
               </div>
 
-              {/* Reserve Selector */}
-              <div className="space-y-2">
-                <label className="text-xs font-semibold text-muted-foreground uppercase">Reserva Destino/Origem</label>
-                <div className="grid grid-cols-2 gap-2">
-                  {(reserves || []).map(r => {
-                    const isSelected = editReserveId === r.id;
-                    const Icon = iconOptions[r.icon as keyof typeof iconOptions] || PiggyBank;
-                    return (
-                      <button
-                        key={r.id}
-                        type="button"
-                        onClick={() => {
-                          setEditReserveId(r.id);
-                          if (r.require_category_on_use === false) {
-                            setEditReserveCategory(r.default_use_category || r.name);
-                          }
+              {/* Reserve Selector (for Aporte / Rendimento only; Retirada uses Forma de Pagamento below like normal expenses) */}
+              {editReserveTxType !== 'utilizacao' && (
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                    Reserva Destino/Origem
+                  </label>
+                  <Select
+                    value={editReserveId}
+                    onValueChange={(val) => {
+                      setEditReserveId(val);
+                      const chosenRes = (reserves || []).find(r => r.id === val);
+                      if (chosenRes && chosenRes.require_category_on_use === false) {
+                        setEditReserveCategory(chosenRes.default_use_category || chosenRes.name);
+                      }
+                    }}
+                  >
+                    <SelectTrigger className="h-9 rounded-lg bg-card border-border text-xs font-bold">
+                      <SelectValue placeholder="Selecione a reserva...">
+                        {val => {
+                          const found = (reserves || []).find(r => r.id === val);
+                          return found ? `${found.name} (Saldo: ${formatCurrency(found.saldo_atual || 0)})` : 'Selecione a reserva...';
                         }}
-                        className={`flex flex-col items-center justify-center p-3 rounded-xl border transition-all duration-200 cursor-pointer gap-2 ${
-                          isSelected 
-                            ? 'bg-primary/10 border-primary text-primary shadow-xs scale-[1.02]' 
-                            : 'bg-card border-border text-muted-foreground hover:bg-muted/40 hover:text-foreground'
-                        }`}
-                      >
-                        <div 
-                          className="p-2 rounded-lg flex items-center justify-center text-white shrink-0 shadow-sm"
-                          style={{ backgroundColor: isSelected ? r.color : `${r.color}99` }}
-                        >
-                          <Icon className="w-4 h-4" />
-                        </div>
-                        <div className="text-center min-w-0 w-full">
-                          <span className="block text-xs font-bold line-clamp-1">{r.name}</span>
-                          <span className="block text-[10px] font-semibold opacity-75 mt-0.5">{formatCurrency(r.saldo_atual || 0)}</span>
-                        </div>
-                      </button>
-                    );
-                  })}
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(reserves || []).filter(r => r.status !== 'inactive' || r.id === editReserveId).map(r => (
+                        <SelectItem key={r.id} value={r.id}>
+                          {r.name} • Saldo: {formatCurrency(r.saldo_atual || 0)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {!editReserveId && <p className="text-[10px] text-rose-500 font-semibold px-1">Por favor, selecione uma reserva para continuar.</p>}
                 </div>
-                {!editReserveId && <p className="text-[10px] text-rose-500 font-semibold px-1">Por favor, selecione uma reserva para continuar.</p>}
-              </div>
+              )}
+
+              {editReserveTxType === 'utilizacao' && editGroupSiblings.length > 1 && (
+                <div className="p-3 rounded-xl border border-indigo-500/30 bg-indigo-500/[0.06] space-y-2">
+                  <span className="text-[10px] font-extrabold uppercase tracking-wider text-indigo-700 dark:text-indigo-300 block">
+                    Escopo da Edição ({editGroupSiblings.length} lançamentos no grupo)
+                  </span>
+                  <div className="grid grid-cols-3 gap-1.5 p-1 rounded-xl bg-muted/60 border border-border/50">
+                    <button
+                      type="button"
+                      onClick={() => setEditApplyScope('single')}
+                      className={`py-1.5 px-1.5 rounded-lg text-[10px] font-black transition-colors cursor-pointer ${
+                        editApplyScope === 'single'
+                          ? 'bg-indigo-600 text-white shadow-xs'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      Só este
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEditApplyScope('future')}
+                      className={`py-1.5 px-1.5 rounded-lg text-[10px] font-black transition-colors cursor-pointer ${
+                        editApplyScope === 'future'
+                          ? 'bg-indigo-600 text-white shadow-xs'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      Este e próximos
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEditApplyScope('all')}
+                      className={`py-1.5 px-1.5 rounded-lg text-[10px] font-black transition-colors cursor-pointer ${
+                        editApplyScope === 'all'
+                          ? 'bg-indigo-600 text-white shadow-xs'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      Todos ({editGroupSiblings.length})
+                    </button>
+                  </div>
+                </div>
+              )}
 
               <div className="grid grid-cols-2 gap-4">
                 {/* Amount */}
@@ -6692,7 +7344,9 @@ export function History() {
                         <CalendarClock className="w-3.5 h-3.5 text-primary" /> Status do Pagamento
                       </label>
                       <span className="text-[10px] text-muted-foreground">
-                        {editPaymentStatus === 'paid' ? 'Abatido da reserva' : 'Pendente na reserva'}
+                        {editUseReserve
+                          ? (editPaymentStatus === 'paid' ? 'Abatido da reserva' : 'Pendente na reserva')
+                          : (editPaymentStatus === 'paid' ? 'Liquidado no caixa' : 'Pendente de quitação')}
                       </span>
                     </div>
 
@@ -6812,6 +7466,160 @@ export function History() {
                       </div>
                     )}
                   </div>
+                </div>
+              )}
+
+              {/* Card & Payment Source Switcher inside Reserve Utilização Edit Modal */}
+              {editReserveTxType === 'utilizacao' && (cards.length > 0 || activeReservesList.length > 0) && (
+                <div className="space-y-2.5 pt-2 border-t border-border/60">
+                  {cards.length > 0 && (() => {
+                    const selectedEditCardObj = editCardId !== '__none__' ? cards.find(c => c.id === editCardId) || null : null;
+                    const baseRefDate = (editCustomSecondaryDate && editDueDate ? editDueDate : editDate) || editOriginalDate || getTodayLocalDateStr();
+                    const cycleDue = selectedEditCardObj
+                      ? computeCardStatementDueDate(editOriginalDate || baseRefDate, selectedEditCardObj.closingDay, selectedEditCardObj.dueDay, 1).statementDueDate
+                      : null;
+                    const nextCycleDue = cycleDue ? calculateNextOccurrence(cycleDue, 'monthly', 1) : null;
+                    return (
+                      <div className="p-3 rounded-xl border border-indigo-500/25 bg-indigo-500/[0.05] space-y-2">
+                        <label className="text-[10px] font-extrabold uppercase tracking-wider text-indigo-700 dark:text-indigo-300 flex items-center gap-1.5">
+                          <CreditCard className="w-3.5 h-3.5" />
+                          Vincular à Fatura do Cartão
+                        </label>
+                        <Select
+                          value={editCardId}
+                          onValueChange={newCardId => {
+                            const prevCardId = editCardId;
+                            setEditCardId(newCardId);
+                            if (newCardId !== '__none__' && prevCardId === '__none__') {
+                              const cObj = cards.find(c => c.id === newCardId);
+                              if (cObj) {
+                                const { statementDueDate } = computeCardStatementDueDate(
+                                  editOriginalDate || editDate || getTodayLocalDateStr(),
+                                  cObj.closingDay,
+                                  cObj.dueDay,
+                                  1
+                                );
+                                setEditDate(statementDueDate);
+                                setEditDueDate(statementDueDate);
+                                setEditPaymentDate(statementDueDate);
+                              }
+                            } else if (newCardId === '__none__' && editOriginalDate) {
+                              setEditDate(editOriginalDate);
+                              setEditDueDate(editOriginalDate);
+                            }
+                          }}
+                        >
+                          <SelectTrigger className="h-9 rounded-lg bg-card border-border text-xs font-bold">
+                            <SelectValue placeholder="Nenhum (Conta avulsa)">
+                              {val => {
+                                if (!val || val === '__none__') return 'Nenhum (Fora de cartão)';
+                                const c = cards.find(item => item.id === val);
+                                return c ? `${c.name} (Vence dia ${c.dueDay})` : 'Nenhum';
+                              }}
+                            </SelectValue>
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="__none__">Nenhum (Fora de cartão)</SelectItem>
+                            {cards.map(c => (
+                              <SelectItem key={c.id} value={c.id}>
+                                {c.name} (Fecha {c.closingDay} • Vence {c.dueDay})
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        {selectedEditCardObj && (
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            {cycleDue && (
+                              <button
+                                type="button"
+                                onClick={() => { setEditDate(cycleDue); setEditDueDate(cycleDue); setEditPaymentDate(cycleDue); }}
+                                className={`px-2 py-0.5 rounded-md border text-[10px] font-bold cursor-pointer ${editDate === cycleDue ? 'border-indigo-500 bg-indigo-500/15 text-indigo-600 dark:text-indigo-300' : 'border-border/60 bg-card text-muted-foreground'}`}
+                              >
+                                Fatura do ciclo ({format(parseLocalDate(cycleDue), 'dd/MM')})
+                              </button>
+                            )}
+                            {nextCycleDue && (
+                              <button
+                                type="button"
+                                onClick={() => { setEditDate(nextCycleDue); setEditDueDate(nextCycleDue); setEditPaymentDate(nextCycleDue); }}
+                                className={`px-2 py-0.5 rounded-md border text-[10px] font-bold cursor-pointer ${editDate === nextCycleDue ? 'border-indigo-500 bg-indigo-500/15 text-indigo-600 dark:text-indigo-300' : 'border-border/60 bg-card text-muted-foreground'}`}
+                              >
+                                Próx. fatura ({format(parseLocalDate(nextCycleDue), 'dd/MM')})
+                              </button>
+                            )}
+                            {editOriginalDate && editOriginalDate !== cycleDue && (
+                              <button
+                                type="button"
+                                onClick={() => { setEditDate(editOriginalDate); setEditDueDate(editOriginalDate); setEditPaymentDate(editOriginalDate); }}
+                                className={`px-2 py-0.5 rounded-md border text-[10px] font-bold cursor-pointer ${editDate === editOriginalDate ? 'border-indigo-500 bg-indigo-500/15 text-indigo-600 dark:text-indigo-300' : 'border-border/60 bg-card text-muted-foreground'}`}
+                              >
+                                Original ({format(parseLocalDate(editOriginalDate), 'dd/MM')})
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+
+                  {((reserves || []).filter(r => r.status !== 'inactive' || r.id === editReserveId)).length > 0 && (
+                    <div className="p-3 rounded-xl border border-amber-500/30 bg-amber-500/[0.06] space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[10px] font-extrabold uppercase tracking-wider text-foreground flex items-center gap-1.5">
+                          <PiggyBank className="w-3.5 h-3.5 text-amber-500" />
+                          Forma de Pagamento
+                        </span>
+                        <div className="grid grid-cols-2 gap-1 p-0.5 rounded-lg bg-muted/60 border border-border/50">
+                          <button
+                            type="button"
+                            onClick={() => setEditUseReserve(false)}
+                            className={`px-2.5 py-1 rounded-md text-[10px] font-black transition-colors cursor-pointer ${
+                              !editUseReserve ? 'bg-card text-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground'
+                            }`}
+                          >
+                            Caixa Livre
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setEditUseReserve(true)}
+                            className={`px-2.5 py-1 rounded-md text-[10px] font-black transition-colors cursor-pointer ${
+                              editUseReserve ? 'bg-amber-500 text-zinc-950 shadow-xs' : 'text-muted-foreground hover:text-foreground'
+                            }`}
+                          >
+                            Usar Reserva
+                          </button>
+                        </div>
+                      </div>
+                      {editUseReserve && (
+                        <Select
+                          value={editReserveId}
+                          onValueChange={(val) => {
+                            setEditReserveId(val);
+                            const chosenRes = (reserves || []).find(r => r.id === val);
+                            if (chosenRes && chosenRes.require_category_on_use === false) {
+                              setEditReserveCategory(chosenRes.default_use_category || chosenRes.name);
+                            }
+                          }}
+                        >
+                          <SelectTrigger className="h-9 rounded-lg bg-card border-border text-xs font-bold">
+                            <SelectValue placeholder="Selecione a reserva...">
+                              {val => {
+                                const found = (reserves || []).find(r => r.id === val);
+                                return found ? `${found.name} (Saldo: ${formatCurrency(found.saldo_atual || 0)})` : 'Selecione a reserva...';
+                              }}
+                            </SelectValue>
+                          </SelectTrigger>
+                          <SelectContent>
+                            {(reserves || []).filter(r => r.status !== 'inactive' || r.id === editReserveId).map(r => (
+                              <SelectItem key={r.id} value={r.id}>
+                                {r.name} • Saldo: {formatCurrency(r.saldo_atual || 0)}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -6967,40 +7775,72 @@ export function History() {
                             ))}
                           </div>
 
-                          {!editItem?.is_recurring ? (
-                            <label className="flex items-start gap-2 p-2.5 bg-primary/5 rounded-lg border border-primary/15 cursor-pointer">
-                              <input
-                                type="checkbox"
-                                checked={editGenerateFuture}
-                                onChange={(e) => setEditGenerateFuture(e.target.checked)}
-                                className="h-4 w-4 mt-0.5 rounded border-border text-primary focus:ring-primary cursor-pointer"
-                              />
-                              <div className="space-y-0.5">
-                                <span className="text-xs font-bold text-foreground">
-                                  Gerar as próximas parcelas automaticamente no extrato
-                                </span>
-                                <p className="text-[9.5px] text-muted-foreground leading-snug">
-                                  Cria as {(Number(editRecurrenceInstallments) || 12) - 1} parcelas futuras com status "Pendente" e vencimentos programados por {getFrequencyLabel(editRecurrenceFrequency)}.
-                                </p>
+                          {editGroupSiblings.length <= 1 && (
+                            <div className="space-y-2">
+                              <div className="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-muted/50 border border-border/50">
+                                <button
+                                  type="button"
+                                  onClick={() => setEditRecurrenceAmountMode('installment')}
+                                  className={`py-1 px-2 rounded-lg text-[10px] font-black transition-colors cursor-pointer ${
+                                    editRecurrenceAmountMode === 'installment'
+                                      ? 'bg-card text-foreground shadow-xs'
+                                      : 'text-muted-foreground hover:text-foreground'
+                                  }`}
+                                >
+                                  Valor é da Parcela
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setEditRecurrenceAmountMode('total')}
+                                  className={`py-1 px-2 rounded-lg text-[10px] font-black transition-colors cursor-pointer ${
+                                    editRecurrenceAmountMode === 'total'
+                                      ? 'bg-card text-foreground shadow-xs'
+                                      : 'text-muted-foreground hover:text-foreground'
+                                  }`}
+                                >
+                                  Dividir Total em {Math.max(2, Number(editRecurrenceInstallments) || 12)}x
+                                </button>
                               </div>
-                            </label>
-                          ) : (
-                            <label className="flex items-start gap-2 p-2.5 bg-primary/5 rounded-lg border border-primary/15 cursor-pointer">
-                              <input
-                                type="checkbox"
-                                checked={editApplyToFuture}
-                                onChange={(e) => setEditApplyToFuture(e.target.checked)}
-                                className="h-4 w-4 mt-0.5 rounded border-border text-primary focus:ring-primary cursor-pointer"
-                              />
-                              <div className="space-y-0.5">
-                                <span className="text-xs font-bold text-foreground">
-                                  Aplicar valor e categoria às próximas parcelas deste grupo
-                                </span>
-                                <p className="text-[9.5px] text-muted-foreground leading-snug">
-                                  Mantém todas as parcelas futuras sincronizadas com as novas configurações.
-                                </p>
-                              </div>
-                            </label>
+
+                              {Number(editAmount) > 0 && (() => {
+                                const nInst = Math.max(2, Math.min(60, Number(editRecurrenceInstallments) || 12));
+                                const rawVal = Number(editAmount) || 0;
+                                const perInst = editRecurrenceAmountMode === 'total'
+                                  ? Math.floor((rawVal / nInst) * 100) / 100
+                                  : rawVal;
+                                const totalAmt = editRecurrenceAmountMode === 'total'
+                                  ? rawVal
+                                  : Math.round(rawVal * nInst * 100) / 100;
+                                return (
+                                  <p className="text-[10px] text-indigo-700 dark:text-indigo-300 font-semibold bg-indigo-500/10 border border-indigo-500/20 rounded-lg px-2.5 py-1.5">
+                                    Gera <strong>{nInst}x</strong> de <strong className="font-mono">{formatCurrency(perInst)}</strong> (Total: <strong className="font-mono">{formatCurrency(totalAmt)}</strong>)
+                                  </p>
+                                );
+                              })()}
+
+                              <label className="flex items-start gap-2 p-2.5 bg-primary/5 rounded-lg border border-primary/15 cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={editGenerateFuture}
+                                  onChange={(e) => setEditGenerateFuture(e.target.checked)}
+                                  className="h-4 w-4 mt-0.5 rounded border-border text-primary focus:ring-primary cursor-pointer"
+                                />
+                                <div className="space-y-0.5">
+                                  <span className="text-xs font-bold text-foreground">
+                                    Gerar as próximas parcelas automaticamente no extrato
+                                  </span>
+                                  <p className="text-[9.5px] text-muted-foreground leading-snug">
+                                    Cria as {(Number(editRecurrenceInstallments) || 12) - 1} parcelas futuras com status "Pendente" e vencimentos programados por {getFrequencyLabel(editRecurrenceFrequency)}.
+                                  </p>
+                                </div>
+                              </label>
+                            </div>
+                          )}
+
+                          {editGroupSiblings.length > 1 && (
+                            <p className="text-[10px] text-indigo-700 dark:text-indigo-300 font-semibold bg-indigo-500/10 border border-indigo-500/20 rounded-lg p-2">
+                              Escopo selecionado no topo: <strong>{editApplyScope === 'all' ? `Todas as ${editGroupSiblings.length} parcelas` : editApplyScope === 'future' ? 'Esta e as próximas' : 'Somente esta parcela'}</strong>.
+                            </p>
                           )}
                         </>
                       )}
@@ -7056,6 +7896,49 @@ export function History() {
                   Despesa
                 </button>
               </div>
+
+              {editGroupSiblings.length > 1 && (
+                <div className="p-3 rounded-xl border border-indigo-500/30 bg-indigo-500/[0.06] space-y-2">
+                  <span className="text-[10px] font-extrabold uppercase tracking-wider text-indigo-700 dark:text-indigo-300 block">
+                    Escopo da Edição ({editGroupSiblings.length} lançamentos no grupo)
+                  </span>
+                  <div className="grid grid-cols-3 gap-1.5 p-1 rounded-xl bg-muted/60 border border-border/50">
+                    <button
+                      type="button"
+                      onClick={() => setEditApplyScope('single')}
+                      className={`py-1.5 px-1.5 rounded-lg text-[10px] font-black transition-colors cursor-pointer ${
+                        editApplyScope === 'single'
+                          ? 'bg-indigo-600 text-white shadow-xs'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      Só este
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEditApplyScope('future')}
+                      className={`py-1.5 px-1.5 rounded-lg text-[10px] font-black transition-colors cursor-pointer ${
+                        editApplyScope === 'future'
+                          ? 'bg-indigo-600 text-white shadow-xs'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      Este e próximos
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEditApplyScope('all')}
+                      className={`py-1.5 px-1.5 rounded-lg text-[10px] font-black transition-colors cursor-pointer ${
+                        editApplyScope === 'all'
+                          ? 'bg-indigo-600 text-white shadow-xs'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      Todos ({editGroupSiblings.length})
+                    </button>
+                  </div>
+                </div>
+              )}
 
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1 relative">
@@ -7327,8 +8210,153 @@ export function History() {
                 </div>
               )}
 
-              {/* Recurrence & Installments Section for Expense */}
-              {editType === 'expense' && (
+              {/* Card & Reserve Source Switcher inside Normal Expense Edit Modal */}
+              {editType === 'expense' && (cards.length > 0 || activeReservesList.length > 0) && (
+                <div className="space-y-2.5">
+                  {cards.length > 0 && (() => {
+                    const selectedEditCardObj = editCardId !== '__none__' ? cards.find(c => c.id === editCardId) || null : null;
+                    const baseRefDate = editOriginalDate || editDate || getTodayLocalDateStr();
+                    const cycleDue = selectedEditCardObj
+                      ? computeCardStatementDueDate(baseRefDate, selectedEditCardObj.closingDay, selectedEditCardObj.dueDay, 1).statementDueDate
+                      : null;
+                    const nextCycleDue = cycleDue ? calculateNextOccurrence(cycleDue, 'monthly', 1) : null;
+                    return (
+                      <div className="p-3 rounded-xl border border-indigo-500/25 bg-indigo-500/[0.05] space-y-2">
+                        <label className="text-[10px] font-extrabold uppercase tracking-wider text-indigo-700 dark:text-indigo-300 flex items-center gap-1.5">
+                          <CreditCard className="w-3.5 h-3.5" />
+                          Vincular à Fatura do Cartão
+                        </label>
+                        <Select
+                          value={editCardId}
+                          onValueChange={newCardId => {
+                            const prevCardId = editCardId;
+                            setEditCardId(newCardId);
+                            if (newCardId !== '__none__' && prevCardId === '__none__') {
+                              const cObj = cards.find(c => c.id === newCardId);
+                              if (cObj) {
+                                const { statementDueDate } = computeCardStatementDueDate(
+                                  editOriginalDate || editDate || getTodayLocalDateStr(),
+                                  cObj.closingDay,
+                                  cObj.dueDay,
+                                  1
+                                );
+                                setEditDate(statementDueDate);
+                                setEditDueDate(statementDueDate);
+                                setEditPaymentDate(statementDueDate);
+                              }
+                            } else if (newCardId === '__none__' && editOriginalDate) {
+                              setEditDate(editOriginalDate);
+                              setEditDueDate(editOriginalDate);
+                            }
+                          }}
+                        >
+                          <SelectTrigger className="h-9 rounded-lg bg-card border-border text-xs font-bold">
+                            <SelectValue placeholder="Nenhum (Conta avulsa)">
+                              {val => {
+                                if (!val || val === '__none__') return 'Nenhum (Conta comum)';
+                                const c = cards.find(item => item.id === val);
+                                return c ? `${c.name} (Vence dia ${c.dueDay})` : 'Nenhum';
+                              }}
+                            </SelectValue>
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="__none__">Nenhum (Conta comum)</SelectItem>
+                            {cards.map(c => (
+                              <SelectItem key={c.id} value={c.id}>
+                                {c.name} (Fecha {c.closingDay} • Vence {c.dueDay})
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        {selectedEditCardObj && (
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            {cycleDue && (
+                              <button
+                                type="button"
+                                onClick={() => { setEditDate(cycleDue); setEditDueDate(cycleDue); setEditPaymentDate(cycleDue); }}
+                                className={`px-2 py-0.5 rounded-md border text-[10px] font-bold cursor-pointer ${editDate === cycleDue ? 'border-indigo-500 bg-indigo-500/15 text-indigo-600 dark:text-indigo-300' : 'border-border/60 bg-card text-muted-foreground'}`}
+                              >
+                                Fatura do ciclo ({format(parseLocalDate(cycleDue), 'dd/MM')})
+                              </button>
+                            )}
+                            {nextCycleDue && (
+                              <button
+                                type="button"
+                                onClick={() => { setEditDate(nextCycleDue); setEditDueDate(nextCycleDue); setEditPaymentDate(nextCycleDue); }}
+                                className={`px-2 py-0.5 rounded-md border text-[10px] font-bold cursor-pointer ${editDate === nextCycleDue ? 'border-indigo-500 bg-indigo-500/15 text-indigo-600 dark:text-indigo-300' : 'border-border/60 bg-card text-muted-foreground'}`}
+                              >
+                                Próx. fatura ({format(parseLocalDate(nextCycleDue), 'dd/MM')})
+                              </button>
+                            )}
+                            {editOriginalDate && editOriginalDate !== cycleDue && (
+                              <button
+                                type="button"
+                                onClick={() => { setEditDate(editOriginalDate); setEditDueDate(editOriginalDate); setEditPaymentDate(editOriginalDate); }}
+                                className={`px-2 py-0.5 rounded-md border text-[10px] font-bold cursor-pointer ${editDate === editOriginalDate ? 'border-indigo-500 bg-indigo-500/15 text-indigo-600 dark:text-indigo-300' : 'border-border/60 bg-card text-muted-foreground'}`}
+                              >
+                                Original ({format(parseLocalDate(editOriginalDate), 'dd/MM')})
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+
+                  {activeReservesList.length > 0 && (
+                    <div className="p-3 rounded-xl border border-amber-500/30 bg-amber-500/[0.06] space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[10px] font-extrabold uppercase tracking-wider text-foreground flex items-center gap-1.5">
+                          <PiggyBank className="w-3.5 h-3.5 text-amber-500" />
+                          Forma de Pagamento
+                        </span>
+                        <div className="grid grid-cols-2 gap-1 p-0.5 rounded-lg bg-muted/60 border border-border/50">
+                          <button
+                            type="button"
+                            onClick={() => setEditUseReserve(false)}
+                            className={`px-2.5 py-1 rounded-md text-[10px] font-black transition-colors cursor-pointer ${
+                              !editUseReserve ? 'bg-card text-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground'
+                            }`}
+                          >
+                            Caixa Livre
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setEditUseReserve(true)}
+                            className={`px-2.5 py-1 rounded-md text-[10px] font-black transition-colors cursor-pointer ${
+                              editUseReserve ? 'bg-amber-500 text-zinc-950 shadow-xs' : 'text-muted-foreground hover:text-foreground'
+                            }`}
+                          >
+                            Usar Reserva
+                          </button>
+                        </div>
+                      </div>
+                      {editUseReserve && (
+                        <Select value={editReserveId} onValueChange={setEditReserveId}>
+                          <SelectTrigger className="h-9 rounded-lg bg-card border-border text-xs font-bold">
+                            <SelectValue placeholder="Selecione a reserva...">
+                              {val => {
+                                const found = activeReservesList.find(r => r.id === val);
+                                return found ? `${found.name} (Saldo: ${formatCurrency(found.saldo_atual || 0)})` : 'Selecione a reserva...';
+                              }}
+                            </SelectValue>
+                          </SelectTrigger>
+                          <SelectContent>
+                            {activeReservesList.map(r => (
+                              <SelectItem key={r.id} value={r.id}>
+                                {r.name} • Saldo: {formatCurrency(r.saldo_atual || 0)}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Recurrence & Installments Section */}
+              {(
                 <div className="p-3.5 bg-primary/[0.03] border border-primary/20 rounded-xl space-y-3.5">
                   <div 
                     className="flex items-center justify-between cursor-pointer select-none"
@@ -7340,7 +8368,7 @@ export function History() {
                       </div>
                       <div>
                         <h4 className="text-xs font-extrabold text-foreground leading-tight">
-                          {editItem?.is_recurring ? 'Configurações de Recorrência' : 'Tornar Despesa Recorrente'}
+                          {editItem?.is_recurring ? 'Configurações de Recorrência' : 'Converter em Recorrente ou Parcelado'}
                         </h4>
                         <p className="text-[9.5px] text-muted-foreground leading-tight">
                           {editItem?.is_recurring
@@ -7480,40 +8508,70 @@ export function History() {
                           </div>
 
                           {/* Action Scope: New recurring vs Existing recurring */}
-                          {!editItem?.is_recurring ? (
-                            <label className="flex items-start gap-2 p-2.5 bg-primary/5 rounded-lg border border-primary/15 cursor-pointer">
-                              <input
-                                type="checkbox"
-                                checked={editGenerateFuture}
-                                onChange={(e) => setEditGenerateFuture(e.target.checked)}
-                                className="h-4 w-4 mt-0.5 rounded border-border text-primary focus:ring-primary cursor-pointer"
-                              />
-                              <div className="space-y-0.5">
-                                <span className="text-xs font-bold text-foreground">
-                                  Gerar as próximas parcelas automaticamente no extrato
-                                </span>
-                                <p className="text-[9.5px] text-muted-foreground leading-snug">
-                                  Cria as {(Number(editRecurrenceInstallments) || 12) - 1} parcelas futuras com status "Pendente" e vencimentos programados por {getFrequencyLabel(editRecurrenceFrequency)}.
-                                </p>
+                          {editGroupSiblings.length <= 1 ? (
+                            <div className="space-y-2">
+                              <div className="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-muted/50 border border-border/50">
+                                <button
+                                  type="button"
+                                  onClick={() => setEditRecurrenceAmountMode('installment')}
+                                  className={`py-1 px-2 rounded-lg text-[10px] font-black transition-colors cursor-pointer ${
+                                    editRecurrenceAmountMode === 'installment'
+                                      ? 'bg-card text-foreground shadow-xs'
+                                      : 'text-muted-foreground hover:text-foreground'
+                                  }`}
+                                >
+                                  Valor é da Parcela
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setEditRecurrenceAmountMode('total')}
+                                  className={`py-1 px-2 rounded-lg text-[10px] font-black transition-colors cursor-pointer ${
+                                    editRecurrenceAmountMode === 'total'
+                                      ? 'bg-card text-foreground shadow-xs'
+                                      : 'text-muted-foreground hover:text-foreground'
+                                  }`}
+                                >
+                                  Dividir Total em {Math.max(2, Number(editRecurrenceInstallments) || 12)}x
+                                </button>
                               </div>
-                            </label>
+
+                              {Number(editAmount) > 0 && (() => {
+                                const nInst = Math.max(2, Math.min(60, Number(editRecurrenceInstallments) || 12));
+                                const rawVal = Number(editAmount) || 0;
+                                const perInst = editRecurrenceAmountMode === 'total'
+                                  ? Math.floor((rawVal / nInst) * 100) / 100
+                                  : rawVal;
+                                const totalAmt = editRecurrenceAmountMode === 'total'
+                                  ? rawVal
+                                  : Math.round(rawVal * nInst * 100) / 100;
+                                return (
+                                  <p className="text-[10px] text-indigo-700 dark:text-indigo-300 font-semibold bg-indigo-500/10 border border-indigo-500/20 rounded-lg px-2.5 py-1.5">
+                                    Gera <strong>{nInst}x</strong> de <strong className="font-mono">{formatCurrency(perInst)}</strong> (Total: <strong className="font-mono">{formatCurrency(totalAmt)}</strong>)
+                                  </p>
+                                );
+                              })()}
+
+                              <label className="flex items-start gap-2 p-2.5 bg-primary/5 rounded-lg border border-primary/15 cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={editGenerateFuture}
+                                  onChange={(e) => setEditGenerateFuture(e.target.checked)}
+                                  className="h-4 w-4 mt-0.5 rounded border-border text-primary focus:ring-primary cursor-pointer"
+                                />
+                                <div className="space-y-0.5">
+                                  <span className="text-xs font-bold text-foreground">
+                                    Gerar as próximas parcelas automaticamente no extrato
+                                  </span>
+                                  <p className="text-[9.5px] text-muted-foreground leading-snug">
+                                    Cria as {(Number(editRecurrenceInstallments) || 12) - 1} parcelas futuras com status "Pendente" e vencimentos programados por {getFrequencyLabel(editRecurrenceFrequency)}.
+                                  </p>
+                                </div>
+                              </label>
+                            </div>
                           ) : (
-                            <label className="flex items-start gap-2 p-2.5 bg-primary/5 rounded-lg border border-primary/15 cursor-pointer">
-                              <input
-                                type="checkbox"
-                                checked={editApplyToFuture}
-                                onChange={(e) => setEditApplyToFuture(e.target.checked)}
-                                className="h-4 w-4 mt-0.5 rounded border-border text-primary focus:ring-primary cursor-pointer"
-                              />
-                              <div className="space-y-0.5">
-                                <span className="text-xs font-bold text-foreground">
-                                  Aplicar valor e categoria às próximas parcelas deste grupo
-                                </span>
-                                <p className="text-[9.5px] text-muted-foreground leading-snug">
-                                  Mantém todas as parcelas futuras sincronizadas com as novas configurações.
-                                </p>
-                              </div>
-                            </label>
+                            <p className="text-[10px] text-indigo-700 dark:text-indigo-300 font-semibold bg-indigo-500/10 border border-indigo-500/20 rounded-lg p-2">
+                              Escopo selecionado no topo: <strong>{editApplyScope === 'all' ? `Todas as ${editGroupSiblings.length} parcelas` : editApplyScope === 'future' ? 'Esta e as próximas' : 'Somente esta parcela'}</strong>.
+                            </p>
                           )}
                         </>
                       )}
@@ -7608,7 +8666,7 @@ export function History() {
                 />
               </div>
 
-              {settleItem.type === 'expense' && !(settleItem as any).isReserveTx && (reserves || []).filter(r => r.status !== 'inactive').length > 0 && (
+              {settleItem.type === 'expense' && (reserves || []).filter(r => r.status !== 'inactive').length > 0 && (
                 <div className="space-y-1.5 pt-2 border-t border-border/60">
                   <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
                     <PiggyBank className="w-3.5 h-3.5 text-amber-500" />

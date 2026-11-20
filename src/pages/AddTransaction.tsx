@@ -78,7 +78,7 @@ import { startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth,
 import { syncQueueManager } from '../lib/syncQueue';
 import { cacheManager } from '../lib/cacheManager';
 import { freightStorage } from '../lib/freightStorage';
-import { calculateNextOccurrence, getFrequencyLabel, generateUUID, parseLocalDate, buildNextRecurringTransaction } from '../lib/recurrenceUtils';
+import { calculateNextOccurrence, getFrequencyLabel, generateUUID, parseLocalDate, buildNextRecurringTransaction, buildNextRecurringReserveTransaction } from '../lib/recurrenceUtils';
 import { getTodayLocalDateStr } from '../lib/utils';
 import { getEffectiveUserId } from '../lib/authUtils';
 import { RefreshCw, CalendarClock, CalendarRange, CheckCircle2, AlertCircle, EyeOff, Bookmark, X } from 'lucide-react';
@@ -182,6 +182,8 @@ export function AddTransaction() {
   const [newTemplateName, setNewTemplateName] = useState('');
   const [registeredCards, setRegisteredCards] = useState<CreditCardConfig[]>([]);
   const [selectedCardId, setSelectedCardId] = useState<string>('');
+  const [cardIsRecurring, setCardIsRecurring] = useState<boolean>(false);
+  const [cardRecurrenceFrequency, setCardRecurrenceFrequency] = useState<RecurrenceFrequency>('monthly');
   const [cardInstallments, setCardInstallments] = useState<string>('1');
   const [cardAmountMode, setCardAmountMode] = useState<'total' | 'installment'>('total');
 
@@ -230,17 +232,20 @@ export function AddTransaction() {
 
   const cardPurchasePreview = useMemo(() => {
     if (!selectedCardObj) return null;
-    const nInst = Math.max(1, Math.min(24, Number(cardInstallments) || 1));
+    const nInst = cardIsRecurring ? 1 : Math.max(1, Math.min(24, Number(cardInstallments) || 1));
     const rawVal = Number(amount) || 0;
     const totalPurchase =
-      cardAmountMode === 'total' ? rawVal : Math.round(rawVal * nInst * 100) / 100;
+      cardIsRecurring || cardAmountMode === 'total' ? rawVal : Math.round(rawVal * nInst * 100) / 100;
     const perInstallment =
-      cardAmountMode === 'total' ? Math.round((rawVal / nInst) * 100) / 100 : rawVal;
+      cardIsRecurring || cardAmountMode === 'installment' ? rawVal : Math.round((rawVal / nInst) * 100) / 100;
     const purchaseDate = date || getTodayLocalDateStr();
     const first = computeCardStatementDueDate(purchaseDate, selectedCardObj.closingDay, selectedCardObj.dueDay, 1);
     const last = computeCardStatementDueDate(purchaseDate, selectedCardObj.closingDay, selectedCardObj.dueDay, nInst);
-    return { nInst, totalPurchase, perInstallment, first, last };
-  }, [selectedCardObj, cardInstallments, amount, cardAmountMode, date]);
+    const nextRecurringDate = cardIsRecurring
+      ? calculateNextOccurrence(first.statementDueDate, cardRecurrenceFrequency, 1)
+      : null;
+    return { nInst, totalPurchase, perInstallment, first, last, nextRecurringDate };
+  }, [selectedCardObj, cardIsRecurring, cardRecurrenceFrequency, cardInstallments, amount, cardAmountMode, date]);
 
   const activeReservesList = useMemo(() => {
     return (reserves || []).filter(r => r.status !== 'inactive');
@@ -429,6 +434,8 @@ export function AddTransaction() {
     setIgnoreInCharts(false);
     setDeductFromReserve(false);
     setDeductReserveId('');
+    setCardIsRecurring(false);
+    setCardRecurrenceFrequency('monthly');
     setCardInstallments('1');
     setCardAmountMode('total');
   };
@@ -848,8 +855,8 @@ export function AddTransaction() {
         return;
       }
 
-      // Smart Expense-to-Reserve Deduction: route expense as a reserve utilization when opted-in
-      if (activeTab === 'despesa' && deductFromReserve && selectedDeductReserve) {
+      // Smart Expense-to-Reserve Deduction: route non-card expense as a reserve utilization when opted-in
+      if (activeTab === 'despesa' && deductFromReserve && selectedDeductReserve && !selectedCardObj) {
         const effectivePaymentStatus = paymentStatus;
         const effectivePaymentDate = effectivePaymentStatus === 'paid'
           ? ((useCustomSecondaryDate ? paymentDate.trim() : '') || date || getTodayLocalDateStr())
@@ -978,12 +985,6 @@ export function AddTransaction() {
 
       // Handle Credit Card Purchases linked to a registered card
       if (activeTab === 'despesa' && isCardCategorySelected && selectedCardObj) {
-        const nInst = Math.max(1, Math.min(24, Number(cardInstallments) || 1));
-        const totalPurchase =
-          cardAmountMode === 'total' ? finalAmount : Math.round(finalAmount * nInst * 100) / 100;
-        const baseInstAmt = Math.floor((totalPurchase / nInst) * 100) / 100;
-        const remainderCents = Math.round((totalPurchase - baseInstAmt * nInst) * 100) / 100;
-        const groupId = nInst > 1 ? generateUUID() : null;
         const rawLabel = (description || '').trim();
         const cardPrefix = `[Cartão ${selectedCardObj.name}]`;
         const cleanLabel = rawLabel || finalCategory || 'Compra no cartão';
@@ -992,8 +993,233 @@ export function AddTransaction() {
           : `${cardPrefix} ${cleanLabel}`;
 
         const purchaseDate = date || getTodayLocalDateStr();
-        const cardBatch: any[] = [];
         const cardBatchIds: string[] = [];
+
+        if (cardIsRecurring) {
+          const groupId = generateUUID();
+          const { statementDueDate } = computeCardStatementDueDate(
+            purchaseDate,
+            selectedCardObj.closingDay,
+            selectedCardObj.dueDay,
+            1
+          );
+          const instStatus: PaymentStatus = paymentStatus;
+          const instPayDate =
+            instStatus === 'paid'
+              ? ((useCustomSecondaryDate ? paymentDate.trim() : '') || statementDueDate)
+              : null;
+
+          if (deductFromReserve && selectedDeductReserve) {
+            const firstRtId = await addReserveTransaction({
+              reserve_id: selectedDeductReserve.id,
+              type: 'utilizacao',
+              amount: finalAmount,
+              date: statementDueDate,
+              due_date: statementDueDate,
+              category: finalCategory,
+              description: baseDesc,
+              payment_status: instStatus,
+              payment_date: instPayDate,
+              is_recurring: true,
+              recurrence_frequency: cardRecurrenceFrequency,
+              recurrence_installments: null,
+              recurrence_group_id: groupId,
+              installment_number: 1,
+              installment_total: null,
+              installment_index: 1,
+              total_installments: null,
+              vehicle_id: getEffectiveVehicleId(),
+              ignore_in_charts: ignoreInCharts,
+            }, { silent: true });
+            if (firstRtId) cardBatchIds.push(firstRtId);
+
+            if (instStatus === 'paid') {
+              const nextDate = calculateNextOccurrence(statementDueDate, cardRecurrenceFrequency, 1);
+              const nextRt = buildNextRecurringReserveTransaction(
+                {
+                  id: firstRtId || generateUUID(),
+                  user_id: userId,
+                  reserve_id: selectedDeductReserve.id,
+                  type: 'utilizacao',
+                  amount: finalAmount,
+                  date: statementDueDate,
+                  due_date: statementDueDate,
+                  category: finalCategory,
+                  description: baseDesc,
+                  is_recurring: true,
+                  recurrence_frequency: cardRecurrenceFrequency,
+                  recurrence_group_id: groupId,
+                  installment_number: 1,
+                  vehicle_id: getEffectiveVehicleId(),
+                  ignore_in_charts: ignoreInCharts,
+                },
+                nextDate,
+                groupId,
+                userId
+              );
+              const nextRtId = await addReserveTransaction({
+                reserve_id: nextRt.reserve_id,
+                type: nextRt.type,
+                amount: nextRt.amount,
+                date: nextRt.date,
+                due_date: nextRt.due_date,
+                category: nextRt.category,
+                description: nextRt.description,
+                payment_status: 'pending',
+                payment_date: null,
+                is_recurring: true,
+                recurrence_frequency: cardRecurrenceFrequency,
+                recurrence_installments: null,
+                recurrence_group_id: groupId,
+                installment_number: 2,
+                installment_total: null,
+                installment_index: 2,
+                total_installments: null,
+                vehicle_id: nextRt.vehicle_id,
+                ignore_in_charts: nextRt.ignore_in_charts,
+              }, { silent: true });
+              if (nextRtId) cardBatchIds.push(nextRtId);
+            }
+
+            if (cardBatchIds.length > 0) {
+              planningStorage.linkTxsToCard(userId, cardBatchIds, selectedCardObj.id);
+            }
+            await refreshData(true);
+            toast.success(
+              `Compra recorrente (${getFrequencyLabel(cardRecurrenceFrequency)}) lançada no ${selectedCardObj.name} (Reserva "${selectedDeductReserve.name}")!`,
+              { id: 'add-tx' }
+            );
+            resetForm();
+            navigate('/planning');
+            return;
+          }
+
+          const firstId = generateUUID();
+          cardBatchIds.push(firstId);
+          const firstPayload: any = {
+            id: firstId,
+            user_id: userId,
+            type: 'expense' as TransactionType,
+            amount: finalAmount,
+            date: statementDueDate,
+            due_date: statementDueDate,
+            category: finalCategory,
+            description: baseDesc,
+            payment_status: instStatus,
+            payment_date: instPayDate,
+            is_recurring: true,
+            recurrence_frequency: cardRecurrenceFrequency,
+            recurrence_installments: null,
+            recurrence_group_id: groupId,
+            installment_number: 1,
+            installment_total: null,
+            installment_index: 1,
+            total_installments: null,
+            start_km: null,
+            end_km: null,
+            deliveries: null,
+            out_of_neighborhood: null,
+            vehicle_id: getEffectiveVehicleId(),
+            card_id: selectedCardObj.id,
+            card_name: selectedCardObj.name,
+            card_installments: 1,
+            card_installment_index: 1,
+            ignore_in_charts: ignoreInCharts,
+            created_at: new Date().toISOString(),
+          };
+          const cardBatch: any[] = [firstPayload];
+          syncQueueManager.enqueue('transactions', 'insert', firstId, firstPayload);
+
+          if (instStatus === 'paid') {
+            const nextDate = calculateNextOccurrence(statementDueDate, cardRecurrenceFrequency, 1);
+            const nextTx = buildNextRecurringTransaction(firstPayload, nextDate, groupId, userId);
+            cardBatch.unshift(nextTx);
+            cardBatchIds.push(nextTx.id);
+            syncQueueManager.enqueue('transactions', 'insert', nextTx.id, nextTx);
+          }
+
+          planningStorage.linkTxsToCard(userId, cardBatchIds, selectedCardObj.id);
+          setTransactions(prev => {
+            const newState = [...cardBatch, ...prev];
+            cacheManager.set(`transactions_${userId}`, newState, undefined, 'transactions');
+            cacheManager.set('last_known_transactions', newState, undefined, 'transactions');
+            return newState;
+          });
+
+          toast.success(
+            `Compra recorrente (${getFrequencyLabel(cardRecurrenceFrequency)}) lançada na fatura do ${selectedCardObj.name}!`,
+            { id: 'add-tx' }
+          );
+          resetForm();
+          navigate('/planning');
+          return;
+        }
+
+        const nInst = Math.max(1, Math.min(24, Number(cardInstallments) || 1));
+        const totalPurchase =
+          cardAmountMode === 'total' ? finalAmount : Math.round(finalAmount * nInst * 100) / 100;
+        const baseInstAmt = Math.floor((totalPurchase / nInst) * 100) / 100;
+        const remainderCents = Math.round((totalPurchase - baseInstAmt * nInst) * 100) / 100;
+        const groupId = nInst > 1 ? generateUUID() : null;
+
+        if (deductFromReserve && selectedDeductReserve) {
+          for (let i = 1; i <= nInst; i++) {
+            const { statementDueDate } = computeCardStatementDueDate(
+              purchaseDate,
+              selectedCardObj.closingDay,
+              selectedCardObj.dueDay,
+              i
+            );
+            const instAmt = i === 1 ? Math.round((baseInstAmt + remainderCents) * 100) / 100 : baseInstAmt;
+            const parcelSuffix = nInst > 1 ? ` (${i}/${nInst})` : '';
+            const instStatus: PaymentStatus = i === 1 ? paymentStatus : 'pending';
+            const instPayDate =
+              instStatus === 'paid'
+                ? ((useCustomSecondaryDate ? paymentDate.trim() : '') || statementDueDate)
+                : null;
+
+            const rtId = await addReserveTransaction({
+              reserve_id: selectedDeductReserve.id,
+              type: 'utilizacao',
+              amount: instAmt,
+              date: statementDueDate,
+              due_date: statementDueDate,
+              category: finalCategory,
+              description: `${baseDesc}${parcelSuffix}`,
+              payment_status: instStatus,
+              payment_date: instPayDate,
+              is_recurring: nInst > 1,
+              recurrence_frequency: nInst > 1 ? ('monthly' as RecurrenceFrequency) : undefined,
+              recurrence_installments: nInst > 1 ? nInst : null,
+              recurrence_group_id: groupId,
+              installment_number: nInst > 1 ? i : null,
+              installment_total: nInst > 1 ? nInst : null,
+              installment_index: nInst > 1 ? i : null,
+              total_installments: nInst > 1 ? nInst : null,
+              vehicle_id: getEffectiveVehicleId(),
+              ignore_in_charts: ignoreInCharts,
+            }, { silent: true });
+
+            if (rtId) cardBatchIds.push(rtId);
+          }
+
+          if (cardBatchIds.length > 0) {
+            planningStorage.linkTxsToCard(userId, cardBatchIds, selectedCardObj.id);
+          }
+
+          await refreshData(true);
+          toast.success(
+            nInst > 1
+              ? `Compra parcelada em ${nInst}x lançada na fatura do ${selectedCardObj.name} (Reserva "${selectedDeductReserve.name}")!`
+              : `Compra lançada na fatura do ${selectedCardObj.name} (Reserva "${selectedDeductReserve.name}")!`,
+            { id: 'add-tx' }
+          );
+          resetForm();
+          navigate('/planning');
+          return;
+        }
+
+        const cardBatch: any[] = [];
 
         for (let i = 1; i <= nInst; i++) {
           const { statementDueDate } = computeCardStatementDueDate(
@@ -1850,91 +2076,169 @@ export function AddTransaction() {
 
                         {selectedCardObj && (
                           <div className="space-y-3 pt-2 border-t border-purple-500/20">
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                              <div className="space-y-1.5">
-                                <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">
-                                  Parcelas no Cartão
-                                </label>
-                                <Select value={cardInstallments} onValueChange={setCardInstallments}>
-                                  <SelectTrigger className="h-9 rounded-xl bg-card text-xs font-bold">
-                                    <SelectValue>
-                                      {(val) => (val === '1' ? '1x (À vista na fatura)' : `${val || 1}x mensais`)}
-                                    </SelectValue>
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    {Array.from({ length: 24 }, (_, idx) => String(idx + 1)).map(n => (
-                                      <SelectItem key={n} value={n}>
-                                        {n === '1' ? '1x (À vista na fatura)' : `${n}x mensais`}
-                                      </SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
-                              </div>
+                            <div className="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-muted/50 border border-border/50">
+                              <button
+                                type="button"
+                                onClick={() => setCardIsRecurring(false)}
+                                className={`py-1.5 px-2 rounded-lg text-[11px] font-black transition-colors cursor-pointer ${
+                                  !cardIsRecurring
+                                    ? 'bg-purple-600 text-white shadow-xs'
+                                    : 'text-muted-foreground hover:text-foreground'
+                                }`}
+                              >
+                                💳 À vista / Parcelado
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setCardIsRecurring(true)}
+                                className={`py-1.5 px-2 rounded-lg text-[11px] font-black transition-colors cursor-pointer ${
+                                  cardIsRecurring
+                                    ? 'bg-purple-600 text-white shadow-xs'
+                                    : 'text-muted-foreground hover:text-foreground'
+                                }`}
+                              >
+                                🔄 Recorrente (Auto)
+                              </button>
+                            </div>
 
-                              {Number(cardInstallments) > 1 && (
+                            {cardIsRecurring ? (
+                              <div className="space-y-2">
                                 <div className="space-y-1.5">
                                   <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">
-                                    Valor Informado Acima é:
+                                    Frequência da Assinatura / Recorrência
                                   </label>
-                                  <div className="grid grid-cols-2 gap-1.5">
-                                    <button
-                                      type="button"
-                                      onClick={() => setCardAmountMode('total')}
-                                      className={`h-9 rounded-xl border text-[11px] font-bold cursor-pointer transition-all ${
-                                        cardAmountMode === 'total'
-                                          ? 'bg-purple-600 text-white border-purple-600'
-                                          : 'bg-card border-border text-muted-foreground'
-                                      }`}
-                                    >
-                                      Total ({cardInstallments}x)
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => setCardAmountMode('installment')}
-                                      className={`h-9 rounded-xl border text-[11px] font-bold cursor-pointer transition-all ${
-                                        cardAmountMode === 'installment'
-                                          ? 'bg-purple-600 text-white border-purple-600'
-                                          : 'bg-card border-border text-muted-foreground'
-                                      }`}
-                                    >
-                                      Por Parcela
-                                    </button>
-                                  </div>
+                                  <Select
+                                    value={cardRecurrenceFrequency}
+                                    onValueChange={(val: RecurrenceFrequency) => setCardRecurrenceFrequency(val)}
+                                  >
+                                    <SelectTrigger className="h-9 rounded-xl bg-card text-xs font-bold">
+                                      <SelectValue>
+                                        {val => getFrequencyLabel(val as RecurrenceFrequency)}
+                                      </SelectValue>
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="weekly">Semanal</SelectItem>
+                                      <SelectItem value="biweekly">Quinzenal (14 dias)</SelectItem>
+                                      <SelectItem value="monthly">Mensal</SelectItem>
+                                      <SelectItem value="bimonthly">Bimestral (2 meses)</SelectItem>
+                                      <SelectItem value="quarterly">Trimestral (3 meses)</SelectItem>
+                                      <SelectItem value="semiannual">Semestral (6 meses)</SelectItem>
+                                      <SelectItem value="yearly">Anual</SelectItem>
+                                    </SelectContent>
+                                  </Select>
                                 </div>
-                              )}
-                            </div>
+                              </div>
+                            ) : (
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                <div className="space-y-1.5">
+                                  <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">
+                                    Parcelas no Cartão
+                                  </label>
+                                  <Select value={cardInstallments} onValueChange={setCardInstallments}>
+                                    <SelectTrigger className="h-9 rounded-xl bg-card text-xs font-bold">
+                                      <SelectValue>
+                                        {(val) => (val === '1' ? '1x (À vista na fatura)' : `${val || 1}x mensais`)}
+                                      </SelectValue>
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {Array.from({ length: 24 }, (_, idx) => String(idx + 1)).map(n => (
+                                        <SelectItem key={n} value={n}>
+                                          {n === '1' ? '1x (À vista na fatura)' : `${n}x mensais`}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+
+                                {Number(cardInstallments) > 1 && (
+                                  <div className="space-y-1.5">
+                                    <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">
+                                      Valor Informado Acima é:
+                                    </label>
+                                    <div className="grid grid-cols-2 gap-1.5">
+                                      <button
+                                        type="button"
+                                        onClick={() => setCardAmountMode('total')}
+                                        className={`h-9 rounded-xl border text-[11px] font-bold cursor-pointer transition-all ${
+                                          cardAmountMode === 'total'
+                                            ? 'bg-purple-600 text-white border-purple-600'
+                                            : 'bg-card border-border text-muted-foreground'
+                                        }`}
+                                      >
+                                        Total ({cardInstallments}x)
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => setCardAmountMode('installment')}
+                                        className={`h-9 rounded-xl border text-[11px] font-bold cursor-pointer transition-all ${
+                                          cardAmountMode === 'installment'
+                                            ? 'bg-purple-600 text-white border-purple-600'
+                                            : 'bg-card border-border text-muted-foreground'
+                                        }`}
+                                      >
+                                        Por Parcela
+                                      </button>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            )}
 
                             {cardPurchasePreview && (
                               <div className="p-2.5 rounded-xl bg-card/80 border border-purple-500/20 text-[11px] space-y-0.5">
                                 <div className="flex flex-wrap items-center justify-between gap-1 font-bold text-foreground">
                                   <span className="text-purple-500 font-black">
-                                    Fatura {selectedCardObj.name}
+                                    Fatura {selectedCardObj.name} {cardIsRecurring ? `• Recorrente (${getFrequencyLabel(cardRecurrenceFrequency)})` : ''}
                                   </span>
                                   {Number(amount) > 0 && (
                                     <span className="font-mono">
-                                      {cardPurchasePreview.nInst}x de{' '}
-                                      {formatCurrency(cardPurchasePreview.perInstallment)}
-                                      {cardPurchasePreview.nInst > 1
-                                        ? ` (Total ${formatCurrency(cardPurchasePreview.totalPurchase)})`
-                                        : ''}
+                                      {cardIsRecurring
+                                        ? `${formatCurrency(cardPurchasePreview.perInstallment)} / ciclo`
+                                        : (
+                                          <>
+                                            {cardPurchasePreview.nInst}x de{' '}
+                                            {formatCurrency(cardPurchasePreview.perInstallment)}
+                                            {cardPurchasePreview.nInst > 1
+                                              ? ` (Total ${formatCurrency(cardPurchasePreview.totalPurchase)})`
+                                              : ''}
+                                          </>
+                                        )}
                                     </span>
                                   )}
                                 </div>
-                                <p className="text-muted-foreground text-[10.5px]">
-                                  {cardPurchasePreview.nInst > 1 ? '1ª parcela' : 'Vencimento'} cai em{' '}
-                                  <strong className="text-foreground">
-                                    {format(parseLocalDate(cardPurchasePreview.first.statementDueDate), 'dd/MM/yyyy')}
-                                  </strong>
-                                  {cardPurchasePreview.nInst > 1 && (
-                                    <>
-                                      {' '}
-                                      • Última em{' '}
-                                      <strong className="text-foreground">
-                                        {format(parseLocalDate(cardPurchasePreview.last.statementDueDate), 'dd/MM/yyyy')}
-                                      </strong>
-                                    </>
-                                  )}
-                                </p>
+                                {cardIsRecurring ? (
+                                  <p className="text-muted-foreground text-[10.5px]">
+                                    1ª cobrança cai em{' '}
+                                    <strong className="text-foreground">
+                                      {format(parseLocalDate(cardPurchasePreview.first.statementDueDate), 'dd/MM/yyyy')}
+                                    </strong>
+                                    {cardPurchasePreview.nextRecurringDate && (
+                                      <>
+                                        {' '}
+                                        • Ao quitar, renova automaticamente para{' '}
+                                        <strong className="text-foreground">
+                                          {format(parseLocalDate(cardPurchasePreview.nextRecurringDate), 'dd/MM/yyyy')}
+                                        </strong>
+                                      </>
+                                    )}
+                                  </p>
+                                ) : (
+                                  <p className="text-muted-foreground text-[10.5px]">
+                                    {cardPurchasePreview.nInst > 1 ? '1ª parcela' : 'Vencimento'} cai em{' '}
+                                    <strong className="text-foreground">
+                                      {format(parseLocalDate(cardPurchasePreview.first.statementDueDate), 'dd/MM/yyyy')}
+                                    </strong>
+                                    {cardPurchasePreview.nInst > 1 && (
+                                      <>
+                                        {' '}
+                                        • Última em{' '}
+                                        <strong className="text-foreground">
+                                          {format(parseLocalDate(cardPurchasePreview.last.statementDueDate), 'dd/MM/yyyy')}
+                                        </strong>
+                                      </>
+                                    )}
+                                  </p>
+                                )}
                               </div>
                             )}
                           </div>
@@ -1944,8 +2248,8 @@ export function AddTransaction() {
                   </div>
                 )}
 
-                {/* Alocação por Reserva (Sugestão automática ou escolha manual) */}
-                {activeTab === 'despesa' && !selectedCardObj && activeReservesList.length > 0 && selectedDeductReserve && (
+                {/* Alocação por Reserva (Sugestão automática ou escolha manual, inclusive para cartão) */}
+                {activeTab === 'despesa' && activeReservesList.length > 0 && selectedDeductReserve && (
                   <div className="p-3.5 rounded-xl border border-indigo-500/30 bg-indigo-500/[0.06] space-y-2.5 animate-fade-in">
                     <label className="flex items-start gap-2.5 cursor-pointer select-none">
                       <input
@@ -1965,9 +2269,11 @@ export function AddTransaction() {
                           </span>
                         </div>
                         <p className="text-[10.5px] text-muted-foreground leading-snug">
-                          {suggestedExpenseReserve
-                            ? <>Detectamos uma reserva compatível com <strong>{category}</strong>. Ao marcar, o gasto usa o saldo da reserva sem descontar do caixa livre.</>
-                            : <>Ao marcar, esta conta será abatida da reserva selecionada (sem descontar do seu caixa livre).</>}
+                          {selectedCardObj
+                            ? <>Ao marcar, as parcelas entram na fatura do <strong>{selectedCardObj.name}</strong> sendo pagas com o saldo da reserva (sem descontar do caixa livre).</>
+                            : suggestedExpenseReserve
+                              ? <>Detectamos uma reserva compatível com <strong>{category}</strong>. Ao marcar, o gasto usa o saldo da reserva sem descontar do caixa livre.</>
+                              : <>Ao marcar, esta conta será abatida da reserva selecionada (sem descontar do seu caixa livre).</>}
                         </p>
                       </div>
                     </label>

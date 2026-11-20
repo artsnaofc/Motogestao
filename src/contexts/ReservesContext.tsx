@@ -14,6 +14,7 @@ import {
   parseLocalDate,
 } from '../lib/recurrenceUtils';
 import { format } from 'date-fns';
+import { planningStorage } from '../lib/planningStorage';
 
 export interface ReservesContextType {
   reserves: Reserve[];
@@ -363,6 +364,14 @@ export function ReservesProvider({
       if (nextRecurringRt.vehicle_id) nextPayload.vehicle_id = nextRecurringRt.vehicle_id;
 
       syncQueueManager.enqueue('reserve_transactions', 'insert', nextRecurringRt.id, nextPayload);
+      const cardMap = planningStorage.getTxCardMap(userId);
+      const linkedCardId = cardMap[id];
+      if (linkedCardId) {
+        planningStorage.linkTxsToCard(userId, [nextRecurringRt.id], linkedCardId);
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('planning_data_synced', { detail: { userId } }));
+        }
+      }
       const nextLabel = format(parseLocalDate(nextRecurringRt.date), 'dd/MM/yyyy');
       toast.info(`Próxima conta recorrente (reserva) agendada para ${nextLabel}!`, { id: 'recurring-next-bill' });
     }
