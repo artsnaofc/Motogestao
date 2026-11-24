@@ -43,7 +43,8 @@ import {
   calculateNextOccurrence,
   RecurrenceFrequency,
   getTodayLocalDateStr,
-  toDateInputString
+  toDateInputString,
+  calculateReserveWeeklyProgress
 } from '../components/reserves/reserveUtils';
 import { cacheManager } from '../lib/cacheManager';
 import { syncQueueManager } from '../lib/syncQueue';
@@ -55,6 +56,7 @@ import { ReserveModal } from '../components/reserves/ReserveModal';
 import { UpdateRuleModal } from '../components/reserves/UpdateRuleModal';
 import { SuggestionAuditModal } from '../components/reserves/SuggestionAuditModal';
 import { ModoBoostModal } from '../components/reserves/ModoBoostModal';
+import { WeeklyGoalsModal } from '../components/reserves/WeeklyGoalsModal';
 import { 
   AporteManualModal, 
   WithdrawModal, 
@@ -142,6 +144,7 @@ export function Reserves() {
 
   const [showModoBoostModal, setShowModoBoostModal] = useState(false);
   const [boostFocusReserveId, setBoostFocusReserveId] = useState<string | null>(null);
+  const [showWeeklyGoalsModal, setShowWeeklyGoalsModal] = useState(false);
 
   const [auditReserve, setAuditReserve] = useState<Reserve | null>(null);
 
@@ -247,6 +250,35 @@ export function Reserves() {
       activeCount: activeReserves.filter(r => !r.is_paused).length
     };
   }, [activeReserves, reserves, transactions, reserveTransactions]);
+
+  // Consolidated weekly contribution progress across active non-paused reserves
+  const weeklySummary = useMemo(() => {
+    let weeklyTotalTarget = 0;
+    let weeklyTotalAported = 0;
+    let weeklyGoalCount = 0;
+    let weeklyRangeLabel = '';
+
+    activeReserves.forEach(r => {
+      const wp = calculateReserveWeeklyProgress(r, transactions, reserveTransactions);
+      if (!weeklyRangeLabel) weeklyRangeLabel = wp.weekRangeLabel;
+      if (r.is_paused) return;
+
+      if (wp.hasTarget) {
+        weeklyTotalTarget += wp.weeklyTarget;
+        weeklyTotalAported += wp.weeklyCountedAportes;
+        weeklyGoalCount += 1;
+      } else if (wp.mode !== 'off' && wp.weeklyTotalAportes > 0) {
+        weeklyTotalAported += wp.weeklyCountedAportes;
+      }
+    });
+
+    return {
+      weeklyTotalTarget: Math.round(weeklyTotalTarget * 100) / 100,
+      weeklyTotalAported: Math.round(weeklyTotalAported * 100) / 100,
+      weeklyGoalCount,
+      weeklyRangeLabel,
+    };
+  }, [activeReserves, transactions, reserveTransactions]);
 
   // Filtered reserves list for cards with configurable sorting
   const filteredCards = useMemo(() => {
@@ -755,6 +787,9 @@ export function Reserves() {
         boost_tipo: reserveData.boost_tipo || 'increment',
         boost_valor: reserveData.boost_valor ?? 0,
         reset_suggestion_on_withdraw: reserveData.reset_suggestion_on_withdraw ?? true,
+        weekly_goal_mode: reserveData.weekly_goal_mode || 'dynamic',
+        weekly_goal_amount: reserveData.weekly_goal_amount ?? null,
+        weekly_goal_include_manual: reserveData.weekly_goal_include_manual ?? true,
         require_category_on_use: reserveData.require_category_on_use,
         default_use_category: reserveData.default_use_category,
         status: 'active',
@@ -889,6 +924,27 @@ export function Reserves() {
         boost_ativo: u.boost_ativo,
         boost_tipo: u.boost_tipo,
         boost_valor: u.boost_valor,
+      };
+      await updateReserve(u.reserveId, payload);
+      if (auditReserve?.id === u.reserveId) {
+        setAuditReserve(prev => (prev ? { ...prev, ...payload } : null));
+      }
+    }
+  };
+
+  const handleBatchUpdateWeeklyGoals = async (
+    updates: Array<{
+      reserveId: string;
+      weekly_goal_mode: 'dynamic' | 'rule_week' | 'fixed' | 'off';
+      weekly_goal_amount: number | null;
+      weekly_goal_include_manual: boolean;
+    }>
+  ) => {
+    for (const u of updates) {
+      const payload: Partial<Reserve> = {
+        weekly_goal_mode: u.weekly_goal_mode,
+        weekly_goal_amount: u.weekly_goal_amount,
+        weekly_goal_include_manual: u.weekly_goal_include_manual,
       };
       await updateReserve(u.reserveId, payload);
       if (auditReserve?.id === u.reserveId) {
@@ -1049,6 +1105,11 @@ export function Reserves() {
           setShowModoBoostModal(true);
         }}
         boostActiveCount={boostActiveCount}
+        weeklyTotalAported={weeklySummary.weeklyTotalAported}
+        weeklyTotalTarget={weeklySummary.weeklyTotalTarget}
+        weeklyRangeLabel={weeklySummary.weeklyRangeLabel}
+        weeklyGoalCount={weeklySummary.weeklyGoalCount}
+        onOpenWeeklyGoals={() => setShowWeeklyGoalsModal(true)}
         hideValues={hideValues}
         setHideValues={setHideValues}
       />
@@ -1236,6 +1297,14 @@ export function Reserves() {
                     setBoostFocusReserveId(r.id);
                     setShowModoBoostModal(true);
                   }}
+                  onConfigureWeeklyGoal={() => setShowWeeklyGoalsModal(true)}
+                  onApplyWeeklyRemaining={(r, amt) => {
+                    setSelectedReserveForAction(r);
+                    setIsSuggestionAporte(false);
+                    setAporteInitialAmount(amt);
+                    setAporteInitialDesc(`[Meta Semanal] ${r.name}`);
+                    setActionModalType('aporte_manual');
+                  }}
                   hideValues={hideValues}
                 />
               ))}
@@ -1313,6 +1382,17 @@ export function Reserves() {
           setReserveToUpdateRule(r);
           setShowUpdateRuleModal(true);
         }}
+      />
+
+      {/* 1d. Modal de Metas Semanais de Aportes */}
+      <WeeklyGoalsModal
+        isOpen={showWeeklyGoalsModal}
+        onClose={() => setShowWeeklyGoalsModal(false)}
+        reserves={reserves}
+        transactions={transactions}
+        reserveTransactions={reserveTransactions}
+        onSaveBatch={handleBatchUpdateWeeklyGoals}
+        hideValues={hideValues}
       />
 
       {/* 2. Modal Criar / Editar Reserva */}

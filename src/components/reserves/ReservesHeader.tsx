@@ -11,7 +11,9 @@ import {
   ArrowUpRight,
   Eye,
   EyeOff,
-  Rocket
+  Rocket,
+  CalendarDays,
+  SlidersHorizontal
 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -31,6 +33,11 @@ interface ReservesHeaderProps {
   onOpenMassAporte: () => void;
   onOpenBoost?: () => void;
   boostActiveCount?: number;
+  weeklyTotalAported?: number;
+  weeklyTotalTarget?: number;
+  weeklyRangeLabel?: string;
+  weeklyGoalCount?: number;
+  onOpenWeeklyGoals?: () => void;
   hideValues?: boolean;
   setHideValues?: (hide: boolean) => void;
 }
@@ -49,10 +56,23 @@ export function ReservesHeader({
   onOpenMassAporte,
   onOpenBoost,
   boostActiveCount = 0,
+  weeklyTotalAported = 0,
+  weeklyTotalTarget = 0,
+  weeklyRangeLabel = '',
+  weeklyGoalCount = 0,
+  onOpenWeeklyGoals,
   hideValues,
   setHideValues
 }: ReservesHeaderProps) {
   const goalProgress = totalGoal > 0 ? Math.min(100, Math.round((totalBalance / totalGoal) * 100)) : 0;
+  const weeklyProgressPct =
+    weeklyTotalTarget > 0
+      ? Math.min(100, Math.round((weeklyTotalAported / weeklyTotalTarget) * 100))
+      : weeklyTotalAported > 0
+        ? 100
+        : 0;
+  const weeklyRemaining = Math.max(0, Math.round((weeklyTotalTarget - weeklyTotalAported) * 100) / 100);
+  const weeklyDone = weeklyTotalTarget > 0 && weeklyTotalAported >= weeklyTotalTarget;
 
   return (
     <div className="space-y-3">
@@ -259,6 +279,118 @@ export function ReservesHeader({
           </div>
         </Card>
       </div>
+
+      {/* Meta Semanal Consolidada de Aportes */}
+      {onOpenWeeklyGoals && (
+        <Card
+          className={`border p-2.5 sm:p-3 text-left transition-all ${
+            weeklyDone
+              ? 'border-emerald-500/35 bg-gradient-to-r from-emerald-500/10 via-card to-teal-500/5'
+              : 'border-indigo-500/25 bg-gradient-to-r from-indigo-500/[0.06] via-card to-violet-500/[0.04]'
+          }`}
+        >
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div
+                className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
+                  weeklyDone
+                    ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
+                    : 'bg-indigo-500/15 text-indigo-600 dark:text-indigo-400'
+                }`}
+              >
+                <CalendarDays className="w-3.5 h-3.5" />
+              </div>
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-[11px] font-black text-foreground">
+                    Meta Semanal de Aportes
+                  </span>
+                  {weeklyRangeLabel && (
+                    <span className="px-1.5 py-0.2 rounded-md bg-muted text-muted-foreground text-[9.5px] font-bold font-mono">
+                      {weeklyRangeLabel}
+                    </span>
+                  )}
+                  {weeklyGoalCount > 0 && (
+                    <span className="text-[10px] font-semibold text-muted-foreground">
+                      · {weeklyGoalCount} {weeklyGoalCount === 1 ? 'reserva' : 'reservas'}
+                    </span>
+                  )}
+                </div>
+                <p className="text-[10.5px] text-muted-foreground font-mono">
+                  Aportado na semana:{' '}
+                  <strong className="text-foreground">
+                    {hideValues ? 'R$ •••' : formatCurrency(weeklyTotalAported)}
+                  </strong>
+                  {weeklyTotalTarget > 0 && (
+                    <>
+                      {' '}
+                      / {hideValues ? 'R$ •••' : formatCurrency(weeklyTotalTarget)}{' '}
+                      <span
+                        className={`font-black ${
+                          weeklyDone
+                            ? 'text-emerald-600 dark:text-emerald-400'
+                            : 'text-indigo-600 dark:text-indigo-400'
+                        }`}
+                      >
+                        ({weeklyProgressPct}%)
+                      </span>
+                      {weeklyDone ? (
+                        <span className="text-emerald-600 dark:text-emerald-400 font-sans font-bold">
+                          {' '}
+                          · ✓ Meta semanal batida!
+                        </span>
+                      ) : (
+                        <span className="text-amber-600 dark:text-amber-400 font-sans font-bold">
+                          {' '}
+                          · Faltam {hideValues ? 'R$ ••' : formatCurrency(weeklyRemaining)}
+                        </span>
+                      )}
+                    </>
+                  )}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2.5 shrink-0">
+              {weeklyTotalTarget > 0 && (
+                <div className="hidden md:block w-28 bg-muted/70 h-1.5 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all duration-500 ${
+                      weeklyDone
+                        ? 'bg-emerald-500'
+                        : 'bg-gradient-to-r from-indigo-500 to-violet-500'
+                    }`}
+                    style={{ width: `${weeklyProgressPct}%` }}
+                  />
+                </div>
+              )}
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={onOpenWeeklyGoals}
+                className="h-7 px-2.5 rounded-xl text-[10.5px] font-bold border-indigo-500/30 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-500/10 gap-1 cursor-pointer"
+              >
+                <SlidersHorizontal className="w-3 h-3" />
+                <span>Metas Semanais</span>
+              </Button>
+            </div>
+          </div>
+
+          {weeklyTotalTarget > 0 && (
+            <div className="md:hidden w-full bg-muted/70 h-1 rounded-full overflow-hidden mt-2">
+              <div
+                className={`h-full rounded-full transition-all duration-500 ${
+                  weeklyDone
+                    ? 'bg-emerald-500'
+                    : 'bg-gradient-to-r from-indigo-500 to-violet-500'
+                }`}
+                style={{ width: `${weeklyProgressPct}%` }}
+              />
+            </div>
+          )}
+        </Card>
+      )}
 
       {/* Main Tabs Navigation: Cards vs Histórico */}
       <div className="flex items-center justify-between border-b border-border/70 pt-1">

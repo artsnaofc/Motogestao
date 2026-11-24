@@ -15,10 +15,11 @@ import {
   ShieldCheck, 
   Layers,
   Receipt,
+  CalendarDays,
   Rocket
 } from 'lucide-react';
 import { Reserve, Transaction, ReserveTransaction } from '../../types';
-import { getSuggestionAudit, SuggestionAuditResult, formatCurrency, calculateReserveGoalProjection, getRuleBoostDeltaLabel } from './reserveUtils';
+import { getSuggestionAudit, SuggestionAuditResult, formatCurrency, calculateReserveGoalProjection, calculateReserveWeeklyProgress, getRuleBoostDeltaLabel } from './reserveUtils';
 import { Button } from '@/components/ui/button';
 
 interface SuggestionAuditModalProps {
@@ -252,6 +253,45 @@ export function SuggestionAuditModal({
               </span>
             </div>
           )}
+
+          {/* Meta Semanal & Aportes da Semana */}
+          {(() => {
+            const wp = calculateReserveWeeklyProgress(reserve, transactions, reserveTransactions);
+            if (!wp.hasTarget && wp.weeklyTotalAportes <= 0) return null;
+            return (
+              <div className="p-3 rounded-xl bg-indigo-500/[0.06] border border-indigo-500/20 space-y-1.5 text-xs">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5 font-bold text-foreground">
+                    <CalendarDays className="w-3.5 h-3.5 text-indigo-500" />
+                    <span>Semana Atual ({wp.weekRangeLabel})</span>
+                    {wp.hasTarget && (
+                      <span className="px-1.5 py-0.2 rounded bg-indigo-500/15 text-indigo-600 dark:text-indigo-400 text-[9.5px] font-extrabold">
+                        {wp.sourceLabel}
+                      </span>
+                    )}
+                  </div>
+                  {wp.hasTarget && (
+                    <span className="font-mono font-black text-indigo-600 dark:text-indigo-400">
+                      {formatCurrency(wp.weeklyCountedAportes)} / {formatCurrency(wp.weeklyTarget)} ({wp.weeklyProgressPct}%)
+                    </span>
+                  )}
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground">
+                  <span>
+                    Aportado na semana: <strong className="text-foreground font-mono">{formatCurrency(wp.weeklyTotalAportes)}</strong>
+                    {(wp.weeklyRuleAportes > 0 || wp.weeklyManualAportes > 0) && (
+                      <> (Regra: {formatCurrency(wp.weeklyRuleAportes)} · Manual: {formatCurrency(wp.weeklyManualAportes)})</>
+                    )}
+                  </span>
+                  {wp.hasTarget && (
+                    <span className={`font-bold font-mono ${wp.isWeeklyGoalReached ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`}>
+                      {wp.isWeeklyGoalReached ? '✓ Meta semanal batida' : `Faltam ${formatCurrency(wp.weeklyRemaining)}`}
+                    </span>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Formula & Rule Memory Box */}
           <div className="p-3.5 rounded-xl bg-card border border-border shadow-2xs space-y-2">

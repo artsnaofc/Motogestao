@@ -568,6 +568,15 @@ export function DataProvider({ children, userId: propUserId }: { children: React
               if (nextItem.reset_suggestion_on_withdraw === undefined && b.reset_suggestion_on_withdraw !== undefined) {
                 nextItem.reset_suggestion_on_withdraw = b.reset_suggestion_on_withdraw;
               }
+              if (nextItem.weekly_goal_mode === undefined && b.weekly_goal_mode !== undefined) {
+                nextItem.weekly_goal_mode = b.weekly_goal_mode;
+              }
+              if (nextItem.weekly_goal_amount === undefined && b.weekly_goal_amount !== undefined) {
+                nextItem.weekly_goal_amount = b.weekly_goal_amount;
+              }
+              if (nextItem.weekly_goal_include_manual === undefined && b.weekly_goal_include_manual !== undefined) {
+                nextItem.weekly_goal_include_manual = b.weekly_goal_include_manual;
+              }
               return nextItem;
             });
 

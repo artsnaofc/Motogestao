@@ -1495,3 +1495,245 @@ export const findMatchingReserveForExpense = (
   return bestScore > 0 ? best : null;
 };
 
+export interface ReserveWeeklyProgress {
+  mode: 'dynamic' | 'rule_week' | 'fixed' | 'off';
+  includeManual: boolean;
+  weekStartStr: string;
+  weekEndStr: string;
+  weekRangeLabel: string;
+  weeklyTarget: number;
+  rawWeeklyTarget: number;
+  weeklyRuleSuggested: number;
+  weeklyRulePace: number;
+  weeklyDeadlineRequired: number | null;
+  weeklyRuleAportes: number;
+  weeklyManualAportes: number;
+  weeklyTotalAportes: number;
+  weeklyCountedAportes: number;
+  weeklyRemaining: number;
+  weeklyProgressPct: number;
+  isWeeklyGoalReached: boolean;
+  isEnabled: boolean;
+  hasTarget: boolean;
+  sourceLabel: string;
+  isCappedByTotalGoal: boolean;
+}
+
+/**
+ * Calcula o progresso semanal (Segunda a Domingo) de aportes da reserva,
+ * suportando metas configuráveis (valor fixo semanal) e dinâmicas
+ * (regra da semana atual, ritmo de 30 dias da regra ou prazo fixo da meta total).
+ */
+export const calculateReserveWeeklyProgress = (
+  res: Reserve,
+  transactions: Transaction[],
+  reserveTransactions: ReserveTransaction[],
+  options?: { ignoreBoost?: boolean }
+): ReserveWeeklyProgress => {
+  const now = new Date();
+  const weekStart = startOfWeek(now, { weekStartsOn: 1 });
+  const weekEnd = endOfWeek(now, { weekStartsOn: 1 });
+  const weekStartStr = format(weekStart, 'yyyy-MM-dd');
+  const weekEndStr = format(weekEnd, 'yyyy-MM-dd');
+  const weekRangeLabel = `${format(weekStart, 'dd/MM')} – ${format(weekEnd, 'dd/MM')}`;
+
+  const mode = (res.weekly_goal_mode || 'dynamic') as 'dynamic' | 'rule_week' | 'fixed' | 'off';
+  const includeManual = res.weekly_goal_include_manual !== false;
+  const isInactive = res.status === 'inactive';
+  const isPaused = isInactive || Boolean(res.is_paused);
+
+  const roundedBalance = Math.round((res.saldo_atual || 0) * 100) / 100;
+  const roundedGoal = Math.round((res.meta_objetivo || 0) * 100) / 100;
+  const hasTotalGoal = roundedGoal > 0;
+  const remainingTotalGoal = hasTotalGoal ? Math.max(0, Math.round((roundedGoal - roundedBalance) * 100) / 100) : 0;
+  const isTotalGoalReached = hasTotalGoal && remainingTotalGoal <= 0;
+
+  // 1. Aportes realizados dentro da semana atual (Segunda a Domingo)
+  // Nota: aportes desta semana contam integralmente no placar semanal do usuário,
+  // mesmo que tenha havido um resgate ou alteração de meta na semana.
+  let weeklyRuleAportes = 0;
+  let weeklyManualAportes = 0;
+
+  (reserveTransactions || []).forEach(rt => {
+    if (rt.reserve_id !== res.id || rt.type !== 'aporte') return;
+    if (rt.payment_status === 'pending' || (rt as any).status === 'pending') return;
+    if (rt.category === 'Rendimento') return;
+    const d = parseLocalDate(rt.date);
+    if (!isWithinInterval(d, { start: weekStart, end: weekEnd })) return;
+    const amt = Number(rt.amount || 0);
+    if (amt <= 0) return;
+    if (isManualAporte(rt)) {
+      weeklyManualAportes += amt;
+    } else {
+      weeklyRuleAportes += amt;
+    }
+  });
+
+  weeklyRuleAportes = Math.round(weeklyRuleAportes * 100) / 100;
+  weeklyManualAportes = Math.round(weeklyManualAportes * 100) / 100;
+  const weeklyTotalAportes = Math.round((weeklyRuleAportes + weeklyManualAportes) * 100) / 100;
+  const weeklyCountedAportes = includeManual ? weeklyTotalAportes : weeklyRuleAportes;
+
+  // 2. Sugestão calculada pela regra na semana atual (Seg-Dom)
+  const weeklyRuleSuggested = !isPaused && !isTotalGoalReached && res.regra_ativa && res.regra_tipo
+    ? calculateSuggestion(res, transactions, reserveTransactions, 'week', { start: '', end: '' }, options)
+    : 0;
+
+  // 3. Ritmo semanal da regra nos últimos 30 dias (funciona mesmo sem meta total)
+  let weeklyRulePace = 0;
+  const effectiveRuleVal = getEffectiveRuleValue(res, options?.ignoreBoost);
+  if (!isPaused && !isTotalGoalReached && res.regra_ativa && res.regra_tipo && effectiveRuleVal > 0) {
+    const windowStart = startOfDay(subDays(now, 29));
+    const windowEnd = endOfDay(now);
+    const recentTxs = (transactions || []).filter(t => {
+      if (!t || t.ignore_in_charts) return false;
+      if (t.payment_status === 'pending' || (t as any).status === 'pending') return false;
+      const d = parseLocalDate(t.date);
+      return isWithinInterval(d, { start: windowStart, end: windowEnd });
+    });
+
+    const ruleCats = res.regra_categorias || [];
+    const ruleType = res.regra_tipo as string;
+    let total30d = 0;
+
+    if (ruleType === 'km') {
+      let km30 = 0;
+      recentTxs.forEach(t => {
+        const matchesCat = ruleCats.length === 0 || ruleCats.includes(t.category);
+        if (t.type === 'income' && matchesCat) {
+          const dist = (Number(t.end_km) || 0) - (Number(t.start_km) || 0);
+          if (dist > 0) km30 += dist;
+        }
+      });
+      total30d = km30 * effectiveRuleVal;
+    } else if (ruleType === 'bruto') {
+      let gross30 = 0;
+      recentTxs.forEach(t => {
+        const matchesCat = ruleCats.length === 0 || ruleCats.includes(t.category);
+        if (t.type === 'income' && matchesCat) {
+          gross30 += Number(t.amount || 0);
+        }
+      });
+      total30d = gross30 * (effectiveRuleVal / 100);
+    } else if (ruleType === 'liquido') {
+      let inc30 = 0;
+      let exp30 = 0;
+      recentTxs.forEach(t => {
+        const matchesCat = ruleCats.length === 0 || ruleCats.includes(t.category);
+        if (t.type === 'income' && matchesCat) {
+          inc30 += Number(t.amount || 0);
+        } else if (t.type === 'expense') {
+          const isReserveUse = (t as any).isReserveTx === true || t.category === 'Aporte Reserva';
+          if (!isReserveUse) exp30 += Number(t.amount || 0);
+        }
+      });
+      total30d = Math.max(0, inc30 - exp30) * (effectiveRuleVal / 100);
+    } else if (ruleType === 'fixo' || ruleType === 'fixo_diario') {
+      const workedDays = new Set<string>();
+      recentTxs.forEach(t => {
+        const matchesCat = ruleCats.length === 0 || ruleCats.includes(t.category);
+        if (t.type === 'income' && matchesCat) {
+          workedDays.add(toDateInputString(t.date) || t.date);
+        }
+      });
+      total30d = workedDays.size * effectiveRuleVal;
+    }
+
+    if (total30d > 0) {
+      weeklyRulePace = Math.round(((total30d / 30) * 7) * 100) / 100;
+    }
+  }
+
+  // 4. Requerido por semana caso tenha Prazo Fixo (target_date)
+  const cleanTargetDate = toDateInputString(res.target_date);
+  let weeklyDeadlineRequired: number | null = null;
+  if (hasTotalGoal && !isTotalGoalReached && cleanTargetDate && /^\d{4}-\d{2}-\d{2}$/.test(cleanTargetDate)) {
+    const daysUntil = differenceInCalendarDays(startOfDay(parseLocalDate(cleanTargetDate)), startOfDay(now));
+    if (daysUntil > 0) {
+      weeklyDeadlineRequired = Math.round(((remainingTotalGoal / daysUntil) * Math.min(7, daysUntil)) * 100) / 100;
+    } else {
+      weeklyDeadlineRequired = remainingTotalGoal;
+    }
+  }
+
+  // 5. Determinar meta semanal bruta conforme o modo
+  let rawWeeklyTarget = 0;
+  let sourceLabel = 'Dinâmica';
+
+  if (isInactive || mode === 'off') {
+    rawWeeklyTarget = 0;
+    sourceLabel = 'Desativada';
+  } else if (mode === 'fixed') {
+    rawWeeklyTarget = Math.max(0, Math.round(Number(res.weekly_goal_amount || 0) * 100) / 100);
+    sourceLabel = 'Configurada';
+  } else if (mode === 'rule_week') {
+    rawWeeklyTarget = weeklyRuleSuggested;
+    sourceLabel = 'Sugestão da Semana';
+  } else {
+    // Modo Dinâmico Automático
+    if (weeklyDeadlineRequired !== null && weeklyDeadlineRequired > 0) {
+      rawWeeklyTarget = weeklyDeadlineRequired;
+      sourceLabel = 'Dinâmica · Prazo';
+    } else if (!isPaused && !isTotalGoalReached && res.regra_ativa && res.regra_tipo) {
+      if (weeklyRulePace > 0 || weeklyRuleSuggested > 0) {
+        rawWeeklyTarget = Math.max(weeklyRuleSuggested, weeklyRulePace);
+        sourceLabel =
+          weeklyRuleSuggested >= weeklyRulePace && weeklyRuleSuggested > 0
+            ? 'Dinâmica · Regra'
+            : 'Dinâmica · Ritmo';
+      }
+    }
+  }
+
+  // 6. Respeitar o teto da meta total (se configurada)
+  let weeklyTarget = rawWeeklyTarget;
+  let isCappedByTotalGoal = false;
+  if (hasTotalGoal && rawWeeklyTarget > 0) {
+    const cap = Math.round((remainingTotalGoal + weeklyCountedAportes) * 100) / 100;
+    if (weeklyTarget > cap) {
+      weeklyTarget = Math.max(0, cap);
+      isCappedByTotalGoal = true;
+    }
+  }
+
+  if (isPaused && mode !== 'fixed') {
+    weeklyTarget = 0;
+  }
+
+  const weeklyRemaining = Math.max(0, Math.round((weeklyTarget - weeklyCountedAportes) * 100) / 100);
+  const weeklyProgressPct =
+    weeklyTarget > 0
+      ? Math.min(100, Math.round((weeklyCountedAportes / weeklyTarget) * 100))
+      : weeklyTotalAportes > 0
+        ? 100
+        : 0;
+  const isWeeklyGoalReached = weeklyTarget > 0 && weeklyCountedAportes >= weeklyTarget;
+  const hasTarget = weeklyTarget > 0;
+  const isEnabled = !isInactive && mode !== 'off' && (hasTarget || weeklyTotalAportes > 0);
+
+  return {
+    mode,
+    includeManual,
+    weekStartStr,
+    weekEndStr,
+    weekRangeLabel,
+    weeklyTarget,
+    rawWeeklyTarget,
+    weeklyRuleSuggested,
+    weeklyRulePace,
+    weeklyDeadlineRequired,
+    weeklyRuleAportes,
+    weeklyManualAportes,
+    weeklyTotalAportes,
+    weeklyCountedAportes,
+    weeklyRemaining,
+    weeklyProgressPct,
+    isWeeklyGoalReached,
+    isEnabled,
+    hasTarget,
+    sourceLabel,
+    isCappedByTotalGoal,
+  };
+};
+
+

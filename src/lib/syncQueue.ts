@@ -219,7 +219,8 @@ class SyncQueueManager {
             const optionalReserveKeys = [
               'rule_history', 'regra_inicio_validade', 'require_category_on_use',
               'default_use_category', 'regra_base', 'target_date',
-              'boost_ativo', 'boost_tipo', 'boost_valor', 'reset_suggestion_on_withdraw'
+              'boost_ativo', 'boost_tipo', 'boost_valor', 'reset_suggestion_on_withdraw',
+              'weekly_goal_mode', 'weekly_goal_amount', 'weekly_goal_include_manual'
             ];
             const safeReserveInsert: Record<string, any> = {};
             for (const k of Object.keys(payloadToInsert || {})) {
@@ -353,7 +354,8 @@ class SyncQueueManager {
             const optionalReserveKeys = [
               'rule_history', 'regra_inicio_validade', 'require_category_on_use',
               'default_use_category', 'regra_base', 'target_date',
-              'boost_ativo', 'boost_tipo', 'boost_valor', 'reset_suggestion_on_withdraw'
+              'boost_ativo', 'boost_tipo', 'boost_valor', 'reset_suggestion_on_withdraw',
+              'weekly_goal_mode', 'weekly_goal_amount', 'weekly_goal_include_manual'
             ];
             const safeReserveUpdate: Record<string, any> = {};
             for (const k of Object.keys(task.payload || {})) {

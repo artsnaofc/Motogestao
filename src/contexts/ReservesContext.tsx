@@ -75,7 +75,10 @@ export function ReservesProvider({
       fields.boost_ativo === undefined &&
       fields.boost_tipo === undefined &&
       fields.boost_valor === undefined &&
-      fields.reset_suggestion_on_withdraw === undefined
+      fields.reset_suggestion_on_withdraw === undefined &&
+      fields.weekly_goal_mode === undefined &&
+      fields.weekly_goal_amount === undefined &&
+      fields.weekly_goal_include_manual === undefined
     ) {
       return;
     }
@@ -86,6 +89,9 @@ export function ReservesProvider({
         boost_tipo?: Reserve['boost_tipo'];
         boost_valor?: number | null;
         reset_suggestion_on_withdraw?: boolean;
+        weekly_goal_mode?: Reserve['weekly_goal_mode'];
+        weekly_goal_amount?: number | null;
+        weekly_goal_include_manual?: boolean;
       }> = raw ? JSON.parse(raw) : {};
       const prevEntry = currentMap[reserveId] || {};
       currentMap[reserveId] = {
@@ -96,6 +102,18 @@ export function ReservesProvider({
           fields.reset_suggestion_on_withdraw !== undefined
             ? fields.reset_suggestion_on_withdraw
             : prevEntry.reset_suggestion_on_withdraw,
+        weekly_goal_mode:
+          fields.weekly_goal_mode !== undefined
+            ? fields.weekly_goal_mode
+            : prevEntry.weekly_goal_mode,
+        weekly_goal_amount:
+          fields.weekly_goal_amount !== undefined
+            ? fields.weekly_goal_amount
+            : prevEntry.weekly_goal_amount,
+        weekly_goal_include_manual:
+          fields.weekly_goal_include_manual !== undefined
+            ? fields.weekly_goal_include_manual
+            : prevEntry.weekly_goal_include_manual,
       };
       localStorage.setItem(`reserve_boost_map_${userId}`, JSON.stringify(currentMap));
       cacheManager.set(`reserve_boost_map_${userId}`, currentMap, undefined, 'reserves');

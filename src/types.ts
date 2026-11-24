@@ -143,6 +143,9 @@ export interface Reserve {
   boost_tipo?: 'increment' | 'multiplier' | null;
   boost_valor?: number | null;
   reset_suggestion_on_withdraw?: boolean;
+  weekly_goal_mode?: 'dynamic' | 'rule_week' | 'fixed' | 'off' | null;
+  weekly_goal_amount?: number | null;
+  weekly_goal_include_manual?: boolean;
   created_at?: string;
   updated_at?: string;
 }

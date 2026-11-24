@@ -13,6 +13,7 @@ import {
   ShieldCheck,
   Calculator,
   Calendar,
+  CalendarDays,
   Rocket
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -26,6 +27,7 @@ import {
   toDateInputString,
   getTodayLocalDateStr,
   calculateReserveGoalProjection,
+  calculateReserveWeeklyProgress,
   formatEstimatedTimeline,
   getDefaultBoostValue
 } from './reserveUtils';
@@ -73,6 +75,9 @@ export function ReserveModal({
   const [boostTipo, setBoostTipo] = useState<'increment' | 'multiplier'>('increment');
   const [boostValor, setBoostValor] = useState<string>('');
   const [resetSuggestionOnWithdraw, setResetSuggestionOnWithdraw] = useState<boolean>(true);
+  const [weeklyGoalMode, setWeeklyGoalMode] = useState<'dynamic' | 'rule_week' | 'fixed' | 'off'>('dynamic');
+  const [weeklyGoalAmount, setWeeklyGoalAmount] = useState<string>('');
+  const [weeklyGoalIncludeManual, setWeeklyGoalIncludeManual] = useState<boolean>(true);
   const [simHorizonDays, setSimHorizonDays] = useState<number>(30);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -152,6 +157,15 @@ export function ReserveModal({
             : String(getDefaultBoostValue(reserveToEdit.regra_tipo || 'km', bType))
         );
         setResetSuggestionOnWithdraw(reserveToEdit.reset_suggestion_on_withdraw !== false);
+        setWeeklyGoalMode((reserveToEdit.weekly_goal_mode || 'dynamic') as 'dynamic' | 'rule_week' | 'fixed' | 'off');
+        setWeeklyGoalAmount(
+          reserveToEdit.weekly_goal_amount !== undefined &&
+            reserveToEdit.weekly_goal_amount !== null &&
+            Number(reserveToEdit.weekly_goal_amount) > 0
+            ? String(Number(reserveToEdit.weekly_goal_amount))
+            : ''
+        );
+        setWeeklyGoalIncludeManual(reserveToEdit.weekly_goal_include_manual !== false);
         setInitialBalance('');
       } else {
         setName('');
@@ -172,6 +186,9 @@ export function ReserveModal({
         setBoostTipo('increment');
         setBoostValor('5');
         setResetSuggestionOnWithdraw(true);
+        setWeeklyGoalMode('dynamic');
+        setWeeklyGoalAmount('');
+        setWeeklyGoalIncludeManual(true);
       }
       setActiveTab('general');
     }
@@ -220,6 +237,13 @@ export function ReserveModal({
       return;
     }
 
+    const cleanWeeklyStr = String(weeklyGoalAmount || '').replace(',', '.').trim();
+    const parsedWeeklyGoal = cleanWeeklyStr ? Math.round(parseFloat(cleanWeeklyStr) * 100) / 100 : 0;
+    if (weeklyGoalMode === 'fixed' && (isNaN(parsedWeeklyGoal) || parsedWeeklyGoal <= 0)) {
+      toast.error('Informe uma meta semanal em R$ maior que zero ou altere o modo.');
+      return;
+    }
+
     try {
       setIsSubmitting(true);
 
@@ -244,6 +268,9 @@ export function ReserveModal({
         boost_tipo: boostTipo,
         boost_valor: parsedBoost > 0 ? parsedBoost : getDefaultBoostValue(regraTipo || 'km', boostTipo),
         reset_suggestion_on_withdraw: resetSuggestionOnWithdraw,
+        weekly_goal_mode: weeklyGoalMode,
+        weekly_goal_amount: weeklyGoalMode === 'fixed' ? parsedWeeklyGoal : parsedWeeklyGoal > 0 ? parsedWeeklyGoal : null,
+        weekly_goal_include_manual: weeklyGoalIncludeManual,
         require_category_on_use: requireCategoryOnUse,
         default_use_category: !requireCategoryOnUse ? defaultUseCategory : null
       };
@@ -395,6 +422,124 @@ export function ReserveModal({
                   </div>
                 )}
               </div>
+
+              {/* Meta Semanal de Aportes (Configurável ou Dinâmica) */}
+              {(() => {
+                const parsedWeeklyVal = parseFloat(String(weeklyGoalAmount || '').replace(',', '.').trim()) || 0;
+                const parsedMetaVal = parseFloat(String(metaObjetivo || '').replace(',', '.').trim()) || 0;
+                const parsedRuleVal = parseFloat(String(regraValor || '').replace(',', '.').trim()) || 0;
+                const parsedBoostSim = parseFloat(String(boostValor || '').replace(',', '.').trim()) || 0;
+                const currentBalSim = isEditing
+                  ? Number(reserveToEdit?.saldo_atual || 0)
+                  : parseFloat(String(initialBalance || '').replace(',', '.').trim()) || 0;
+                const simWeeklyReserve: Reserve = {
+                  id: reserveToEdit?.id || 'sim-weekly',
+                  user_id: reserveToEdit?.user_id || '',
+                  name: name || 'Reserva',
+                  saldo_inicial: currentBalSim,
+                  saldo_atual: currentBalSim,
+                  meta_objetivo: parsedMetaVal,
+                  target_date: targetDate ? toDateInputString(targetDate) || null : null,
+                  icon,
+                  color,
+                  regra_ativa: regraAtiva,
+                  regra_tipo: regraAtiva && regraTipo ? (regraTipo as any) : null,
+                  regra_valor: regraAtiva ? parsedRuleVal : null,
+                  regra_categorias: regraAtiva ? regraCategorias : [],
+                  regra_inicio_validade: regraAtiva ? (toDateInputString(regraInicioValidade) || getTodayLocalDateStr()) : undefined,
+                  boost_ativo: regraAtiva ? boostAtivo : false,
+                  boost_tipo: boostTipo,
+                  boost_valor: parsedBoostSim,
+                  weekly_goal_mode: weeklyGoalMode,
+                  weekly_goal_amount: weeklyGoalMode === 'fixed' ? parsedWeeklyVal : null,
+                  weekly_goal_include_manual: weeklyGoalIncludeManual,
+                  status: reserveToEdit?.status || 'active',
+                  is_paused: reserveToEdit?.is_paused || false,
+                  created_at: reserveToEdit?.created_at || new Date().toISOString(),
+                };
+                const weeklyPrev = calculateReserveWeeklyProgress(simWeeklyReserve, transactions, reserveTransactions);
+
+                return (
+                  <div className="p-3 rounded-2xl border border-border/80 bg-muted/25 space-y-2.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5">
+                        <CalendarDays className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+                        <span className="text-xs font-black text-foreground">
+                          Meta Semanal de Aportes
+                        </span>
+                      </div>
+                      {weeklyPrev.hasTarget && (
+                        <span className="text-[10.5px] font-mono font-black text-indigo-600 dark:text-indigo-400">
+                          {formatCurrency(weeklyPrev.weeklyTarget)}/sem
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+                      {[
+                        { id: 'dynamic' as const, label: 'Dinâmica' },
+                        { id: 'rule_week' as const, label: 'Sugestão Sem.' },
+                        { id: 'fixed' as const, label: 'Valor Fixo' },
+                        { id: 'off' as const, label: 'Desativada' },
+                      ].map(opt => (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          onClick={() => {
+                            setWeeklyGoalMode(opt.id);
+                            if (opt.id === 'fixed' && !weeklyGoalAmount && weeklyPrev.weeklyTarget > 0) {
+                              setWeeklyGoalAmount(String(weeklyPrev.weeklyTarget));
+                            }
+                          }}
+                          className={`px-2 py-1.5 rounded-xl border text-[10.5px] font-bold transition-all cursor-pointer ${
+                            weeklyGoalMode === opt.id
+                              ? 'bg-indigo-600 text-white border-indigo-600 shadow-2xs'
+                              : 'bg-card text-muted-foreground border-border/70 hover:text-foreground'
+                          }`}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+
+                    {weeklyGoalMode === 'fixed' && (
+                      <div className="flex items-center gap-2">
+                        <span className="text-[11px] font-bold text-muted-foreground shrink-0">
+                          Alvo semanal (R$):
+                        </span>
+                        <Input
+                          type="text"
+                          inputMode="decimal"
+                          placeholder="Ex: 150.00"
+                          value={weeklyGoalAmount}
+                          onChange={e => setWeeklyGoalAmount(e.target.value.replace(/[^0-9.,]/g, ''))}
+                          className="h-8 text-xs font-mono font-bold rounded-xl bg-card"
+                        />
+                      </div>
+                    )}
+
+                    {weeklyGoalMode !== 'off' && (
+                      <div className="flex flex-wrap items-center justify-between gap-2 text-[10.5px] text-muted-foreground">
+                        <span>
+                          Aportado na semana ({weeklyPrev.weekRangeLabel}):{' '}
+                          <strong className="text-foreground font-mono">
+                            {formatCurrency(weeklyPrev.weeklyTotalAportes)}
+                          </strong>
+                        </span>
+                        <label className="inline-flex items-center gap-1.5 font-semibold cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={weeklyGoalIncludeManual}
+                            onChange={e => setWeeklyGoalIncludeManual(e.target.checked)}
+                            className="w-3.5 h-3.5 rounded accent-indigo-600 cursor-pointer"
+                          />
+                          <span>Incluir manuais</span>
+                        </label>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
 
               {/* Simulador de Impacto de Metas ("E se...?") */}
               {(() => {

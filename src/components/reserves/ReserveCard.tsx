@@ -25,6 +25,7 @@ import {
   Info,
   Landmark,
   Calendar,
+  CalendarDays,
   Rocket
 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
@@ -41,6 +42,7 @@ import {
   getEffectiveRuleValue,
   getRuleBoostDeltaLabel,
   getBoostSpeedupComparison,
+  calculateReserveWeeklyProgress,
   parseLocalDate 
 } from './reserveUtils';
 
@@ -64,6 +66,8 @@ interface ReserveCardProps {
   onTransferToCash?: (reserve: Reserve) => void;
   onToggleBoost?: (reserve: Reserve) => void;
   onConfigureBoost?: (reserve: Reserve) => void;
+  onConfigureWeeklyGoal?: (reserve: Reserve) => void;
+  onApplyWeeklyRemaining?: (reserve: Reserve, amount: number) => void;
   hideValues?: boolean;
 }
 
@@ -87,6 +91,8 @@ export function ReserveCard({
   onTransferToCash,
   onToggleBoost,
   onConfigureBoost,
+  onConfigureWeeklyGoal,
+  onApplyWeeklyRemaining,
   hideValues
 }: ReserveCardProps) {
   const [showMenu, setShowMenu] = useState(false);
@@ -130,6 +136,7 @@ export function ReserveCard({
   const yieldStats = calculateReserveYieldStats(reserve, reserveTransactions);
   const totalYield = yieldStats.yieldAmount;
   const projection = calculateReserveGoalProjection(reserve, transactions, reserveTransactions);
+  const weeklyProgress = calculateReserveWeeklyProgress(reserve, transactions, reserveTransactions);
   const boostSpeedup = boostActive
     ? getBoostSpeedupComparison(reserve, transactions, reserveTransactions)
     : null;
@@ -465,6 +472,116 @@ export function ReserveCard({
                   <span className="font-mono font-black shrink-0">
                     {hideValues ? 'R$ ••/dia' : `${formatCurrency(projection.requiredDailyForDeadline)}/dia`}
                   </span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Weekly Contribution Goal Strip (Meta Semanal de Aportes) */}
+          {!isInactive && (weeklyProgress.hasTarget || weeklyProgress.weeklyTotalAportes > 0) && (
+            <div
+              className={`mt-2 p-2 rounded-xl border space-y-1 text-[10px] ${
+                weeklyProgress.isWeeklyGoalReached
+                  ? 'bg-emerald-500/[0.07] border-emerald-500/25'
+                  : 'bg-muted/25 border-border/60'
+              }`}
+              title={`Semana ${weeklyProgress.weekRangeLabel} • Regra: ${formatCurrency(weeklyProgress.weeklyRuleAportes)} • Manual: ${formatCurrency(weeklyProgress.weeklyManualAportes)}`}
+            >
+              {weeklyProgress.hasTarget ? (
+                <>
+                  <div className="flex items-center justify-between gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => onConfigureWeeklyGoal && onConfigureWeeklyGoal(reserve)}
+                      className="inline-flex items-center gap-1 min-w-0 font-bold text-foreground hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors cursor-pointer"
+                      title="Configurar meta semanal desta reserva"
+                    >
+                      <CalendarDays className="w-3 h-3 text-indigo-500 shrink-0" />
+                      <span className="truncate">Meta Semanal</span>
+                      <span className="px-1 py-0.2 rounded bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20 text-[8.5px] font-extrabold shrink-0">
+                        {weeklyProgress.sourceLabel}
+                      </span>
+                    </button>
+                    <div className="flex items-center gap-1 font-mono shrink-0">
+                      <span className="font-black text-foreground">
+                        {hideValues ? 'R$ •••' : formatCurrency(weeklyProgress.weeklyCountedAportes)}
+                      </span>
+                      <span className="text-muted-foreground">
+                        /{hideValues ? '••' : formatCurrency(weeklyProgress.weeklyTarget)}
+                      </span>
+                      <span
+                        className={`font-black ${
+                          weeklyProgress.isWeeklyGoalReached
+                            ? 'text-emerald-600 dark:text-emerald-400'
+                            : 'text-indigo-600 dark:text-indigo-400'
+                        }`}
+                      >
+                        {weeklyProgress.weeklyProgressPct}%
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="w-full bg-muted/70 h-1 rounded-full overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all duration-500 ${
+                        weeklyProgress.isWeeklyGoalReached
+                          ? 'bg-emerald-500'
+                          : 'bg-gradient-to-r from-indigo-500 to-violet-500'
+                      }`}
+                      style={{ width: `${weeklyProgress.weeklyProgressPct}%` }}
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between gap-2 text-[9.5px] text-muted-foreground">
+                    <span className="truncate">
+                      Semana {weeklyProgress.weekRangeLabel}
+                      {!weeklyProgress.includeManual && weeklyProgress.weeklyManualAportes > 0 && !hideValues
+                        ? ` (+${formatCurrency(weeklyProgress.weeklyManualAportes)} manual)`
+                        : ''}
+                    </span>
+                    {weeklyProgress.isWeeklyGoalReached ? (
+                      <span className="font-black text-emerald-600 dark:text-emerald-400 shrink-0">
+                        ✓ Batida na semana
+                      </span>
+                    ) : (
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <span className="font-mono font-bold text-amber-600 dark:text-amber-400">
+                          Falta {hideValues ? 'R$ ••' : formatCurrency(weeklyProgress.weeklyRemaining)}
+                        </span>
+                        {onApplyWeeklyRemaining && !isPaused && weeklyProgress.weeklyRemaining > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => onApplyWeeklyRemaining(reserve, weeklyProgress.weeklyRemaining)}
+                            className="px-1.5 py-0.2 rounded bg-indigo-600 hover:bg-indigo-700 text-white text-[8.5px] font-black uppercase cursor-pointer"
+                            title="Fazer aporte para completar a meta semanal"
+                          >
+                            + Completar
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <div className="flex items-center justify-between gap-2">
+                  <span className="inline-flex items-center gap-1 text-muted-foreground font-semibold truncate">
+                    <CalendarDays className="w-3 h-3 text-indigo-500 shrink-0" />
+                    <span>Aportado na semana ({weeklyProgress.weekRangeLabel}):</span>
+                  </span>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <span className="font-mono font-black text-foreground">
+                      {hideValues ? 'R$ •••' : formatCurrency(weeklyProgress.weeklyTotalAportes)}
+                    </span>
+                    {onConfigureWeeklyGoal && (
+                      <button
+                        type="button"
+                        onClick={() => onConfigureWeeklyGoal(reserve)}
+                        className="text-[9px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
+                      >
+                        Definir meta
+                      </button>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
