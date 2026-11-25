@@ -103,7 +103,7 @@ export const FutureCashFlowCard: React.FC<FutureCashFlowCardProps> = ({
       ) {
         return;
       }
-      const dStr = (t.date || '').split('T')[0];
+      const dStr = (t.payment_date || t.date || '').split('T')[0];
       const mStr = dStr.slice(0, 7);
       if (!mStr || mStr >= currentMonthStr) return;
 

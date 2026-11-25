@@ -68,6 +68,7 @@ import {
   RotateCcw,
   Globe,
   Landmark,
+  Eye,
   EyeOff,
   CreditCard
 } from 'lucide-react';
@@ -477,6 +478,7 @@ export function History() {
     savedFilters?.filterStatus === 'scheduled_30' ||
     savedFilters?.filterStatus === 'scheduled_90'
   ));
+  const [hideIgnored, setHideIgnored] = useState<boolean>(() => Boolean(savedFilters?.hideIgnored ?? false));
 
   // Source filters
   const [includeCash, setIncludeCash] = useState(savedFilters?.includeCash ?? true);
@@ -743,6 +745,7 @@ export function History() {
       sortBy,
       showAdvanced,
       showFuture,
+      hideIgnored,
       includeCash,
       includeReserves,
       includeInvestments,
@@ -753,7 +756,7 @@ export function History() {
     cacheManager.set(HISTORY_FILTERS_KEY, filterState, undefined, 'settings');
   }, [
     searchTerm, searchAllPeriods, filterType, filterCategory, filterStatus, filterPaymentStatus, minAmount, maxAmount,
-    sortBy, showAdvanced, showFuture, includeCash, includeReserves, includeInvestments,
+    sortBy, showAdvanced, showFuture, hideIgnored, includeCash, includeReserves, includeInvestments,
     filterReserveId, filterTicker, activeQuickChip
   ]);
 
@@ -772,8 +775,9 @@ export function History() {
     if (filterReserveId !== 'all') count++;
     if (filterTicker !== 'all') count++;
     if (showFuture) count++;
+    if (hideIgnored) count++;
     return count;
-  }, [filterType, filterCategory, filterStatus, filterPaymentStatus, minAmount, maxAmount, sortBy, includeCash, includeReserves, includeInvestments, filterReserveId, filterTicker, showFuture]);
+  }, [filterType, filterCategory, filterStatus, filterPaymentStatus, minAmount, maxAmount, sortBy, includeCash, includeReserves, includeInvestments, filterReserveId, filterTicker, showFuture, hideIgnored]);
 
   // Edit Modal
   const [editItem, setEditItem] = useState<Transaction | null>(null);
@@ -846,7 +850,7 @@ export function History() {
   // Reset visible groups count when filter parameters change
   React.useEffect(() => {
     setVisibleGroupsCount(10);
-  }, [searchTerm, filterType, filterCategory, filterStatus, minAmount, maxAmount, sortBy, includeCash, includeReserves, includeInvestments, filterReserveId, filterTicker, globalPeriod]);
+  }, [searchTerm, filterType, filterCategory, filterStatus, minAmount, maxAmount, sortBy, includeCash, includeReserves, includeInvestments, filterReserveId, filterTicker, globalPeriod, hideIgnored]);
 
   // States for Editing Reserve Transactions & Card Linkage
   const [editIsReserve, setEditIsReserve] = useState(false);
@@ -2300,6 +2304,13 @@ export function History() {
     return false;
   };
 
+  const isIgnoredHistoryTx = (t: any) => {
+    if (!t || !t.ignore_in_charts) return false;
+    if (t.isInvestmentTx || t.isDividendTx || isTransferToCashTx(t)) return false;
+    if (t.isReserveTx && t.reserveTxType !== 'utilizacao') return false;
+    return true;
+  };
+
   const allTransactions = useMemo(() => {
     const todayStr = getTodayLocalDateStr();
 
@@ -2960,6 +2971,9 @@ export function History() {
       if (t.payment_status === 'pending') {
         return;
       }
+      if (hideIgnored && isIgnoredHistoryTx(t)) {
+        return;
+      }
       const amount = Number(t.amount);
       const isInvestment = (t as any).isInvestmentTx;
       const isDividend = (t as any).isDividendTx;
@@ -3068,7 +3082,7 @@ export function History() {
       totalVendaInvestimento,
       totalDividendosRecebidos
     };
-  }, [transactions, periodFiltered, settings, reserves, investmentTransactions, dividends]);
+  }, [transactions, periodFiltered, settings, reserves, investmentTransactions, dividends, hideIgnored]);
 
   const totalInvestmentEquity = useMemo(() => {
     const posMap: Record<string, number> = {};
@@ -3610,6 +3624,11 @@ export function History() {
         if (dTx > todayEnd) return false;
       }
 
+      // Optionally hide transactions marked as "ignorar nos gráficos" (matching Dashboard toggle)
+      if (hideIgnored && isIgnoredHistoryTx(t)) {
+        return false;
+      }
+
       // Data Source Filters
       const isInvestment = (t as any).isInvestmentTx || (t as any).isDividendTx;
       const isReserve = (t as any).isReserveTx;
@@ -3711,7 +3730,16 @@ export function History() {
     }
 
     return result;
-  }, [periodFiltered, allTransactionsAdjusted, searchTerm, searchAllPeriods, matchesSmartTransactionSearch, filterType, filterCategory, filterStatus, filterPaymentStatus, minAmount, maxAmount, sortBy, settings, includeCash, includeReserves, includeInvestments, filterReserveId, filterTicker, showFuture, globalPeriod, customDateRange]);
+  }, [periodFiltered, allTransactionsAdjusted, searchTerm, searchAllPeriods, matchesSmartTransactionSearch, filterType, filterCategory, filterStatus, filterPaymentStatus, minAmount, maxAmount, sortBy, settings, includeCash, includeReserves, includeInvestments, filterReserveId, filterTicker, showFuture, hideIgnored, globalPeriod, customDateRange]);
+
+  const ignoredSummary = useMemo(() => {
+    const allItems = allTransactionsAdjusted.filter(t => isIgnoredHistoryTx(t));
+    const periodItems = periodFiltered.filter(t => isIgnoredHistoryTx(t));
+    return {
+      allCount: allItems.length,
+      periodCount: periodItems.length,
+    };
+  }, [allTransactionsAdjusted, periodFiltered]);
 
   // Future / Scheduled summary across all transactions so user always knows what is coming up
   const futureSummary = useMemo(() => {
@@ -4049,6 +4077,7 @@ export function History() {
     const incomeTxs = periodFiltered.filter(t => {
       if (t.type !== 'income') return false;
       if (t.payment_status === 'pending') return false;
+      if (hideIgnored && isIgnoredHistoryTx(t)) return false;
       const isReserveTx = (t as any).isReserveTx === true;
       const isInvestmentTx = (t as any).isInvestmentTx === true;
       const isResgateReserva = t.category === 'Resgate Reserva';
@@ -4062,7 +4091,7 @@ export function History() {
       avgDailyEarnings: activeDays > 0 ? (summaries.ganhosBrutos || 0) / activeDays : 0,
       raceCount: count
     };
-  }, [periodFiltered, summaries.ganhosBrutos]);
+  }, [periodFiltered, summaries.ganhosBrutos, hideIgnored]);
 
   const { pctBanca, pctReserva, pctInvestimento } = useMemo(() => {
     const bPrice = Math.max(0, summaries.bancaLivre);
@@ -4253,6 +4282,7 @@ export function History() {
     setFilterTicker('all');
     setActiveQuickChip('all');
     setShowFuture(false);
+    setHideIgnored(false);
   };
 
   const handleToggleShowFuture = () => {
@@ -5375,6 +5405,30 @@ export function History() {
                 )}
               </Button>
 
+              {(ignoredSummary.allCount > 0 || hideIgnored) && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setHideIgnored(prev => !prev)}
+                  className={`h-11 text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 px-3.5 select-none transition-colors border cursor-pointer ${
+                    hideIgnored
+                      ? 'border-amber-500/40 bg-amber-500/15 text-amber-600 dark:text-amber-400'
+                      : 'border-border bg-card text-muted-foreground hover:text-foreground'
+                  }`}
+                  title={hideIgnored ? 'Mostrar lançamentos marcados como ignorados nos gráficos' : 'Ocultar lançamentos marcados como ignorados nos gráficos (como no Dashboard)'}
+                >
+                  {hideIgnored ? <EyeOff className="w-4 h-4 shrink-0" /> : <Eye className="w-4 h-4 shrink-0" />}
+                  <span>{hideIgnored ? 'Ignorados ocultos' : 'Ocultar ignorados'}</span>
+                  {ignoredSummary.allCount > 0 && (
+                    <span className={`font-black text-[10px] px-1.5 py-0.5 rounded-full ${
+                      hideIgnored ? 'bg-amber-500 text-zinc-950' : 'bg-muted text-muted-foreground'
+                    }`}>
+                      {ignoredSummary.allCount}
+                    </span>
+                  )}
+                </Button>
+              )}
+
               <Button
                 type="button"
                 variant="outline"
@@ -5523,6 +5577,16 @@ export function History() {
                     className="px-2 py-0.5 text-[11px] font-bold rounded-lg bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30 flex items-center gap-1 cursor-pointer hover:bg-amber-500/25"
                   >
                     <span>Exibindo futuras</span>
+                    <X className="w-3 h-3" />
+                  </button>
+                )}
+                {hideIgnored && (
+                  <button
+                    type="button"
+                    onClick={() => setHideIgnored(false)}
+                    className="px-2 py-0.5 text-[11px] font-bold rounded-lg bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30 flex items-center gap-1 cursor-pointer hover:bg-amber-500/25"
+                  >
+                    <span>Ignorados ocultos{ignoredSummary.allCount > 0 ? ` (${ignoredSummary.allCount})` : ''}</span>
                     <X className="w-3 h-3" />
                   </button>
                 )}

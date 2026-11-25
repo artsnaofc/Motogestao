@@ -1103,6 +1103,8 @@ export function Dashboard() {
       const parsedDate = parseLocalDate(effectiveDateStr);
       return {
         ...t,
+        date: dateStr,
+        originalDate: t.date,
         _dateStr: dateStr,
         _monthStr: dateStr.substring(0, 7),
         _ts: parsedDate.getTime(),
@@ -1152,7 +1154,7 @@ export function Dashboard() {
         if (item.is_reserve_use || item.description?.startsWith('[Reserva]')) {
           const matchRt = (reserveTransactions || []).find(
             rt => rt.type === 'utilizacao' &&
-                  rt.date === (item.date || '').split('T')[0] &&
+                  rt.date === ((item.originalDate || item.date || '').split('T')[0]) &&
                   Math.abs(Number(rt.amount) - Number(item.amount)) < 0.01
           );
           if (matchRt) {
@@ -1648,7 +1650,7 @@ export function Dashboard() {
         if (rt.type !== 'rendimento') return false;
         if (rt.payment_status === 'pending') return false;
         if (globalPeriod === 'all') return true;
-        const ts = parseLocalDate(rt.date).getTime();
+        const ts = parseLocalDate(rt.payment_date || rt.date).getTime();
         return ts >= currentStartTime && ts <= currentEndTime;
       })
       .reduce((sum, rt) => sum + Number(rt.amount), 0);
@@ -1706,7 +1708,7 @@ export function Dashboard() {
         if (rt.linked_investment_id) return false;
         if (!isAssetPurchaseReserveTx(rt)) return false;
         if (globalPeriod === 'all') return true;
-        const ts = parseLocalDate(rt.date).getTime();
+        const ts = parseLocalDate(rt.payment_date || rt.date).getTime();
         return ts >= currentStartTime && ts <= currentEndTime;
       })
       .reduce((sum, rt) => sum + Number(rt.amount), 0);
@@ -1724,7 +1726,7 @@ export function Dashboard() {
         if (rt.payment_status === 'pending') return false;
         if (rt.linked_investment_id) return false;
         if (!isAssetPurchaseReserveTx(rt)) return false;
-        const ts = parseLocalDate(rt.date).getTime();
+        const ts = parseLocalDate(rt.payment_date || rt.date).getTime();
         return ts >= pastStartTime && ts <= pastEndTime;
       })
       .reduce((sum, rt) => sum + Number(rt.amount), 0);
@@ -1845,8 +1847,8 @@ export function Dashboard() {
     const startOfLastW = subWeeks(startOfW, 1);
     const endOfLastW = subWeeks(endOfW, 1);
     
-    const weeklyTxs = (chartTransactionsAdjusted || []).filter(t => isWithinInterval(parseLocalDate(t.date), { start: startOfW, end: endOfW }));
-    const lastWeeklyTxs = (chartTransactionsAdjusted || []).filter(t => isWithinInterval(parseLocalDate(t.date), { start: startOfLastW, end: endOfLastW }));
+    const weeklyTxs = (chartTransactionsAdjusted || []).filter(t => isWithinInterval(parseLocalDate((t as any)._dateStr || t.date), { start: startOfW, end: endOfW }));
+    const lastWeeklyTxs = (chartTransactionsAdjusted || []).filter(t => isWithinInterval(parseLocalDate((t as any)._dateStr || t.date), { start: startOfLastW, end: endOfLastW }));
 
     const todayStr = format(today, 'yyyy-MM-dd');
     const todayTxs = weeklyTxs.filter(t => ((t as any)._dateStr || t.date.split('T')[0]) === todayStr);
@@ -1960,7 +1962,7 @@ export function Dashboard() {
     (transactions || []).forEach(t => {
       if (t.type !== 'expense' || t.payment_status === 'pending') return;
       if (t.category === 'Aporte Reserva' || t.category === 'Resgate Reserva' || t.category === 'Resgate de Reserva') return;
-      const d = (t.date || '').split('T')[0];
+      const d = (t.payment_date || t.date || '').split('T')[0];
       if (!d.startsWith(currMonth)) return;
       const cat = t.category || 'Outros';
       map[cat] = (map[cat] || 0) + (Number(t.amount) || 0);
@@ -2162,7 +2164,7 @@ export function Dashboard() {
     let maxSingleExpense = { amount: 0, category: '', date: null as string | null, description: '' };
 
     chartTransactionsAdjusted.forEach(t => {
-      const dateStr = t.date.split('T')[0];
+      const dateStr = ((t as any)._dateStr || t.date).split('T')[0];
       const monthStr = dateStr.substring(0, 7);
       const amount = Number(t.amount) || 0;
 
@@ -4979,7 +4981,7 @@ export function Dashboard() {
                 ? rt.reserve_id === investmentReserveId 
                 : rt.description?.toLowerCase().includes('invest') || rt.description?.toLowerCase().includes('ativo');
               const isAssetPurchase = rt.linked_investment_id || rt.description?.toLowerCase().includes('compra');
-              return isMatch && rt.type === 'utilizacao' && !isAssetPurchase && (globalPeriod === 'all' || isWithinInterval(parseLocalDate(rt.date), { start: currentStart, end: currentEnd }));
+              return isMatch && rt.type === 'utilizacao' && !isAssetPurchase && (globalPeriod === 'all' || isWithinInterval(parseLocalDate(rt.payment_date || rt.date), { start: currentStart, end: currentEnd }));
             })
             .reduce((sum, rt) => sum + Number(rt.amount), 0);
 
@@ -4995,7 +4997,7 @@ export function Dashboard() {
                 ? rt.reserve_id === investmentReserveId 
                 : rt.description?.toLowerCase().includes('invest') || rt.description?.toLowerCase().includes('ativo');
               const isAssetPurchase = rt.linked_investment_id || rt.description?.toLowerCase().includes('compra');
-              return isMatch && rt.type === 'utilizacao' && !isAssetPurchase && (globalPeriod === 'all' || isWithinInterval(parseLocalDate(rt.date), { start: pastStart, end: pastEnd }));
+              return isMatch && rt.type === 'utilizacao' && !isAssetPurchase && (globalPeriod === 'all' || isWithinInterval(parseLocalDate(rt.payment_date || rt.date), { start: pastStart, end: pastEnd }));
             })
             .reduce((sum, rt) => sum + Number(rt.amount), 0);
           const pastPessoal = Math.max(0, (past.perExp || 0) - pastResgatesInv);

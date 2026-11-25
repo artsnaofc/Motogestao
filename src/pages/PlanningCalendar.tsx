@@ -450,10 +450,12 @@ export function PlanningCalendar() {
       ) {
         return;
       }
-      const dueStr = (t.due_date || t.date || '').split('T')[0];
-      if (!dueStr) return;
-
       const status: 'paid' | 'pending' = t.payment_status === 'pending' ? 'pending' : 'paid';
+      const dueStr = (status === 'paid'
+        ? (t.payment_date || t.due_date || t.date || '')
+        : (t.due_date || t.date || '')
+      ).split('T')[0];
+      if (!dueStr) return;
 
       if (t.type === 'income') {
         const isPlannedIncome =
@@ -532,9 +534,12 @@ export function PlanningCalendar() {
 
     (reserveTransactions || []).forEach(rt => {
       if (rt.type !== 'utilizacao') return;
-      const dueStr = (rt.due_date || rt.date || '').split('T')[0];
-      if (!dueStr) return;
       const status: 'paid' | 'pending' = rt.payment_status === 'pending' ? 'pending' : 'paid';
+      const dueStr = (status === 'paid'
+        ? (rt.payment_date || rt.due_date || rt.date || '')
+        : (rt.due_date || rt.date || '')
+      ).split('T')[0];
+      if (!dueStr) return;
       const cardId = extractCardTagFromTransaction(rt as any, txCardMap, cards);
       const isCard = Boolean(
         cardId ||
