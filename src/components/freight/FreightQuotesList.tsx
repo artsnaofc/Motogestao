@@ -250,6 +250,7 @@ export function FreightQuotesList({
       tab: 'frete',
       amount: String(quote.total_price),
       operational_expenses: opExpenses > 0 ? String(Number(opExpenses.toFixed(2))) : '',
+      ...(opExpenses > 0 && Number(quote.tolls_fee || 0) > 0 ? { operational_category: 'Pedágio' } : {}),
       description: description,
       date: quoteDate,
       distance_km: String(quote.total_calculated_km || quote.distance_km || 0),

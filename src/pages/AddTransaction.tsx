@@ -107,6 +107,7 @@ export function AddTransaction() {
   const paramOpExpensesRaw = searchParams.get('operational_expenses') || searchParams.get('toll') || searchParams.get('expenses') || '';
   const parsedOpExpenses = Number(paramOpExpensesRaw);
   const paramOpExpenses = (!isNaN(parsedOpExpenses) && paramOpExpensesRaw !== '') ? String(Number(parsedOpExpenses.toFixed(2))) : '';
+  const paramOpCategory = searchParams.get('operational_category') || searchParams.get('op_category') || '';
   const paramDesc = searchParams.get('description') || '';
   const paramDate = searchParams.get('date') || '';
   const paramQuoteId = searchParams.get('quote_id') || '';
@@ -153,6 +154,9 @@ export function AddTransaction() {
   const [amount, setAmount] = useState(paramAmount || '');
   const [category, setCategory] = useState('');
   const [operationalExpenses, setOperationalExpenses] = useState(paramOpExpenses || '');
+  const [operationalExpenseCategory, setOperationalExpenseCategory] = useState<string>(
+    paramOpCategory || 'Pedágio'
+  );
   const [showFreightCalc, setShowFreightCalc] = useState(false);
 
   // Reserves Tab specific state
@@ -223,6 +227,42 @@ export function AddTransaction() {
     }
     return expenseCategories;
   }, [expenseCategories, registeredCards.length]);
+
+  const freightOperationalCategories = useMemo(() => {
+    const base = [
+      'Pedágio',
+      'Combustível',
+      'Manutenção',
+      ...(settings?.operational_expense_categories || []),
+    ];
+    const seen = new Set<string>();
+    const result: string[] = [];
+    base.forEach(cat => {
+      const trimmed = String(cat || '').trim();
+      const norm = trimmed.toLowerCase();
+      if (trimmed && !seen.has(norm)) {
+        seen.add(norm);
+        result.push(trimmed);
+      }
+    });
+    return result;
+  }, [settings?.operational_expense_categories]);
+
+  const freightOtherExpenseCategories = useMemo(() => {
+    const quickNorms = new Set(freightOperationalCategories.map(c => c.toLowerCase()));
+    const candidates = [...expenseCategories, 'Gastos Operacionais', 'Trabalho', 'Alimentação', 'Outros'];
+    const seen = new Set<string>();
+    const result: string[] = [];
+    candidates.forEach(cat => {
+      const trimmed = String(cat || '').trim();
+      const norm = trimmed.toLowerCase();
+      if (trimmed && !isCreditCardCategoryName(trimmed) && !quickNorms.has(norm) && !seen.has(norm)) {
+        seen.add(norm);
+        result.push(trimmed);
+      }
+    });
+    return result;
+  }, [freightOperationalCategories, expenseCategories]);
 
   const isCardCategorySelected = activeTab === 'despesa' && isCreditCardCategoryName(category);
   const selectedCardObj = useMemo(() => {
@@ -358,6 +398,7 @@ export function AddTransaction() {
     setAmount(String(freightPrice));
     if (calcToll > 0) {
       setOperationalExpenses(String(calcToll));
+      setOperationalExpenseCategory('Pedágio');
     }
     if (totalKm > 0 && startKm && !isNaN(Number(startKm))) {
       setEndKm(String(Number(startKm) + totalKm));
@@ -406,13 +447,14 @@ export function AddTransaction() {
       setActiveTab('frete');
       if (paramAmount) setAmount(paramAmount);
       if (paramOpExpenses) setOperationalExpenses(paramOpExpenses);
+      if (paramOpCategory) setOperationalExpenseCategory(paramOpCategory);
       if (paramDesc) setDescription(paramDesc);
       if (paramDate) setDate(paramDate);
       if (paramDistanceKm && !isNaN(Number(paramDistanceKm)) && startKm && !isNaN(Number(startKm))) {
         setEndKm(String(Number(startKm) + Number(paramDistanceKm)));
       }
     }
-  }, [paramType, paramReserveId, paramAmount, paramTab, paramOpExpenses, paramDesc, paramDate, paramDistanceKm, startKm]);
+  }, [paramType, paramReserveId, paramAmount, paramTab, paramOpExpenses, paramOpCategory, paramDesc, paramDate, paramDistanceKm, startKm]);
 
   const resetForm = () => {
     setDeliveries('0');
@@ -422,6 +464,7 @@ export function AddTransaction() {
     setStartKm('');
     setEndKm('');
     setOperationalExpenses('');
+    setOperationalExpenseCategory('Pedágio');
     setPaymentStatus('paid');
     setPaymentDate('');
     setDueDate('');
@@ -627,6 +670,7 @@ export function AddTransaction() {
     // Default fallbacks based on name
     const normalized = catName.toLowerCase();
     if (isCreditCardCategoryName(catName)) return CreditCard;
+    if (normalized.includes('pedágio') || normalized.includes('pedagio')) return MapPin;
     if (normalized.includes('combustível') || normalized.includes('gasolina')) return Fuel;
     if (normalized.includes('manutenção') || normalized.includes('oficina') || normalized.includes('peça')) return Wrench;
     if (normalized.includes('aliment') || normalized.includes('almoço')) return Utensils;
@@ -1472,6 +1516,12 @@ export function AddTransaction() {
         const opVal = Number(operationalExpenses);
         if (!isNaN(opVal) && opVal > 0) {
           const opId = generateUUID();
+          const chosenOpCategory = (operationalExpenseCategory || 'Pedágio').trim() || 'Pedágio';
+          const opVehicleId =
+            isVehicleRelatedCategory(chosenOpCategory, 'despesa', 'expense', settings) &&
+            !shouldDefaultToNoVehicle(chosenOpCategory)
+              ? getEffectiveVehicleId()
+              : undefined;
 
           const opPayload = {
             id: opId,
@@ -1479,11 +1529,14 @@ export function AddTransaction() {
             type: 'expense' as TransactionType,
             amount: opVal,
             date: date,
-            category: 'Trabalho',
-            description: description ? `[Custos] ${description}` : 'Custos Adicionais (Frete)',
+            category: chosenOpCategory,
+            description: description
+              ? `[${chosenOpCategory}] ${description}`
+              : `${chosenOpCategory} (Frete)`,
             payment_status: 'paid' as PaymentStatus,
             payment_date: date,
             due_date: date,
+            vehicle_id: opVehicleId,
             ignore_in_charts: ignoreInCharts,
             created_at: new Date().toISOString()
           };
@@ -1884,16 +1937,17 @@ export function AddTransaction() {
                   </div>
                 )}
 
-                <div className="space-y-2 p-4 bg-amber-500/[0.03] border border-amber-500/20 rounded-xl">
-                  <div className="flex items-center justify-between">
+                <div className="space-y-3 p-4 bg-amber-500/[0.03] border border-amber-500/20 rounded-xl">
+                  <div className="flex items-center justify-between gap-2">
                     <label className="text-[10px] font-extrabold uppercase tracking-wider text-amber-600 dark:text-amber-400 flex items-center gap-1.5 font-bold">
-                      <CreditCard className="w-3.5 h-3.5" /> Gastos Operacionais
+                      <CreditCard className="w-3.5 h-3.5" /> Gastos Operacionais do Frete
                     </label>
                     <span className="text-[9px] text-muted-foreground bg-muted/65 px-1.5 py-0.5 rounded font-medium">Opcional</span>
                   </div>
                   <p className="text-[11px] text-muted-foreground">
-                    Soma dos adicionais e taxas extras do frete (pedágios, ajudante, paradas extras, escadas, urgência).
+                    Custos diretos da viagem (pedágios, abastecimento extra, manutenção ou taxas). Entra como despesa paga na categoria escolhida abaixo.
                   </p>
+
                   <div className="relative">
                     <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-muted-foreground/75 font-bold text-sm">
                       R$
@@ -1904,6 +1958,79 @@ export function AddTransaction() {
                       value={operationalExpenses}
                       onChange={setOperationalExpenses}
                     />
+                  </div>
+
+                  <div className="space-y-1.5 pt-0.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">
+                        Categoria do Gasto:
+                      </span>
+                      <span className="text-[10.5px] font-bold text-amber-600 dark:text-amber-400">
+                        {operationalExpenseCategory}
+                      </span>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {freightOperationalCategories.map(cat => {
+                        const isSelected = operationalExpenseCategory.toLowerCase() === cat.toLowerCase();
+                        return (
+                          <button
+                            key={cat}
+                            type="button"
+                            onClick={() => setOperationalExpenseCategory(cat)}
+                            className={`px-2.5 py-1.5 rounded-lg border text-[11px] font-bold transition-all cursor-pointer ${
+                              isSelected
+                                ? 'bg-amber-500/15 border-amber-500/50 text-amber-700 dark:text-amber-300 shadow-2xs'
+                                : 'bg-card border-border/80 text-muted-foreground hover:bg-muted/50 hover:text-foreground'
+                            }`}
+                          >
+                            {cat}
+                          </button>
+                        );
+                      })}
+
+                      {freightOtherExpenseCategories.length > 0 && (
+                        <Select
+                          value={
+                            freightOtherExpenseCategories.some(
+                              c => c.toLowerCase() === operationalExpenseCategory.toLowerCase()
+                            )
+                              ? operationalExpenseCategory
+                              : null
+                          }
+                          onValueChange={(val) => {
+                            if (val) setOperationalExpenseCategory(String(val));
+                          }}
+                        >
+                          <SelectTrigger
+                            className={`h-8 w-auto min-w-[115px] rounded-lg px-2.5 text-[11px] font-bold ${
+                              freightOtherExpenseCategories.some(
+                                c => c.toLowerCase() === operationalExpenseCategory.toLowerCase()
+                              )
+                                ? 'bg-amber-500/15 border-amber-500/50 text-amber-700 dark:text-amber-300'
+                                : 'bg-card border-border/80 text-muted-foreground'
+                            }`}
+                          >
+                            <SelectValue>
+                              {(val) => (val ? String(val) : 'Outra...')}
+                            </SelectValue>
+                          </SelectTrigger>
+                          <SelectContent>
+                            {freightOtherExpenseCategories.map(cat => (
+                              <SelectItem key={cat} value={cat}>
+                                {cat}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      )}
+                    </div>
+
+                    {Number(operationalExpenses) > 0 && (
+                      <p className="text-[10.5px] font-semibold text-amber-700 dark:text-amber-300/90 pt-0.5">
+                        Será lançada uma despesa paga de <strong>{formatCurrency(Number(operationalExpenses))}</strong> em <strong>{operationalExpenseCategory}</strong>.
+                      </p>
+                    )}
                   </div>
                 </div>
               </div>
