@@ -68,6 +68,7 @@ interface ReserveCardProps {
   onConfigureBoost?: (reserve: Reserve) => void;
   onConfigureWeeklyGoal?: (reserve: Reserve) => void;
   onApplyWeeklyRemaining?: (reserve: Reserve, amount: number) => void;
+  operationalCategories?: string[];
   hideValues?: boolean;
 }
 
@@ -93,6 +94,7 @@ export function ReserveCard({
   onConfigureBoost,
   onConfigureWeeklyGoal,
   onApplyWeeklyRemaining,
+  operationalCategories,
   hideValues
 }: ReserveCardProps) {
   const [showMenu, setShowMenu] = useState(false);
@@ -123,7 +125,9 @@ export function ReserveCard({
   const isPaused = isInactive || reserve.is_paused;
 
   // Calculate suggestions
-  const suggested = calculateSuggestion(reserve, transactions, reserveTransactions, globalPeriod, customDateRange);
+  const suggested = calculateSuggestion(reserve, transactions, reserveTransactions, globalPeriod, customDateRange, {
+    operationalCategories,
+  });
   const effectiveAportes = getEffectiveAportesInPeriod(reserve, reserveTransactions, globalPeriod, customDateRange);
   const pendingSuggestion = Math.round(Math.max(0, suggested - effectiveAportes) * 100) / 100;
 
@@ -135,10 +139,14 @@ export function ReserveCard({
   // Recent transactions count & Yield stats
   const yieldStats = calculateReserveYieldStats(reserve, reserveTransactions);
   const totalYield = yieldStats.yieldAmount;
-  const projection = calculateReserveGoalProjection(reserve, transactions, reserveTransactions);
-  const weeklyProgress = calculateReserveWeeklyProgress(reserve, transactions, reserveTransactions);
+  const projection = calculateReserveGoalProjection(reserve, transactions, reserveTransactions, {
+    operationalCategories,
+  });
+  const weeklyProgress = calculateReserveWeeklyProgress(reserve, transactions, reserveTransactions, {
+    operationalCategories,
+  });
   const boostSpeedup = boostActive
-    ? getBoostSpeedupComparison(reserve, transactions, reserveTransactions)
+    ? getBoostSpeedupComparison(reserve, transactions, reserveTransactions, undefined, { operationalCategories })
     : null;
 
   const pendingCredits = Math.round(
@@ -163,7 +171,8 @@ export function ReserveCard({
       return `💰 ${Number(val.toFixed(2))}% do Bruto`;
     }
     if (reserve.regra_tipo === 'liquido') {
-      return `📈 ${Number(val.toFixed(2))}% do Lucro`;
+      const modeShort = reserve.regra_base === 'liquido' ? 'Lucro Líq.' : 'Lucro Op.';
+      return `📈 ${Number(val.toFixed(2))}% ${modeShort}`;
     }
     if (reserve.regra_tipo === 'fixo' || (reserve.regra_tipo as string) === 'fixo_diario') {
       return `📅 R$ ${val.toFixed(2)}/dia`;

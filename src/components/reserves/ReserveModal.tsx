@@ -66,6 +66,7 @@ export function ReserveModal({
   // Automation states
   const [regraAtiva, setRegraAtiva] = useState(false);
   const [regraTipo, setRegraTipo] = useState<Reserve['regra_tipo'] | ''>('');
+  const [regraBase, setRegraBase] = useState<Reserve['regra_base']>('lucro');
   const [regraValor, setRegraValor] = useState('');
   const [regraCategorias, setRegraCategorias] = useState<string[]>([]);
   const [regraInicioValidade, setRegraInicioValidade] = useState<string>(getTodayLocalDateStr());
@@ -138,6 +139,7 @@ export function ReserveModal({
         setColor(reserveToEdit.color || '#6366f1');
         setRegraAtiva(!!reserveToEdit.regra_ativa);
         setRegraTipo(reserveToEdit.regra_tipo || '');
+        setRegraBase(reserveToEdit.regra_base === 'liquido' ? 'liquido' : 'lucro');
         setRegraValor(reserveToEdit.regra_valor !== undefined && reserveToEdit.regra_valor !== null ? String(reserveToEdit.regra_valor) : '');
         setRegraCategorias(reserveToEdit.regra_categorias && reserveToEdit.regra_categorias.length > 0 ? reserveToEdit.regra_categorias : allCategories);
         const initValidade = toDateInputString(reserveToEdit.regra_inicio_validade) || getTodayLocalDateStr();
@@ -156,7 +158,9 @@ export function ReserveModal({
             ? String(Number(reserveToEdit.boost_valor))
             : String(getDefaultBoostValue(reserveToEdit.regra_tipo || 'km', bType))
         );
-        setResetSuggestionOnWithdraw(reserveToEdit.reset_suggestion_on_withdraw !== false);
+        setResetSuggestionOnWithdraw(
+          reserveToEdit.regra_tipo === 'liquido' ? false : reserveToEdit.reset_suggestion_on_withdraw !== false
+        );
         setWeeklyGoalMode((reserveToEdit.weekly_goal_mode || 'dynamic') as 'dynamic' | 'rule_week' | 'fixed' | 'off');
         setWeeklyGoalAmount(
           reserveToEdit.weekly_goal_amount !== undefined &&
@@ -177,6 +181,7 @@ export function ReserveModal({
         setColor('#6366f1');
         setRegraAtiva(false);
         setRegraTipo('');
+        setRegraBase('lucro');
         setRegraValor('');
         setRegraCategorias(allCategories);
         setRegraInicioValidade(getTodayLocalDateStr());
@@ -261,13 +266,14 @@ export function ReserveModal({
         color,
         regra_ativa: regraAtiva,
         regra_tipo: regraAtiva ? (regraTipo as any) : null,
+        regra_base: regraAtiva ? (regraTipo === 'liquido' ? regraBase : 'bruto') : 'bruto',
         regra_valor: regraAtiva && parsedRegraVal !== undefined && !isNaN(parsedRegraVal) ? parsedRegraVal : null,
         regra_categorias: regraAtiva ? regraCategorias : [],
         regra_inicio_validade: regraAtiva ? (toDateInputString(regraInicioValidade) || getTodayLocalDateStr()) : null,
         boost_ativo: regraAtiva ? boostAtivo : false,
         boost_tipo: boostTipo,
         boost_valor: parsedBoost > 0 ? parsedBoost : getDefaultBoostValue(regraTipo || 'km', boostTipo),
-        reset_suggestion_on_withdraw: resetSuggestionOnWithdraw,
+        reset_suggestion_on_withdraw: regraTipo === 'liquido' ? false : resetSuggestionOnWithdraw,
         weekly_goal_mode: weeklyGoalMode,
         weekly_goal_amount: weeklyGoalMode === 'fixed' ? parsedWeeklyGoal : parsedWeeklyGoal > 0 ? parsedWeeklyGoal : null,
         weekly_goal_include_manual: weeklyGoalIncludeManual,
@@ -444,6 +450,7 @@ export function ReserveModal({
                   color,
                   regra_ativa: regraAtiva,
                   regra_tipo: regraAtiva && regraTipo ? (regraTipo as any) : null,
+                  regra_base: regraAtiva ? (regraTipo === 'liquido' ? regraBase : 'bruto') : 'bruto',
                   regra_valor: regraAtiva ? parsedRuleVal : null,
                   regra_categorias: regraAtiva ? regraCategorias : [],
                   regra_inicio_validade: regraAtiva ? (toDateInputString(regraInicioValidade) || getTodayLocalDateStr()) : undefined,
@@ -457,7 +464,9 @@ export function ReserveModal({
                   is_paused: reserveToEdit?.is_paused || false,
                   created_at: reserveToEdit?.created_at || new Date().toISOString(),
                 };
-                const weeklyPrev = calculateReserveWeeklyProgress(simWeeklyReserve, transactions, reserveTransactions);
+                const weeklyPrev = calculateReserveWeeklyProgress(simWeeklyReserve, transactions, reserveTransactions, {
+                  operationalCategories: settings?.operational_expense_categories,
+                });
 
                 return (
                   <div className="p-3 rounded-2xl border border-border/80 bg-muted/25 space-y-2.5">
@@ -795,7 +804,15 @@ export function ReserveModal({
                   {/* Rule Type */}
                   <div className="space-y-1.5">
                     <label className="text-xs font-bold text-muted-foreground">Tipo de Cálculo da Regra</label>
-                    <Select value={regraTipo} onValueChange={(val: any) => setRegraTipo(val)}>
+                    <Select
+                      value={regraTipo}
+                      onValueChange={(val: any) => {
+                        setRegraTipo(val);
+                        if (val === 'liquido') {
+                          setResetSuggestionOnWithdraw(false);
+                        }
+                      }}
+                    >
                       <SelectTrigger className="h-10 text-xs font-semibold rounded-xl">
                         <SelectValue placeholder="Selecione o tipo de regra..." />
                       </SelectTrigger>
@@ -807,6 +824,47 @@ export function ReserveModal({
                       </SelectContent>
                     </Select>
                   </div>
+
+                  {regraTipo === 'liquido' && (
+                    <div className="p-3 rounded-2xl bg-indigo-500/[0.06] border border-indigo-500/20 space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-black text-foreground">Base de Cálculo do Lucro</span>
+                        <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
+                          Resgates protegidos
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setRegraBase('lucro')}
+                          className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                            regraBase !== 'liquido'
+                              ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
+                              : 'bg-card border-border/80 text-foreground hover:bg-muted/60'
+                          }`}
+                        >
+                          <span className="text-xs font-black block">Lucro Operacional</span>
+                          <span className={`text-[10px] leading-tight block mt-0.5 ${regraBase !== 'liquido' ? 'text-indigo-100' : 'text-muted-foreground'}`}>
+                            Deduz só custos do trabalho (combustível, manutenção, pedágio).
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setRegraBase('liquido')}
+                          className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                            regraBase === 'liquido'
+                              ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
+                              : 'bg-card border-border/80 text-foreground hover:bg-muted/60'
+                          }`}
+                        >
+                          <span className="text-xs font-black block">Lucro Líquido Geral</span>
+                          <span className={`text-[10px] leading-tight block mt-0.5 ${regraBase === 'liquido' ? 'text-indigo-100' : 'text-muted-foreground'}`}>
+                            Deduz todas as despesas do caixa (exceto resgates e ignorados).
+                          </span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Rule Value */}
                   <div className="space-y-1.5">
@@ -846,7 +904,7 @@ export function ReserveModal({
                   </div>
 
                   {/* Category Selection */}
-                  {(regraTipo === 'km' || regraTipo === 'bruto' || regraTipo === 'fixo') && (
+                  {(regraTipo === 'km' || regraTipo === 'bruto' || regraTipo === 'liquido' || regraTipo === 'fixo') && (
                     <div className="space-y-2 pt-1">
                       <div className="flex items-center justify-between">
                         <label className="text-xs font-bold text-muted-foreground">
@@ -957,28 +1015,42 @@ export function ReserveModal({
                   </div>
 
                   {/* Opção: Zerar sugestão ao fazer resgate */}
-                  <div className={`p-3 rounded-2xl border transition-all flex items-center justify-between gap-3 ${
-                    resetSuggestionOnWithdraw
-                      ? 'bg-muted/35 border-border/80'
-                      : 'bg-indigo-500/10 border-indigo-500/30'
-                  }`}>
-                    <div className="space-y-0.5">
-                      <span className="text-xs font-bold text-foreground block">
-                        Zerar sugestão ao fazer resgate
-                      </span>
-                      <p className="text-[10.5px] text-muted-foreground leading-snug">
-                        {resetSuggestionOnWithdraw
-                          ? 'Ativado: ao realizar um resgate pago, a sugestão reinicia a partir da data do resgate.'
-                          : 'Desativado: resgates não zeram nem reiniciam a sugestão atual.'}
-                      </p>
+                  {regraTipo === 'liquido' ? (
+                    <div className="p-3 rounded-2xl border bg-emerald-500/[0.08] border-emerald-500/25 flex items-start gap-2.5">
+                      <ShieldCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
+                      <div className="space-y-0.5">
+                        <span className="text-xs font-bold text-foreground block">
+                          Resgates protegidos no Lucro Líquido
+                        </span>
+                        <p className="text-[10.5px] text-muted-foreground leading-snug">
+                          Resgates desta reserva, gastos pagos com reservas e lançamentos ignorados não zeram nem diminuem sua sugestão.
+                        </p>
+                      </div>
                     </div>
-                    <input
-                      type="checkbox"
-                      checked={resetSuggestionOnWithdraw}
-                      onChange={e => setResetSuggestionOnWithdraw(e.target.checked)}
-                      className="w-5 h-5 rounded text-indigo-600 accent-indigo-600 cursor-pointer shrink-0"
-                    />
-                  </div>
+                  ) : (
+                    <div className={`p-3 rounded-2xl border transition-all flex items-center justify-between gap-3 ${
+                      resetSuggestionOnWithdraw
+                        ? 'bg-muted/35 border-border/80'
+                        : 'bg-indigo-500/10 border-indigo-500/30'
+                    }`}>
+                      <div className="space-y-0.5">
+                        <span className="text-xs font-bold text-foreground block">
+                          Zerar sugestão ao fazer resgate
+                        </span>
+                        <p className="text-[10.5px] text-muted-foreground leading-snug">
+                          {resetSuggestionOnWithdraw
+                            ? 'Ativado: ao realizar um resgate pago, a sugestão reinicia a partir da data do resgate.'
+                            : 'Desativado: resgates não zeram nem reiniciam a sugestão atual.'}
+                        </p>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={resetSuggestionOnWithdraw}
+                        onChange={e => setResetSuggestionOnWithdraw(e.target.checked)}
+                        className="w-5 h-5 rounded text-indigo-600 accent-indigo-600 cursor-pointer shrink-0"
+                      />
+                    </div>
+                  )}
                 </div>
               )}
 

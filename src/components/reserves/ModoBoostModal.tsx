@@ -54,6 +54,7 @@ interface ModoBoostModalProps {
     }>
   ) => Promise<void>;
   onOpenRuleModal?: (reserve: Reserve) => void;
+  operationalCategories?: string[];
 }
 
 interface DraftBoostRow {
@@ -74,6 +75,7 @@ export function ModoBoostModal({
   onUpdateReserveBoost,
   onBatchUpdateBoost,
   onOpenRuleModal,
+  operationalCategories,
 }: ModoBoostModalProps) {
   const [drafts, setDrafts] = useState<Record<string, DraftBoostRow>>({});
   const [globalPresetMode, setGlobalPresetMode] = useState<'increment' | 'multiplier'>('increment');
@@ -161,7 +163,10 @@ export function ModoBoostModal({
     eligibleReserves.forEach(r => {
       const draft = drafts[r.id];
       const basePending = (() => {
-        const s = calculateSuggestion(r, transactions, reserveTransactions, globalPeriod, customDateRange, { ignoreBoost: true });
+        const s = calculateSuggestion(r, transactions, reserveTransactions, globalPeriod, customDateRange, {
+          ignoreBoost: true,
+          operationalCategories,
+        });
         const e = getEffectiveAportesInPeriod(r, reserveTransactions, globalPeriod, customDateRange, { ignoreBoost: true });
         return Math.max(0, Math.round((s - e) * 100) / 100);
       })();
@@ -179,7 +184,9 @@ export function ModoBoostModal({
       if (simActive) activeBoostCount += 1;
 
       const simPending = (() => {
-        const s = calculateSuggestion(simulatedRes, transactions, reserveTransactions, globalPeriod, customDateRange);
+        const s = calculateSuggestion(simulatedRes, transactions, reserveTransactions, globalPeriod, customDateRange, {
+          operationalCategories,
+        });
         const e = getEffectiveAportesInPeriod(simulatedRes, reserveTransactions, globalPeriod, customDateRange);
         return Math.max(0, Math.round((s - e) * 100) / 100);
       })();
@@ -194,7 +201,7 @@ export function ModoBoostModal({
       extraDelta: Math.round((totalBoostedPending - totalNormalPending) * 100) / 100,
       activeBoostCount,
     };
-  }, [eligibleReserves, drafts, transactions, reserveTransactions, globalPeriod, customDateRange]);
+  }, [eligibleReserves, drafts, transactions, reserveTransactions, globalPeriod, customDateRange, operationalCategories]);
 
   if (!isOpen) return null;
 
@@ -603,7 +610,10 @@ export function ModoBoostModal({
                 const basePending = Math.max(
                   0,
                   Math.round(
-                    (calculateSuggestion(r, transactions, reserveTransactions, globalPeriod, customDateRange, { ignoreBoost: true }) -
+                    (calculateSuggestion(r, transactions, reserveTransactions, globalPeriod, customDateRange, {
+                      ignoreBoost: true,
+                      operationalCategories,
+                    }) -
                       getEffectiveAportesInPeriod(r, reserveTransactions, globalPeriod, customDateRange, { ignoreBoost: true })) *
                       100
                   ) / 100
@@ -611,7 +621,9 @@ export function ModoBoostModal({
                 const boostedPending = Math.max(
                   0,
                   Math.round(
-                    (calculateSuggestion(simulatedRes, transactions, reserveTransactions, globalPeriod, customDateRange) -
+                    (calculateSuggestion(simulatedRes, transactions, reserveTransactions, globalPeriod, customDateRange, {
+                      operationalCategories,
+                    }) -
                       getEffectiveAportesInPeriod(simulatedRes, reserveTransactions, globalPeriod, customDateRange)) *
                       100
                   ) / 100
@@ -626,7 +638,8 @@ export function ModoBoostModal({
                     boost_ativo: true,
                     boost_tipo: draft.boost_tipo,
                     boost_valor: parsedBoostVal > 0 ? parsedBoostVal : getDefaultBoostValue(r.regra_tipo, draft.boost_tipo),
-                  }
+                  },
+                  { operationalCategories }
                 );
 
                 const unitLabel =

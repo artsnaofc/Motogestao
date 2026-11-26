@@ -350,6 +350,7 @@ export const getActiveRuleForDate = (res: Reserve, dateStr: string) => {
           index: i,
           regra_ativa: Boolean(hist.regra_ativa),
           regra_tipo: hist.regra_tipo,
+          regra_base: hist.regra_base || res.regra_base,
           regra_valor: hist.regra_valor,
           regra_categorias: hist.regra_categorias || [],
           start_date: hist.start_date,
@@ -365,6 +366,7 @@ export const getActiveRuleForDate = (res: Reserve, dateStr: string) => {
     index: -1,
     regra_ativa: Boolean(res.regra_ativa),
     regra_tipo: res.regra_tipo,
+    regra_base: res.regra_base,
     regra_valor: res.regra_valor,
     regra_categorias: res.regra_categorias || [],
     start_date: res.regra_inicio_validade || res.created_at?.split('T')[0] || cleanDate,
@@ -461,10 +463,89 @@ export const isTxInPeriod = (
   }
 };
 
+export const getEffectiveTxDateStr = (t: Pick<Transaction, 'date' | 'payment_status' | 'payment_date'>): string => {
+  const raw = t.payment_status === 'paid' && t.payment_date ? t.payment_date : t.date;
+  return toDateInputString(raw) || (raw ? String(raw).split('T')[0] : '');
+};
+
+export const getLiquidoProfitMode = (res: Pick<Reserve, 'regra_base'>): 'operacional' | 'geral' => {
+  return res.regra_base === 'liquido' ? 'geral' : 'operacional';
+};
+
+export const buildLinkedReserveTxIdSet = (reserveTransactions?: ReserveTransaction[]): Set<string> => {
+  const set = new Set<string>();
+  (reserveTransactions || []).forEach(rt => {
+    if (rt && rt.transaction_id) {
+      set.add(rt.transaction_id);
+    }
+  });
+  return set;
+};
+
+export const isReserveOrNonOperatingTx = (
+  t: Transaction,
+  linkedReserveTxIds?: Set<string>
+): boolean => {
+  if (!t) return true;
+  if (
+    t.is_reserve_use === true ||
+    (t as any).isReserveUseOriginal === true ||
+    (t as any).isReserveTx === true ||
+    (t as any).isReserveAporte === true ||
+    (t as any).isInvestmentTx === true ||
+    (t as any).isDividendTx === true ||
+    (t as any).isSaleSettlement === true ||
+    (t as any).isTransferToCash === true
+  ) {
+    return true;
+  }
+
+  if (linkedReserveTxIds && t.id && linkedReserveTxIds.has(t.id)) {
+    return true;
+  }
+
+  const desc = String(t.description || '').trim();
+  const rawDesc = String((t as any).rawDescription || '').trim();
+  if (desc.startsWith('[Reserva]') || rawDesc.startsWith('[Reserva]')) {
+    return true;
+  }
+
+  const cat = String(t.category || '').toLowerCase().trim();
+  if (
+    cat === 'aporte reserva' ||
+    cat === 'resgate reserva' ||
+    cat === 'resgate de reserva' ||
+    cat === 'resgate' ||
+    cat === 'transferência p/ caixa' ||
+    cat === 'transferencia p/ caixa'
+  ) {
+    return true;
+  }
+
+  return false;
+};
+
+export const doesExpenseCountForLiquido = (
+  res: Reserve,
+  t: Transaction,
+  options?: { operationalCategories?: string[]; linkedReserveTxIds?: Set<string> }
+): boolean => {
+  if (!t || t.type !== 'expense') return false;
+  if (t.ignore_in_charts) return false;
+  if (isReserveOrNonOperatingTx(t, options?.linkedReserveTxIds)) return false;
+  const mode = getLiquidoProfitMode(res);
+  if (mode === 'operacional') {
+    return isOperationalCategory(t.category, options?.operationalCategories);
+  }
+  return true;
+};
+
 export const getLatestWithdrawalDate = (
   res: Reserve,
   reserveTransactions: ReserveTransaction[]
 ): string | null => {
+  // Na regra de Lucro Líquido, resgates da própria reserva nunca zeram nem reduzem a base de lucro do período
+  if (res.regra_tipo === 'liquido') return null;
   // Respeita a configuração da regra que define se resgates devem zerar/reiniciar a sugestão
   if (res.reset_suggestion_on_withdraw === false) return null;
   // Only consider withdrawals (utilizações) that have already been marked as paid/settled
@@ -588,7 +669,7 @@ export const calculateSuggestion = (
   reserveTransactions: ReserveTransaction[],
   globalPeriod: string,
   customDateRange: { start: string; end: string },
-  options?: { ignoreBoost?: boolean }
+  options?: { ignoreBoost?: boolean; operationalCategories?: string[] }
 ): number => {
   const roundedBalance = Math.round((res.saldo_atual || 0) * 100) / 100;
   const roundedGoal = Math.round((res.meta_objetivo || 0) * 100) / 100;
@@ -603,14 +684,16 @@ export const calculateSuggestion = (
   const cleanLastWDate = lastWDate ? toDateInputString(lastWDate) : null;
   const ruleStartDate = toDateInputString(res.regra_inicio_validade);
   const cutoffMs = getRuleCutoffTimestamp(res, ruleStartDate);
+  const linkedRtIds = buildLinkedReserveTxIdSet(reserveTransactions);
 
   const periodTxs = (transactions || []).filter(t => {
+    if (!t || t.ignore_in_charts) return false;
     // Ignore pending revenue or expense transactions for contribution suggestions
     if (t.payment_status === 'pending' || (t as any).status === 'pending') return false;
-    const inPeriod = isTxInPeriod(t.date, globalPeriod, customDateRange);
+    const txDay = getEffectiveTxDateStr(t);
+    const inPeriod = isTxInPeriod(txDay, globalPeriod, customDateRange);
     if (!inPeriod) return false;
     const isDefaultRes = res.name === 'Reserva de Manutenção' || res.name === 'Reserva de Emergência';
-    const txDay = toDateInputString(t.date) || (t.date ? t.date.split('T')[0] : '');
     if (res.created_at && !isDefaultRes) {
       const creationDay = toDateInputString(res.created_at) || res.created_at.split('T')[0];
       if (txDay < creationDay) return false;
@@ -635,6 +718,7 @@ export const calculateSuggestion = (
   if (ruleType === 'km') {
     let totalKm = 0;
     periodTxs.forEach(t => {
+      if (isReserveOrNonOperatingTx(t, linkedRtIds)) return;
       const matchesCategory = ruleCats.length === 0 || ruleCats.includes(t.category);
       if (t.type === 'income' && matchesCategory) {
         const distance = (Number(t.end_km) || 0) - (Number(t.start_km) || 0);
@@ -645,6 +729,7 @@ export const calculateSuggestion = (
   } else if (ruleType === 'bruto') {
     let grossSum = 0;
     periodTxs.forEach(t => {
+      if (isReserveOrNonOperatingTx(t, linkedRtIds)) return;
       const matchesCategory = ruleCats.length === 0 || ruleCats.includes(t.category);
       if (t.type === 'income' && matchesCategory) {
         grossSum += Number(t.amount || 0);
@@ -655,14 +740,18 @@ export const calculateSuggestion = (
     let totalIncome = 0;
     let totalExpense = 0;
     periodTxs.forEach(t => {
+      if (isReserveOrNonOperatingTx(t, linkedRtIds)) return;
       const matchesCategory = ruleCats.length === 0 || ruleCats.includes(t.category);
       if (t.type === 'income' && matchesCategory) {
         totalIncome += Number(t.amount || 0);
-      } else if (t.type === 'expense') {
-        const isReserveUse = (t as any).isReserveTx === true || t.category === 'Aporte Reserva';
-        if (!isReserveUse) {
-          totalExpense += Number(t.amount || 0);
-        }
+      } else if (
+        t.type === 'expense' &&
+        doesExpenseCountForLiquido(res, t, {
+          operationalCategories: options?.operationalCategories,
+          linkedReserveTxIds: linkedRtIds,
+        })
+      ) {
+        totalExpense += Number(t.amount || 0);
       }
     });
     const netProfit = Math.max(0, totalIncome - totalExpense);
@@ -670,9 +759,10 @@ export const calculateSuggestion = (
   } else if (ruleType === 'fixo' || ruleType === 'fixo_diario') {
     const eligibleDates = new Set<string>();
     periodTxs.forEach(t => {
+      if (isReserveOrNonOperatingTx(t, linkedRtIds)) return;
       const matchesCategory = ruleCats.length === 0 || ruleCats.includes(t.category);
       if (t.type === 'income' && matchesCategory) {
-        eligibleDates.add(toDateInputString(t.date) || t.date);
+        eligibleDates.add(getEffectiveTxDateStr(t));
       }
     });
     totalSuggestion = Math.round(eligibleDates.size * ruleValue * 100) / 100;
@@ -718,6 +808,12 @@ export interface SuggestionAuditResult {
   pendingSuggestion: number;
   txCount: number;
   eligibleTxs: Array<{ id: string; date: string; description: string; category: string; amount: number; km?: number }>;
+  deductedExpenses: Array<{ id: string; date: string; description: string; category: string; amount: number }>;
+  liquidoMode: 'operacional' | 'geral';
+  ignoredReserveExpensesTotal: number;
+  ignoredReserveExpensesCount: number;
+  ignoredPersonalExpensesTotal: number;
+  ignoredPersonalExpensesCount: number;
   lastWithdrawalDate: string | null;
   resetOnWithdraw: boolean;
   pendingWithdrawalsIgnored: number;
@@ -736,13 +832,16 @@ export const getSuggestionAudit = (
   transactions: Transaction[],
   reserveTransactions: ReserveTransaction[],
   globalPeriod: string,
-  customDateRange: { start: string; end: string }
+  customDateRange: { start: string; end: string },
+  options?: { operationalCategories?: string[] }
 ): SuggestionAuditResult => {
   const lastWDate = getLatestWithdrawalDate(res, reserveTransactions);
   const cleanLastWDate = lastWDate ? toDateInputString(lastWDate) : null;
   const ruleStartDate = toDateInputString(res.regra_inicio_validade);
   const cutoffMs = getRuleCutoffTimestamp(res, ruleStartDate);
   const cutoffAtIso = cutoffMs !== null ? new Date(cutoffMs).toISOString() : null;
+  const linkedRtIds = buildLinkedReserveTxIdSet(reserveTransactions);
+  const liquidoMode = getLiquidoProfitMode(res);
   
   // Count pending withdrawals that were correctly ignored
   const pendingWithdrawalsIgnored = (reserveTransactions || []).filter(
@@ -751,12 +850,13 @@ export const getSuggestionAudit = (
           (rt.payment_status === 'pending' || (rt as any).status === 'pending')
   ).length;
 
-  const periodTxs = (transactions || []).filter(t => {
+  const isInWindowPreIgnore = (t: Transaction) => {
+    if (!t) return false;
     if (t.payment_status === 'pending' || (t as any).status === 'pending') return false;
-    const inPeriod = isTxInPeriod(t.date, globalPeriod, customDateRange);
+    const txDay = getEffectiveTxDateStr(t);
+    const inPeriod = isTxInPeriod(txDay, globalPeriod, customDateRange);
     if (!inPeriod) return false;
     const isDefaultRes = res.name === 'Reserva de Manutenção' || res.name === 'Reserva de Emergência';
-    const txDay = toDateInputString(t.date) || (t.date ? t.date.split('T')[0] : '');
     if (res.created_at && !isDefaultRes) {
       const creationDay = toDateInputString(res.created_at) || res.created_at.split('T')[0];
       if (txDay < creationDay) return false;
@@ -768,7 +868,10 @@ export const getSuggestionAudit = (
       if (!isNaN(txCreatedMs) && txCreatedMs < cutoffMs) return false;
     }
     return true;
-  });
+  };
+
+  const windowTxsAll = (transactions || []).filter(isInWindowPreIgnore);
+  const periodTxs = windowTxsAll.filter(t => !t.ignore_in_charts);
 
   const roundedBalance = Math.round((res.saldo_atual || 0) * 100) / 100;
   const roundedGoal = Math.round((res.meta_objetivo || 0) * 100) / 100;
@@ -781,8 +884,13 @@ export const getSuggestionAudit = (
   const boostType = (res.boost_tipo || 'increment') as 'increment' | 'multiplier';
   const boostValue = Number(res.boost_valor || 0);
 
-  const baseCalculated = calculateSuggestion(res, transactions, reserveTransactions, globalPeriod, customDateRange, { ignoreBoost: true });
-  const calculated = calculateSuggestion(res, transactions, reserveTransactions, globalPeriod, customDateRange);
+  const baseCalculated = calculateSuggestion(res, transactions, reserveTransactions, globalPeriod, customDateRange, {
+    ignoreBoost: true,
+    operationalCategories: options?.operationalCategories,
+  });
+  const calculated = calculateSuggestion(res, transactions, reserveTransactions, globalPeriod, customDateRange, {
+    operationalCategories: options?.operationalCategories,
+  });
   const effectiveAportesAll = getEffectiveAportesInPeriod(res, reserveTransactions, globalPeriod, customDateRange, { includeBoostExtras: true });
   const effectiveAportesBaseOnly = getEffectiveAportesInPeriod(res, reserveTransactions, globalPeriod, customDateRange, { ignoreBoost: true });
   const boostExtraAportes = Math.max(0, Math.round((effectiveAportesAll - effectiveAportesBaseOnly) * 100) / 100);
@@ -816,29 +924,58 @@ export const getSuggestionAudit = (
   let grossRevenue = 0;
   let totalExpense = 0;
   let totalKm = 0;
+  let ignoredReserveExpensesTotal = 0;
+  let ignoredReserveExpensesCount = 0;
+  let ignoredPersonalExpensesTotal = 0;
+  let ignoredPersonalExpensesCount = 0;
   const eligibleTxs: Array<{ id: string; date: string; description: string; category: string; amount: number; km?: number }> = [];
+  const deductedExpenses: Array<{ id: string; date: string; description: string; category: string; amount: number }> = [];
+
+  windowTxsAll.forEach(t => {
+    if (t.type !== 'expense') return;
+    if (t.ignore_in_charts || isReserveOrNonOperatingTx(t, linkedRtIds)) {
+      ignoredReserveExpensesTotal += Number(t.amount || 0);
+      ignoredReserveExpensesCount += 1;
+    } else if (res.regra_tipo === 'liquido' && liquidoMode === 'operacional' && !isOperationalCategory(t.category, options?.operationalCategories)) {
+      ignoredPersonalExpensesTotal += Number(t.amount || 0);
+      ignoredPersonalExpensesCount += 1;
+    }
+  });
 
   periodTxs.forEach(t => {
+    if (isReserveOrNonOperatingTx(t, linkedRtIds)) return;
     const matchesCategory = ruleCats.length === 0 || ruleCats.includes(t.category);
     const distance = (Number(t.end_km) || 0) - (Number(t.start_km) || 0);
     const validDistance = distance > 0 ? distance : 0;
+    const effectiveDate = getEffectiveTxDateStr(t);
     
     if (t.type === 'income' && matchesCategory) {
       grossRevenue += Number(t.amount || 0);
       totalKm += validDistance;
       eligibleTxs.push({
         id: t.id,
-        date: t.date,
+        date: effectiveDate,
         description: t.description || 'Receita',
         category: t.category,
         amount: Number(t.amount || 0),
         km: validDistance > 0 ? validDistance : undefined,
       });
-    } else if (t.type === 'expense') {
-      const isReserveUse = (t as any).isReserveTx === true || t.category === 'Aporte Reserva';
-      if (!isReserveUse) {
-        totalExpense += Number(t.amount || 0);
-      }
+    } else if (
+      t.type === 'expense' &&
+      doesExpenseCountForLiquido(res, t, {
+        operationalCategories: options?.operationalCategories,
+        linkedReserveTxIds: linkedRtIds,
+      })
+    ) {
+      const amt = Number(t.amount || 0);
+      totalExpense += amt;
+      deductedExpenses.push({
+        id: t.id,
+        date: effectiveDate,
+        description: t.description || t.category || 'Despesa',
+        category: t.category,
+        amount: amt,
+      });
     }
   });
 
@@ -865,8 +1002,15 @@ export const getSuggestionAudit = (
     formulaExplanation = `${formatCurrency(grossRevenue)} (Bruto) × ${effectiveRuleValue}% = ${formatCurrency(calculated)}`;
   } else if (res.regra_tipo === 'liquido') {
     const boostSuffix = boostActive ? ` (Base ${baseRuleValue}% + Boost ${getRuleBoostDeltaLabel(res)})` : '';
-    details.push(`Regra: ${effectiveRuleValue}% sobre o lucro líquido do período${boostSuffix} (${formatCurrency(netProfit)}).`);
-    formulaExplanation = `Lucro Líquido (${formatCurrency(grossRevenue)} - ${formatCurrency(totalExpense)} = ${formatCurrency(netProfit)}) × ${effectiveRuleValue}% = ${formatCurrency(calculated)}`;
+    const modeLabel = liquidoMode === 'operacional' ? 'Lucro Operacional' : 'Lucro Líquido Geral';
+    details.push(`Regra: ${effectiveRuleValue}% sobre o ${modeLabel} do período${boostSuffix} (${formatCurrency(netProfit)}).`);
+    formulaExplanation = `${modeLabel} (${formatCurrency(grossRevenue)} - ${formatCurrency(totalExpense)} = ${formatCurrency(netProfit)}) × ${effectiveRuleValue}% = ${formatCurrency(calculated)}`;
+    if (ignoredReserveExpensesCount > 0) {
+      details.push(`${ignoredReserveExpensesCount} resgate(s)/uso(s) de reserva ou item(ns) ignorado(s) (${formatCurrency(ignoredReserveExpensesTotal)}) não reduziram seu lucro.`);
+    }
+    if (liquidoMode === 'operacional' && ignoredPersonalExpensesCount > 0) {
+      details.push(`${ignoredPersonalExpensesCount} despesa(s) pessoal(is) (${formatCurrency(ignoredPersonalExpensesTotal)}) foram protegidas no modo Operacional.`);
+    }
   } else if (res.regra_tipo === 'fixo' || (res.regra_tipo as string) === 'fixo_diario') {
     const boostSuffix = boostActive ? ` (Base R$ ${baseRuleValue.toFixed(2)} + Boost ${getRuleBoostDeltaLabel(res)})` : '';
     details.push(`Regra: R$ ${effectiveRuleValue.toFixed(2)} fixos por dia trabalhado${boostSuffix} (${workedDays} dias com receitas).`);
@@ -890,8 +1034,10 @@ export const getSuggestionAudit = (
     details.push(`Vigência da regra ativa: A partir de ${formattedRuleDate}${timeSuffix} (lançamentos anteriores desconsiderados).`);
   }
 
-  const resetOnWithdraw = res.reset_suggestion_on_withdraw !== false;
-  if (!resetOnWithdraw) {
+  const resetOnWithdraw = res.regra_tipo === 'liquido' ? false : res.reset_suggestion_on_withdraw !== false;
+  if (res.regra_tipo === 'liquido') {
+    details.push('Proteção Lucro Líquido: resgates desta ou de outras reservas nunca zeram nem reduzem a sugestão.');
+  } else if (!resetOnWithdraw) {
     details.push('Reinício de sugestão ao resgatar DESATIVADO: resgates não zeram a sugestão atual.');
   } else if (cleanLastWDate) {
     details.push(`Contagem reiniciada após o último resgate pago em ${new Date(cleanLastWDate + 'T00:00:00').toLocaleDateString('pt-BR')}.`);
@@ -925,6 +1071,12 @@ export const getSuggestionAudit = (
     pendingSuggestion,
     txCount: eligibleTxs.length,
     eligibleTxs,
+    deductedExpenses,
+    liquidoMode,
+    ignoredReserveExpensesTotal: Math.round(ignoredReserveExpensesTotal * 100) / 100,
+    ignoredReserveExpensesCount,
+    ignoredPersonalExpensesTotal: Math.round(ignoredPersonalExpensesTotal * 100) / 100,
+    ignoredPersonalExpensesCount,
     lastWithdrawalDate: cleanLastWDate,
     resetOnWithdraw,
     pendingWithdrawalsIgnored,
@@ -1129,7 +1281,7 @@ export const calculateReserveGoalProjection = (
   res: Reserve,
   transactions: Transaction[],
   reserveTransactions: ReserveTransaction[],
-  options?: { ignoreBoost?: boolean }
+  options?: { ignoreBoost?: boolean; operationalCategories?: string[] }
 ): ReserveGoalProjection => {
   const balance = Math.round((res.saldo_atual || 0) * 100) / 100;
   const goal = Math.round((res.meta_objetivo || 0) * 100) / 100;
@@ -1207,10 +1359,11 @@ export const calculateReserveGoalProjection = (
   let ruleDailyPace = 0;
   const effectiveRuleVal = getEffectiveRuleValue(res, options?.ignoreBoost);
   if (res.regra_ativa && res.regra_tipo && effectiveRuleVal > 0) {
+    const linkedRtIds = buildLinkedReserveTxIdSet(reserveTransactions);
     const recentTxs = (transactions || []).filter(t => {
       if (!t || t.ignore_in_charts) return false;
       if (t.payment_status === 'pending' || (t as any).status === 'pending') return false;
-      const d = parseLocalDate(t.date);
+      const d = parseLocalDate(getEffectiveTxDateStr(t));
       return isWithinInterval(d, { start: windowStart, end: windowEnd });
     });
 
@@ -1222,6 +1375,7 @@ export const calculateReserveGoalProjection = (
     if (ruleType === 'km') {
       let km30 = 0;
       recentTxs.forEach(t => {
+        if (isReserveOrNonOperatingTx(t, linkedRtIds)) return;
         const matchesCat = ruleCats.length === 0 || ruleCats.includes(t.category);
         if (t.type === 'income' && matchesCat) {
           const dist = (Number(t.end_km) || 0) - (Number(t.start_km) || 0);
@@ -1232,6 +1386,7 @@ export const calculateReserveGoalProjection = (
     } else if (ruleType === 'bruto') {
       let gross30 = 0;
       recentTxs.forEach(t => {
+        if (isReserveOrNonOperatingTx(t, linkedRtIds)) return;
         const matchesCat = ruleCats.length === 0 || ruleCats.includes(t.category);
         if (t.type === 'income' && matchesCat) {
           gross30 += Number(t.amount || 0);
@@ -1242,21 +1397,28 @@ export const calculateReserveGoalProjection = (
       let inc30 = 0;
       let exp30 = 0;
       recentTxs.forEach(t => {
+        if (isReserveOrNonOperatingTx(t, linkedRtIds)) return;
         const matchesCat = ruleCats.length === 0 || ruleCats.includes(t.category);
         if (t.type === 'income' && matchesCat) {
           inc30 += Number(t.amount || 0);
-        } else if (t.type === 'expense') {
-          const isReserveUse = (t as any).isReserveTx === true || t.category === 'Aporte Reserva';
-          if (!isReserveUse) exp30 += Number(t.amount || 0);
+        } else if (
+          t.type === 'expense' &&
+          doesExpenseCountForLiquido(res, t, {
+            operationalCategories: options?.operationalCategories,
+            linkedReserveTxIds: linkedRtIds,
+          })
+        ) {
+          exp30 += Number(t.amount || 0);
         }
       });
       total30d = Math.max(0, inc30 - exp30) * (ruleVal / 100);
     } else if (ruleType === 'fixo' || ruleType === 'fixo_diario') {
       const workedDays = new Set<string>();
       recentTxs.forEach(t => {
+        if (isReserveOrNonOperatingTx(t, linkedRtIds)) return;
         const matchesCat = ruleCats.length === 0 || ruleCats.includes(t.category);
         if (t.type === 'income' && matchesCat) {
-          workedDays.add(toDateInputString(t.date) || t.date);
+          workedDays.add(getEffectiveTxDateStr(t));
         }
       });
       total30d = workedDays.size * ruleVal;
@@ -1348,9 +1510,13 @@ export const getBoostSpeedupComparison = (
   res: Reserve,
   transactions: Transaction[],
   reserveTransactions: ReserveTransaction[],
-  overrideBoost?: { boost_ativo?: boolean; boost_tipo?: 'increment' | 'multiplier' | null; boost_valor?: number | null }
+  overrideBoost?: { boost_ativo?: boolean; boost_tipo?: 'increment' | 'multiplier' | null; boost_valor?: number | null },
+  options?: { operationalCategories?: string[] }
 ): BoostSpeedupComparison => {
-  const normalProjection = calculateReserveGoalProjection(res, transactions, reserveTransactions, { ignoreBoost: true });
+  const normalProjection = calculateReserveGoalProjection(res, transactions, reserveTransactions, {
+    ignoreBoost: true,
+    operationalCategories: options?.operationalCategories,
+  });
   const boostedReserve: Reserve = overrideBoost
     ? {
         ...res,
@@ -1359,7 +1525,10 @@ export const getBoostSpeedupComparison = (
         boost_valor: overrideBoost.boost_valor ?? res.boost_valor,
       }
     : res;
-  const boostedProjection = calculateReserveGoalProjection(boostedReserve, transactions, reserveTransactions, { ignoreBoost: false });
+  const boostedProjection = calculateReserveGoalProjection(boostedReserve, transactions, reserveTransactions, {
+    ignoreBoost: false,
+    operationalCategories: options?.operationalCategories,
+  });
 
   const daysSaved =
     normalProjection.estimatedDays !== null &&
@@ -1528,7 +1697,7 @@ export const calculateReserveWeeklyProgress = (
   res: Reserve,
   transactions: Transaction[],
   reserveTransactions: ReserveTransaction[],
-  options?: { ignoreBoost?: boolean }
+  options?: { ignoreBoost?: boolean; operationalCategories?: string[] }
 ): ReserveWeeklyProgress => {
   const now = new Date();
   const weekStart = startOfWeek(now, { weekStartsOn: 1 });
@@ -1585,10 +1754,11 @@ export const calculateReserveWeeklyProgress = (
   if (!isPaused && !isTotalGoalReached && res.regra_ativa && res.regra_tipo && effectiveRuleVal > 0) {
     const windowStart = startOfDay(subDays(now, 29));
     const windowEnd = endOfDay(now);
+    const linkedRtIds = buildLinkedReserveTxIdSet(reserveTransactions);
     const recentTxs = (transactions || []).filter(t => {
       if (!t || t.ignore_in_charts) return false;
       if (t.payment_status === 'pending' || (t as any).status === 'pending') return false;
-      const d = parseLocalDate(t.date);
+      const d = parseLocalDate(getEffectiveTxDateStr(t));
       return isWithinInterval(d, { start: windowStart, end: windowEnd });
     });
 
@@ -1599,6 +1769,7 @@ export const calculateReserveWeeklyProgress = (
     if (ruleType === 'km') {
       let km30 = 0;
       recentTxs.forEach(t => {
+        if (isReserveOrNonOperatingTx(t, linkedRtIds)) return;
         const matchesCat = ruleCats.length === 0 || ruleCats.includes(t.category);
         if (t.type === 'income' && matchesCat) {
           const dist = (Number(t.end_km) || 0) - (Number(t.start_km) || 0);
@@ -1609,6 +1780,7 @@ export const calculateReserveWeeklyProgress = (
     } else if (ruleType === 'bruto') {
       let gross30 = 0;
       recentTxs.forEach(t => {
+        if (isReserveOrNonOperatingTx(t, linkedRtIds)) return;
         const matchesCat = ruleCats.length === 0 || ruleCats.includes(t.category);
         if (t.type === 'income' && matchesCat) {
           gross30 += Number(t.amount || 0);
@@ -1619,21 +1791,28 @@ export const calculateReserveWeeklyProgress = (
       let inc30 = 0;
       let exp30 = 0;
       recentTxs.forEach(t => {
+        if (isReserveOrNonOperatingTx(t, linkedRtIds)) return;
         const matchesCat = ruleCats.length === 0 || ruleCats.includes(t.category);
         if (t.type === 'income' && matchesCat) {
           inc30 += Number(t.amount || 0);
-        } else if (t.type === 'expense') {
-          const isReserveUse = (t as any).isReserveTx === true || t.category === 'Aporte Reserva';
-          if (!isReserveUse) exp30 += Number(t.amount || 0);
+        } else if (
+          t.type === 'expense' &&
+          doesExpenseCountForLiquido(res, t, {
+            operationalCategories: options?.operationalCategories,
+            linkedReserveTxIds: linkedRtIds,
+          })
+        ) {
+          exp30 += Number(t.amount || 0);
         }
       });
       total30d = Math.max(0, inc30 - exp30) * (effectiveRuleVal / 100);
     } else if (ruleType === 'fixo' || ruleType === 'fixo_diario') {
       const workedDays = new Set<string>();
       recentTxs.forEach(t => {
+        if (isReserveOrNonOperatingTx(t, linkedRtIds)) return;
         const matchesCat = ruleCats.length === 0 || ruleCats.includes(t.category);
         if (t.type === 'income' && matchesCat) {
-          workedDays.add(toDateInputString(t.date) || t.date);
+          workedDays.add(getEffectiveTxDateStr(t));
         }
       });
       total30d = workedDays.size * effectiveRuleVal;

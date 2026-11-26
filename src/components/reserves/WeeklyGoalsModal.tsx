@@ -40,6 +40,7 @@ interface WeeklyGoalsModalProps {
       weekly_goal_include_manual: boolean;
     }>
   ) => Promise<void>;
+  operationalCategories?: string[];
   hideValues?: boolean;
 }
 
@@ -50,6 +51,7 @@ export function WeeklyGoalsModal({
   transactions,
   reserveTransactions,
   onSaveBatch,
+  operationalCategories,
   hideValues,
 }: WeeklyGoalsModalProps) {
   const activeReserves = useMemo(
@@ -95,7 +97,9 @@ export function WeeklyGoalsModal({
           }
         : r;
 
-      const prog = calculateReserveWeeklyProgress(simulated, transactions, reserveTransactions);
+      const prog = calculateReserveWeeklyProgress(simulated, transactions, reserveTransactions, {
+        operationalCategories,
+      });
       if (!weekRange) weekRange = prog.weekRangeLabel;
       if (!r.is_paused && prog.weeklyTarget > 0) {
         totalTarget += prog.weeklyTarget;
@@ -110,7 +114,7 @@ export function WeeklyGoalsModal({
     const pct = totalTarget > 0 ? Math.min(100, Math.round((totalCounted / totalTarget) * 100)) : 0;
 
     return { totalTarget, totalCounted, pct, weekRange };
-  }, [activeReserves, drafts, transactions, reserveTransactions]);
+  }, [activeReserves, drafts, transactions, reserveTransactions, operationalCategories]);
 
   if (!isOpen) return null;
 
@@ -250,7 +254,9 @@ export function WeeklyGoalsModal({
                 weekly_goal_amount: d.mode === 'fixed' ? parsedAmount : res.weekly_goal_amount,
                 weekly_goal_include_manual: d.includeManual,
               };
-              const prog = calculateReserveWeeklyProgress(simulated, transactions, reserveTransactions);
+              const prog = calculateReserveWeeklyProgress(simulated, transactions, reserveTransactions, {
+                operationalCategories,
+              });
 
               return (
                 <div

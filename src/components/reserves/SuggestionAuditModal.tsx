@@ -18,7 +18,7 @@ import {
   CalendarDays,
   Rocket
 } from 'lucide-react';
-import { Reserve, Transaction, ReserveTransaction } from '../../types';
+import { Reserve, Transaction, ReserveTransaction, UserSettings } from '../../types';
 import { getSuggestionAudit, SuggestionAuditResult, formatCurrency, calculateReserveGoalProjection, calculateReserveWeeklyProgress, getRuleBoostDeltaLabel } from './reserveUtils';
 import { Button } from '@/components/ui/button';
 
@@ -28,6 +28,7 @@ interface SuggestionAuditModalProps {
   reserve: Reserve | null;
   transactions: Transaction[];
   reserveTransactions: ReserveTransaction[];
+  settings?: UserSettings | null;
   globalPeriod: string;
   customDateRange: { start: string; end: string };
   onApplyAporte?: (reserve: Reserve, amount: number) => void;
@@ -39,11 +40,13 @@ export function SuggestionAuditModal({
   reserve,
   transactions,
   reserveTransactions,
+  settings,
   globalPeriod,
   customDateRange,
   onApplyAporte
 }: SuggestionAuditModalProps) {
   const [showAllTxs, setShowAllTxs] = useState(false);
+  const [showAllExpenses, setShowAllExpenses] = useState(false);
 
   if (!isOpen || !reserve) return null;
 
@@ -52,7 +55,8 @@ export function SuggestionAuditModal({
     transactions,
     reserveTransactions,
     globalPeriod,
-    customDateRange
+    customDateRange,
+    { operationalCategories: settings?.operational_expense_categories }
   );
 
   const getRuleLabel = () => {
@@ -64,7 +68,7 @@ export function SuggestionAuditModal({
       case 'bruto':
         return `${val}% do Faturamento Bruto${audit.boostActive ? ` (${getRuleBoostDeltaLabel(reserve)})` : ''}`;
       case 'liquido':
-        return `${val}% do Lucro Líquido${audit.boostActive ? ` (${getRuleBoostDeltaLabel(reserve)})` : ''}`;
+        return `${val}% do ${audit.liquidoMode === 'operacional' ? 'Lucro Operacional' : 'Lucro Líquido Geral'}${audit.boostActive ? ` (${getRuleBoostDeltaLabel(reserve)})` : ''}`;
       case 'fixo':
       case 'fixo_diario':
         return `R$ ${val.toFixed(2)} fixos por dia${audit.boostActive ? ` (${getRuleBoostDeltaLabel(reserve)})` : ''}`;
@@ -145,7 +149,9 @@ export function SuggestionAuditModal({
           )}
 
           {!audit.isGoalReached && reserve.target_date && (() => {
-            const proj = calculateReserveGoalProjection(reserve, transactions, reserveTransactions);
+            const proj = calculateReserveGoalProjection(reserve, transactions, reserveTransactions, {
+              operationalCategories: settings?.operational_expense_categories,
+            });
             if (!proj.targetDateDisplay || proj.requiredDailyForDeadline === null) return null;
             return (
               <div className={`p-3 rounded-xl border flex items-center justify-between gap-2 text-xs ${
@@ -256,7 +262,9 @@ export function SuggestionAuditModal({
 
           {/* Meta Semanal & Aportes da Semana */}
           {(() => {
-            const wp = calculateReserveWeeklyProgress(reserve, transactions, reserveTransactions);
+            const wp = calculateReserveWeeklyProgress(reserve, transactions, reserveTransactions, {
+              operationalCategories: settings?.operational_expense_categories,
+            });
             if (!wp.hasTarget && wp.weeklyTotalAportes <= 0) return null;
             return (
               <div className="p-3 rounded-xl bg-indigo-500/[0.06] border border-indigo-500/20 space-y-1.5 text-xs">
@@ -309,6 +317,48 @@ export function SuggestionAuditModal({
               {audit.formulaExplanation}
             </div>
 
+            {reserve.regra_tipo === 'liquido' && (
+              <div className="space-y-2 pt-1">
+                <div className="grid grid-cols-3 gap-2 text-[11px]">
+                  <div className="p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
+                    <span className="text-[9.5px] font-bold text-muted-foreground uppercase block">Receitas</span>
+                    <span className="font-mono font-black text-emerald-600 dark:text-emerald-400">
+                      +{formatCurrency(audit.grossRevenue)}
+                    </span>
+                  </div>
+                  <div className="p-2 rounded-lg bg-rose-500/10 border border-rose-500/20">
+                    <span className="text-[9.5px] font-bold text-muted-foreground uppercase block">
+                      {audit.liquidoMode === 'operacional' ? 'Custos Operac.' : 'Despesas Caixa'}
+                    </span>
+                    <span className="font-mono font-black text-rose-600 dark:text-rose-400">
+                      -{formatCurrency(audit.totalExpense)}
+                    </span>
+                  </div>
+                  <div className="p-2 rounded-lg bg-indigo-500/10 border border-indigo-500/20">
+                    <span className="text-[9.5px] font-bold text-muted-foreground uppercase block">Base Líquida</span>
+                    <span className="font-mono font-black text-indigo-600 dark:text-indigo-400">
+                      {formatCurrency(audit.netProfit)}
+                    </span>
+                  </div>
+                </div>
+
+                {(audit.ignoredReserveExpensesCount > 0 || (audit.liquidoMode === 'operacional' && audit.ignoredPersonalExpensesCount > 0)) && (
+                  <div className="p-2.5 rounded-lg bg-emerald-500/[0.07] border border-emerald-500/20 text-[11px] text-emerald-800 dark:text-emerald-200 space-y-1">
+                    {audit.ignoredReserveExpensesCount > 0 && (
+                      <div>
+                        • <strong>Resgates / usos de reserva / ignorados desconsiderados:</strong> {audit.ignoredReserveExpensesCount} item(ns) ({formatCurrency(audit.ignoredReserveExpensesTotal)}) não abateram seu lucro.
+                      </div>
+                    )}
+                    {audit.liquidoMode === 'operacional' && audit.ignoredPersonalExpensesCount > 0 && (
+                      <div>
+                        • <strong>Despesas pessoais protegidas (Modo Operacional):</strong> {audit.ignoredPersonalExpensesCount} gasto(s) ({formatCurrency(audit.ignoredPersonalExpensesTotal)}) não zeraram a sugestão do trabalho.
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Categorias e Regras */}
             {audit.categories.length > 0 && (
               <div className="flex items-center gap-1.5 flex-wrap pt-1 text-[11px]">
@@ -345,7 +395,14 @@ export function SuggestionAuditModal({
                   </span>
                 </li>
               )}
-              {!audit.resetOnWithdraw ? (
+              {reserve.regra_tipo === 'liquido' ? (
+                <li className="flex items-start gap-2 text-emerald-600 dark:text-emerald-400 font-semibold">
+                  <span className="font-bold">•</span>
+                  <span>
+                    <strong>Proteção Lucro Líquido:</strong> resgates desta ou de outras reservas e despesas pagas via reserva nunca zeram nem reduzem a sugestão calculada.
+                  </span>
+                </li>
+              ) : !audit.resetOnWithdraw ? (
                 <li className="flex items-start gap-2 text-indigo-600 dark:text-indigo-400 font-semibold">
                   <span className="font-bold">•</span>
                   <span>
@@ -375,6 +432,52 @@ export function SuggestionAuditModal({
               )}
             </ul>
           </div>
+
+          {/* Despesas Deduzidas (para Lucro Líquido) */}
+          {reserve.regra_tipo === 'liquido' && audit.deductedExpenses.length > 0 && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-foreground">
+                  <Receipt className="w-3.5 h-3.5 text-rose-500" />
+                  <span>
+                    Despesas Deduzidas na Base ({audit.deductedExpenses.length})
+                  </span>
+                </div>
+                {audit.deductedExpenses.length > 4 && (
+                  <button
+                    type="button"
+                    onClick={() => setShowAllExpenses(!showAllExpenses)}
+                    className="text-[11px] font-bold text-indigo-600 hover:text-indigo-700 flex items-center gap-0.5 cursor-pointer"
+                  >
+                    {showAllExpenses ? (
+                      <>Ver menos <ChevronUp className="w-3 h-3" /></>
+                    ) : (
+                      <>Ver todas ({audit.deductedExpenses.length}) <ChevronDown className="w-3 h-3" /></>
+                    )}
+                  </button>
+                )}
+              </div>
+
+              <div className="border border-border rounded-xl overflow-hidden divide-y divide-border/60">
+                {(showAllExpenses ? audit.deductedExpenses : audit.deductedExpenses.slice(0, 4)).map((exp) => (
+                  <div key={exp.id} className="p-2.5 flex items-center justify-between gap-2 text-xs hover:bg-muted/30 transition-colors">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-semibold text-foreground truncate">{exp.description}</span>
+                        <span className="px-1.5 py-0.2 rounded text-[9px] bg-muted text-muted-foreground">{exp.category}</span>
+                      </div>
+                      <span className="text-[10px] text-muted-foreground">
+                        {new Date(exp.date + 'T00:00:00').toLocaleDateString('pt-BR')}
+                      </span>
+                    </div>
+                    <span className="font-bold text-rose-600 dark:text-rose-400 font-mono shrink-0">
+                      -{formatCurrency(exp.amount)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Transações Elegíveis na Base de Cálculo */}
           <div className="space-y-2">

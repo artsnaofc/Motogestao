@@ -47,6 +47,7 @@ interface MassAporteConsolidatorProps {
   }) => Promise<void>;
   onClose?: () => void;
   onAuditSuggestion?: (reserve: Reserve) => void;
+  operationalCategories?: string[];
   isModal?: boolean;
 }
 
@@ -60,6 +61,7 @@ export function MassAporteConsolidator({
   onExecuteBatch,
   onClose,
   onAuditSuggestion,
+  operationalCategories,
   isModal = false
 }: MassAporteConsolidatorProps) {
   // Selection state
@@ -98,12 +100,17 @@ export function MassAporteConsolidator({
 
     activeReserves.forEach(r => {
       const boostActive = isReserveBoostActive(r);
-      const suggested = calculateSuggestion(r, transactions, reserveTransactions, globalPeriod, customDateRange);
+      const suggested = calculateSuggestion(r, transactions, reserveTransactions, globalPeriod, customDateRange, {
+        operationalCategories,
+      });
       const effectiveAportes = getEffectiveAportesInPeriod(r, reserveTransactions, globalPeriod, customDateRange);
       const pending = Math.max(0, Math.round((suggested - effectiveAportes) * 100) / 100);
 
       const baseSugg = boostActive
-        ? calculateSuggestion(r, transactions, reserveTransactions, globalPeriod, customDateRange, { ignoreBoost: true })
+        ? calculateSuggestion(r, transactions, reserveTransactions, globalPeriod, customDateRange, {
+            ignoreBoost: true,
+            operationalCategories,
+          })
         : suggested;
       const baseEff = boostActive
         ? getEffectiveAportesInPeriod(r, reserveTransactions, globalPeriod, customDateRange, { ignoreBoost: true })
@@ -128,7 +135,7 @@ export function MassAporteConsolidator({
     });
 
     return map;
-  }, [activeReserves, transactions, reserveTransactions, globalPeriod, customDateRange]);
+  }, [activeReserves, transactions, reserveTransactions, globalPeriod, customDateRange, operationalCategories]);
 
   // Initial populate with smart suggestions
   useEffect(() => {

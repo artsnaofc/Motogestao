@@ -1055,6 +1055,7 @@ interface RuleHistoryModalProps {
   reserveTransactions: ReserveTransaction[];
   globalPeriod: string;
   customDateRange: { start: string; end: string };
+  operationalCategories?: string[];
 }
 
 export function RuleHistoryModal({
@@ -1064,11 +1065,14 @@ export function RuleHistoryModal({
   transactions,
   reserveTransactions,
   globalPeriod,
-  customDateRange
+  customDateRange,
+  operationalCategories
 }: RuleHistoryModalProps) {
   if (!isOpen || !reserve) return null;
 
-  const audit = getSuggestionAudit(reserve, transactions, reserveTransactions, globalPeriod, customDateRange);
+  const audit = getSuggestionAudit(reserve, transactions, reserveTransactions, globalPeriod, customDateRange, {
+    operationalCategories,
+  });
   const historyRules = reserve.rule_history || [];
 
   return (

@@ -81,7 +81,12 @@ import {
   getBoostExtraFromRt,
   parseLocalDate,
   getTodayLocalDateStr,
-  toDateInputString
+  toDateInputString,
+  getEffectiveTxDateStr,
+  buildLinkedReserveTxIdSet,
+  isReserveOrNonOperatingTx,
+  doesExpenseCountForLiquido,
+  getLiquidoProfitMode
 } from './reserveUtils';
 import { toast } from '@/lib/toast';
 
@@ -92,6 +97,7 @@ export interface RuleHistoryItem {
   date: string; // YYYY-MM-DD
   updated_at?: string;
   regra_tipo?: string;
+  regra_base?: 'bruto' | 'liquido' | 'lucro';
   regra_valor: number;
   regra_categorias?: string[];
   regra_ativa?: boolean;
@@ -173,6 +179,7 @@ export function ReserveHistoryTab({
 
   // Edit Rule Form Fields
   const [editRuleType, setEditRuleType] = useState<string>('km');
+  const [editRuleBase, setEditRuleBase] = useState<'lucro' | 'liquido'>('lucro');
   const [editRuleValue, setEditRuleValue] = useState<string>('');
   const [editRuleStartDate, setEditRuleStartDate] = useState<string>('');
   const [editRuleEndDate, setEditRuleEndDate] = useState<string>('');
@@ -455,14 +462,24 @@ export function ReserveHistoryTab({
 
   // Real-time calculation simulator for any given rule against recent transactions
   const calculateRuleSimulation = useMemo(() => {
-    return (ruleType: string, ruleValStr: string, cats: string[]) => {
+    const linkedReserveTxIds = buildLinkedReserveTxIdSet(reserveTransactions);
+    return (
+      ruleType: string,
+      ruleValStr: string,
+      cats: string[],
+      ruleBase?: 'bruto' | 'liquido' | 'lucro'
+    ) => {
       const val = parseFloat(String(ruleValStr).replace(',', '.'));
       if (isNaN(val) || val <= 0 || !ruleType) return { estimate: 0, metricLabel: 'Aguardando valor' };
 
       const thirtyDaysAgo = subDays(new Date(), 30);
       const recentTxs = (transactions || []).filter(t => {
         if (t.payment_status === 'pending' || (t as any).status === 'pending') return false;
-        const d = parseLocalDate(t.date);
+        if (t.ignore_in_charts) return false;
+        if (isReserveOrNonOperatingTx(t, linkedReserveTxIds)) return false;
+        const effectiveDate = getEffectiveTxDateStr(t);
+        if (!effectiveDate) return false;
+        const d = parseLocalDate(effectiveDate);
         return d >= thirtyDaysAgo;
       });
 
@@ -488,27 +505,42 @@ export function ReserveHistoryTab({
         total = gross * (val / 100);
         metricLabel = `${formatCurrency(gross)} faturamento elegível (últimos 30d)`;
       } else if (ruleType === 'liquido') {
+        const effectiveBase = ruleBase || editRuleBase;
+        const tempReserve = {
+          regra_tipo: 'liquido',
+          regra_base: effectiveBase,
+        } as Reserve;
+        const modeLabel =
+          getLiquidoProfitMode(tempReserve) === 'operacional'
+            ? 'lucro operacional'
+            : 'lucro líquido geral';
+
         const totalIncome = recentTxs
-          .filter(t => t.type === 'income')
+          .filter(t => t.type === 'income' && (cats.length === 0 || cats.includes(t.category)))
           .reduce((sum, t) => sum + Number(t.amount || 0), 0);
         const totalExpense = recentTxs
-          .filter(t => t.type === 'expense' && !(t as any).isReserveTx && t.category !== 'Aporte Reserva')
+          .filter(t =>
+            doesExpenseCountForLiquido(tempReserve, t, {
+              operationalCategories: settings?.operational_expense_categories,
+              linkedReserveTxIds,
+            })
+          )
           .reduce((sum, t) => sum + Number(t.amount || 0), 0);
         const netProfit = Math.max(0, totalIncome - totalExpense);
         total = netProfit * (val / 100);
-        metricLabel = `${formatCurrency(netProfit)} lucro líquido (últimos 30d)`;
+        metricLabel = `${formatCurrency(netProfit)} ${modeLabel} (últimos 30d)`;
       } else if (ruleType === 'fixo' || ruleType === 'fixo_diario') {
         const eligible = recentTxs.filter(
           t => t.type === 'income' && (cats.length === 0 || cats.includes(t.category))
         );
-        const uniqueDays = new Set(eligible.map(t => t.date));
+        const uniqueDays = new Set(eligible.map(t => getEffectiveTxDateStr(t)));
         total = uniqueDays.size * val;
         metricLabel = `${uniqueDays.size} dias com receita (últimos 30d)`;
       }
 
       return { estimate: Math.round(total * 100) / 100, metricLabel };
     };
-  }, [transactions]);
+  }, [transactions, reserveTransactions, settings?.operational_expense_categories, editRuleBase]);
 
   // Intelligent Fallback candidate calculation for active rule deletion
   const fallbackRuleCandidate = useMemo(() => {
@@ -542,6 +574,7 @@ export function ReserveHistoryTab({
           date: activeStartDate,
           updated_at: res.updated_at || res.created_at || activeStartDate,
           regra_tipo: res.regra_tipo,
+          regra_base: res.regra_base,
           regra_valor: Number(res.regra_valor || 0),
           regra_categorias: res.regra_categorias || [],
           regra_ativa: res.regra_ativa !== false,
@@ -565,6 +598,7 @@ export function ReserveHistoryTab({
           date: startDate,
           updated_at: h.updated_at || startDate,
           regra_tipo: h.regra_tipo,
+          regra_base: h.regra_base || res.regra_base,
           regra_valor: Number(h.regra_valor || 0),
           regra_categorias: h.regra_categorias || [],
           regra_ativa: h.regra_ativa !== undefined ? Boolean(h.regra_ativa) : true,
@@ -1456,6 +1490,9 @@ export function ReserveHistoryTab({
     setRuleToEdit(rule);
     const normalizedType = rule.regra_tipo === 'fixo_diario' ? 'fixo' : (rule.regra_tipo || 'km');
     setEditRuleType(normalizedType);
+    const reserveForRule = reserveMap[rule.reserve_id];
+    const resolvedBase = (rule.regra_base || reserveForRule?.regra_base) === 'liquido' ? 'liquido' : 'lucro';
+    setEditRuleBase(resolvedBase);
     setEditRuleValue(rule.regra_valor !== undefined && rule.regra_valor !== null ? String(rule.regra_valor) : '');
     const cleanStart = toDateInputString(rule.start_date || rule.date) || getTodayLocalDateStr();
     const cleanEnd = toDateInputString(rule.end_date);
@@ -1541,6 +1578,7 @@ export function ReserveHistoryTab({
             start_date: prevStart,
             end_date: toDateInputString(editRuleStartDate) || getTodayLocalDateStr(),
             regra_tipo: reserve.regra_tipo,
+            regra_base: reserve.regra_base,
             regra_valor: reserve.regra_valor,
             regra_categorias: reserve.regra_categorias || [],
             regra_ativa: reserve.regra_ativa !== false,
@@ -1555,10 +1593,12 @@ export function ReserveHistoryTab({
 
         await onUpdateReserve(ruleToEdit.reserve_id, {
           regra_tipo: editRuleType as any,
+          regra_base: editRuleType === 'liquido' ? editRuleBase : 'lucro',
           regra_valor: numVal,
           regra_categorias: parsedCats,
           regra_inicio_validade: cleanStart,
           regra_ativa: editRuleActive,
+          ...(editRuleType === 'liquido' ? { reset_suggestion_on_withdraw: false } : {}),
           rule_history: currentHist,
           updated_at: new Date().toISOString()
         });
@@ -1574,6 +1614,7 @@ export function ReserveHistoryTab({
           currentHistory[targetIdx] = {
             ...currentHistory[targetIdx],
             regra_tipo: editRuleType,
+            regra_base: editRuleType === 'liquido' ? editRuleBase : 'lucro',
             regra_valor: numVal,
             regra_categorias: parsedCats,
             start_date: cleanHistStart,
@@ -1588,6 +1629,7 @@ export function ReserveHistoryTab({
             currentHistory[matchIdx] = {
               ...currentHistory[matchIdx],
               regra_tipo: editRuleType,
+              regra_base: editRuleType === 'liquido' ? editRuleBase : 'lucro',
               regra_valor: numVal,
               regra_categorias: parsedCats,
               start_date: cleanHistStart,
@@ -1649,6 +1691,7 @@ export function ReserveHistoryTab({
 
           const payload: Partial<Reserve> = {
             regra_tipo: fallbackRuleCandidate.regra_tipo as any,
+            regra_base: fallbackRuleCandidate.regra_base || 'lucro',
             regra_valor: Number(fallbackRuleCandidate.regra_valor),
             regra_categorias: fallbackRuleCandidate.regra_categorias || [],
             regra_ativa: fallbackRuleCandidate.regra_ativa !== false,
@@ -3032,7 +3075,7 @@ export function ReserveHistoryTab({
 
             {/* Live Calculation Simulation Card */}
             {(() => {
-              const sim = calculateRuleSimulation(editRuleType, editRuleValue, editRuleCategoryList);
+              const sim = calculateRuleSimulation(editRuleType, editRuleValue, editRuleCategoryList, editRuleBase);
               return (
                 <div className="p-3.5 rounded-2xl bg-gradient-to-r from-indigo-500/10 via-purple-500/5 to-transparent border border-indigo-500/20 space-y-1">
                   <div className="flex items-center justify-between text-[11px]">
@@ -3074,6 +3117,43 @@ export function ReserveHistoryTab({
                   <option value="personalizado">Personalizado</option>
                 </select>
               </div>
+
+              {editRuleType === 'liquido' && (
+                <div className="space-y-2 p-2.5 rounded-xl bg-emerald-500/5 border border-emerald-500/20">
+                  <div className="text-[11px] font-bold text-foreground">
+                    Despesas deduzidas da base:
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setEditRuleBase('lucro')}
+                      className={`p-2 rounded-lg border text-left transition-all cursor-pointer ${
+                        editRuleBase === 'lucro'
+                          ? 'bg-emerald-500/15 border-emerald-500 text-emerald-700 dark:text-emerald-300'
+                          : 'bg-background border-border/80 text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      <div className="font-bold text-[11px]">Lucro Operacional</div>
+                      <div className="text-[10px] opacity-80 leading-tight">Só custos do trabalho</div>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEditRuleBase('liquido')}
+                      className={`p-2 rounded-lg border text-left transition-all cursor-pointer ${
+                        editRuleBase === 'liquido'
+                          ? 'bg-emerald-500/15 border-emerald-500 text-emerald-700 dark:text-emerald-300'
+                          : 'bg-background border-border/80 text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      <div className="font-bold text-[11px]">Lucro Líquido Geral</div>
+                      <div className="text-[10px] opacity-80 leading-tight">Todas despesas reais</div>
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-emerald-700 dark:text-emerald-400 leading-snug">
+                    Resgates da reserva, gastos marcados com a reserva, investimentos e itens ignorados nos gráficos nunca reduzem a sugestão.
+                  </p>
+                </div>
+              )}
 
               {/* Rule Value */}
               <div className="space-y-1">
@@ -3349,7 +3429,8 @@ export function ReserveHistoryTab({
                     const sim = calculateRuleSimulation(
                       fallbackRuleCandidate.regra_tipo,
                       String(fallbackRuleCandidate.regra_valor),
-                      fallbackRuleCandidate.regra_categorias || []
+                      fallbackRuleCandidate.regra_categorias || [],
+                      fallbackRuleCandidate.regra_base
                     );
                     return (
                       <div className="p-2.5 rounded-xl bg-muted/40 border border-border/60 text-[11px] flex items-center justify-between">

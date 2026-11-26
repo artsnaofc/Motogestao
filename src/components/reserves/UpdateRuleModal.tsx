@@ -23,11 +23,11 @@ import { Reserve, Transaction, UserSettings, ReserveTransaction } from '../../ty
 import { 
   iconOptions, 
   formatCurrency, 
-  isTxInPeriod, 
   getPeriodDisplayLabel, 
   getTodayLocalDateStr,
   toDateInputString,
-  getDefaultBoostValue
+  getDefaultBoostValue,
+  calculateSuggestion
 } from './reserveUtils';
 import { toast } from '@/lib/toast';
 
@@ -43,6 +43,7 @@ interface UpdateRuleModalProps {
   onSaveRule: (reserveId: string, ruleData: {
     regra_ativa: boolean;
     regra_tipo?: Reserve['regra_tipo'];
+    regra_base?: Reserve['regra_base'];
     regra_valor?: number | null;
     regra_categorias?: string[];
     regra_inicio_validade?: string;
@@ -108,6 +109,7 @@ export function UpdateRuleModal({
   // Form State
   const [regraAtiva, setRegraAtiva] = useState(false);
   const [regraTipo, setRegraTipo] = useState<Reserve['regra_tipo'] | ''>('km');
+  const [regraBase, setRegraBase] = useState<Reserve['regra_base']>('lucro');
   const [regraValor, setRegraValor] = useState('');
   const [regraCategorias, setRegraCategorias] = useState<string[]>([]);
   const [effectiveDate, setEffectiveDate] = useState<string>(getTodayLocalDateStr());
@@ -140,6 +142,7 @@ export function UpdateRuleModal({
       if (reserve) {
         setRegraAtiva(Boolean(reserve.regra_ativa));
         setRegraTipo(reserve.regra_tipo || 'km');
+        setRegraBase(reserve.regra_base === 'liquido' ? 'liquido' : 'lucro');
         const initialDate = toDateInputString(reserve.regra_inicio_validade) || getTodayLocalDateStr();
         setEffectiveDate(initialDate);
         setRegraValor(
@@ -156,7 +159,9 @@ export function UpdateRuleModal({
             ? String(Number(reserve.boost_valor))
             : String(getDefaultBoostValue(reserve.regra_tipo || 'km', bType))
         );
-        setResetSuggestionOnWithdraw(reserve.reset_suggestion_on_withdraw !== false);
+        setResetSuggestionOnWithdraw(
+          reserve.regra_tipo === 'liquido' ? false : reserve.reset_suggestion_on_withdraw !== false
+        );
         
         const savedCats = reserve.regra_categorias && reserve.regra_categorias.length > 0
           ? reserve.regra_categorias
@@ -207,63 +212,32 @@ export function UpdateRuleModal({
 
     const cleanBoostStr = String(boostValor || '').replace(',', '.').trim();
     const parsedBoost = parseFloat(cleanBoostStr);
-    let val = baseVal;
-    if (boostAtivo && !isNaN(parsedBoost)) {
-      if (boostTipo === 'multiplier' && parsedBoost > 1) {
-        val = baseVal * parsedBoost;
-      } else if (boostTipo === 'increment' && parsedBoost > 0) {
-        val = baseVal + parsedBoost;
-      }
-      if (regraTipo === 'bruto' || regraTipo === 'liquido') {
-        val = Math.min(100, val);
-      }
-    }
 
-    const effDate = toDateInputString(effectiveDate);
-    const periodTxs = (transactions || []).filter(t => {
-      if (effDate && t.date < effDate) return false;
-      return isTxInPeriod(t.date, globalPeriod, customDateRange);
-    });
+    const simulatedReserve: Reserve = {
+      ...reserve,
+      status: 'active',
+      is_paused: false,
+      saldo_atual: 0,
+      regra_ativa: true,
+      regra_tipo: regraTipo as Reserve['regra_tipo'],
+      regra_base: regraTipo === 'liquido' ? regraBase : 'bruto',
+      regra_valor: baseVal,
+      regra_categorias: regraCategorias,
+      regra_inicio_validade: toDateInputString(effectiveDate) || getTodayLocalDateStr(),
+      boost_ativo: boostAtivo,
+      boost_tipo: boostTipo,
+      boost_valor: !isNaN(parsedBoost) && parsedBoost > 0 ? parsedBoost : getDefaultBoostValue(regraTipo || 'km', boostTipo),
+      reset_suggestion_on_withdraw: regraTipo === 'liquido' ? false : resetSuggestionOnWithdraw,
+    };
 
-    let total = 0;
-    if (regraTipo === 'km') {
-      const eligible = periodTxs.filter(
-        t => t.type === 'income' && regraCategorias.includes(t.category) && t.start_km !== null && t.end_km !== null
-      );
-      eligible.forEach(t => {
-        const distance = (Number(t.end_km) || 0) - (Number(t.start_km) || 0);
-        if (distance > 0) {
-          total += distance * val;
-        }
-      });
-    } else if (regraTipo === 'bruto') {
-      const eligible = periodTxs.filter(
-        t => t.type === 'income' && regraCategorias.includes(t.category)
-      );
-      const gross = eligible.reduce((sum, t) => sum + Number(t.amount || 0), 0);
-      total = gross * (val / 100);
-    } else if (regraTipo === 'liquido') {
-      const totalIncome = periodTxs
-        .filter(t => t.type === 'income')
-        .reduce((sum, t) => sum + Number(t.amount || 0), 0);
-      const totalExpense = periodTxs
-        .filter(t => t.type === 'expense' && !(t as any).isReserveTx && t.category !== 'Aporte Reserva')
-        .reduce((sum, t) => sum + Number(t.amount || 0), 0);
-      const netProfit = Math.max(0, totalIncome - totalExpense);
-      total = netProfit * (val / 100);
-    } else if (regraTipo === 'fixo' || (regraTipo as string) === 'fixo_diario') {
-      const eligible = periodTxs.filter(
-        t => t.type === 'income' && regraCategorias.includes(t.category)
-      );
-      const uniqueDays = new Set(eligible.map(t => t.date));
-      total = uniqueDays.size * val;
-    }
-
-    if (reserve.meta_objetivo && reserve.meta_objetivo > 0 && total > reserve.meta_objetivo) {
-      total = reserve.meta_objetivo;
-    }
-
-    return Math.round(total * 100) / 100;
+    return calculateSuggestion(
+      simulatedReserve,
+      transactions,
+      reserveTransactions,
+      globalPeriod,
+      customDateRange,
+      { operationalCategories: settings?.operational_expense_categories }
+    );
   };
 
   const currentSimulatedVal = simulatedSuggestion();
@@ -291,7 +265,7 @@ export function UpdateRuleModal({
         toast.error('O percentual não pode ser maior que 100%.');
         return;
       }
-      if ((regraTipo === 'km' || regraTipo === 'bruto' || regraTipo === 'fixo') && regraCategorias.length === 0) {
+      if ((regraTipo === 'km' || regraTipo === 'bruto' || regraTipo === 'liquido' || regraTipo === 'fixo') && regraCategorias.length === 0) {
         toast.error('Selecione ao menos uma categoria de receita elegível no seu perfil.');
         return;
       }
@@ -319,6 +293,7 @@ export function UpdateRuleModal({
       await onSaveRule(reserve.id, {
         regra_ativa: regraAtiva,
         regra_tipo: regraAtiva ? (regraTipo as any) : null,
+        regra_base: regraAtiva ? (regraTipo === 'liquido' ? regraBase : 'bruto') : 'bruto',
         regra_valor: regraAtiva ? parsedVal : null,
         regra_categorias: regraAtiva ? regraCategorias : [],
         regra_inicio_validade: toDateInputString(effectiveDate) || getTodayLocalDateStr(),
@@ -327,7 +302,7 @@ export function UpdateRuleModal({
         boost_ativo: regraAtiva ? boostAtivo : false,
         boost_tipo: boostTipo,
         boost_valor: parsedBoostVal > 0 ? parsedBoostVal : getDefaultBoostValue(regraTipo || 'km', boostTipo),
-        reset_suggestion_on_withdraw: resetSuggestionOnWithdraw,
+        reset_suggestion_on_withdraw: regraTipo === 'liquido' ? false : resetSuggestionOnWithdraw,
       } as any);
 
       toast.success(`Regra de aporte de ${reserve.name} atualizada com sucesso!`);
@@ -420,7 +395,15 @@ export function UpdateRuleModal({
                   <Sliders className="w-3.5 h-3.5 text-indigo-500" />
                   Tipo de Cálculo
                 </label>
-                <Select value={regraTipo || 'km'} onValueChange={(val: any) => setRegraTipo(val)}>
+                <Select
+                  value={regraTipo || 'km'}
+                  onValueChange={(val: any) => {
+                    setRegraTipo(val);
+                    if (val === 'liquido') {
+                      setResetSuggestionOnWithdraw(false);
+                    }
+                  }}
+                >
                   <SelectTrigger className="h-10 text-xs font-bold rounded-xl bg-card">
                     <SelectValue placeholder="Selecione o tipo de cálculo..." />
                   </SelectTrigger>
@@ -440,6 +423,48 @@ export function UpdateRuleModal({
                   </SelectContent>
                 </Select>
               </div>
+
+              {/* Base de Despesas quando Lucro Líquido */}
+              {regraTipo === 'liquido' && (
+                <div className="p-3 rounded-2xl bg-indigo-500/[0.06] border border-indigo-500/20 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-black text-foreground">Base de Cálculo do Lucro</span>
+                    <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
+                      Resgates protegidos
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setRegraBase('lucro')}
+                      className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                        regraBase !== 'liquido'
+                          ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
+                          : 'bg-card border-border/80 text-foreground hover:bg-muted/60'
+                      }`}
+                    >
+                      <span className="text-xs font-black block">Lucro Operacional</span>
+                      <span className={`text-[10px] leading-tight block mt-0.5 ${regraBase !== 'liquido' ? 'text-indigo-100' : 'text-muted-foreground'}`}>
+                        Deduz só custos do trabalho (combustível, manutenção, pedágio). Gastos pessoais não zeram a sugestão.
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setRegraBase('liquido')}
+                      className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                        regraBase === 'liquido'
+                          ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
+                          : 'bg-card border-border/80 text-foreground hover:bg-muted/60'
+                      }`}
+                    >
+                      <span className="text-xs font-black block">Lucro Líquido Geral</span>
+                      <span className={`text-[10px] leading-tight block mt-0.5 ${regraBase === 'liquido' ? 'text-indigo-100' : 'text-muted-foreground'}`}>
+                        Deduz todas as despesas do caixa (exceto resgates, usos de reserva e itens ignorados).
+                      </span>
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* Valor da Regra */}
               <div className="space-y-1.5">
@@ -513,7 +538,7 @@ export function UpdateRuleModal({
               </div>
 
               {/* Categorias Elegíveis do Perfil */}
-              {(regraTipo === 'km' || regraTipo === 'bruto' || regraTipo === 'fixo') && (
+              {(regraTipo === 'km' || regraTipo === 'bruto' || regraTipo === 'liquido' || regraTipo === 'fixo') && (
                 <div className="space-y-2 p-3 bg-muted/25 rounded-2xl border border-border/70">
                   <div className="flex items-center justify-between">
                     <div>
@@ -667,34 +692,48 @@ export function UpdateRuleModal({
               </div>
 
               {/* Opção: Zerar sugestão ao realizar resgate */}
-              <div className={`p-3 rounded-2xl border transition-all flex items-center justify-between gap-3 ${
-                resetSuggestionOnWithdraw
-                  ? 'bg-muted/35 border-border/80'
-                  : 'bg-indigo-500/10 border-indigo-500/30'
-              }`}>
-                <div className="space-y-0.5">
-                  <div className="flex items-center gap-1.5">
-                    <AlertCircle className={`w-3.5 h-3.5 ${resetSuggestionOnWithdraw ? 'text-amber-500' : 'text-indigo-500'}`} />
-                    <span className="text-xs font-black text-foreground">
-                      Zerar sugestão ao fazer resgate
+              {regraTipo === 'liquido' ? (
+                <div className="p-3 rounded-2xl border bg-emerald-500/[0.08] border-emerald-500/25 flex items-start gap-2.5">
+                  <ShieldCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
+                  <div className="space-y-0.5">
+                    <span className="text-xs font-black text-foreground block">
+                      Resgates protegidos no Lucro Líquido
                     </span>
+                    <p className="text-[10.5px] text-muted-foreground leading-snug">
+                      Resgates desta reserva, despesas pagas via reservas e lançamentos ignorados não zeram nem reduzem a base de cálculo do lucro.
+                    </p>
                   </div>
-                  <p className="text-[10.5px] text-muted-foreground leading-snug">
-                    {resetSuggestionOnWithdraw
-                      ? 'Ativado: ao realizar um resgate pago, o acumulado da sugestão reinicia a partir da data do resgate.'
-                      : 'Desativado: seus resgates não zeram nem reiniciam a sugestão calculada pela regra.'}
-                  </p>
                 </div>
-                <label className="relative inline-flex items-center cursor-pointer shrink-0">
-                  <input
-                    type="checkbox"
-                    checked={resetSuggestionOnWithdraw}
-                    onChange={e => setResetSuggestionOnWithdraw(e.target.checked)}
-                    className="sr-only peer"
-                  />
-                  <div className="w-10 h-5.5 bg-muted rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4.5 after:w-4.5 after:transition-all peer-checked:bg-indigo-600"></div>
-                </label>
-              </div>
+              ) : (
+                <div className={`p-3 rounded-2xl border transition-all flex items-center justify-between gap-3 ${
+                  resetSuggestionOnWithdraw
+                    ? 'bg-muted/35 border-border/80'
+                    : 'bg-indigo-500/10 border-indigo-500/30'
+                }`}>
+                  <div className="space-y-0.5">
+                    <div className="flex items-center gap-1.5">
+                      <AlertCircle className={`w-3.5 h-3.5 ${resetSuggestionOnWithdraw ? 'text-amber-500' : 'text-indigo-500'}`} />
+                      <span className="text-xs font-black text-foreground">
+                        Zerar sugestão ao fazer resgate
+                      </span>
+                    </div>
+                    <p className="text-[10.5px] text-muted-foreground leading-snug">
+                      {resetSuggestionOnWithdraw
+                        ? 'Ativado: ao realizar um resgate pago, o acumulado da sugestão reinicia a partir da data do resgate.'
+                        : 'Desativado: seus resgates não zeram nem reiniciam a sugestão calculada pela regra.'}
+                    </p>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                    <input
+                      type="checkbox"
+                      checked={resetSuggestionOnWithdraw}
+                      onChange={e => setResetSuggestionOnWithdraw(e.target.checked)}
+                      className="sr-only peer"
+                    />
+                    <div className="w-10 h-5.5 bg-muted rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4.5 after:w-4.5 after:transition-all peer-checked:bg-indigo-600"></div>
+                  </label>
+                </div>
+              )}
 
               {/* Simulação em Tempo Real */}
               <div className="p-3 bg-gradient-to-r from-emerald-500/10 via-emerald-500/5 to-transparent rounded-2xl border border-emerald-500/20 flex items-center justify-between">

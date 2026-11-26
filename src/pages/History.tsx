@@ -74,7 +74,7 @@ import {
 } from 'lucide-react';
 import { ExecutiveReportModal } from '../components/ExecutiveReportModal';
 import { TransactionDetailView } from '../components/history/TransactionDetailView';
-import { isOperationalCategory, getActiveRuleForDate, iconOptions, findMatchingReserveForExpense } from '../components/reserves/reserveUtils';
+import { isOperationalCategory, getActiveRuleForDate, iconOptions, findMatchingReserveForExpense, buildLinkedReserveTxIdSet, isReserveOrNonOperatingTx, doesExpenseCountForLiquido } from '../components/reserves/reserveUtils';
 import {
   planningStorage,
   CreditCardConfig,
@@ -2200,8 +2200,14 @@ export function History() {
     return formatted.endsWith(',00') ? formatted.slice(0, -3) : formatted;
   };
 
+  const linkedReserveTxIds = useMemo(
+    () => buildLinkedReserveTxIdSet(reserveTransactions),
+    [reserveTransactions]
+  );
+
   const getTransactionReserveContributions = (t: Transaction) => {
     if (!reserves || reserves.length === 0) return [];
+    if (t.ignore_in_charts || isReserveOrNonOperatingTx(t, linkedReserveTxIds)) return [];
 
     return reserves
       .map(r => {
@@ -2227,6 +2233,7 @@ export function History() {
         const activeRule = {
           regra_ativa: ruleInfo.regra_ativa,
           regra_tipo: ruleInfo.regra_tipo,
+          regra_base: ruleInfo.regra_base,
           regra_valor: ruleInfo.regra_valor,
           regra_categorias: ruleInfo.regra_categorias || [],
         };
@@ -2267,9 +2274,20 @@ export function History() {
         } else if (activeRule.regra_tipo === 'liquido') {
           const factor = ruleValue / 100;
           if (t.type === 'income') {
-            rAmount = Number(t.amount || 0) * factor;
-          } else {
-            rAmount = -Number(t.amount || 0) * factor;
+            const isEligibleIncome = ruleCats.length === 0 || ruleCats.includes(t.category);
+            if (isEligibleIncome) {
+              rAmount = Number(t.amount || 0) * factor;
+            }
+          } else if (t.type === 'expense') {
+            const tempReserve = { ...r, regra_base: activeRule.regra_base ?? r.regra_base };
+            if (
+              doesExpenseCountForLiquido(tempReserve, t, {
+                operationalCategories: settings?.operational_expense_categories,
+                linkedReserveTxIds,
+              })
+            ) {
+              rAmount = -Number(t.amount || 0) * factor;
+            }
           }
         }
 

@@ -577,6 +577,9 @@ export function DataProvider({ children, userId: propUserId }: { children: React
               if (nextItem.weekly_goal_include_manual === undefined && b.weekly_goal_include_manual !== undefined) {
                 nextItem.weekly_goal_include_manual = b.weekly_goal_include_manual;
               }
+              if (b.regra_base !== undefined && (nextItem.regra_base === undefined || nextItem.regra_base === 'bruto')) {
+                nextItem.regra_base = b.regra_base;
+              }
               return nextItem;
             });
 

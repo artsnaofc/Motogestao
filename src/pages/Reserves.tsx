@@ -204,7 +204,8 @@ export function Reserves() {
         transactions, 
         reserveTransactions, 
         FIXED_SUGGESTION_PERIOD, 
-        FIXED_CUSTOM_RANGE
+        FIXED_CUSTOM_RANGE,
+        { operationalCategories: settings?.operational_expense_categories }
       );
       const effectiveAportes = getEffectiveAportesInPeriod(
         r, 
@@ -249,7 +250,7 @@ export function Reserves() {
       topYieldReserve,
       activeCount: activeReserves.filter(r => !r.is_paused).length
     };
-  }, [activeReserves, reserves, transactions, reserveTransactions]);
+  }, [activeReserves, reserves, transactions, reserveTransactions, settings?.operational_expense_categories]);
 
   // Consolidated weekly contribution progress across active non-paused reserves
   const weeklySummary = useMemo(() => {
@@ -259,7 +260,9 @@ export function Reserves() {
     let weeklyRangeLabel = '';
 
     activeReserves.forEach(r => {
-      const wp = calculateReserveWeeklyProgress(r, transactions, reserveTransactions);
+      const wp = calculateReserveWeeklyProgress(r, transactions, reserveTransactions, {
+        operationalCategories: settings?.operational_expense_categories,
+      });
       if (!weeklyRangeLabel) weeklyRangeLabel = wp.weekRangeLabel;
       if (r.is_paused) return;
 
@@ -278,7 +281,7 @@ export function Reserves() {
       weeklyGoalCount,
       weeklyRangeLabel,
     };
-  }, [activeReserves, transactions, reserveTransactions]);
+  }, [activeReserves, transactions, reserveTransactions, settings?.operational_expense_categories]);
 
   // Filtered reserves list for cards with configurable sorting
   const filteredCards = useMemo(() => {
@@ -302,7 +305,8 @@ export function Reserves() {
           transactions, 
           reserveTransactions, 
           FIXED_SUGGESTION_PERIOD, 
-          FIXED_CUSTOM_RANGE
+          FIXED_CUSTOM_RANGE,
+          { operationalCategories: settings?.operational_expense_categories }
         );
         const eff = getEffectiveAportesInPeriod(
           r, 
@@ -330,7 +334,8 @@ export function Reserves() {
         transactions,
         reserveTransactions,
         FIXED_SUGGESTION_PERIOD,
-        FIXED_CUSTOM_RANGE
+        FIXED_CUSTOM_RANGE,
+        { operationalCategories: settings?.operational_expense_categories }
       );
       const eff = getEffectiveAportesInPeriod(
         r,
@@ -350,8 +355,12 @@ export function Reserves() {
 
     return [...list].sort((a, b) => {
       if (sortBy === 'urgency') {
-        const projA = calculateReserveGoalProjection(a, transactions, reserveTransactions);
-        const projB = calculateReserveGoalProjection(b, transactions, reserveTransactions);
+        const projA = calculateReserveGoalProjection(a, transactions, reserveTransactions, {
+          operationalCategories: settings?.operational_expense_categories,
+        });
+        const projB = calculateReserveGoalProjection(b, transactions, reserveTransactions, {
+          operationalCategories: settings?.operational_expense_categories,
+        });
         const daysA = projA.hasGoal && !projA.isReached && projA.estimatedDays !== null ? projA.estimatedDays : Number.MAX_SAFE_INTEGER;
         const daysB = projB.hasGoal && !projB.isReached && projB.estimatedDays !== null ? projB.estimatedDays : Number.MAX_SAFE_INTEGER;
         if (daysA !== daysB) return daysA - daysB;
@@ -395,7 +404,7 @@ export function Reserves() {
 
       return a.name.localeCompare(b.name);
     });
-  }, [activeReserves, inactiveReserves, searchTerm, statusFilter, sortBy, transactions, reserveTransactions]);
+  }, [activeReserves, inactiveReserves, searchTerm, statusFilter, sortBy, transactions, reserveTransactions, settings?.operational_expense_categories]);
 
   // ----------------------------------------------------
   // HANDLERS
@@ -489,7 +498,10 @@ export function Reserves() {
         reserveTransactions,
         FIXED_SUGGESTION_PERIOD,
         FIXED_CUSTOM_RANGE,
-        { ignoreBoost: true }
+        {
+          ignoreBoost: true,
+          operationalCategories: settings?.operational_expense_categories,
+        }
       );
       const baseEff = getEffectiveAportesInPeriod(
         res,
@@ -731,7 +743,10 @@ export function Reserves() {
       const ruleReenabled = !reserveToEdit.regra_ativa && Boolean(reserveData.regra_ativa);
       const hasActiveRuleAfterSave = Boolean(reserveData.regra_ativa && reserveData.regra_tipo);
 
-      const finalPayload: Partial<Reserve> = { ...reserveData };
+      const finalPayload: Partial<Reserve> = {
+        ...reserveData,
+        ...(reserveData.regra_tipo === 'liquido' ? { reset_suggestion_on_withdraw: false } : {}),
+      };
 
       if ((goalChanged || ruleReenabled) && hasActiveRuleAfterSave) {
         const updatedHistory = Array.isArray(reserveToEdit.rule_history) ? [...reserveToEdit.rule_history] : [];
@@ -751,6 +766,7 @@ export function Reserves() {
           cutoff_at: nowIso,
           action_type: goalChanged ? 'goal_change' : 'unpause',
           regra_tipo: reserveToEdit.regra_tipo || reserveData.regra_tipo,
+          regra_base: reserveToEdit.regra_base || reserveData.regra_base,
           regra_valor: reserveToEdit.regra_valor ?? reserveData.regra_valor ?? 0,
           regra_categorias: reserveToEdit.regra_categorias || reserveData.regra_categorias || [],
           regra_ativa: Boolean(reserveToEdit.regra_ativa),
@@ -780,13 +796,17 @@ export function Reserves() {
         color: reserveData.color || '#6366f1',
         regra_ativa: !!reserveData.regra_ativa,
         regra_tipo: reserveData.regra_tipo,
+        regra_base: reserveData.regra_base || 'lucro',
         regra_valor: reserveData.regra_valor,
         regra_categorias: reserveData.regra_categorias || [],
         regra_inicio_validade: reserveData.regra_inicio_validade || getTodayLocalDateStr(),
         boost_ativo: Boolean(reserveData.boost_ativo),
         boost_tipo: reserveData.boost_tipo || 'increment',
         boost_valor: reserveData.boost_valor ?? 0,
-        reset_suggestion_on_withdraw: reserveData.reset_suggestion_on_withdraw ?? true,
+        reset_suggestion_on_withdraw:
+          reserveData.regra_tipo === 'liquido'
+            ? false
+            : (reserveData.reset_suggestion_on_withdraw ?? true),
         weekly_goal_mode: reserveData.weekly_goal_mode || 'dynamic',
         weekly_goal_amount: reserveData.weekly_goal_amount ?? null,
         weekly_goal_include_manual: reserveData.weekly_goal_include_manual ?? true,
@@ -816,15 +836,22 @@ export function Reserves() {
     const wasReenabled = !currentRes.regra_ativa && Boolean(ruleData.regra_ativa);
     let updatedHistory = Array.isArray(currentRes.rule_history) ? [...currentRes.rule_history] : [];
 
-    if (hadPrevRule && (currentRes.regra_tipo !== ruleData.regra_tipo || currentRes.regra_valor !== ruleData.regra_valor || currentRes.regra_ativa !== ruleData.regra_ativa)) {
+    if (
+      hadPrevRule &&
+      (currentRes.regra_tipo !== ruleData.regra_tipo ||
+        currentRes.regra_valor !== ruleData.regra_valor ||
+        currentRes.regra_base !== ruleData.regra_base ||
+        currentRes.regra_ativa !== ruleData.regra_ativa)
+    ) {
       const rawPrev = currentRes.regra_inicio_validade || currentRes.created_at || effectiveDate;
       const prevStartDate = toDateInputString(rawPrev) || effectiveDate;
+      const prevLiquidoMode = currentRes.regra_base === 'liquido' ? 'Lucro Líquido Geral' : 'Lucro Operacional';
       const typeLabel = currentRes.regra_tipo === 'km' 
         ? `R$ ${currentRes.regra_valor}/km` 
         : currentRes.regra_tipo === 'bruto' 
         ? `${currentRes.regra_valor}% Faturamento Bruto` 
         : currentRes.regra_tipo === 'liquido' 
-        ? `${currentRes.regra_valor}% Lucro Líquido` 
+        ? `${currentRes.regra_valor}% ${prevLiquidoMode}` 
         : `R$ ${currentRes.regra_valor}/dia`;
 
       updatedHistory.push({
@@ -832,6 +859,7 @@ export function Reserves() {
         end_date: effectiveDate,
         ...(effectiveDate === todayStr ? { cutoff_rule_start: effectiveDate, cutoff_at: nowIso, action_type: wasReenabled ? 'unpause' : 'rule_update' } : {}),
         regra_tipo: currentRes.regra_tipo,
+        regra_base: currentRes.regra_base,
         regra_valor: currentRes.regra_valor,
         regra_categorias: currentRes.regra_categorias || [],
         regra_ativa: currentRes.regra_ativa,
@@ -846,6 +874,7 @@ export function Reserves() {
         cutoff_at: nowIso,
         action_type: 'unpause',
         regra_tipo: ruleData.regra_tipo,
+        regra_base: ruleData.regra_base,
         regra_valor: ruleData.regra_valor ?? 0,
         regra_categorias: ruleData.regra_categorias || [],
         regra_ativa: false,
@@ -856,6 +885,7 @@ export function Reserves() {
 
     const payload: Partial<Reserve> = {
       ...ruleData,
+      ...(ruleData.regra_tipo === 'liquido' ? { reset_suggestion_on_withdraw: false } : {}),
       regra_inicio_validade: effectiveDate,
       rule_history: updatedHistory
     };
@@ -1028,7 +1058,9 @@ export function Reserves() {
           setAuditReserve(prev => (prev ? { ...prev, ...payload } : null));
         }
         const simulated = { ...res, ...payload };
-        const speedup = getBoostSpeedupComparison(simulated, transactions, reserveTransactions);
+        const speedup = getBoostSpeedupComparison(simulated, transactions, reserveTransactions, undefined, {
+          operationalCategories: settings?.operational_expense_categories,
+        });
         const speedNote =
           speedup.daysSaved && speedup.daysSaved > 0
             ? ` Meta ${speedup.daysSaved} ${speedup.daysSaved === 1 ? 'dia' : 'dias'} mais rápida!`
@@ -1305,6 +1337,7 @@ export function Reserves() {
                     setAporteInitialDesc(`[Meta Semanal] ${r.name}`);
                     setActionModalType('aporte_manual');
                   }}
+                  operationalCategories={settings?.operational_expense_categories}
                   hideValues={hideValues}
                 />
               ))}
@@ -1343,6 +1376,7 @@ export function Reserves() {
               onExecuteBatch={handleExecuteBatch}
               onClose={() => setShowMassAporteModal(false)}
               onAuditSuggestion={r => setAuditReserve(r)}
+              operationalCategories={settings?.operational_expense_categories}
               isModal={true}
             />
           </div>
@@ -1351,12 +1385,13 @@ export function Reserves() {
 
       {/* 1b. Modal Auditoria da Sugestão de Aportes */}
       <SuggestionAuditModal
-        key={auditReserve ? `${auditReserve.id}-${auditReserve.regra_inicio_validade}-${auditReserve.regra_valor}-${auditReserve.regra_tipo}-${auditReserve.boost_ativo}-${auditReserve.boost_tipo}-${auditReserve.boost_valor}-${auditReserve.reset_suggestion_on_withdraw}` : 'audit-closed'}
+        key={auditReserve ? `${auditReserve.id}-${auditReserve.regra_inicio_validade}-${auditReserve.regra_valor}-${auditReserve.regra_tipo}-${auditReserve.regra_base}-${auditReserve.boost_ativo}-${auditReserve.boost_tipo}-${auditReserve.boost_valor}-${auditReserve.reset_suggestion_on_withdraw}` : 'audit-closed'}
         isOpen={Boolean(auditReserve)}
         onClose={() => setAuditReserve(null)}
         reserve={auditReserve ? (reserves.find(r => r.id === auditReserve.id) || auditReserve) : null}
         transactions={transactions}
         reserveTransactions={reserveTransactions}
+        settings={settings}
         globalPeriod={FIXED_SUGGESTION_PERIOD}
         customDateRange={FIXED_CUSTOM_RANGE}
         onApplyAporte={(res, amt) => handleApplyDirectSuggestion(res, amt)}
@@ -1374,6 +1409,7 @@ export function Reserves() {
         reserveTransactions={reserveTransactions}
         globalPeriod={FIXED_SUGGESTION_PERIOD}
         customDateRange={FIXED_CUSTOM_RANGE}
+        operationalCategories={settings?.operational_expense_categories}
         focusReserveId={boostFocusReserveId}
         onUpdateReserveBoost={handleUpdateReserveBoost}
         onBatchUpdateBoost={handleBatchUpdateBoost}
@@ -1391,6 +1427,7 @@ export function Reserves() {
         reserves={reserves}
         transactions={transactions}
         reserveTransactions={reserveTransactions}
+        operationalCategories={settings?.operational_expense_categories}
         onSaveBatch={handleBatchUpdateWeeklyGoals}
         hideValues={hideValues}
       />
@@ -1468,7 +1505,7 @@ export function Reserves() {
 
       {/* 6. Modal Histórico de Regras & Auditoria */}
       <RuleHistoryModal
-        key={selectedReserveForAction ? `${selectedReserveForAction.id}-${selectedReserveForAction.regra_inicio_validade}-${selectedReserveForAction.regra_valor}` : 'history-closed'}
+        key={selectedReserveForAction ? `${selectedReserveForAction.id}-${selectedReserveForAction.regra_inicio_validade}-${selectedReserveForAction.regra_valor}-${selectedReserveForAction.regra_base}` : 'history-closed'}
         isOpen={actionModalType === 'rule_history'}
         reserve={selectedReserveForAction ? (reserves.find(r => r.id === selectedReserveForAction.id) || selectedReserveForAction) : null}
         onClose={() => {
@@ -1479,6 +1516,7 @@ export function Reserves() {
         reserveTransactions={reserveTransactions}
         globalPeriod={FIXED_SUGGESTION_PERIOD}
         customDateRange={FIXED_CUSTOM_RANGE}
+        operationalCategories={settings?.operational_expense_categories}
       />
 
       {/* 7. Modal de Confirmação: Inativar/Reativar, Pausar/Retomar, Boost ON/OFF, Excluir */}
@@ -1500,7 +1538,9 @@ export function Reserves() {
             );
             const speedup =
               type === 'boost_on'
-                ? getBoostSpeedupComparison(simulatedBoostRes, transactions, reserveTransactions)
+                ? getBoostSpeedupComparison(simulatedBoostRes, transactions, reserveTransactions, undefined, {
+                    operationalCategories: settings?.operational_expense_categories,
+                  })
                 : null;
 
             const config = (() => {

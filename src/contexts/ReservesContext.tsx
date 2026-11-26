@@ -78,7 +78,8 @@ export function ReservesProvider({
       fields.reset_suggestion_on_withdraw === undefined &&
       fields.weekly_goal_mode === undefined &&
       fields.weekly_goal_amount === undefined &&
-      fields.weekly_goal_include_manual === undefined
+      fields.weekly_goal_include_manual === undefined &&
+      fields.regra_base === undefined
     ) {
       return;
     }
@@ -92,6 +93,7 @@ export function ReservesProvider({
         weekly_goal_mode?: Reserve['weekly_goal_mode'];
         weekly_goal_amount?: number | null;
         weekly_goal_include_manual?: boolean;
+        regra_base?: Reserve['regra_base'];
       }> = raw ? JSON.parse(raw) : {};
       const prevEntry = currentMap[reserveId] || {};
       currentMap[reserveId] = {
@@ -114,6 +116,10 @@ export function ReservesProvider({
           fields.weekly_goal_include_manual !== undefined
             ? fields.weekly_goal_include_manual
             : prevEntry.weekly_goal_include_manual,
+        regra_base:
+          fields.regra_base !== undefined
+            ? fields.regra_base
+            : prevEntry.regra_base,
       };
       localStorage.setItem(`reserve_boost_map_${userId}`, JSON.stringify(currentMap));
       cacheManager.set(`reserve_boost_map_${userId}`, currentMap, undefined, 'reserves');
