@@ -81,16 +81,28 @@ import { freightStorage } from '../lib/freightStorage';
 import { calculateNextOccurrence, getFrequencyLabel, generateUUID, parseLocalDate, buildNextRecurringTransaction, buildNextRecurringReserveTransaction } from '../lib/recurrenceUtils';
 import { getTodayLocalDateStr } from '../lib/utils';
 import { getEffectiveUserId } from '../lib/authUtils';
-import { RefreshCw, CalendarClock, CalendarRange, CheckCircle2, AlertCircle, EyeOff, Bookmark, X, ChevronDown, Plus, Trash2 } from 'lucide-react';
+import { RefreshCw, CalendarClock, CalendarRange, CheckCircle2, AlertCircle, EyeOff, Bookmark, X, ChevronDown, Plus, Trash2, SlidersHorizontal } from 'lucide-react';
 import { isVehicleRelatedCategory, shouldDefaultToNoVehicle } from '../lib/vehicleUtils';
 import { findMatchingReserveForExpense } from '../components/reserves/reserveUtils';
 import {
   planningStorage,
   TxQuickTemplate,
   CreditCardConfig,
+  ExpenseBudgetsMap,
   computeCardStatementDueDate,
   isCreditCardCategoryName,
 } from '../lib/planningStorage';
+import {
+  computeExpenseWindowTotals,
+  getCategoryBudgetStatuses,
+  getMostCriticalBudgetStatus,
+  getBudgetSeverityStyles,
+} from '../lib/budgetUtils';
+import { BudgetLimitsModal } from '../components/BudgetLimitsModal';
+import {
+  TransactionBudgetFeedback,
+  FreightExpensesBudgetSummary,
+} from '../components/TransactionBudgetFeedback';
 
 export function AddTransaction() {
   const navigate = useNavigate();
@@ -113,7 +125,7 @@ export function AddTransaction() {
   const paramQuoteId = searchParams.get('quote_id') || '';
   const paramDistanceKm = searchParams.get('distance_km') || '';
 
-  const { transactions, setTransactions, settings, refreshData, globalPeriod, reserves, addReserveTransaction, hideValues } = useData();
+  const { transactions, setTransactions, settings, refreshData, globalPeriod, reserves, reserveTransactions, addReserveTransaction, hideValues } = useData();
   const { activeVehicle, vehicles } = useVehicles();
 
   const [selectedVehicleId, setSelectedVehicleId] = useState<string>(
@@ -190,11 +202,15 @@ export function AddTransaction() {
   const [cardRecurrenceFrequency, setCardRecurrenceFrequency] = useState<RecurrenceFrequency>('monthly');
   const [cardInstallments, setCardInstallments] = useState<string>('1');
   const [cardAmountMode, setCardAmountMode] = useState<'total' | 'installment'>('total');
+  const [expenseBudgets, setExpenseBudgets] = useState<ExpenseBudgetsMap>({});
+  const [showBudgetModal, setShowBudgetModal] = useState(false);
+  const [budgetFocusCategory, setBudgetFocusCategory] = useState<string | null>(null);
 
   useEffect(() => {
     let activeUid = '';
     const hydrate = (uid: string) => {
       setQuickTemplates(planningStorage.getTemplates(uid));
+      setExpenseBudgets(planningStorage.getExpenseBudgets(uid));
       const cards = planningStorage.getCards(uid);
       setRegisteredCards(cards);
       if (cards.length > 0) {
@@ -227,6 +243,25 @@ export function AddTransaction() {
     }
     return expenseCategories;
   }, [expenseCategories, registeredCards.length]);
+
+  const expenseWindowTotals = useMemo(
+    () => computeExpenseWindowTotals(transactions, reserveTransactions, date),
+    [transactions, reserveTransactions, date]
+  );
+
+  const allBudgetCategories = useMemo(() => {
+    const set = new Set<string>([
+      ...displayedExpenseCategories,
+      ...(settings?.operational_expense_categories || []),
+      ...Object.keys(expenseBudgets).filter(k => k !== '__ALL__'),
+    ]);
+    return Array.from(set).filter(Boolean).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  }, [displayedExpenseCategories, settings?.operational_expense_categories, expenseBudgets]);
+
+  const handleOpenBudgetModal = (focusCat: string | null = null) => {
+    setBudgetFocusCategory(focusCat);
+    setShowBudgetModal(true);
+  };
 
   const freightOperationalCategories = useMemo(() => {
     const base = [
@@ -2106,6 +2141,17 @@ export function AddTransaction() {
                           </span>
                         )}
                       </div>
+
+                      <FreightExpensesBudgetSummary
+                        items={freightExpenseItems}
+                        dateStr={date}
+                        budgets={expenseBudgets}
+                        transactions={transactions}
+                        reserveTransactions={reserveTransactions}
+                        formatCurrency={formatCurrency}
+                        hideValues={hideValues}
+                        onOpenConfig={(focusCat) => handleOpenBudgetModal(focusCat ?? null)}
+                      />
                     </div>
                   )}
                 </div>
@@ -2146,19 +2192,42 @@ export function AddTransaction() {
                 )}
                 
                 <div className="space-y-3">
-                  <div className="flex justify-between items-center flex-wrap gap-1 mb-1">
+                  <div className="flex justify-between items-center flex-wrap gap-1.5 mb-1">
                     <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground/90">Escolha a Categoria</label>
-                    {category && globalPeriod !== 'all' && (
-                      <span className="text-[10px] text-muted-foreground bg-muted p-1 px-2 rounded-md font-semibold">
-                        Gasto {globalPeriod === 'today' ? 'hoje' : globalPeriod === 'week' ? 'na semana' : 'no mês'}: <span className="font-extrabold text-foreground">{formatCurrency(getCategoryPeriodTotal(category) || 0)}</span>
-                      </span>
-                    )}
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      {category && globalPeriod !== 'all' && (
+                        <span className="text-[10px] text-muted-foreground bg-muted p-1 px-2 rounded-md font-semibold">
+                          Gasto {globalPeriod === 'today' ? 'hoje' : globalPeriod === 'week' ? 'na semana' : 'no mês'}: <span className="font-extrabold text-foreground">{formatCurrency(getCategoryPeriodTotal(category) || 0)}</span>
+                        </span>
+                      )}
+                      {activeTab === 'despesa' && (
+                        <button
+                          type="button"
+                          onClick={() => handleOpenBudgetModal(category || null)}
+                          className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-border/70 bg-muted/40 hover:bg-muted text-[10px] font-extrabold text-foreground transition-colors cursor-pointer"
+                          title="Configurar tetos diário, semanal e mensal"
+                        >
+                          <SlidersHorizontal className="w-3 h-3 text-primary" />
+                          <span>Tetos</span>
+                        </button>
+                      )}
+                    </div>
                   </div>
                   
                   <div className="grid grid-cols-2 xs:grid-cols-3 md:grid-cols-4 gap-2">
                     {(activeTab === 'despesa' ? displayedExpenseCategories : incomeCategories).map(cat => {
                       const Icon = getCategoryIcon(cat);
                       const isSelected = category === cat;
+                      const catCapCritical =
+                        activeTab === 'despesa'
+                          ? getMostCriticalBudgetStatus(
+                              getCategoryBudgetStatuses(cat, expenseBudgets, expenseWindowTotals)
+                            )
+                          : null;
+                      const capStyles = catCapCritical
+                        ? getBudgetSeverityStyles(catCapCritical.severity)
+                        : null;
+
                       return (
                         <button
                           key={cat}
@@ -2176,12 +2245,20 @@ export function AddTransaction() {
                               }
                             }
                           }}
-                          className={`flex flex-col items-center justify-center p-3 rounded-xl border transition-all duration-200 cursor-pointer gap-2 ${
+                          className={`relative flex flex-col items-center justify-center p-3 rounded-xl border transition-all duration-200 cursor-pointer gap-2 ${
                             isSelected 
                               ? 'bg-primary/10 border-primary text-primary shadow-sm scale-[1.02]' 
                               : 'bg-card border-border text-muted-foreground hover:bg-muted/40 hover:text-foreground'
                           }`}
                         >
+                          {catCapCritical && capStyles && (
+                            <span
+                              className={`absolute top-1.5 right-1.5 px-1.5 py-0.2 rounded-md border text-[8.5px] font-black leading-tight ${capStyles.badge}`}
+                              title={`Teto ${catCapCritical.label}: ${Math.round(catCapCritical.pct)}%`}
+                            >
+                              {catCapCritical.shortLabel} {Math.round(catCapCritical.pct)}%
+                            </span>
+                          )}
                           <div className={`p-2 rounded-lg ${isSelected ? 'bg-primary/20' : 'bg-muted/50'}`}>
                             <Icon className="w-5 h-5 md:w-6 md:h-6" />
                           </div>
@@ -2190,6 +2267,21 @@ export function AddTransaction() {
                       );
                     })}
                   </div>
+
+                  {activeTab === 'despesa' && category && (
+                    <TransactionBudgetFeedback
+                      category={category}
+                      amount={Number(amount) || 0}
+                      dateStr={date}
+                      isPending={paymentStatus === 'pending'}
+                      budgets={expenseBudgets}
+                      transactions={transactions}
+                      reserveTransactions={reserveTransactions}
+                      formatCurrency={formatCurrency}
+                      hideValues={hideValues}
+                      onOpenConfig={(focusCat) => handleOpenBudgetModal(focusCat ?? null)}
+                    />
+                  )}
                 </div>
 
                 {/* Seleção de Cartão de Crédito Cadastrado (aparece ao selecionar categoria Cartão) */}
@@ -3007,6 +3099,20 @@ export function AddTransaction() {
         fuelPrice={settings?.fuel_price ?? 6.00}
         maintenanceRatePerKm={maintenanceRatePerKm}
         defaultDriverLabor={settings?.default_driver_labor ?? 100}
+      />
+
+      <BudgetLimitsModal
+        open={showBudgetModal}
+        onOpenChange={setShowBudgetModal}
+        userId={templateUserId || 'default'}
+        categories={allBudgetCategories}
+        operationalCategories={settings?.operational_expense_categories || []}
+        budgets={expenseBudgets}
+        totals={expenseWindowTotals}
+        formatCurrency={formatCurrency}
+        hideValues={hideValues}
+        focusCategory={budgetFocusCategory}
+        onSaved={(next) => setExpenseBudgets(next)}
       />
     </div>
   );

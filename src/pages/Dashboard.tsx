@@ -97,7 +97,10 @@ import { Input } from '@/components/ui/input';
 import { getTodayLocalDateStr } from '../lib/utils';
 import { getEffectiveUserId } from '../lib/authUtils';
 import { syncQueueManager } from '../lib/syncQueue';
-import { planningStorage } from '../lib/planningStorage';
+import { planningStorage, ExpenseBudgetsMap } from '../lib/planningStorage';
+import { computeExpenseWindowTotals, getCategoryBudgetStatuses } from '../lib/budgetUtils';
+import { BudgetLimitsModal } from '../components/BudgetLimitsModal';
+import { BudgetOverviewPanel, CategoryBudgetBars } from '../components/BudgetProgressComponents';
 import { useData } from '../contexts/DataContext';
 import {
   getInvestmentTransactionNetAmount,
@@ -460,9 +463,9 @@ export function Dashboard() {
   const [showIgnoredInCharts, setShowIgnoredInCharts] = useState<boolean>(false);
   const [showIgnoredModal, setShowIgnoredModal] = useState<boolean>(false);
   const [dashUserId, setDashUserId] = useState<string>('');
-  const [categoryBudgets, setCategoryBudgets] = useState<Record<string, number>>({});
+  const [expenseBudgets, setExpenseBudgets] = useState<ExpenseBudgetsMap>({});
   const [showBudgetModal, setShowBudgetModal] = useState<boolean>(false);
-  const [tempBudgets, setTempBudgets] = useState<Record<string, string>>({});
+  const [budgetFocusCategory, setBudgetFocusCategory] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -472,7 +475,7 @@ export function Dashboard() {
       const effectiveId = uid || 'default';
       activeUid = effectiveId;
       setDashUserId(effectiveId);
-      setCategoryBudgets(planningStorage.getCategoryBudgets(effectiveId));
+      setExpenseBudgets(planningStorage.getExpenseBudgets(effectiveId));
     });
 
     const handleSync = (e: Event) => {
@@ -480,7 +483,7 @@ export function Dashboard() {
       const detailUid = (e as CustomEvent)?.detail?.userId;
       const targetUid = detailUid || activeUid;
       if (targetUid) {
-        setCategoryBudgets(planningStorage.getCategoryBudgets(targetUid));
+        setExpenseBudgets(planningStorage.getExpenseBudgets(targetUid));
       }
     };
 
@@ -1984,17 +1987,22 @@ export function Dashboard() {
     return map;
   }, [transactions, reserveTransactions]);
 
+  const expenseWindowTotals = useMemo(
+    () => computeExpenseWindowTotals(transactions, reserveTransactions),
+    [transactions, reserveTransactions]
+  );
+
   const allEditableExpenseCategories = useMemo(() => {
     const set = new Set<string>([
       ...(settings?.operational_expense_categories || ['Combustível', 'Pedágio', 'Manutenção']),
       ...(settings?.personal_expense_categories || ['Alimentação', 'Plano de Internet', 'Equipamento', 'Moradia', 'Lazer', 'Saúde', 'Transporte Pessoal', 'Outras Despesas']),
       ...Object.keys(currentMonthExpenseByCategory),
-      ...Object.keys(categoryBudgets),
+      ...Object.keys(expenseBudgets).filter(k => k !== '__ALL__'),
     ]);
     set.delete('Aporte Reserva');
     set.delete('Compra de Investimentos');
     return Array.from(set).filter(Boolean).sort((a, b) => a.localeCompare(b, 'pt-BR'));
-  }, [settings?.operational_expense_categories, settings?.personal_expense_categories, currentMonthExpenseByCategory, categoryBudgets]);
+  }, [settings?.operational_expense_categories, settings?.personal_expense_categories, currentMonthExpenseByCategory, expenseBudgets]);
 
   const reconcilableIncomeCategories = useMemo(() => {
     const defaults = settings?.income_categories || [
@@ -2015,29 +2023,9 @@ export function Dashboard() {
     return Array.from(new Set([...defaults, ...Array.from(fromTxs)]));
   }, [settings?.income_categories, transactions]);
 
-  const handleOpenBudgetModal = () => {
-    const initial: Record<string, string> = {};
-    allEditableExpenseCategories.forEach(cat => {
-      const val = categoryBudgets[cat];
-      initial[cat] = val && val > 0 ? String(val).replace('.', ',') : '';
-    });
-    setTempBudgets(initial);
+  const handleOpenBudgetModal = (focusCat: string | null = null) => {
+    setBudgetFocusCategory(focusCat);
     setShowBudgetModal(true);
-  };
-
-  const handleSaveCategoryBudgets = () => {
-    const cleaned: Record<string, number> = {};
-    Object.entries(tempBudgets).forEach(([cat, raw]) => {
-      const normalized = String(raw || '').replace(/[^\d.,]/g, '').replace(',', '.').trim();
-      const num = parseFloat(normalized);
-      if (!isNaN(num) && num > 0) {
-        cleaned[cat] = Math.round(num * 100) / 100;
-      }
-    });
-    setCategoryBudgets(cleaned);
-    planningStorage.saveCategoryBudgets(dashUserId || 'default', cleaned);
-    setShowBudgetModal(false);
-    toast.success('Tetos mensais por categoria salvos!');
   };
 
   const divTotals = useMemo(() => {
@@ -7244,14 +7232,22 @@ export function Dashboard() {
                   </span>
                   <button
                     type="button"
-                    onClick={handleOpenBudgetModal}
+                    onClick={() => handleOpenBudgetModal(null)}
                     className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-border/70 bg-muted/30 hover:bg-muted text-[10px] font-bold text-foreground normal-case tracking-normal cursor-pointer transition-all"
-                    title="Configurar tetos mensais de gasto por categoria"
+                    title="Configurar tetos diário, semanal e mensal por categoria"
                   >
                     <SlidersHorizontal className="w-3 h-3 text-primary" />
                     <span>Tetos de Gastos</span>
                   </button>
                 </h3>
+
+                <BudgetOverviewPanel
+                  budgets={expenseBudgets}
+                  totals={expenseWindowTotals}
+                  formatCurrency={formatCurrency}
+                  hideValues={hideValues}
+                  onOpenConfig={(focusCat) => handleOpenBudgetModal(focusCat ?? null)}
+                />
 
                 {Object.keys(expensesByCategory).length === 0 ? (
                   <div className="text-xs text-muted-foreground italic py-6 text-center">Nenhuma despesa registrada no período</div>
@@ -7354,25 +7350,17 @@ export function Dashboard() {
                                         style={{ width: `${percentageOfGroup}%` }}
                                       />
                                     </div>
-                                    {categoryBudgets[cat] > 0 && (() => {
-                                      const cap = categoryBudgets[cat];
-                                      const spentMonth = currentMonthExpenseByCategory[cat] || 0;
-                                      const pct = (spentMonth / cap) * 100;
-                                      const barColor = pct >= 100 ? 'bg-rose-500' : pct >= 80 ? 'bg-amber-500' : 'bg-emerald-500';
-                                      const textColor = pct >= 100 ? 'text-rose-500' : pct >= 80 ? 'text-amber-500' : 'text-emerald-600 dark:text-emerald-400';
+                                    {(() => {
+                                      const catStatuses = getCategoryBudgetStatuses(cat, expenseBudgets, expenseWindowTotals);
+                                      if (catStatuses.length === 0) return null;
                                       return (
-                                        <div className="px-1 pt-0.5 space-y-0.5">
-                                          <div className="flex items-center justify-between text-[9.5px] font-bold">
-                                            <span className="text-muted-foreground">
-                                              Teto mês: {hideValues ? '•••' : formatCurrency(spentMonth)} / {hideValues ? '•••' : formatCurrency(cap)}
-                                            </span>
-                                            <span className={textColor}>
-                                              {pct.toFixed(0)}% {pct >= 100 ? '(Excedido)' : pct >= 80 ? '(Atenção)' : ''}
-                                            </span>
-                                          </div>
-                                          <div className="w-full h-1.5 rounded-full bg-muted/80 overflow-hidden">
-                                            <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${Math.min(100, pct)}%` }} />
-                                          </div>
+                                        <div className="px-1 pt-0.5">
+                                          <CategoryBudgetBars
+                                            statuses={catStatuses}
+                                            formatCurrency={formatCurrency}
+                                            hideValues={hideValues}
+                                            compact
+                                          />
                                         </div>
                                       );
                                     })()}
@@ -7462,25 +7450,17 @@ export function Dashboard() {
                                         style={{ width: `${percentageOfGroup}%` }}
                                       />
                                     </div>
-                                    {categoryBudgets[cat] > 0 && (() => {
-                                      const cap = categoryBudgets[cat];
-                                      const spentMonth = currentMonthExpenseByCategory[cat] || 0;
-                                      const pct = (spentMonth / cap) * 100;
-                                      const barColor = pct >= 100 ? 'bg-rose-500' : pct >= 80 ? 'bg-amber-500' : 'bg-emerald-500';
-                                      const textColor = pct >= 100 ? 'text-rose-500' : pct >= 80 ? 'text-amber-500' : 'text-emerald-600 dark:text-emerald-400';
+                                    {(() => {
+                                      const catStatuses = getCategoryBudgetStatuses(cat, expenseBudgets, expenseWindowTotals);
+                                      if (catStatuses.length === 0) return null;
                                       return (
-                                        <div className="px-1 pt-0.5 space-y-0.5">
-                                          <div className="flex items-center justify-between text-[9.5px] font-bold">
-                                            <span className="text-muted-foreground">
-                                              Teto mês: {hideValues ? '•••' : formatCurrency(spentMonth)} / {hideValues ? '•••' : formatCurrency(cap)}
-                                            </span>
-                                            <span className={textColor}>
-                                              {pct.toFixed(0)}% {pct >= 100 ? '(Excedido)' : pct >= 80 ? '(Atenção)' : ''}
-                                            </span>
-                                          </div>
-                                          <div className="w-full h-1.5 rounded-full bg-muted/80 overflow-hidden">
-                                            <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${Math.min(100, pct)}%` }} />
-                                          </div>
+                                        <div className="px-1 pt-0.5">
+                                          <CategoryBudgetBars
+                                            statuses={catStatuses}
+                                            formatCurrency={formatCurrency}
+                                            hideValues={hideValues}
+                                            compact
+                                          />
                                         </div>
                                       );
                                     })()}
@@ -8551,58 +8531,19 @@ export function Dashboard() {
         totalPersonalExpense={summary.perExpense}
       />
 
-      {/* Proposta 1: Modal Configurar Tetos Mensais de Gastos por Categoria */}
-      <Dialog open={showBudgetModal} onOpenChange={setShowBudgetModal}>
-        <DialogContent className="max-w-lg max-h-[85vh] p-0 bg-card border-border/70 rounded-3xl shadow-2xl overflow-hidden flex flex-col">
-          <DialogHeader className="p-5 pb-3 border-b border-border/40 shrink-0">
-            <DialogTitle className="text-lg font-black text-foreground flex items-center gap-2">
-              <SlidersHorizontal className="w-5 h-5 text-primary" />
-              Tetos Mensais por Categoria
-            </DialogTitle>
-            <DialogDescription className="text-xs font-medium text-muted-foreground">
-              Defina um limite mensal opcional (R$) para acompanhar seu orçamento no mês atual. Deixe em branco para categorias sem limite.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="flex-1 overflow-y-auto p-5 space-y-2.5 custom-scrollbar">
-            {allEditableExpenseCategories.map(cat => {
-              const spent = currentMonthExpenseByCategory[cat] || 0;
-              return (
-                <div
-                  key={cat}
-                  className="flex items-center justify-between gap-3 p-2.5 rounded-xl bg-muted/20 border border-border/50"
-                >
-                  <div className="min-w-0">
-                    <div className="text-xs font-bold text-foreground truncate">{cat}</div>
-                    <div className="text-[10px] text-muted-foreground font-mono">
-                      Gasto no mês: {hideValues ? 'R$ •••' : formatCurrency(spent)}
-                    </div>
-                  </div>
-                  <div className="w-32 shrink-0">
-                    <Input
-                      type="text"
-                      inputMode="decimal"
-                      placeholder="Sem teto"
-                      value={tempBudgets[cat] ?? ''}
-                      onChange={(e) => setTempBudgets(prev => ({ ...prev, [cat]: e.target.value }))}
-                      className="h-8 text-xs font-mono text-right"
-                    />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          <div className="p-4 border-t border-border/40 flex items-center justify-end gap-2 shrink-0 bg-muted/10">
-            <Button type="button" variant="outline" size="sm" onClick={() => setShowBudgetModal(false)}>
-              Cancelar
-            </Button>
-            <Button type="button" size="sm" onClick={handleSaveCategoryBudgets} className="font-bold">
-              Salvar Tetos
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <BudgetLimitsModal
+        open={showBudgetModal}
+        onOpenChange={setShowBudgetModal}
+        userId={dashUserId || 'default'}
+        categories={allEditableExpenseCategories}
+        operationalCategories={settings?.operational_expense_categories || []}
+        budgets={expenseBudgets}
+        totals={expenseWindowTotals}
+        formatCurrency={formatCurrency}
+        hideValues={hideValues}
+        focusCategory={budgetFocusCategory}
+        onSaved={(next) => setExpenseBudgets(next)}
+      />
     </div>
   );
 }

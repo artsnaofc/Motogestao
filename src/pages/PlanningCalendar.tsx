@@ -29,7 +29,11 @@ import {
   computeCardStatementDueDate,
   extractCardTagFromTransaction,
   getCardCycleStatus,
+  ExpenseBudgetsMap,
 } from '../lib/planningStorage';
+import { computeExpenseWindowTotals, getCategoryBudgetStatuses } from '../lib/budgetUtils';
+import { BudgetLimitsModal } from '../components/BudgetLimitsModal';
+import { CategoryBudgetBars } from '../components/BudgetProgressComponents';
 import {
   getInvestmentTransactionNetAmount,
   isInvestmentSaleReserveAporte,
@@ -148,7 +152,7 @@ export function PlanningCalendar() {
   const [userId, setUserId] = useState<string>('');
   const [cards, setCards] = useState<CreditCardConfig[]>([]);
   const [txCardMap, setTxCardMap] = useState<Record<string, string>>({});
-  const [categoryBudgets, setCategoryBudgets] = useState<Record<string, number>>({});
+  const [expenseBudgets, setExpenseBudgets] = useState<ExpenseBudgetsMap>({});
 
   const [currentMonth, setCurrentMonth] = useState<Date>(() => startOfMonth(new Date()));
   const [selectedDayStr, setSelectedDayStr] = useState<string>(() => getTodayLocalDateStr());
@@ -270,9 +274,9 @@ export function PlanningCalendar() {
   >(null);
   const [confirmingDuplicate, setConfirmingDuplicate] = useState(false);
 
-  // Category Budget Quick Modal
+  // Multi-period Expense Budget Modal
+  const [showBudgetModal, setShowBudgetModal] = useState(false);
   const [budgetModalCategory, setBudgetModalCategory] = useState<string | null>(null);
-  const [budgetModalLimit, setBudgetModalLimit] = useState<string>('');
 
   useEffect(() => {
     let activeUid = '';
@@ -280,7 +284,7 @@ export function PlanningCalendar() {
       const loadedCards = planningStorage.getCards(uid);
       setCards(loadedCards);
       setTxCardMap(planningStorage.getTxCardMap(uid));
-      setCategoryBudgets(planningStorage.getCategoryBudgets(uid));
+      setExpenseBudgets(planningStorage.getExpenseBudgets(uid));
       if (loadedCards.length > 0) {
         setSelectedCardId(prev => prev || loadedCards[0].id);
       }
@@ -2996,22 +3000,22 @@ export function PlanningCalendar() {
     }
   };
 
-  const handleSaveCategoryBudget = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!budgetModalCategory) return;
-    const effectiveUid = userId || (await getEffectiveUserId()) || 'default';
-    const parsed = Number(budgetModalLimit);
-    const nextBudgets = { ...categoryBudgets };
-    if (!parsed || parsed <= 0) {
-      delete nextBudgets[budgetModalCategory];
-      toast.success(`Limite removido para ${budgetModalCategory}.`);
-    } else {
-      nextBudgets[budgetModalCategory] = parsed;
-      toast.success(`Teto mensal de ${formatCurrency(parsed)} salvo para ${budgetModalCategory}!`);
-    }
-    setCategoryBudgets(nextBudgets);
-    planningStorage.saveCategoryBudgets(effectiveUid, nextBudgets);
-    setBudgetModalCategory(null);
+  const expenseWindowTotals = useMemo(
+    () => computeExpenseWindowTotals(transactions, reserveTransactions),
+    [transactions, reserveTransactions]
+  );
+
+  const allBudgetCategories = useMemo(() => {
+    const set = new Set<string>([
+      ...expenseCategories,
+      ...Object.keys(expenseBudgets).filter(k => k !== '__ALL__'),
+    ]);
+    return Array.from(set).filter(Boolean).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  }, [expenseCategories, expenseBudgets]);
+
+  const handleOpenBudgetModal = (cat: string | null = null) => {
+    setBudgetModalCategory(cat);
+    setShowBudgetModal(true);
   };
 
   const jumpToDate = (dateStr: string) => {
@@ -4968,6 +4972,20 @@ export function PlanningCalendar() {
 
             {rightPanelTab === 'categories' && (
               <div className="space-y-3">
+                <div className="flex items-center justify-between gap-2 pb-1">
+                  <span className="text-[11px] font-extrabold uppercase tracking-wider text-muted-foreground">
+                    Despesas &amp; Tetos
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => handleOpenBudgetModal(null)}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-border/70 bg-muted/30 hover:bg-muted text-[10.5px] font-extrabold text-foreground transition-colors cursor-pointer"
+                  >
+                    <SlidersHorizontal className="w-3 h-3 text-indigo-500" />
+                    <span>Configurar Tetos</span>
+                  </button>
+                </div>
+
                 {monthCategoryBreakdown.rows.length === 0 ? (
                   <div className="py-10 text-center space-y-2">
                     <PieChart className="w-8 h-8 text-muted-foreground/40 mx-auto" />
@@ -4982,10 +5000,17 @@ export function PlanningCalendar() {
                         monthCategoryBreakdown.grandTotal > 0
                           ? Math.round((row.total / monthCategoryBreakdown.grandTotal) * 100)
                           : 0;
-                      const budgetLimit = categoryBudgets[row.category] || 0;
+                      const rule = expenseBudgets[row.category] || {};
+                      const budgetLimit = rule.monthly || 0;
                       const budgetPct =
                         budgetLimit > 0 ? Math.min(100, Math.round((row.total / budgetLimit) * 100)) : 0;
                       const overBudget = budgetLimit > 0 && row.total > budgetLimit;
+                      const dailyWeeklyStatuses = getCategoryBudgetStatuses(
+                        row.category,
+                        expenseBudgets,
+                        expenseWindowTotals
+                      ).filter(s => s.period !== 'monthly');
+                      const hasAnyCap = Boolean(rule.daily || rule.weekly || rule.monthly);
 
                       return (
                         <div
@@ -5013,11 +5038,22 @@ export function PlanningCalendar() {
                             />
                           </div>
 
+                          {dailyWeeklyStatuses.length > 0 && (
+                            <div className="pt-0.5">
+                              <CategoryBudgetBars
+                                statuses={dailyWeeklyStatuses}
+                                formatCurrency={formatCurrency}
+                                hideValues={hideValues}
+                                compact
+                              />
+                            </div>
+                          )}
+
                           <div className="flex items-center justify-between text-[10px] font-semibold text-muted-foreground tabular-nums">
                             <span>
                               {budgetLimit > 0 ? (
                                 <span className={overBudget ? 'text-rose-600 dark:text-rose-400 font-bold' : ''}>
-                                  Teto: {formatCurrency(budgetLimit)} ({budgetPct}%)
+                                  Teto mês: {formatCurrency(budgetLimit)} ({budgetPct}%)
                                 </span>
                               ) : (
                                 `${row.count} ${row.count === 1 ? 'conta' : 'contas'}`
@@ -5025,13 +5061,10 @@ export function PlanningCalendar() {
                             </span>
                             <button
                               type="button"
-                              onClick={() => {
-                                setBudgetModalCategory(row.category);
-                                setBudgetModalLimit(budgetLimit > 0 ? String(budgetLimit) : '');
-                              }}
+                              onClick={() => handleOpenBudgetModal(row.category)}
                               className="text-indigo-600 dark:text-indigo-400 font-extrabold hover:underline cursor-pointer"
                             >
-                              {budgetLimit > 0 ? 'Alterar Teto' : '+ Definir Teto'}
+                              {hasAnyCap ? 'Alterar Tetos' : '+ Definir Teto'}
                             </button>
                           </div>
                         </div>
@@ -6906,46 +6939,23 @@ export function PlanningCalendar() {
         </DialogContent>
       </Dialog>
 
-      {/* Modal: Teto Mensal por Categoria */}
-      <Dialog open={budgetModalCategory !== null} onOpenChange={open => !open && setBudgetModalCategory(null)}>
-        <DialogContent className="max-w-sm rounded-3xl">
-          <DialogHeader>
-            <DialogTitle className="text-base font-black flex items-center gap-2">
-              <SlidersHorizontal className="w-4 h-4 text-indigo-500" />
-              Teto Mensal: {budgetModalCategory}
-            </DialogTitle>
-            <DialogDescription className="text-xs">
-              Defina um limite mensal para acompanhar o quanto já comprometeu nesta categoria. Deixe 0 para remover.
-            </DialogDescription>
-          </DialogHeader>
-          <form onSubmit={handleSaveCategoryBudget} className="space-y-4 pt-1">
-            <div className="space-y-1.5">
-              <label className="text-[10.5px] font-extrabold uppercase tracking-wider text-muted-foreground">
-                Limite Mensal (R$)
-              </label>
-              <CurrencyInput
-                value={budgetModalLimit}
-                onChange={setBudgetModalLimit}
-                placeholder="0,00"
-                className="h-10 rounded-xl font-bold"
-              />
-            </div>
-            <div className="flex justify-end gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setBudgetModalCategory(null)}
-                className="rounded-xl text-xs font-bold cursor-pointer"
-              >
-                Cancelar
-              </Button>
-              <Button type="submit" className="rounded-xl text-xs font-black cursor-pointer">
-                Salvar Teto
-              </Button>
-            </div>
-          </form>
-        </DialogContent>
-      </Dialog>
+      {/* Modal: Tetos de Despesas (Diário, Semanal e Mensal) */}
+      <BudgetLimitsModal
+        open={showBudgetModal}
+        onOpenChange={(open) => {
+          setShowBudgetModal(open);
+          if (!open) setBudgetModalCategory(null);
+        }}
+        userId={userId || 'default'}
+        categories={allBudgetCategories}
+        operationalCategories={settings?.operational_expense_categories || []}
+        budgets={expenseBudgets}
+        totals={expenseWindowTotals}
+        formatCurrency={formatCurrency}
+        hideValues={hideValues}
+        focusCategory={budgetModalCategory}
+        onSaved={(next) => setExpenseBudgets(next)}
+      />
       {/* Modal: Quitar Fatura do Cartão (Caixa Livre ou Reserva) */}
       <Dialog
         open={settleInvoiceModal !== null}

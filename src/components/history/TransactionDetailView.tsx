@@ -31,10 +31,14 @@ import {
   Car,
   TrendingUp,
   Bike,
-  Heart
+  Heart,
+  SlidersHorizontal
 } from 'lucide-react';
 import { getPaymentStatusMeta, formatRecurrenceFrequency } from '../../lib/recurrenceUtils';
 import { iconOptions } from '../reserves/reserveUtils';
+import { ExpenseBudgetsMap } from '../../lib/planningStorage';
+import { ExpenseWindowTotals, getCategoryBudgetStatuses } from '../../lib/budgetUtils';
+import { CategoryBudgetBars } from '../BudgetProgressComponents';
 
 interface TransactionDetailViewProps {
   transaction: Transaction;
@@ -51,6 +55,10 @@ interface TransactionDetailViewProps {
   onSettlePending?: (t: Transaction) => void;
   onSettleSeries?: (t: Transaction) => void;
   onToggleIgnoreInCharts?: (t: Transaction) => void;
+  expenseBudgets?: ExpenseBudgetsMap;
+  expenseWindowTotals?: ExpenseWindowTotals;
+  hideValues?: boolean;
+  onOpenBudgetConfig?: (category: string) => void;
 }
 
 export function TransactionDetailView({
@@ -68,6 +76,10 @@ export function TransactionDetailView({
   onSettlePending,
   onSettleSeries,
   onToggleIgnoreInCharts,
+  expenseBudgets,
+  expenseWindowTotals,
+  hideValues = false,
+  onOpenBudgetConfig,
 }: TransactionDetailViewProps) {
   const isReserveTx = (t as any).isReserveTx;
   const isInvestmentTx = (t as any).isInvestmentTx;
@@ -756,6 +768,42 @@ export function TransactionDetailView({
               </p>
             </div>
           )}
+
+          {expenseBudgets && expenseWindowTotals && (() => {
+            const catStatuses = getCategoryBudgetStatuses(t.category, expenseBudgets, expenseWindowTotals);
+            if (catStatuses.length === 0 && !onOpenBudgetConfig) return null;
+            return (
+              <div className="p-2.5 rounded-lg bg-card border border-border/60 space-y-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[9px] text-muted-foreground uppercase font-extrabold flex items-center gap-1">
+                    <SlidersHorizontal className="w-3 h-3 text-primary" />
+                    <span>Tetos da Categoria ({t.category})</span>
+                  </span>
+                  {onOpenBudgetConfig && (
+                    <button
+                      type="button"
+                      onClick={() => onOpenBudgetConfig(t.category)}
+                      className="text-[10px] font-extrabold text-primary hover:underline cursor-pointer"
+                    >
+                      {catStatuses.length > 0 ? 'Ajustar' : '+ Definir Teto'}
+                    </button>
+                  )}
+                </div>
+                {catStatuses.length > 0 ? (
+                  <CategoryBudgetBars
+                    statuses={catStatuses}
+                    formatCurrency={formatCurrency}
+                    hideValues={hideValues}
+                    compact
+                  />
+                ) : (
+                  <p className="text-[10.5px] text-muted-foreground">
+                    Nenhum teto diário, semanal ou mensal definido para esta categoria.
+                  </p>
+                )}
+              </div>
+            );
+          })()}
         </div>
       </div>
     );

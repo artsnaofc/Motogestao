@@ -78,9 +78,16 @@ import { isOperationalCategory, getActiveRuleForDate, iconOptions, findMatchingR
 import {
   planningStorage,
   CreditCardConfig,
+  ExpenseBudgetsMap,
   computeCardStatementDueDate,
   extractCardTagFromTransaction,
 } from '../lib/planningStorage';
+import {
+  computeExpenseWindowTotals,
+  getAllConfiguredBudgetStatuses,
+} from '../lib/budgetUtils';
+import { BudgetLimitsModal } from '../components/BudgetLimitsModal';
+import { BudgetOverviewPanel, CategoryBudgetBadge } from '../components/BudgetProgressComponents';
 import { 
   getPaymentStatusMeta, 
   formatRecurrenceFrequency, 
@@ -435,27 +442,59 @@ export function History() {
   const [historyUserId, setHistoryUserId] = useState<string>('');
   const [cards, setCards] = useState<CreditCardConfig[]>([]);
   const [txCardMap, setTxCardMap] = useState<Record<string, string>>({});
+  const [expenseBudgets, setExpenseBudgets] = useState<ExpenseBudgetsMap>({});
+  const [showBudgetModal, setShowBudgetModal] = useState(false);
+  const [budgetFocusCategory, setBudgetFocusCategory] = useState<string | null>(null);
+  const [showBudgetsPanel, setShowBudgetsPanel] = useState(false);
 
   React.useEffect(() => {
     let activeUid = '';
-    const hydrateCards = (uid: string) => {
+    const hydratePlanning = (uid: string) => {
       setCards(planningStorage.getCards(uid));
       setTxCardMap(planningStorage.getTxCardMap(uid));
+      setExpenseBudgets(planningStorage.getExpenseBudgets(uid));
     };
     getEffectiveUserId().then(uid => {
       const effectiveUid = uid || 'default';
       activeUid = effectiveUid;
       setHistoryUserId(effectiveUid);
-      hydrateCards(effectiveUid);
+      hydratePlanning(effectiveUid);
     });
     const handleSync = (e: Event) => {
       const detailUid = (e as CustomEvent)?.detail?.userId;
       const targetUid = detailUid || activeUid || 'default';
-      hydrateCards(targetUid);
+      hydratePlanning(targetUid);
     };
     window.addEventListener('planning_data_synced', handleSync);
     return () => window.removeEventListener('planning_data_synced', handleSync);
   }, []);
+
+  const expenseWindowTotals = useMemo(
+    () => computeExpenseWindowTotals(transactions, reserveTransactions),
+    [transactions, reserveTransactions]
+  );
+
+  const budgetSummaryMeta = useMemo(
+    () => getAllConfiguredBudgetStatuses(expenseBudgets, expenseWindowTotals),
+    [expenseBudgets, expenseWindowTotals]
+  );
+
+  const allBudgetCategories = useMemo(() => {
+    const set = new Set<string>([
+      ...(settings?.operational_expense_categories || ['Combustível', 'Pedágio', 'Manutenção']),
+      ...(settings?.personal_expense_categories || ['Alimentação', 'Plano de Internet', 'Equipamento', 'Moradia', 'Lazer', 'Saúde', 'Transporte Pessoal', 'Outras Despesas']),
+      ...(settings?.expense_categories || []),
+      ...Object.keys(expenseBudgets).filter(k => k !== '__ALL__'),
+    ]);
+    set.delete('Aporte Reserva');
+    set.delete('Compra de Investimentos');
+    return Array.from(set).filter(Boolean).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  }, [settings?.operational_expense_categories, settings?.personal_expense_categories, settings?.expense_categories, expenseBudgets]);
+
+  const handleOpenBudgetModal = (focusCat: string | null = null) => {
+    setBudgetFocusCategory(focusCat);
+    setShowBudgetModal(true);
+  };
 
   // Saved filters from localStorage
   const savedFilters = useMemo(() => loadSavedFilters(), []);
@@ -4795,6 +4834,20 @@ export function History() {
                     <span>Ignorado nos gráficos</span>
                   </span>
                 )}
+
+                {!isIncome && !isTransfer && !isSaleSettlement && !(t as any).isInvestmentTx && !isProventoTx && (!isReserveTx || isUtilizacao) && (
+                  <CategoryBudgetBadge
+                    category={t.category}
+                    budgets={expenseBudgets}
+                    totals={expenseWindowTotals}
+                    formatCurrency={formatCurrency}
+                    hideValues={hideValues}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleOpenBudgetModal(t.category);
+                    }}
+                  />
+                )}
               </div>
 
               {!isNoDescTx && t.description && (
@@ -4885,6 +4938,10 @@ export function History() {
               onSettlePending={handleOpenSettle}
               onSettleSeries={handleOpenSettleSeries}
               onToggleIgnoreInCharts={handleToggleIgnoreInCharts}
+              expenseBudgets={expenseBudgets}
+              expenseWindowTotals={expenseWindowTotals}
+              hideValues={hideValues}
+              onOpenBudgetConfig={(cat) => handleOpenBudgetModal(cat)}
             />
           </div>
         )}
@@ -4910,6 +4967,43 @@ export function History() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2 shrink-0">
+          <Button
+            variant={showBudgetsPanel ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => {
+              const hasConfigured =
+                budgetSummaryMeta.globalStatuses.length > 0 ||
+                budgetSummaryMeta.categoryEntries.length > 0;
+              if (!hasConfigured) {
+                handleOpenBudgetModal(null);
+              } else {
+                setShowBudgetsPanel(prev => !prev);
+              }
+            }}
+            className={`h-9 px-3 text-xs font-bold rounded-xl flex items-center gap-1.5 cursor-pointer ${
+              showBudgetsPanel
+                ? 'bg-primary text-primary-foreground shadow-xs'
+                : budgetSummaryMeta.exceededCount > 0
+                  ? 'border-rose-500/40 bg-rose-500/10 text-rose-600 dark:text-rose-400 hover:bg-rose-500/20'
+                  : budgetSummaryMeta.alertCount > 0
+                    ? 'border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400 hover:bg-amber-500/20'
+                    : 'border-border bg-card text-foreground hover:bg-muted/40'
+            }`}
+            title="Ver e configurar tetos diário, semanal e mensal de despesas"
+          >
+            <SlidersHorizontal className="w-3.5 h-3.5" />
+            <span>Tetos</span>
+            {(budgetSummaryMeta.exceededCount > 0 || budgetSummaryMeta.alertCount > 0) && (
+              <span
+                className={`px-1.5 py-0.2 rounded-md text-[10px] font-black font-mono ${
+                  showBudgetsPanel ? 'bg-white/20 text-white' : 'bg-current/15 text-current'
+                }`}
+              >
+                {budgetSummaryMeta.exceededCount + budgetSummaryMeta.alertCount}
+              </span>
+            )}
+          </Button>
+
           <Button
             variant={showBillsAgenda ? 'default' : 'outline'}
             size="sm"
@@ -4986,6 +5080,18 @@ export function History() {
           </Button>
         </div>
       </header>
+
+      {(showBudgetsPanel || budgetSummaryMeta.exceededCount > 0) && (
+        <BudgetOverviewPanel
+          budgets={expenseBudgets}
+          totals={expenseWindowTotals}
+          formatCurrency={formatCurrency}
+          hideValues={hideValues}
+          onOpenConfig={(focusCat) => handleOpenBudgetModal(focusCat ?? null)}
+          defaultExpanded={showBudgetsPanel}
+          title="Tetos de Despesas nos Lançamentos"
+        />
+      )}
 
       {/* Premium Stats Row */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
@@ -9042,6 +9148,21 @@ export function History() {
         allTransactions={allTransactions}
         settings={settings}
         reserves={reserves}
+      />
+
+      {/* Expense Budgets Configuration Modal */}
+      <BudgetLimitsModal
+        open={showBudgetModal}
+        onOpenChange={setShowBudgetModal}
+        userId={historyUserId || 'default'}
+        categories={allBudgetCategories}
+        operationalCategories={settings?.operational_expense_categories || []}
+        budgets={expenseBudgets}
+        totals={expenseWindowTotals}
+        formatCurrency={formatCurrency}
+        hideValues={hideValues}
+        focusCategory={budgetFocusCategory}
+        onSaved={(next) => setExpenseBudgets(next)}
       />
     </div>
   );

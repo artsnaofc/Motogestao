@@ -52,11 +52,90 @@ export interface PlatformReconciliation {
   adjustmentTxId?: string;
 }
 
+export type BudgetPeriod = 'daily' | 'weekly' | 'monthly';
+
+export interface CategoryBudgetRule {
+  daily?: number;
+  weekly?: number;
+  monthly?: number;
+}
+
+export type ExpenseBudgetsMap = Record<string, CategoryBudgetRule>;
+
+export const GLOBAL_EXPENSE_BUDGET_KEY = '__ALL__';
+
+const DAILY_BUDGET_PREFIX = '__daily__::';
+const WEEKLY_BUDGET_PREFIX = '__weekly__::';
+
 const getCardsKey = (userId: string) => `credit_cards_${userId}`;
 const getBudgetsKey = (userId: string) => `category_budgets_${userId}`;
+const getExpenseBudgetsKey = (userId: string) => `expense_budgets_v2_${userId}`;
 const getTemplatesKey = (userId: string) => `tx_quick_templates_${userId}`;
 const getReconciliationsKey = (userId: string) => `platform_reconciliations_${userId}`;
 const getTxCardMapKey = (userId: string) => `tx_card_map_${userId}`;
+
+function slugifyBudgetCategory(category: string): string {
+  return category
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '') || 'cat';
+}
+
+function encodeBudgetRow(userId: string, category: string, period: BudgetPeriod, limit: number) {
+  const slug = slugifyBudgetCategory(category);
+  const storedCategory =
+    period === 'daily'
+      ? `${DAILY_BUDGET_PREFIX}${category}`
+      : period === 'weekly'
+        ? `${WEEKLY_BUDGET_PREFIX}${category}`
+        : category;
+  const legacySlug = category.trim().toLowerCase().replace(/\s+/g, '_');
+  const id =
+    period === 'monthly'
+      ? `${userId}_${legacySlug}`
+      : `${userId}_${period}_${slug}`;
+  return {
+    id,
+    user_id: userId,
+    category: storedCategory,
+    monthly_limit: limit,
+    updated_at: new Date().toISOString(),
+  };
+}
+
+function normalizeExpenseBudgets(raw: ExpenseBudgetsMap): ExpenseBudgetsMap {
+  const cleaned: ExpenseBudgetsMap = {};
+  Object.entries(raw || {}).forEach(([cat, rule]) => {
+    if (!cat || !rule || typeof rule !== 'object') return;
+    const nextRule: CategoryBudgetRule = {};
+    if (typeof rule.daily === 'number' && isFinite(rule.daily) && rule.daily > 0) {
+      nextRule.daily = Math.round(rule.daily * 100) / 100;
+    }
+    if (typeof rule.weekly === 'number' && isFinite(rule.weekly) && rule.weekly > 0) {
+      nextRule.weekly = Math.round(rule.weekly * 100) / 100;
+    }
+    if (typeof rule.monthly === 'number' && isFinite(rule.monthly) && rule.monthly > 0) {
+      nextRule.monthly = Math.round(rule.monthly * 100) / 100;
+    }
+    if (nextRule.daily || nextRule.weekly || nextRule.monthly) {
+      cleaned[cat] = nextRule;
+    }
+  });
+  return cleaned;
+}
+
+function extractMonthlyMap(budgets: ExpenseBudgetsMap): Record<string, number> {
+  const monthly: Record<string, number> = {};
+  Object.entries(budgets).forEach(([cat, rule]) => {
+    if (cat !== GLOBAL_EXPENSE_BUDGET_KEY && rule.monthly && rule.monthly > 0) {
+      monthly[cat] = rule.monthly;
+    }
+  });
+  return monthly;
+}
 
 function readStore<T>(key: string, fallback: T): T {
   const fromCache = cacheManager.get<T>(key);
@@ -274,38 +353,100 @@ export const planningStorage = {
     }
   },
 
-  // Category Monthly Budgets (category -> max monthly BRL)
+  // Multi-period Expense Budgets (Diário, Semanal, Mensal + Teto Geral)
+  getExpenseBudgets(userId: string): ExpenseBudgetsMap {
+    if (!userId) return {};
+    const v2 = readStore<ExpenseBudgetsMap | null>(getExpenseBudgetsKey(userId), null);
+    if (v2 && typeof v2 === 'object' && Object.keys(v2).length > 0) {
+      return normalizeExpenseBudgets(v2);
+    }
+    // Migrate from legacy monthly-only map if v2 is empty
+    const legacy = readStore<Record<string, number>>(getBudgetsKey(userId), {});
+    if (legacy && Object.keys(legacy).length > 0) {
+      const migrated: ExpenseBudgetsMap = {};
+      Object.entries(legacy).forEach(([cat, val]) => {
+        if (typeof val === 'number' && val > 0) {
+          migrated[cat] = { monthly: val };
+        }
+      });
+      return normalizeExpenseBudgets(migrated);
+    }
+    return {};
+  },
+
+  saveExpenseBudgets(userId: string, budgets: ExpenseBudgetsMap): void {
+    if (!userId) return;
+    const normalized = normalizeExpenseBudgets(budgets);
+    writeStore(getExpenseBudgetsKey(userId), normalized);
+    writeStore(getBudgetsKey(userId), extractMonthlyMap(normalized));
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('planning_data_synced', { detail: { userId } }));
+    }
+
+    // Asynchronously synchronize with Supabase using existing category_budgets columns
+    (async () => {
+      try {
+        if (!navigator.onLine) return;
+        const dbRows: ReturnType<typeof encodeBudgetRow>[] = [];
+        Object.entries(normalized).forEach(([category, rule]) => {
+          if (rule.monthly && rule.monthly > 0) {
+            dbRows.push(encodeBudgetRow(userId, category, 'monthly', rule.monthly));
+          }
+          if (rule.daily && rule.daily > 0) {
+            dbRows.push(encodeBudgetRow(userId, category, 'daily', rule.daily));
+          }
+          if (rule.weekly && rule.weekly > 0) {
+            dbRows.push(encodeBudgetRow(userId, category, 'weekly', rule.weekly));
+          }
+        });
+
+        if (dbRows.length > 0) {
+          const { error } = await supabase.from('category_budgets').upsert(dbRows);
+          if (error && error.code !== '42P01') {
+            console.warn('[planningStorage] Erro ao salvar tetos de despesas no Supabase:', error);
+          }
+          const activeIds = dbRows.map(r => r.id);
+          await supabase
+            .from('category_budgets')
+            .delete()
+            .eq('user_id', userId)
+            .not('id', 'in', `(${activeIds.map(id => `"${id}"`).join(',')})`);
+        } else {
+          await supabase.from('category_budgets').delete().eq('user_id', userId);
+        }
+      } catch (err) {
+        console.warn('[planningStorage] Falha ao sincronizar tetos de despesas no Supabase:', err);
+      }
+    })();
+  },
+
+  // Legacy-compatible Category Monthly Budgets (category -> max monthly BRL)
   getCategoryBudgets(userId: string): Record<string, number> {
     if (!userId) return {};
-    return readStore<Record<string, number>>(getBudgetsKey(userId), {});
+    return extractMonthlyMap(this.getExpenseBudgets(userId));
   },
 
   saveCategoryBudgets(userId: string, budgets: Record<string, number>): void {
     if (!userId) return;
-    writeStore(getBudgetsKey(userId), budgets);
-
-    // Asynchronously synchronize with Supabase
-    (async () => {
-      try {
-        if (!navigator.onLine) return;
-        const entries = Object.entries(budgets);
-        if (entries.length > 0) {
-          const dbRows = entries.map(([category, monthlyLimit]) => ({
-            id: `${userId}_${category.trim().toLowerCase().replace(/\s+/g, '_')}`,
-            user_id: userId,
-            category,
-            monthly_limit: monthlyLimit,
-            updated_at: new Date().toISOString(),
-          }));
-          const { error } = await supabase.from('category_budgets').upsert(dbRows);
-          if (error && error.code !== '42P01') {
-            console.warn('[planningStorage] Erro ao salvar orçamentos no Supabase:', error);
-          }
-        }
-      } catch (err) {
-        console.warn('[planningStorage] Falha ao sincronizar orçamentos no Supabase:', err);
+    const current = this.getExpenseBudgets(userId);
+    const next: ExpenseBudgetsMap = {};
+    // Preserve global rule & daily/weekly rules, update monthly values
+    (Object.entries(current) as Array<[string, CategoryBudgetRule]>).forEach(([cat, rule]) => {
+      const kept: CategoryBudgetRule = {};
+      if (rule.daily) kept.daily = rule.daily;
+      if (rule.weekly) kept.weekly = rule.weekly;
+      if (cat === GLOBAL_EXPENSE_BUDGET_KEY && rule.monthly) kept.monthly = rule.monthly;
+      if (kept.daily || kept.weekly || kept.monthly) {
+        next[cat] = kept;
       }
-    })();
+    });
+    Object.entries(budgets || {}).forEach(([cat, monthlyLimit]) => {
+      if (typeof monthlyLimit === 'number' && monthlyLimit > 0) {
+        next[cat] = { ...(next[cat] || {}), monthly: monthlyLimit };
+      }
+    });
+    this.saveExpenseBudgets(userId, next);
   },
 
   // Quick Transaction Templates (1-click favorites)
@@ -424,26 +565,41 @@ export const planningStorage = {
         }
       }
 
-      // 3. Category Budgets
+      // 3. Multi-period Expense Budgets
       if (budgetsRes.status === 'fulfilled' && !budgetsRes.value.error && budgetsRes.value.data) {
-        const cloudBudgets: Record<string, number> = {};
+        const cloudBudgets: ExpenseBudgetsMap = {};
         budgetsRes.value.data.forEach((row: any) => {
-          if (row.category && typeof row.monthly_limit === 'number') {
-            cloudBudgets[row.category] = row.monthly_limit;
+          const rawCat = String(row.category || '');
+          const limit = Number(row.monthly_limit);
+          if (!rawCat || !isFinite(limit) || limit <= 0) return;
+
+          if (rawCat.startsWith(DAILY_BUDGET_PREFIX)) {
+            const cat = rawCat.slice(DAILY_BUDGET_PREFIX.length);
+            if (cat) cloudBudgets[cat] = { ...(cloudBudgets[cat] || {}), daily: limit };
+          } else if (rawCat.startsWith(WEEKLY_BUDGET_PREFIX)) {
+            const cat = rawCat.slice(WEEKLY_BUDGET_PREFIX.length);
+            if (cat) cloudBudgets[cat] = { ...(cloudBudgets[cat] || {}), weekly: limit };
+          } else {
+            cloudBudgets[rawCat] = { ...(cloudBudgets[rawCat] || {}), monthly: limit };
           }
         });
-        const localBudgets = this.getCategoryBudgets(userId);
-        if (Object.keys(cloudBudgets).length > 0) {
-          writeStore(getBudgetsKey(userId), cloudBudgets);
+
+        const normalizedCloud = normalizeExpenseBudgets(cloudBudgets);
+        const localBudgets = this.getExpenseBudgets(userId);
+
+        if (Object.keys(normalizedCloud).length > 0) {
+          writeStore(getExpenseBudgetsKey(userId), normalizedCloud);
+          writeStore(getBudgetsKey(userId), extractMonthlyMap(normalizedCloud));
         } else if (Object.keys(localBudgets).length > 0) {
-          const dbRows = Object.entries(localBudgets).map(([category, monthlyLimit]) => ({
-            id: `${userId}_${category.trim().toLowerCase().replace(/\s+/g, '_')}`,
-            user_id: userId,
-            category,
-            monthly_limit: monthlyLimit,
-            updated_at: new Date().toISOString(),
-          }));
-          await supabase.from('category_budgets').upsert(dbRows);
+          const dbRows: ReturnType<typeof encodeBudgetRow>[] = [];
+          (Object.entries(localBudgets) as Array<[string, CategoryBudgetRule]>).forEach(([category, rule]) => {
+            if (rule.monthly && rule.monthly > 0) dbRows.push(encodeBudgetRow(userId, category, 'monthly', rule.monthly));
+            if (rule.daily && rule.daily > 0) dbRows.push(encodeBudgetRow(userId, category, 'daily', rule.daily));
+            if (rule.weekly && rule.weekly > 0) dbRows.push(encodeBudgetRow(userId, category, 'weekly', rule.weekly));
+          });
+          if (dbRows.length > 0) {
+            await supabase.from('category_budgets').upsert(dbRows);
+          }
         }
       }
 
