@@ -48,6 +48,7 @@ import {
 } from '../components/reserves/reserveUtils';
 import { cacheManager } from '../lib/cacheManager';
 import { syncQueueManager } from '../lib/syncQueue';
+import { getCurrentLocalTimeStr, normalizeTimeStr, setRtTimeEntry } from '../lib/timeUtils';
 import { ReservesHeader } from '../components/reserves/ReservesHeader';
 import { ReserveCard } from '../components/reserves/ReserveCard';
 import { MassAporteConsolidator } from '../components/reserves/MassAporteConsolidator';
@@ -414,11 +415,13 @@ export function Reserves() {
   const handleExecuteBatch = async (batchData: {
     items: { reserve_id: string; amount: number; name: string; boostExtra?: number }[];
     date: string;
+    time?: string;
     description: string;
   }) => {
     try {
       setIsSubmittingBatch(true);
       const batchId = `batch_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      const effectiveTime = normalizeTimeStr(batchData.time) || getCurrentLocalTimeStr();
       let totalSum = 0;
 
       for (const item of batchData.items) {
@@ -440,6 +443,7 @@ export function Reserves() {
           type: 'aporte',
           amount: cleanAmount,
           date: batchData.date,
+          time: effectiveTime,
           description: `[Consolidador em Massa] ${batchData.description}${boostSuffix}`,
           source: 'mass_contribution',
           batch_id: batchId,
@@ -482,6 +486,7 @@ export function Reserves() {
   const handleAporteManualSubmit = async (data: {
     amount: number;
     date: string;
+    time?: string;
     description: string;
     isSuggestion?: boolean;
   }) => {
@@ -489,6 +494,7 @@ export function Reserves() {
     const res = selectedReserveForAction;
     const cleanAmount = Math.round(data.amount * 100) / 100;
     const isSugg = Boolean(data.isSuggestion ?? isSuggestionAporte);
+    const effectiveTime = normalizeTimeStr(data.time) || getCurrentLocalTimeStr();
 
     let boostExtra = 0;
     if (isSugg && isReserveBoostActive(res)) {
@@ -528,6 +534,7 @@ export function Reserves() {
       type: 'aporte',
       amount: cleanAmount,
       date: data.date,
+      time: effectiveTime,
       category: isSugg ? 'Aporte Sugerido' : 'Aporte Manual',
       description: finalDesc,
       source: isSugg ? 'automation' : 'manual',
@@ -549,6 +556,7 @@ export function Reserves() {
   const handleWithdrawSubmit = async (data: {
     amount: number;
     date: string;
+    time?: string;
     category: string;
     description: string;
     payment_status?: 'paid' | 'pending';
@@ -569,6 +577,7 @@ export function Reserves() {
     const totalInstallments = Math.max(2, Math.min(60, Number(data.recurrence_installments) || 12));
     const shouldGenerateFuture = isRecurring && Boolean(data.generate_future);
     const ignoreInCharts = Boolean(data.ignore_in_charts);
+    const effectiveTime = normalizeTimeStr(data.time) || getCurrentLocalTimeStr();
 
     const userId = await getEffectiveUserId();
 
@@ -584,6 +593,7 @@ export function Reserves() {
         type: 'utilizacao',
         amount: cleanAmount,
         date: data.date,
+        time: effectiveTime,
         category: data.category,
         description: firstDesc,
         payment_status: data.payment_status || 'paid',
@@ -611,6 +621,7 @@ export function Reserves() {
           type: 'utilizacao',
           amount: cleanAmount,
           date: futureDate,
+          time: effectiveTime,
           category: data.category,
           description: `${data.description} (${i}/${totalInstallments})`,
           payment_status: 'pending',
@@ -632,6 +643,10 @@ export function Reserves() {
 
       const allNewRts = [firstRt, ...futureTxs];
 
+      allNewRts.forEach(rt => {
+        setRtTimeEntry(userId, rt.id, rt.time);
+      });
+
       // Optimistic update
       setReserveTransactions(prev => {
         const nextState = [...allNewRts, ...prev];
@@ -648,6 +663,7 @@ export function Reserves() {
           type: rt.type,
           amount: rt.amount,
           date: rt.date,
+          time: rt.time,
           category: rt.category,
           description: rt.description,
           payment_status: rt.payment_status,
@@ -676,6 +692,7 @@ export function Reserves() {
         type: 'utilizacao',
         amount: cleanAmount,
         date: data.date,
+        time: effectiveTime,
         category: data.category,
         description: data.description,
         source: 'manual',
@@ -707,6 +724,7 @@ export function Reserves() {
   const handleUpdateBalanceSubmit = async (data: {
     newBalance: number;
     date: string;
+    time?: string;
     type: 'rendimento' | 'aporte' | 'ajuste';
     description: string;
   }) => {
@@ -715,6 +733,7 @@ export function Reserves() {
     const currentBal = Math.round((res.saldo_atual || 0) * 100) / 100;
     const cleanNewBal = Math.round(data.newBalance * 100) / 100;
     const diff = Math.round((cleanNewBal - currentBal) * 100) / 100;
+    const effectiveTime = normalizeTimeStr(data.time) || getCurrentLocalTimeStr();
 
     if (diff !== 0) {
       await addReserveTransaction({
@@ -722,6 +741,7 @@ export function Reserves() {
         type: diff > 0 ? 'rendimento' : 'utilizacao',
         amount: Math.abs(diff),
         date: data.date,
+        time: effectiveTime,
         description: `[Rendimento/Ajuste] ${data.description}`,
         source: 'manual'
       });
@@ -736,6 +756,7 @@ export function Reserves() {
   const handleSaveReserve = async (reserveData: Partial<Reserve>, initialBalance?: number) => {
     if (reserveToEdit) {
       const todayStr = getTodayLocalDateStr();
+      const nowTimeStr = getCurrentLocalTimeStr();
       const nowIso = new Date().toISOString();
       const prevGoal = Math.round(Number(reserveToEdit.meta_objetivo || 0) * 100) / 100;
       const newGoal = Math.round(Number(reserveData.meta_objetivo || 0) * 100) / 100;
@@ -752,6 +773,7 @@ export function Reserves() {
         const updatedHistory = Array.isArray(reserveToEdit.rule_history) ? [...reserveToEdit.rule_history] : [];
         const rawPrevStart = reserveToEdit.regra_inicio_validade || reserveToEdit.created_at || todayStr;
         const prevStartDate = toDateInputString(rawPrevStart) || todayStr;
+        const prevStartTime = normalizeTimeStr(reserveToEdit.regra_inicio_hora) || null;
 
         const reasonDesc = goalChanged && ruleReenabled
           ? `Meta alterada (${formatCurrency(prevGoal)} ➔ ${formatCurrency(newGoal)}) e regra ativada (sugestão recalculada a partir de agora)`
@@ -761,7 +783,9 @@ export function Reserves() {
 
         updatedHistory.push({
           start_date: prevStartDate,
+          start_time: prevStartTime,
           end_date: todayStr,
+          end_time: nowTimeStr,
           cutoff_rule_start: todayStr,
           cutoff_at: nowIso,
           action_type: goalChanged ? 'goal_change' : 'unpause',
@@ -775,6 +799,7 @@ export function Reserves() {
         });
 
         finalPayload.regra_inicio_validade = todayStr;
+        finalPayload.regra_inicio_hora = nowTimeStr;
         finalPayload.rule_history = updatedHistory;
       }
 
@@ -800,6 +825,7 @@ export function Reserves() {
         regra_valor: reserveData.regra_valor,
         regra_categorias: reserveData.regra_categorias || [],
         regra_inicio_validade: reserveData.regra_inicio_validade || getTodayLocalDateStr(),
+        regra_inicio_hora: normalizeTimeStr(reserveData.regra_inicio_hora) || getCurrentLocalTimeStr(),
         boost_ativo: Boolean(reserveData.boost_ativo),
         boost_tipo: reserveData.boost_tipo || 'increment',
         boost_valor: reserveData.boost_valor ?? 0,
@@ -830,8 +856,10 @@ export function Reserves() {
     }
 
     const todayStr = getTodayLocalDateStr();
+    const nowTimeStr = getCurrentLocalTimeStr();
     const nowIso = new Date().toISOString();
     const effectiveDate = toDateInputString(ruleData.regra_inicio_validade) || todayStr;
+    const effectiveTime = normalizeTimeStr(ruleData.regra_inicio_hora) || nowTimeStr;
     const hadPrevRule = Boolean(currentRes.regra_tipo && currentRes.regra_valor);
     const wasReenabled = !currentRes.regra_ativa && Boolean(ruleData.regra_ativa);
     let updatedHistory = Array.isArray(currentRes.rule_history) ? [...currentRes.rule_history] : [];
@@ -845,6 +873,7 @@ export function Reserves() {
     ) {
       const rawPrev = currentRes.regra_inicio_validade || currentRes.created_at || effectiveDate;
       const prevStartDate = toDateInputString(rawPrev) || effectiveDate;
+      const prevStartTime = normalizeTimeStr(currentRes.regra_inicio_hora) || null;
       const prevLiquidoMode = currentRes.regra_base === 'liquido' ? 'Lucro Líquido Geral' : 'Lucro Operacional';
       const typeLabel = currentRes.regra_tipo === 'km' 
         ? `R$ ${currentRes.regra_valor}/km` 
@@ -856,7 +885,9 @@ export function Reserves() {
 
       updatedHistory.push({
         start_date: prevStartDate,
+        start_time: prevStartTime,
         end_date: effectiveDate,
+        end_time: effectiveTime,
         ...(effectiveDate === todayStr ? { cutoff_rule_start: effectiveDate, cutoff_at: nowIso, action_type: wasReenabled ? 'unpause' : 'rule_update' } : {}),
         regra_tipo: currentRes.regra_tipo,
         regra_base: currentRes.regra_base,
@@ -869,7 +900,9 @@ export function Reserves() {
     } else if (wasReenabled && effectiveDate === todayStr && ruleData.regra_tipo) {
       updatedHistory.push({
         start_date: effectiveDate,
+        start_time: effectiveTime,
         end_date: effectiveDate,
+        end_time: effectiveTime,
         cutoff_rule_start: effectiveDate,
         cutoff_at: nowIso,
         action_type: 'unpause',
@@ -887,6 +920,7 @@ export function Reserves() {
       ...ruleData,
       ...(ruleData.regra_tipo === 'liquido' ? { reset_suggestion_on_withdraw: false } : {}),
       regra_inicio_validade: effectiveDate,
+      regra_inicio_hora: ruleData.regra_ativa ? effectiveTime : null,
       rule_history: updatedHistory
     };
 
@@ -1007,15 +1041,19 @@ export function Reserves() {
         toast.success(`Automação de "${res.name}" pausada.`);
       } else if (type === 'unpause') {
         const todayStr = getTodayLocalDateStr();
+        const nowTimeStr = getCurrentLocalTimeStr();
         const nowIso = new Date().toISOString();
         const updatedHistory = Array.isArray(res.rule_history) ? [...res.rule_history] : [];
         const rawPrev = res.regra_inicio_validade || res.created_at || todayStr;
         const prevStartDate = toDateInputString(rawPrev) || todayStr;
+        const prevStartTime = normalizeTimeStr(res.regra_inicio_hora) || null;
 
         if (res.regra_tipo) {
           updatedHistory.push({
             start_date: prevStartDate,
+            start_time: prevStartTime,
             end_date: todayStr,
+            end_time: nowTimeStr,
             cutoff_rule_start: todayStr,
             cutoff_at: nowIso,
             action_type: 'unpause',
@@ -1030,7 +1068,7 @@ export function Reserves() {
 
         const payload: Partial<Reserve> = {
           is_paused: false,
-          ...(res.regra_tipo ? { regra_inicio_validade: todayStr, rule_history: updatedHistory } : {})
+          ...(res.regra_tipo ? { regra_inicio_validade: todayStr, regra_inicio_hora: nowTimeStr, rule_history: updatedHistory } : {})
         };
         await updateReserve(res.id, payload);
         if (auditReserve?.id === res.id) {
@@ -1074,15 +1112,19 @@ export function Reserves() {
         toast.success(`Reserva "${res.name}" inativada! Você pode acessá-la na aba "Inativas".`);
       } else if (type === 'reactivate') {
         const todayStr = getTodayLocalDateStr();
+        const nowTimeStr = getCurrentLocalTimeStr();
         const nowIso = new Date().toISOString();
         const updatedHistory = Array.isArray(res.rule_history) ? [...res.rule_history] : [];
         const rawPrev = res.regra_inicio_validade || res.created_at || todayStr;
         const prevStartDate = toDateInputString(rawPrev) || todayStr;
+        const prevStartTime = normalizeTimeStr(res.regra_inicio_hora) || null;
 
         if (res.regra_ativa && res.regra_tipo) {
           updatedHistory.push({
             start_date: prevStartDate,
+            start_time: prevStartTime,
             end_date: todayStr,
+            end_time: nowTimeStr,
             cutoff_rule_start: todayStr,
             cutoff_at: nowIso,
             action_type: 'unpause',
@@ -1098,7 +1140,7 @@ export function Reserves() {
         await updateReserve(res.id, {
           status: 'active',
           is_paused: false,
-          ...(res.regra_ativa && res.regra_tipo ? { regra_inicio_validade: todayStr, rule_history: updatedHistory } : {})
+          ...(res.regra_ativa && res.regra_tipo ? { regra_inicio_validade: todayStr, regra_inicio_hora: nowTimeStr, rule_history: updatedHistory } : {})
         });
         toast.success(`Reserva "${res.name}" reativada com sucesso!`);
       } else if (type === 'delete') {
@@ -1385,7 +1427,7 @@ export function Reserves() {
 
       {/* 1b. Modal Auditoria da Sugestão de Aportes */}
       <SuggestionAuditModal
-        key={auditReserve ? `${auditReserve.id}-${auditReserve.regra_inicio_validade}-${auditReserve.regra_valor}-${auditReserve.regra_tipo}-${auditReserve.regra_base}-${auditReserve.boost_ativo}-${auditReserve.boost_tipo}-${auditReserve.boost_valor}-${auditReserve.reset_suggestion_on_withdraw}` : 'audit-closed'}
+        key={auditReserve ? `${auditReserve.id}-${auditReserve.regra_inicio_validade}-${auditReserve.regra_inicio_hora || ''}-${auditReserve.regra_valor}-${auditReserve.regra_tipo}-${auditReserve.regra_base}-${auditReserve.boost_ativo}-${auditReserve.boost_tipo}-${auditReserve.boost_valor}-${auditReserve.reset_suggestion_on_withdraw}` : 'audit-closed'}
         isOpen={Boolean(auditReserve)}
         onClose={() => setAuditReserve(null)}
         reserve={auditReserve ? (reserves.find(r => r.id === auditReserve.id) || auditReserve) : null}
@@ -1505,7 +1547,7 @@ export function Reserves() {
 
       {/* 6. Modal Histórico de Regras & Auditoria */}
       <RuleHistoryModal
-        key={selectedReserveForAction ? `${selectedReserveForAction.id}-${selectedReserveForAction.regra_inicio_validade}-${selectedReserveForAction.regra_valor}-${selectedReserveForAction.regra_base}` : 'history-closed'}
+        key={selectedReserveForAction ? `${selectedReserveForAction.id}-${selectedReserveForAction.regra_inicio_validade}-${selectedReserveForAction.regra_inicio_hora || ''}-${selectedReserveForAction.regra_valor}-${selectedReserveForAction.regra_base}` : 'history-closed'}
         isOpen={actionModalType === 'rule_history'}
         reserve={selectedReserveForAction ? (reserves.find(r => r.id === selectedReserveForAction.id) || selectedReserveForAction) : null}
         onClose={() => {

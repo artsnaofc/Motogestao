@@ -83,6 +83,11 @@ import {
   differenceInCalendarDays,
   format
 } from 'date-fns';
+import {
+  getEffectiveItemTime,
+  normalizeTimeStr,
+  compareByDateTimeDesc
+} from '../../lib/timeUtils';
 
 export const iconOptions: Record<string, any> = {
   PiggyBank,
@@ -333,30 +338,40 @@ export const isOperationalCategory = (category?: string | null, customOpList?: s
   return standardOperational.includes(lower);
 };
 
-export const getActiveRuleForDate = (res: Reserve, dateStr: string) => {
+export const getActiveRuleForDate = (res: Reserve, dateStr: string, timeStr?: string | null) => {
   const historyRules = res.rule_history || [];
   const cleanDate = dateStr.split('T')[0];
+  const cleanTime = normalizeTimeStr(timeStr) || normalizeTimeStr(dateStr);
 
-  // Check if historical rule applies to this date
+  // Check if historical rule applies to this date (+ optional intra-day time)
   for (let i = 0; i < historyRules.length; i++) {
     const hist = historyRules[i];
     const end = hist.end_date ? hist.end_date.split('T')[0] : null;
     const start = hist.start_date ? hist.start_date.split('T')[0] : null;
+    const startTime = normalizeTimeStr(hist.start_time);
+    const endTime = normalizeTimeStr(hist.end_time);
 
-    if (end && cleanDate < end) {
-      if (!start || cleanDate >= start) {
-        return {
-          source: 'history' as const,
-          index: i,
-          regra_ativa: Boolean(hist.regra_ativa),
-          regra_tipo: hist.regra_tipo,
-          regra_base: hist.regra_base || res.regra_base,
-          regra_valor: hist.regra_valor,
-          regra_categorias: hist.regra_categorias || [],
-          start_date: hist.start_date,
-          end_date: hist.end_date,
-        };
-      }
+    const isBeforeEnd = end
+      ? cleanDate < end || (cleanDate === end && Boolean(endTime && cleanTime && cleanTime < endTime))
+      : false;
+    const isAfterOrAtStart = !start
+      ? true
+      : cleanDate > start || (cleanDate === start && (!startTime || !cleanTime || cleanTime >= startTime));
+
+    if (isBeforeEnd && isAfterOrAtStart) {
+      return {
+        source: 'history' as const,
+        index: i,
+        regra_ativa: Boolean(hist.regra_ativa),
+        regra_tipo: hist.regra_tipo,
+        regra_base: hist.regra_base || res.regra_base,
+        regra_valor: hist.regra_valor,
+        regra_categorias: hist.regra_categorias || [],
+        start_date: hist.start_date,
+        start_time: startTime,
+        end_date: hist.end_date,
+        end_time: endTime,
+      };
     }
   }
 
@@ -370,7 +385,9 @@ export const getActiveRuleForDate = (res: Reserve, dateStr: string) => {
     regra_valor: res.regra_valor,
     regra_categorias: res.regra_categorias || [],
     start_date: res.regra_inicio_validade || res.created_at?.split('T')[0] || cleanDate,
+    start_time: normalizeTimeStr(res.regra_inicio_hora),
     end_date: null,
+    end_time: null,
   };
 };
 
@@ -540,28 +557,53 @@ export const doesExpenseCountForLiquido = (
   return true;
 };
 
-export const getLatestWithdrawalDate = (
+export interface ReserveWithdrawalPoint {
+  date: string;
+  time: string | null;
+  createdAt: string | null;
+}
+
+export const getLatestWithdrawalPoint = (
   res: Reserve,
   reserveTransactions: ReserveTransaction[]
-): string | null => {
+): ReserveWithdrawalPoint | null => {
   // Na regra de Lucro Líquido, resgates da própria reserva nunca zeram nem reduzem a base de lucro do período
   if (res.regra_tipo === 'liquido') return null;
   // Respeita a configuração da regra que define se resgates devem zerar/reiniciar a sugestão
   if (res.reset_suggestion_on_withdraw === false) return null;
   // Only consider withdrawals (utilizações) that have already been marked as paid/settled
   const utilizacoes = (reserveTransactions || []).filter(
-    rt => rt.reserve_id === res.id && 
-          rt.type === 'utilizacao' && 
+    rt => rt.reserve_id === res.id &&
+          rt.type === 'utilizacao' &&
           rt.payment_status !== 'pending' &&
           (rt as any).status !== 'pending'
   );
   if (utilizacoes.length === 0) return null;
   const sorted = [...utilizacoes].sort((a, b) => {
-    const dateA = a.payment_date || a.date || '';
-    const dateB = b.payment_date || b.date || '';
-    return dateB.localeCompare(dateA);
+    const effDateA = toDateInputString(a.payment_date || a.date) || '';
+    const effDateB = toDateInputString(b.payment_date || b.date) || '';
+    const timeA = getEffectiveItemTime({ ...a, date: effDateA, payment_date: effDateA });
+    const timeB = getEffectiveItemTime({ ...b, date: effDateB, payment_date: effDateB });
+    return compareByDateTimeDesc(
+      { id: a.id, date: effDateA, time: timeA, created_at: a.created_at },
+      { id: b.id, date: effDateB, time: timeB, created_at: b.created_at }
+    );
   });
-  return sorted[0].payment_date || sorted[0].date;
+  const latest = sorted[0];
+  const effDate = toDateInputString(latest.payment_date || latest.date) || '';
+  if (!effDate) return null;
+  return {
+    date: effDate,
+    time: getEffectiveItemTime({ ...latest, date: effDate, payment_date: effDate }),
+    createdAt: latest.created_at || null,
+  };
+};
+
+export const getLatestWithdrawalDate = (
+  res: Reserve,
+  reserveTransactions: ReserveTransaction[]
+): string | null => {
+  return getLatestWithdrawalPoint(res, reserveTransactions)?.date || null;
 };
 
 /**
@@ -586,6 +628,84 @@ export const getRuleCutoffTimestamp = (res: Reserve, ruleStartDate: string | nul
     }
   }
   return latestMs;
+};
+
+export const getRuleEffectiveStartTime = (
+  res: Reserve,
+  ruleStartDate: string | null | undefined,
+  cutoffMs?: number | null
+): string | null => {
+  const explicit = normalizeTimeStr(res.regra_inicio_hora);
+  if (explicit) return explicit;
+  const resolvedCutoff = cutoffMs !== undefined ? cutoffMs : getRuleCutoffTimestamp(res, ruleStartDate);
+  if (resolvedCutoff !== null) {
+    const d = new Date(resolvedCutoff);
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  }
+  return null;
+};
+
+export const isItemBeforeWithdrawalPoint = (
+  itemDay: string,
+  itemTime: string | null,
+  itemCreatedAt: string | null | undefined,
+  wPoint: ReserveWithdrawalPoint | null
+): boolean => {
+  if (!wPoint || !wPoint.date) return false;
+  if (itemDay < wPoint.date) return true;
+  if (itemDay > wPoint.date) return false;
+  if (wPoint.time && itemTime) {
+    if (itemTime < wPoint.time) return true;
+    if (itemTime > wPoint.time) return false;
+    if (wPoint.createdAt && itemCreatedAt) {
+      const wMs = new Date(wPoint.createdAt).getTime();
+      const iMs = new Date(itemCreatedAt).getTime();
+      if (!isNaN(wMs) && !isNaN(iMs)) return iMs <= wMs;
+    }
+    return true;
+  }
+  return true;
+};
+
+export const isItemBeforeRuleBoundary = (
+  itemDay: string,
+  itemTime: string | null,
+  itemCreatedAt: string | null | undefined,
+  ruleStartDate: string | null | undefined,
+  ruleStartTime: string | null | undefined,
+  cutoffMs: number | null
+): boolean => {
+  if (!ruleStartDate) return false;
+  if (itemDay < ruleStartDate) return true;
+  if (itemDay > ruleStartDate) return false;
+
+  const normRuleTime = normalizeTimeStr(ruleStartTime);
+  if (normRuleTime) {
+    if (!itemTime) {
+      if (cutoffMs !== null && itemCreatedAt) {
+        const itemMs = new Date(itemCreatedAt).getTime();
+        if (!isNaN(itemMs)) return itemMs < cutoffMs;
+      }
+      return true;
+    }
+    if (itemTime < normRuleTime) return true;
+    if (itemTime > normRuleTime) return false;
+    if (cutoffMs !== null && itemCreatedAt) {
+      const cutoffDate = new Date(cutoffMs);
+      const cutoffHHMM = `${String(cutoffDate.getHours()).padStart(2, '0')}:${String(cutoffDate.getMinutes()).padStart(2, '0')}`;
+      if (cutoffHHMM === normRuleTime) {
+        const itemMs = new Date(itemCreatedAt).getTime();
+        if (!isNaN(itemMs)) return itemMs < cutoffMs;
+      }
+    }
+    return false;
+  }
+
+  if (cutoffMs !== null && itemCreatedAt) {
+    const itemMs = new Date(itemCreatedAt).getTime();
+    if (!isNaN(itemMs) && itemMs < cutoffMs) return true;
+  }
+  return false;
 };
 
 export const getDefaultBoostValue = (
@@ -680,10 +800,10 @@ export const calculateSuggestion = (
     return 0;
   }
 
-  const lastWDate = getLatestWithdrawalDate(res, reserveTransactions);
-  const cleanLastWDate = lastWDate ? toDateInputString(lastWDate) : null;
+  const wPoint = getLatestWithdrawalPoint(res, reserveTransactions);
   const ruleStartDate = toDateInputString(res.regra_inicio_validade);
   const cutoffMs = getRuleCutoffTimestamp(res, ruleStartDate);
+  const ruleStartTime = getRuleEffectiveStartTime(res, ruleStartDate, cutoffMs);
   const linkedRtIds = buildLinkedReserveTxIdSet(reserveTransactions);
 
   const periodTxs = (transactions || []).filter(t => {
@@ -698,14 +818,9 @@ export const calculateSuggestion = (
       const creationDay = toDateInputString(res.created_at) || res.created_at.split('T')[0];
       if (txDay < creationDay) return false;
     }
-    if (cleanLastWDate && txDay <= cleanLastWDate) return false;
-    // Rule counts strictly starting from its effective validity date (zerando sugestões anteriores à vigência)
-    if (ruleStartDate && txDay < ruleStartDate) return false;
-    // Same-day cutoff: if rule was unpaused or goal changed today, exclude entries created earlier today
-    if (cutoffMs !== null && ruleStartDate && txDay === ruleStartDate && t.created_at) {
-      const txCreatedMs = new Date(t.created_at).getTime();
-      if (!isNaN(txCreatedMs) && txCreatedMs < cutoffMs) return false;
-    }
+    const txTime = getEffectiveItemTime(t);
+    if (isItemBeforeWithdrawalPoint(txDay, txTime, t.created_at, wPoint)) return false;
+    if (isItemBeforeRuleBoundary(txDay, txTime, t.created_at, ruleStartDate, ruleStartTime, cutoffMs)) return false;
     return true;
   });
   
@@ -800,6 +915,7 @@ export interface SuggestionAuditResult {
   boostExtraAportes: number;
   categories: string[];
   ruleStartDate: string | null;
+  ruleStartTime: string | null;
   cutoffAt: string | null;
   details: string[];
   totalSuggested: number;
@@ -807,14 +923,15 @@ export interface SuggestionAuditResult {
   manualAportes?: number;
   pendingSuggestion: number;
   txCount: number;
-  eligibleTxs: Array<{ id: string; date: string; description: string; category: string; amount: number; km?: number }>;
-  deductedExpenses: Array<{ id: string; date: string; description: string; category: string; amount: number }>;
+  eligibleTxs: Array<{ id: string; date: string; time?: string | null; description: string; category: string; amount: number; km?: number }>;
+  deductedExpenses: Array<{ id: string; date: string; time?: string | null; description: string; category: string; amount: number }>;
   liquidoMode: 'operacional' | 'geral';
   ignoredReserveExpensesTotal: number;
   ignoredReserveExpensesCount: number;
   ignoredPersonalExpensesTotal: number;
   ignoredPersonalExpensesCount: number;
   lastWithdrawalDate: string | null;
+  lastWithdrawalTime: string | null;
   resetOnWithdraw: boolean;
   pendingWithdrawalsIgnored: number;
   grossRevenue: number;
@@ -835,10 +952,11 @@ export const getSuggestionAudit = (
   customDateRange: { start: string; end: string },
   options?: { operationalCategories?: string[] }
 ): SuggestionAuditResult => {
-  const lastWDate = getLatestWithdrawalDate(res, reserveTransactions);
-  const cleanLastWDate = lastWDate ? toDateInputString(lastWDate) : null;
+  const wPoint = getLatestWithdrawalPoint(res, reserveTransactions);
+  const cleanLastWDate = wPoint?.date || null;
   const ruleStartDate = toDateInputString(res.regra_inicio_validade);
   const cutoffMs = getRuleCutoffTimestamp(res, ruleStartDate);
+  const ruleStartTime = getRuleEffectiveStartTime(res, ruleStartDate, cutoffMs);
   const cutoffAtIso = cutoffMs !== null ? new Date(cutoffMs).toISOString() : null;
   const linkedRtIds = buildLinkedReserveTxIdSet(reserveTransactions);
   const liquidoMode = getLiquidoProfitMode(res);
@@ -861,12 +979,9 @@ export const getSuggestionAudit = (
       const creationDay = toDateInputString(res.created_at) || res.created_at.split('T')[0];
       if (txDay < creationDay) return false;
     }
-    if (cleanLastWDate && txDay <= cleanLastWDate) return false;
-    if (ruleStartDate && txDay < ruleStartDate) return false;
-    if (cutoffMs !== null && ruleStartDate && txDay === ruleStartDate && t.created_at) {
-      const txCreatedMs = new Date(t.created_at).getTime();
-      if (!isNaN(txCreatedMs) && txCreatedMs < cutoffMs) return false;
-    }
+    const txTime = getEffectiveItemTime(t);
+    if (isItemBeforeWithdrawalPoint(txDay, txTime, t.created_at, wPoint)) return false;
+    if (isItemBeforeRuleBoundary(txDay, txTime, t.created_at, ruleStartDate, ruleStartTime, cutoffMs)) return false;
     return true;
   };
 
@@ -908,12 +1023,9 @@ export const getSuggestionAudit = (
       if (rt.payment_status === 'pending' || (rt as any).status === 'pending') return false;
       if (!isTxInPeriod(rt.date, globalPeriod, customDateRange)) return false;
       const rtDay = toDateInputString(rt.date) || rt.date;
-      if (cleanLastWDate && rtDay <= cleanLastWDate) return false;
-      if (ruleStartDate && rtDay < ruleStartDate) return false;
-      if (cutoffMs !== null && ruleStartDate && rtDay === ruleStartDate && rt.created_at) {
-        const rtCreatedMs = new Date(rt.created_at).getTime();
-        if (!isNaN(rtCreatedMs) && rtCreatedMs < cutoffMs) return false;
-      }
+      const rtTime = getEffectiveItemTime(rt);
+      if (isItemBeforeWithdrawalPoint(rtDay, rtTime, rt.created_at, wPoint)) return false;
+      if (isItemBeforeRuleBoundary(rtDay, rtTime, rt.created_at, ruleStartDate, ruleStartTime, cutoffMs)) return false;
       return isManualAporte(rt);
     })
     .reduce((sum, rt) => sum + Number(rt.amount || 0), 0);
@@ -928,8 +1040,8 @@ export const getSuggestionAudit = (
   let ignoredReserveExpensesCount = 0;
   let ignoredPersonalExpensesTotal = 0;
   let ignoredPersonalExpensesCount = 0;
-  const eligibleTxs: Array<{ id: string; date: string; description: string; category: string; amount: number; km?: number }> = [];
-  const deductedExpenses: Array<{ id: string; date: string; description: string; category: string; amount: number }> = [];
+  const eligibleTxs: Array<{ id: string; date: string; time?: string | null; description: string; category: string; amount: number; km?: number }> = [];
+  const deductedExpenses: Array<{ id: string; date: string; time?: string | null; description: string; category: string; amount: number }> = [];
 
   windowTxsAll.forEach(t => {
     if (t.type !== 'expense') return;
@@ -948,6 +1060,7 @@ export const getSuggestionAudit = (
     const distance = (Number(t.end_km) || 0) - (Number(t.start_km) || 0);
     const validDistance = distance > 0 ? distance : 0;
     const effectiveDate = getEffectiveTxDateStr(t);
+    const effectiveTime = getEffectiveItemTime(t);
     
     if (t.type === 'income' && matchesCategory) {
       grossRevenue += Number(t.amount || 0);
@@ -955,6 +1068,7 @@ export const getSuggestionAudit = (
       eligibleTxs.push({
         id: t.id,
         date: effectiveDate,
+        time: effectiveTime,
         description: t.description || 'Receita',
         category: t.category,
         amount: Number(t.amount || 0),
@@ -972,6 +1086,7 @@ export const getSuggestionAudit = (
       deductedExpenses.push({
         id: t.id,
         date: effectiveDate,
+        time: effectiveTime,
         description: t.description || t.category || 'Despesa',
         category: t.category,
         amount: amt,
@@ -1028,9 +1143,11 @@ export const getSuggestionAudit = (
 
   if (ruleStartDate) {
     const formattedRuleDate = new Date(ruleStartDate + 'T00:00:00').toLocaleDateString('pt-BR');
-    const timeSuffix = cutoffMs !== null
-      ? ` às ${new Date(cutoffMs).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`
-      : '';
+    const timeSuffix = ruleStartTime
+      ? ` às ${ruleStartTime}`
+      : cutoffMs !== null
+        ? ` às ${new Date(cutoffMs).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`
+        : '';
     details.push(`Vigência da regra ativa: A partir de ${formattedRuleDate}${timeSuffix} (lançamentos anteriores desconsiderados).`);
   }
 
@@ -1040,7 +1157,8 @@ export const getSuggestionAudit = (
   } else if (!resetOnWithdraw) {
     details.push('Reinício de sugestão ao resgatar DESATIVADO: resgates não zeram a sugestão atual.');
   } else if (cleanLastWDate) {
-    details.push(`Contagem reiniciada após o último resgate pago em ${new Date(cleanLastWDate + 'T00:00:00').toLocaleDateString('pt-BR')}.`);
+    const wTimeSuffix = wPoint?.time ? ` às ${wPoint.time}` : '';
+    details.push(`Contagem reiniciada após o último resgate pago em ${new Date(cleanLastWDate + 'T00:00:00').toLocaleDateString('pt-BR')}${wTimeSuffix}.`);
   }
   if (pendingWithdrawalsIgnored > 0) {
     details.push(`${pendingWithdrawalsIgnored} resgate(s) recorrente(s) pendente(s) foram desconsiderados até a sua quitação.`);
@@ -1063,6 +1181,7 @@ export const getSuggestionAudit = (
     boostExtraAportes,
     categories: res.regra_categorias || [],
     ruleStartDate,
+    ruleStartTime,
     cutoffAt: cutoffAtIso,
     details,
     totalSuggested: calculated,
@@ -1078,6 +1197,7 @@ export const getSuggestionAudit = (
     ignoredPersonalExpensesTotal: Math.round(ignoredPersonalExpensesTotal * 100) / 100,
     ignoredPersonalExpensesCount,
     lastWithdrawalDate: cleanLastWDate,
+    lastWithdrawalTime: wPoint?.time || null,
     resetOnWithdraw,
     pendingWithdrawalsIgnored,
     grossRevenue,
@@ -1139,10 +1259,10 @@ export const getEffectiveAportesInPeriod = (
   customDateRange: { start: string; end: string },
   options?: { includeBoostExtras?: boolean; ignoreBoost?: boolean }
 ): number => {
-  const lastWDate = getLatestWithdrawalDate(res, reserveTransactions);
-  const cleanLastWDate = lastWDate ? toDateInputString(lastWDate) : null;
+  const wPoint = getLatestWithdrawalPoint(res, reserveTransactions);
   const ruleStartDate = toDateInputString(res.regra_inicio_validade);
   const cutoffMs = getRuleCutoffTimestamp(res, ruleStartDate);
+  const ruleStartTime = getRuleEffectiveStartTime(res, ruleStartDate, cutoffMs);
   const treatAsBoostActive = options?.ignoreBoost ? false : isReserveBoostActive(res);
   const total = (reserveTransactions || [])
     .filter(rt => {
@@ -1154,12 +1274,9 @@ export const getEffectiveAportesInPeriod = (
                       rt.category !== 'Rendimento';
       if (!matches) return false;
       const rtDay = toDateInputString(rt.date) || rt.date;
-      if (cleanLastWDate && rtDay <= cleanLastWDate) return false;
-      if (ruleStartDate && rtDay < ruleStartDate) return false;
-      if (cutoffMs !== null && ruleStartDate && rtDay === ruleStartDate && rt.created_at) {
-        const rtCreatedMs = new Date(rt.created_at).getTime();
-        if (!isNaN(rtCreatedMs) && rtCreatedMs < cutoffMs) return false;
-      }
+      const rtTime = getEffectiveItemTime(rt);
+      if (isItemBeforeWithdrawalPoint(rtDay, rtTime, rt.created_at, wPoint)) return false;
+      if (isItemBeforeRuleBoundary(rtDay, rtTime, rt.created_at, ruleStartDate, ruleStartTime, cutoffMs)) return false;
       // Regra de negócio: Aportes manuais NÃO abatem o cálculo da sugestão das regras
       if (isManualAporte(rt)) return false;
       return true;

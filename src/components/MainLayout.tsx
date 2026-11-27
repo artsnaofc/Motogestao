@@ -42,7 +42,27 @@ export function MainLayout({ children }: { children?: React.ReactNode }) {
   const navigate = useNavigate();
   const [syncQueue, setSyncQueue] = useState<SyncTask[]>([]);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [isStandalone, setIsStandalone] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return (
+      window.matchMedia?.('(display-mode: standalone)').matches === true ||
+      Boolean((window.navigator as { standalone?: boolean }).standalone)
+    );
+  });
   const { settings } = useData();
+
+  React.useEffect(() => {
+    const mediaQuery = window.matchMedia?.('(display-mode: standalone)');
+    if (!mediaQuery) return;
+    const updateStandalone = () => {
+      setIsStandalone(
+        mediaQuery.matches || Boolean((window.navigator as { standalone?: boolean }).standalone)
+      );
+    };
+    updateStandalone();
+    mediaQuery.addEventListener?.('change', updateStandalone);
+    return () => mediaQuery.removeEventListener?.('change', updateStandalone);
+  }, []);
 
   // Watch session inactivity according to system settings timeout
   useSessionInactivity();
@@ -385,7 +405,7 @@ export function MainLayout({ children }: { children?: React.ReactNode }) {
         {/* Main Content Area (Dedicated mobile scroll container so bottom nav never detaches) */}
         <main
           id="main-scroll-container"
-          className="flex-1 min-h-0 overflow-y-auto overscroll-y-contain md:overflow-visible w-full md:pl-64 lg:pl-72 pb-10 md:pb-12 flex flex-col min-w-0"
+          className="flex-1 min-h-0 overflow-y-auto overscroll-y-contain md:overflow-visible w-full md:pl-64 lg:pl-72 pb-3 md:pb-12 flex flex-col min-w-0"
         >
           <BroadcastBanner />
           <div className="flex-1 min-w-0">
@@ -398,8 +418,10 @@ export function MainLayout({ children }: { children?: React.ReactNode }) {
           aria-label="Navegação inferior móvel"
           className="md:hidden shrink-0 relative w-full border-t border-border/80 bg-background/95 backdrop-blur-xl z-40 px-2 shadow-[0_-4px_16px_rgba(0,0,0,0.08)] select-none touch-manipulation"
           style={{
-            paddingTop: '4px',
-            paddingBottom: 'max(6px, env(safe-area-inset-bottom, 0px))',
+            paddingTop: '5px',
+            paddingBottom: isStandalone
+              ? 'max(6px, min(14px, env(safe-area-inset-bottom, 0px)))'
+              : '6px',
           }}
         >
           <div className="flex items-center justify-around max-w-md mx-auto">
@@ -452,7 +474,7 @@ export function MainLayout({ children }: { children?: React.ReactNode }) {
             })()}
 
             {/* Slot 3 (Central CTA: Lançar) */}
-            <div className="flex-1 flex flex-col items-center justify-center -mt-1.5">
+            <div className="flex-1 flex flex-col items-center justify-center -mt-1">
               <Link
                 to="/add"
                 onClick={() => setIsMobileMenuOpen(false)}

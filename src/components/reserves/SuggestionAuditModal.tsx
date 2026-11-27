@@ -391,7 +391,11 @@ export function SuggestionAuditModal({
                   <span className="font-bold">•</span>
                   <span>
                     <strong>Início da vigência da regra:</strong> {new Date(audit.ruleStartDate + 'T00:00:00').toLocaleDateString('pt-BR')}
-                    {audit.cutoffAt ? ` às ${new Date(audit.cutoffAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}` : ''} (Sugestões reiniciadas a partir deste momento).
+                    {audit.ruleStartTime
+                      ? ` às ${audit.ruleStartTime}`
+                      : audit.cutoffAt
+                        ? ` às ${new Date(audit.cutoffAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`
+                        : ''} (Sugestões reiniciadas a partir deste momento).
                   </span>
                 </li>
               )}
@@ -413,7 +417,8 @@ export function SuggestionAuditModal({
                 <li className="flex items-start gap-2 text-foreground">
                   <span className="text-amber-500 font-bold">•</span>
                   <span>
-                    <strong>Último resgate pago (quitado):</strong> {new Date(audit.lastWithdrawalDate + 'T00:00:00').toLocaleDateString('pt-BR')}. Apenas transações posteriores a esta data são somadas para sugestão.
+                    <strong>Último resgate pago (quitado):</strong> {new Date(audit.lastWithdrawalDate + 'T00:00:00').toLocaleDateString('pt-BR')}
+                    {audit.lastWithdrawalTime ? ` às ${audit.lastWithdrawalTime}` : ''}. Apenas transações posteriores a este momento são somadas para sugestão.
                   </span>
                 </li>
               ) : (
@@ -468,6 +473,7 @@ export function SuggestionAuditModal({
                       </div>
                       <span className="text-[10px] text-muted-foreground">
                         {new Date(exp.date + 'T00:00:00').toLocaleDateString('pt-BR')}
+                        {exp.time ? ` às ${exp.time}` : ''}
                       </span>
                     </div>
                     <span className="font-bold text-rose-600 dark:text-rose-400 font-mono shrink-0">
@@ -520,6 +526,7 @@ export function SuggestionAuditModal({
                       </div>
                       <span className="text-[10px] text-muted-foreground">
                         {new Date(tx.date + 'T00:00:00').toLocaleDateString('pt-BR')}
+                        {tx.time ? ` às ${tx.time}` : ''}
                         {tx.km ? ` • ${tx.km} km` : ''}
                       </span>
                     </div>

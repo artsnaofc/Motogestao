@@ -7,6 +7,7 @@ import { syncQueueManager } from '../lib/syncQueue';
 import { toast } from '../lib/toast';
 import { getEffectiveUserId } from '../lib/authUtils';
 import { planningStorage } from '../lib/planningStorage';
+import { compareByDateTimeDesc, getRtTimeMap, getTxTimeMap } from '../lib/timeUtils';
 
 // Segregated Contexts & Hooks
 import { QuotesProvider, useQuotes } from './QuotesContext';
@@ -489,21 +490,24 @@ export function DataProvider({ children, userId: propUserId }: { children: React
             }
           }
 
-          // Sort chronologically (newest first)
-          merged.sort((a, b) => {
-            const dateA = a.date || '';
-            const dateB = b.date || '';
-            if (dateA !== dateB) return dateB.localeCompare(dateA);
-            return (b.created_at || '').localeCompare(a.created_at || '');
+          const txTimeMap = getTxTimeMap(userId);
+          const hydratedTxMerged = merged.map(txItem => {
+            if (!txItem.time && txTimeMap[txItem.id]) {
+              return { ...txItem, time: txTimeMap[txItem.id] };
+            }
+            return txItem;
           });
 
-          setTransactions(merged);
-          cacheManager.set(`transactions_${userId}`, merged, undefined, 'transactions');
+          // Sort chronologically (newest first by date + time + created_at)
+          hydratedTxMerged.sort(compareByDateTimeDesc);
+
+          setTransactions(hydratedTxMerged);
+          cacheManager.set(`transactions_${userId}`, hydratedTxMerged, undefined, 'transactions');
           cacheManager.set('last_known_owner_id', userId, undefined, 'transactions');
-          cacheManager.set('last_known_transactions', merged, undefined, 'transactions');
+          cacheManager.set('last_known_transactions', hydratedTxMerged, undefined, 'transactions');
 
           // Map any transactions with card_id to local txCardMap
-          const cardTxs = merged.filter(t => t.card_id);
+          const cardTxs = hydratedTxMerged.filter(t => t.card_id);
           if (cardTxs.length > 0) {
             const cardMapUpdates: Record<string, string> = {};
             cardTxs.forEach(t => {
@@ -580,6 +584,9 @@ export function DataProvider({ children, userId: propUserId }: { children: React
               if (b.regra_base !== undefined && (nextItem.regra_base === undefined || nextItem.regra_base === 'bruto')) {
                 nextItem.regra_base = b.regra_base;
               }
+              if ((nextItem.regra_inicio_hora === undefined || nextItem.regra_inicio_hora === null) && b.regra_inicio_hora !== undefined) {
+                nextItem.regra_inicio_hora = b.regra_inicio_hora;
+              }
               return nextItem;
             });
 
@@ -638,12 +645,19 @@ export function DataProvider({ children, userId: propUserId }: { children: React
             boostExtraMap = rawExtra ? JSON.parse(rawExtra) : (cacheManager.get(`boost_aporte_extras_map_${userId}`) || {});
           } catch {}
 
+          const rtTimeMap = getRtTimeMap(userId);
           const hydratedRts = merged.map(rt => {
-            if (rt.boost_extra === undefined && boostExtraMap[rt.id] !== undefined) {
-              return { ...rt, boost_extra: boostExtraMap[rt.id] };
+            const nextRt = { ...rt };
+            if (nextRt.boost_extra === undefined && boostExtraMap[nextRt.id] !== undefined) {
+              nextRt.boost_extra = boostExtraMap[nextRt.id];
             }
-            return rt;
+            if (!nextRt.time && rtTimeMap[nextRt.id]) {
+              nextRt.time = rtTimeMap[nextRt.id];
+            }
+            return nextRt;
           });
+
+          hydratedRts.sort(compareByDateTimeDesc);
 
           setReserveTransactions(hydratedRts);
           cacheManager.set(`reserve_transactions_${userId}`, hydratedRts, undefined, 'reserves');

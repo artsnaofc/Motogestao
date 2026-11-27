@@ -34,6 +34,7 @@ import {
   parseLocalDate,
   getTodayLocalDateStr
 } from './reserveUtils';
+import { getCurrentLocalTimeStr, normalizeTimeStr } from '../../lib/timeUtils';
 import { toast } from '@/lib/toast';
 
 // ==========================================
@@ -49,6 +50,7 @@ interface AporteManualModalProps {
   onSubmit: (data: {
     amount: number;
     date: string;
+    time?: string | null;
     description: string;
     isSuggestion?: boolean;
   }) => Promise<void>;
@@ -65,6 +67,7 @@ export function AporteManualModal({
 }: AporteManualModalProps) {
   const [amount, setAmount] = useState('');
   const [date, setDate] = useState(getTodayLocalDateStr());
+  const [time, setTime] = useState(getCurrentLocalTimeStr());
   const [description, setDescription] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -73,6 +76,7 @@ export function AporteManualModal({
       setDescription(initialDescription || (isSuggestion ? `[Aporte Sugerido] Regra calculada: ${reserve.name}` : `[Aporte Manual] ${reserve.name}`));
       setAmount(initialAmount && initialAmount > 0 ? String(Math.round(initialAmount * 100) / 100) : '');
       setDate(getTodayLocalDateStr());
+      setTime(getCurrentLocalTimeStr());
     }
   }, [reserve, isOpen, initialAmount, initialDescription, isSuggestion]);
 
@@ -99,6 +103,7 @@ export function AporteManualModal({
       await onSubmit({
         amount: val,
         date,
+        time: normalizeTimeStr(time) || getCurrentLocalTimeStr(),
         description: description || (isSuggestion ? `[Aporte Sugerido] ${reserve.name}` : `[Aporte Manual] ${reserve.name}`),
         isSuggestion: Boolean(isSuggestion),
       });
@@ -258,14 +263,37 @@ export function AporteManualModal({
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-xs font-bold text-muted-foreground">Descrição</label>
-              <Input
-                placeholder="Ex: Aporte extra"
-                value={description}
-                onChange={e => setDescription(e.target.value)}
-                className="h-10 text-xs rounded-xl"
-              />
+              <label className="text-xs font-bold text-muted-foreground">Hora</label>
+              <div className="flex items-center gap-1.5">
+                <div className="relative flex-1">
+                  <Clock className="w-3.5 h-3.5 text-muted-foreground absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <Input
+                    type="time"
+                    required
+                    value={time}
+                    onChange={e => setTime(e.target.value)}
+                    className="pl-8 h-10 text-xs rounded-xl font-mono"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setTime(getCurrentLocalTimeStr())}
+                  className="h-10 px-2.5 rounded-xl border border-border/80 bg-card hover:bg-muted text-[11px] font-bold text-emerald-600 dark:text-emerald-400 shrink-0 cursor-pointer"
+                >
+                  Agora
+                </button>
+              </div>
             </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-xs font-bold text-muted-foreground">Descrição</label>
+            <Input
+              placeholder="Ex: Aporte extra"
+              value={description}
+              onChange={e => setDescription(e.target.value)}
+              className="h-10 text-xs rounded-xl"
+            />
           </div>
 
           {/* Actions */}
@@ -303,6 +331,7 @@ interface WithdrawModalProps {
   onSubmit: (data: {
     amount: number;
     date: string;
+    time?: string | null;
     category: string;
     description: string;
     payment_status?: 'paid' | 'pending';
@@ -327,6 +356,7 @@ export function WithdrawModal({
   const [destinationMode, setDestinationMode] = useState<'expense' | 'transfer_to_cash'>(initialMode);
   const [amount, setAmount] = useState('');
   const [date, setDate] = useState(getTodayLocalDateStr());
+  const [time, setTime] = useState(getCurrentLocalTimeStr());
   const [category, setCategory] = useState('');
   const [description, setDescription] = useState('');
   const [paymentStatus, setPaymentStatus] = useState<'paid' | 'pending'>('paid');
@@ -363,6 +393,7 @@ export function WithdrawModal({
       setAmount('');
       const today = getTodayLocalDateStr();
       setDate(today);
+      setTime(getCurrentLocalTimeStr());
       setDueDate(today);
       setPaymentDate(today);
       setPaymentStatus('paid');
@@ -424,6 +455,7 @@ export function WithdrawModal({
       await onSubmit({
         amount: val,
         date,
+        time: normalizeTimeStr(time) || getCurrentLocalTimeStr(),
         category: finalCategory,
         description: description || (isTransfer ? `Transferência para o Caixa: ${reserve.name}` : `Utilização de reserva: ${reserve.name}`),
         payment_status: isTransfer ? 'paid' : paymentStatus,
@@ -568,16 +600,41 @@ export function WithdrawModal({
               </p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-muted-foreground">Data</label>
-                <Input
-                  type="date"
-                  required
-                  value={date}
-                  onChange={e => setDate(e.target.value)}
-                  className="h-10 text-xs rounded-xl"
-                />
+            <div className="space-y-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-muted-foreground">Data</label>
+                  <Input
+                    type="date"
+                    required
+                    value={date}
+                    onChange={e => setDate(e.target.value)}
+                    className="h-10 text-xs rounded-xl"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-muted-foreground">Hora</label>
+                  <div className="flex items-center gap-1.5">
+                    <div className="relative flex-1">
+                      <Clock className="w-3.5 h-3.5 text-muted-foreground absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                      <Input
+                        type="time"
+                        required
+                        value={time}
+                        onChange={e => setTime(e.target.value)}
+                        className="pl-8 h-10 text-xs rounded-xl font-mono"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setTime(getCurrentLocalTimeStr())}
+                      className="h-10 px-2.5 rounded-xl border border-border/80 bg-card hover:bg-muted text-[11px] font-bold text-rose-600 dark:text-rose-400 shrink-0 cursor-pointer"
+                    >
+                      Agora
+                    </button>
+                  </div>
+                </div>
               </div>
 
               <div className="space-y-1.5">
@@ -611,20 +668,45 @@ export function WithdrawModal({
             </div>
           )}
 
-          {/* Date when in transfer mode */}
+          {/* Date & Time when in transfer mode */}
           {isTransfer && (
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-muted-foreground">Data da Transferência</label>
-              <Input
-                type="date"
-                required
-                value={date}
-                onChange={e => {
-                  setDate(e.target.value);
-                  setPaymentDate(e.target.value);
-                }}
-                className="h-10 text-xs rounded-xl"
-              />
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-muted-foreground">Data da Transferência</label>
+                <Input
+                  type="date"
+                  required
+                  value={date}
+                  onChange={e => {
+                    setDate(e.target.value);
+                    setPaymentDate(e.target.value);
+                  }}
+                  className="h-10 text-xs rounded-xl"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-muted-foreground">Hora</label>
+                <div className="flex items-center gap-1.5">
+                  <div className="relative flex-1">
+                    <Clock className="w-3.5 h-3.5 text-muted-foreground absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    <Input
+                      type="time"
+                      required
+                      value={time}
+                      onChange={e => setTime(e.target.value)}
+                      className="pl-8 h-10 text-xs rounded-xl font-mono"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setTime(getCurrentLocalTimeStr())}
+                    className="h-10 px-2.5 rounded-xl border border-border/80 bg-card hover:bg-muted text-[11px] font-bold text-emerald-600 dark:text-emerald-400 shrink-0 cursor-pointer"
+                  >
+                    Agora
+                  </button>
+                </div>
+              </div>
             </div>
           )}
 
@@ -896,6 +978,7 @@ interface UpdateBalanceModalProps {
   onSubmit: (data: {
     newBalance: number;
     date: string;
+    time?: string | null;
     type: 'rendimento' | 'aporte' | 'ajuste';
     description: string;
   }) => Promise<void>;
@@ -909,6 +992,7 @@ export function UpdateBalanceModal({
 }: UpdateBalanceModalProps) {
   const [newBalanceInput, setNewBalanceInput] = useState('');
   const [date, setDate] = useState(getTodayLocalDateStr());
+  const [time, setTime] = useState(getCurrentLocalTimeStr());
   const [description, setDescription] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -917,6 +1001,7 @@ export function UpdateBalanceModal({
       setNewBalanceInput(String(Math.round((reserve.saldo_atual || 0) * 100) / 100));
       setDescription(`Atualização de saldo / rendimento - ${reserve.name}`);
       setDate(getTodayLocalDateStr());
+      setTime(getCurrentLocalTimeStr());
     }
   }, [reserve, isOpen]);
 
@@ -938,6 +1023,7 @@ export function UpdateBalanceModal({
       await onSubmit({
         newBalance: newBalanceNum,
         date,
+        time: normalizeTimeStr(time) || getCurrentLocalTimeStr(),
         type: diff >= 0 ? 'rendimento' : 'ajuste',
         description: description || `Ajuste de saldo: ${formatCurrency(currentBalance)} -> ${formatCurrency(newBalanceNum)}`
       });
@@ -1005,15 +1091,40 @@ export function UpdateBalanceModal({
             </strong>
           </div>
 
-          <div className="space-y-1.5">
-            <label className="text-xs font-bold text-muted-foreground">Data do Ajuste / Fechamento</label>
-            <Input
-              type="date"
-              required
-              value={date}
-              onChange={e => setDate(e.target.value)}
-              className="h-10 text-xs rounded-xl"
-            />
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-muted-foreground">Data do Ajuste</label>
+              <Input
+                type="date"
+                required
+                value={date}
+                onChange={e => setDate(e.target.value)}
+                className="h-10 text-xs rounded-xl"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-muted-foreground">Hora</label>
+              <div className="flex items-center gap-1.5">
+                <div className="relative flex-1">
+                  <Clock className="w-3.5 h-3.5 text-muted-foreground absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <Input
+                    type="time"
+                    required
+                    value={time}
+                    onChange={e => setTime(e.target.value)}
+                    className="pl-8 h-10 text-xs rounded-xl font-mono"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setTime(getCurrentLocalTimeStr())}
+                  className="h-10 px-2.5 rounded-xl border border-border/80 bg-card hover:bg-muted text-[11px] font-bold text-blue-600 dark:text-blue-400 shrink-0 cursor-pointer"
+                >
+                  Agora
+                </button>
+              </div>
+            </div>
           </div>
 
           <div className="space-y-1.5">
@@ -1138,6 +1249,7 @@ export function RuleHistoryModal({
                       </span>
                       <span className="text-muted-foreground text-[10px]">
                         Até {formatDateDisplay(rule.end_date)}
+                        {rule.end_time ? ` às ${rule.end_time}` : ''}
                       </span>
                     </div>
                     {rule.regra_categorias && rule.regra_categorias.length > 0 && (

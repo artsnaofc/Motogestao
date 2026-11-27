@@ -95,6 +95,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { getTodayLocalDateStr } from '../lib/utils';
+import { getEffectiveItemTime, combineLocalDateAndTimeMs, compareByDateTimeDesc } from '../lib/timeUtils';
 import { getEffectiveUserId } from '../lib/authUtils';
 import { syncQueueManager } from '../lib/syncQueue';
 import { planningStorage, ExpenseBudgetsMap } from '../lib/planningStorage';
@@ -1014,6 +1015,7 @@ export function Dashboard() {
           type: isRendimento ? 'income' : 'expense' as const,
           amount: Number(rt.amount),
           date: rt.date,
+          time: rt.time || null,
           category: effectiveCategory,
           description: rt.description || (isRendimento ? `Rendimento da ${reserveName}` : (isUtilizacao ? `Utilização da ${reserveName}` : `Aporte para ${reserveName}`)),
           isReserveAporte: rt.type === 'aporte',
@@ -1103,14 +1105,17 @@ export function Dashboard() {
         ? ((t as any).due_date || t.date)
         : ((t as any).payment_date || t.date);
       const dateStr = effectiveDateStr.split('T')[0];
-      const parsedDate = parseLocalDate(effectiveDateStr);
+      const timeStr = getEffectiveItemTime(t);
+      const ts = combineLocalDateAndTimeMs(dateStr, timeStr, '00:00');
       return {
         ...t,
         date: dateStr,
+        time: timeStr || t.time || null,
         originalDate: t.date,
         _dateStr: dateStr,
+        _timeStr: timeStr,
         _monthStr: dateStr.substring(0, 7),
-        _ts: parsedDate.getTime(),
+        _ts: ts,
       };
     });
   }, [allTransactions, settings]);
@@ -1119,7 +1124,7 @@ export function Dashboard() {
   const ignoredSummary = useMemo(() => {
     const allItems = (allTransactionsAdjusted || [])
       .filter(t => Boolean(t.ignore_in_charts))
-      .sort((a: any, b: any) => (b._ts || 0) - (a._ts || 0));
+      .sort((a: any, b: any) => compareByDateTimeDesc(a, b));
 
     const periodItems = globalPeriod === 'all'
       ? allItems
@@ -1746,21 +1751,26 @@ export function Dashboard() {
 
   const sortedReservesByLastTransaction = useMemo(() => {
     if (!reserves) return [];
-    
-    // Create a map of reserve_id to its latest transaction date
-    const latestTxMap: Record<string, string> = {};
+
+    // Create a map of reserve_id to its latest transaction (by date + time)
+    const latestTxMap: Record<string, (typeof reserveTransactions)[number]> = {};
     (reserveTransactions || []).forEach(rt => {
       const currentLatest = latestTxMap[rt.reserve_id];
-      if (!currentLatest || rt.date > currentLatest) {
-        latestTxMap[rt.reserve_id] = rt.date;
+      if (!currentLatest || compareByDateTimeDesc(rt, currentLatest) < 0) {
+        latestTxMap[rt.reserve_id] = rt;
       }
     });
 
     return [...reserves].sort((a, b) => {
-      const dateA = latestTxMap[a.id] || '';
-      const dateB = latestTxMap[b.id] || '';
-      if (dateA !== dateB) {
-        return dateB.localeCompare(dateA); // most recent first
+      const txA = latestTxMap[a.id];
+      const txB = latestTxMap[b.id];
+      if (txA && txB) {
+        const cmp = compareByDateTimeDesc(txA, txB);
+        if (cmp !== 0) return cmp;
+      } else if (txA) {
+        return -1;
+      } else if (txB) {
+        return 1;
       }
       return a.name.localeCompare(b.name);
     });
@@ -1786,7 +1796,7 @@ export function Dashboard() {
       }
       const lastTx = (investmentTransactions || [])
         .filter(t => t.ticker === ticker && (t as any).payment_status !== 'pending')
-        .sort((a, b) => (b.date || '').localeCompare(a.date || ''))[0];
+        .sort(compareByDateTimeDesc)[0];
       const fallbackPrice = lastTx ? Number(lastTx.price) : 0;
       return acc + (fallbackPrice * quantity);
     }, 0);
@@ -3569,7 +3579,7 @@ export function Dashboard() {
         // Find last transaction up to endOfMonthDate
         const lastTx = investmentTransactions
           .filter(t => t.ticker === ticker && (t as any).payment_status !== 'pending' && parseLocalDate(t.date) <= endOfMonthDate)
-          .sort((a, b) => (b.date || '').localeCompare(a.date || ''))[0];
+          .sort(compareByDateTimeDesc)[0];
         const fallbackPrice = lastTx ? Number(lastTx.price) : 0;
         const price = quotes[ticker] || fallbackPrice;
         return acc + (price * quantity);
@@ -8490,6 +8500,7 @@ export function Dashboard() {
                         )}
                         <span className="text-[10px] text-muted-foreground font-mono">
                           {format(parseLocalDate(item._dateStr || item.date), 'dd/MM/yyyy')}
+                          {item._timeStr ? ` às ${item._timeStr}` : ''}
                         </span>
                       </div>
                       <p className="text-xs font-semibold text-foreground truncate">

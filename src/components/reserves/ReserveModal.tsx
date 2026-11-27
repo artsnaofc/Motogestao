@@ -14,8 +14,10 @@ import {
   Calculator,
   Calendar,
   CalendarDays,
-  Rocket
+  Rocket,
+  Clock
 } from 'lucide-react';
+import { getCurrentLocalTimeStr, normalizeTimeStr } from '../../lib/timeUtils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -70,6 +72,7 @@ export function ReserveModal({
   const [regraValor, setRegraValor] = useState('');
   const [regraCategorias, setRegraCategorias] = useState<string[]>([]);
   const [regraInicioValidade, setRegraInicioValidade] = useState<string>(getTodayLocalDateStr());
+  const [regraInicioHora, setRegraInicioHora] = useState<string>(getCurrentLocalTimeStr());
   const [requireCategoryOnUse, setRequireCategoryOnUse] = useState<boolean>(true);
   const [defaultUseCategory, setDefaultUseCategory] = useState<string>('');
   const [boostAtivo, setBoostAtivo] = useState<boolean>(false);
@@ -144,6 +147,7 @@ export function ReserveModal({
         setRegraCategorias(reserveToEdit.regra_categorias && reserveToEdit.regra_categorias.length > 0 ? reserveToEdit.regra_categorias : allCategories);
         const initValidade = toDateInputString(reserveToEdit.regra_inicio_validade) || getTodayLocalDateStr();
         setRegraInicioValidade(initValidade);
+        setRegraInicioHora(normalizeTimeStr(reserveToEdit.regra_inicio_hora) || getCurrentLocalTimeStr());
         
         const reqCat = reserveToEdit.require_category_on_use !== undefined
           ? Boolean(reserveToEdit.require_category_on_use)
@@ -185,6 +189,7 @@ export function ReserveModal({
         setRegraValor('');
         setRegraCategorias(allCategories);
         setRegraInicioValidade(getTodayLocalDateStr());
+        setRegraInicioHora(getCurrentLocalTimeStr());
         setRequireCategoryOnUse(true);
         setDefaultUseCategory(profileExpenseCategories[0] || 'Manutenção');
         setBoostAtivo(false);
@@ -270,6 +275,7 @@ export function ReserveModal({
         regra_valor: regraAtiva && parsedRegraVal !== undefined && !isNaN(parsedRegraVal) ? parsedRegraVal : null,
         regra_categorias: regraAtiva ? regraCategorias : [],
         regra_inicio_validade: regraAtiva ? (toDateInputString(regraInicioValidade) || getTodayLocalDateStr()) : null,
+        regra_inicio_hora: regraAtiva ? (normalizeTimeStr(regraInicioHora) || getCurrentLocalTimeStr()) : null,
         boost_ativo: regraAtiva ? boostAtivo : false,
         boost_tipo: boostTipo,
         boost_valor: parsedBoost > 0 ? parsedBoost : getDefaultBoostValue(regraTipo || 'km', boostTipo),
@@ -454,6 +460,7 @@ export function ReserveModal({
                   regra_valor: regraAtiva ? parsedRuleVal : null,
                   regra_categorias: regraAtiva ? regraCategorias : [],
                   regra_inicio_validade: regraAtiva ? (toDateInputString(regraInicioValidade) || getTodayLocalDateStr()) : undefined,
+                  regra_inicio_hora: regraAtiva ? (normalizeTimeStr(regraInicioHora) || getCurrentLocalTimeStr()) : null,
                   boost_ativo: regraAtiva ? boostAtivo : false,
                   boost_tipo: boostTipo,
                   boost_valor: parsedBoostSim,
@@ -793,6 +800,7 @@ export function ReserveModal({
                     setRegraAtiva(checked);
                     if (checked && reserveToEdit && !reserveToEdit.regra_ativa) {
                       setRegraInicioValidade(getTodayLocalDateStr());
+                      setRegraInicioHora(getCurrentLocalTimeStr());
                     }
                   }}
                   className="w-5 h-5 rounded text-indigo-600 accent-indigo-600 cursor-pointer"
@@ -889,18 +897,38 @@ export function ReserveModal({
                     />
                   </div>
 
-                  {/* Data de Início da Vigência */}
+                  {/* Data e Hora de Início da Vigência */}
                   <div className="space-y-1.5 text-left">
                     <label className="text-xs font-bold text-muted-foreground flex items-center justify-between">
-                      <span>Início da Vigência da Regra:</span>
-                      <span className="text-[10px] text-indigo-500 font-medium">A partir desta data</span>
+                      <span>Início da Vigência da Regra (Data e Hora):</span>
+                      <span className="text-[10px] text-indigo-500 font-medium">A partir deste momento</span>
                     </label>
-                    <Input
-                      type="date"
-                      value={regraInicioValidade}
-                      onChange={e => setRegraInicioValidade(e.target.value)}
-                      className="h-10 text-xs rounded-xl font-mono"
-                    />
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <Input
+                        type="date"
+                        value={regraInicioValidade}
+                        onChange={e => setRegraInicioValidade(e.target.value)}
+                        className="h-10 text-xs rounded-xl font-mono"
+                      />
+                      <div className="flex items-center gap-1.5">
+                        <div className="relative flex-1">
+                          <Clock className="w-3.5 h-3.5 text-muted-foreground absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                          <Input
+                            type="time"
+                            value={regraInicioHora}
+                            onChange={e => setRegraInicioHora(e.target.value)}
+                            className="pl-8 h-10 text-xs rounded-xl font-mono"
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setRegraInicioHora(getCurrentLocalTimeStr())}
+                          className="h-10 px-2.5 rounded-xl border border-border/80 bg-card hover:bg-muted text-[11px] font-bold text-indigo-600 dark:text-indigo-400 shrink-0 cursor-pointer"
+                        >
+                          Agora
+                        </button>
+                      </div>
+                    </div>
                   </div>
 
                   {/* Category Selection */}

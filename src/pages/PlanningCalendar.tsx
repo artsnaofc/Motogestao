@@ -52,6 +52,14 @@ import {
 } from '../lib/recurrenceUtils';
 import { findMatchingReserveForExpense } from '../components/reserves/reserveUtils';
 import { getTodayLocalDateStr } from '../lib/utils';
+import {
+  getCurrentLocalTimeStr,
+  getEffectiveItemTime,
+  normalizeTimeStr,
+  compareByDateTimeAsc,
+  setTxTimeEntry,
+  setRtTimeEntry,
+} from '../lib/timeUtils';
 import { getEffectiveUserId } from '../lib/authUtils';
 import { syncQueueManager } from '../lib/syncQueue';
 import { cacheManager } from '../lib/cacheManager';
@@ -109,6 +117,7 @@ interface NormalizedPlannedItem {
   id: string;
   kind: 'expense' | 'income';
   dateStr: string;
+  timeStr?: string | null;
   monthKey: string;
   amount: number;
   category: string;
@@ -187,6 +196,7 @@ export function PlanningCalendar() {
   const [cardInvoiceTarget, setCardInvoiceTarget] = useState<CardInvoiceTarget>('auto');
   const [cardRepeatAuto, setCardRepeatAuto] = useState<boolean>(false);
   const [entryDate, setEntryDate] = useState<string>(getTodayLocalDateStr());
+  const [entryTime, setEntryTime] = useState<string>(() => getCurrentLocalTimeStr());
   const [entryAmount, setEntryAmount] = useState<string>('');
   const [amountInputType, setAmountInputType] = useState<'total' | 'installment'>('total');
   const [installments, setInstallments] = useState<string>('1');
@@ -204,6 +214,7 @@ export function PlanningCalendar() {
   const [editingItem, setEditingItem] = useState<NormalizedPlannedItem | null>(null);
   const [editAmount, setEditAmount] = useState<string>('');
   const [editDate, setEditDate] = useState<string>('');
+  const [editTime, setEditTime] = useState<string>('');
   const [editCategory, setEditCategory] = useState<string>('');
   const [editDescription, setEditDescription] = useState<string>('');
   const [editStatus, setEditStatus] = useState<'paid' | 'pending'>('pending');
@@ -226,6 +237,7 @@ export function PlanningCalendar() {
     totalPending: number;
   } | null>(null);
   const [settleInvoiceDate, setSettleInvoiceDate] = useState<string>(getTodayLocalDateStr());
+  const [settleInvoiceTime, setSettleInvoiceTime] = useState<string>(() => getCurrentLocalTimeStr());
   const [settleInvoiceReserveId, setSettleInvoiceReserveId] = useState<string>('__cash__');
   const [settlingInvoice, setSettlingInvoice] = useState<boolean>(false);
 
@@ -248,6 +260,7 @@ export function PlanningCalendar() {
     | null
   >(null);
   const [payConfirmDate, setPayConfirmDate] = useState<string>(getTodayLocalDateStr());
+  const [payConfirmTime, setPayConfirmTime] = useState<string>(() => getCurrentLocalTimeStr());
   const [payConfirmReserveId, setPayConfirmReserveId] = useState<string>('__cash__');
   const [confirmingPay, setConfirmingPay] = useState(false);
 
@@ -478,6 +491,7 @@ export function PlanningCalendar() {
           id: t.id,
           kind: 'income',
           dateStr: dueStr,
+          timeStr: getEffectiveItemTime(t),
           monthKey: dueStr.slice(0, 7),
           amount: Number(t.amount) || 0,
           category: t.category || 'Receita',
@@ -521,6 +535,7 @@ export function PlanningCalendar() {
         id: t.id,
         kind: 'expense',
         dateStr: dueStr,
+        timeStr: getEffectiveItemTime(t),
         monthKey: dueStr.slice(0, 7),
         amount: Number(t.amount) || 0,
         category: t.category || 'Outros',
@@ -567,6 +582,7 @@ export function PlanningCalendar() {
         id: rt.id,
         kind: 'expense',
         dateStr: dueStr,
+        timeStr: getEffectiveItemTime(rt),
         monthKey: dueStr.slice(0, 7),
         amount: Number(rt.amount) || 0,
         category: rt.category || 'Reserva',
@@ -582,7 +598,12 @@ export function PlanningCalendar() {
       });
     });
 
-    return items.sort((a, b) => a.dateStr.localeCompare(b.dateStr));
+    return items.sort((a, b) =>
+      compareByDateTimeAsc(
+        { id: a.id, date: a.dateStr, time: a.timeStr, created_at: a.rawTx?.created_at },
+        { id: b.id, date: b.dateStr, time: b.timeStr, created_at: b.rawTx?.created_at }
+      )
+    );
   }, [transactions, reserveTransactions, cards, txCardMap, currentMonthKey, showSpotPaidExpenses]);
 
   const cardLookup = useMemo(() => {
@@ -648,6 +669,7 @@ export function PlanningCalendar() {
           id: `proj_${anchor.id}_${nextDateStr}`,
           kind: anchor.kind,
           dateStr: nextDateStr,
+          timeStr: anchor.timeStr || null,
           monthKey: nextMonthKey,
           amount: anchor.amount,
           category: anchor.category,
@@ -670,7 +692,12 @@ export function PlanningCalendar() {
   }, [plannedItems, currentMonth, cardLookup]);
 
   const calendarPlannedItems = useMemo(() => {
-    return [...plannedItems, ...projectedRecurringItems].sort((a, b) => a.dateStr.localeCompare(b.dateStr));
+    return [...plannedItems, ...projectedRecurringItems].sort((a, b) =>
+      compareByDateTimeAsc(
+        { id: a.id, date: a.dateStr, time: a.timeStr, created_at: a.rawTx?.created_at },
+        { id: b.id, date: b.dateStr, time: b.timeStr, created_at: b.rawTx?.created_at }
+      )
+    );
   }, [plannedItems, projectedRecurringItems]);
 
   const filteredItems = useMemo(() => {
@@ -1241,6 +1268,7 @@ export function PlanningCalendar() {
       }
     }
     setEntryDate(resolvedDate);
+    setEntryTime(getCurrentLocalTimeStr());
 
     // If user clicked directly on a day inside the viewed month for a card purchase,
     // keep invoice target 'auto' by default so card rules apply, OR if they're launching for a past/closed month let them switch with 1 click
@@ -1297,6 +1325,7 @@ export function PlanningCalendar() {
 
     setSavingEntry(true);
     try {
+      const chosenTime = normalizeTimeStr(entryTime) || null;
       const batch: Transaction[] = [];
 
       if (entryMode === 'card') {
@@ -1333,6 +1362,7 @@ export function PlanningCalendar() {
                 type: 'utilizacao',
                 amount: rawVal,
                 date: statementDueDate,
+                time: chosenTime,
                 due_date: statementDueDate,
                 category: entryCategory,
                 description: `[Cartão ${selectedCardObj.name}] ${labelDesc}`,
@@ -1371,6 +1401,7 @@ export function PlanningCalendar() {
             type: 'expense',
             amount: rawVal,
             date: statementDueDate,
+            time: chosenTime,
             due_date: statementDueDate,
             category: entryCategory,
             description: `[Cartão ${selectedCardObj.name}] ${labelDesc}`,
@@ -1391,6 +1422,7 @@ export function PlanningCalendar() {
             created_at: new Date().toISOString(),
           };
           batch.push(payload);
+          setTxTimeEntry(effectiveUid, recId, chosenTime);
           syncQueueManager.enqueue('transactions', 'insert', recId, payload);
           planningStorage.linkTxsToCard(effectiveUid, [recId], selectedCardObj.id);
           setTxCardMap(planningStorage.getTxCardMap(effectiveUid));
@@ -1448,6 +1480,7 @@ export function PlanningCalendar() {
                 type: 'utilizacao',
                 amount: instAmt,
                 date: statementDueDate,
+                time: chosenTime,
                 due_date: statementDueDate,
                 category: entryCategory,
                 description: `[Cartão ${selectedCardObj.name}] ${labelDesc}${parcelSuffix}`,
@@ -1509,6 +1542,7 @@ export function PlanningCalendar() {
             type: 'expense',
             amount: instAmt,
             date: statementDueDate,
+            time: chosenTime,
             due_date: statementDueDate,
             category: entryCategory,
             description: `[Cartão ${selectedCardObj.name}] ${labelDesc}${parcelSuffix}`,
@@ -1527,6 +1561,7 @@ export function PlanningCalendar() {
             created_at: new Date().toISOString(),
           };
           batch.push(payload);
+          setTxTimeEntry(effectiveUid, instId, chosenTime);
           syncQueueManager.enqueue('transactions', 'insert', instId, payload);
         }
 
@@ -1579,6 +1614,7 @@ export function PlanningCalendar() {
                 type: 'utilizacao',
                 amount: rawVal,
                 date: instDate,
+                time: chosenTime,
                 due_date: instDate,
                 category: entryCategory,
                 description: `${labelDesc}${parcelSuffix}`,
@@ -1622,6 +1658,7 @@ export function PlanningCalendar() {
             type: isIncomeMode ? 'income' : 'expense',
             amount: rawVal,
             date: instDate,
+            time: chosenTime,
             due_date: instDate,
             category: entryCategory,
             description: `${labelDesc}${parcelSuffix}`,
@@ -1638,6 +1675,7 @@ export function PlanningCalendar() {
             created_at: new Date().toISOString(),
           };
           batch.push(payload);
+          setTxTimeEntry(effectiveUid, instId, chosenTime);
           syncQueueManager.enqueue('transactions', 'insert', instId, payload);
         }
 
@@ -1679,6 +1717,11 @@ export function PlanningCalendar() {
         ? getTodayLocalDateStr()
         : item.rawTx?.payment_date || item.dateStr
     );
+    setPayConfirmTime(
+      item.paymentStatus === 'pending'
+        ? getCurrentLocalTimeStr()
+        : (item.timeStr || getEffectiveItemTime(item.rawTx) || '')
+    );
     setPayConfirmReserveId(
       item.isReserveTx && item.rawTx?.reserve_id ? item.rawTx.reserve_id : '__cash__'
     );
@@ -1689,6 +1732,7 @@ export function PlanningCalendar() {
     if (!payConfirmTarget || confirmingPay) return;
     const effectiveUid = userId || (await getEffectiveUserId()) || 'default';
     const chosenPayDate = payConfirmDate || getTodayLocalDateStr();
+    const chosenPayTime = normalizeTimeStr(payConfirmTime) || getCurrentLocalTimeStr();
     setConfirmingPay(true);
 
     try {
@@ -1697,13 +1741,13 @@ export function PlanningCalendar() {
           if (item.isReserveTx) {
             await updateReserveTransaction(
               item.id,
-              { payment_status: 'paid', payment_date: chosenPayDate },
+              { payment_status: 'paid', payment_date: chosenPayDate, time: chosenPayTime },
               { silent: true }
             );
           } else {
             await updateTransaction(
               item.id,
-              { payment_status: 'paid', payment_date: chosenPayDate },
+              { payment_status: 'paid', payment_date: chosenPayDate, time: chosenPayTime },
               { silent: true }
             );
           }
@@ -1719,6 +1763,7 @@ export function PlanningCalendar() {
       const { item } = payConfirmTarget;
       const newStatus = item.paymentStatus === 'pending' ? 'paid' : 'pending';
       const newPayDate = newStatus === 'paid' ? chosenPayDate : null;
+      const effectiveItemTime = newStatus === 'paid' ? chosenPayTime : (item.timeStr || null);
       const raw = item.rawTx || {};
 
       // Allow switching Cash <-> Reserve when settling an expense
@@ -1741,6 +1786,7 @@ export function PlanningCalendar() {
                 reserve_id: targetRes.id,
                 payment_status: 'paid',
                 payment_date: newPayDate,
+                time: chosenPayTime,
               },
               { silent: true }
             );
@@ -1751,6 +1797,7 @@ export function PlanningCalendar() {
                 type: 'utilizacao',
                 amount: item.amount,
                 date: item.dateStr,
+                time: chosenPayTime,
                 due_date: item.dateStr,
                 category: item.category,
                 description: taggedDesc,
@@ -1784,6 +1831,7 @@ export function PlanningCalendar() {
                 reserve_id: targetRes.id,
                 type: 'utilizacao',
                 date: item.dateStr,
+                time: item.timeStr || chosenPayTime,
                 due_date: item.dateStr,
                 description: taggedDesc,
               };
@@ -1794,6 +1842,7 @@ export function PlanningCalendar() {
                   raw.recurrence_group_id,
                   effectiveUid
                 );
+                setRtTimeEntry(effectiveUid, nextRt.id, nextRt.time);
                 setReserveTransactions(prev => {
                   const nextState = [nextRt, ...prev];
                   cacheManager.set(`reserve_transactions_${effectiveUid}`, nextState, undefined, 'reserves');
@@ -1819,6 +1868,7 @@ export function PlanningCalendar() {
             type: 'expense',
             amount: item.amount,
             date: item.dateStr,
+            time: chosenPayTime,
             due_date: item.dateStr,
             category: item.category,
             description: taggedDesc,
@@ -1839,6 +1889,7 @@ export function PlanningCalendar() {
             created_at: new Date().toISOString(),
           };
           const extraBatch: Transaction[] = [newTxPayload];
+          setTxTimeEntry(effectiveUid, newTxId, chosenPayTime);
           if (isAutoRenewRecurring(raw) && raw.recurrence_group_id) {
             const nextDate = calculateNextOccurrence(
               item.dateStr,
@@ -1847,12 +1898,13 @@ export function PlanningCalendar() {
             );
             if (!hasExistingNextOccurrence(transactions, newTxPayload, raw.recurrence_group_id, nextDate)) {
               const nextTx = buildNextRecurringTransaction(
-                newTxPayload,
+                { ...newTxPayload, time: item.timeStr || chosenPayTime },
                 nextDate,
                 raw.recurrence_group_id,
                 effectiveUid
               );
               extraBatch.push(nextTx);
+              setTxTimeEntry(effectiveUid, nextTx.id, nextTx.time);
               syncQueueManager.enqueue('transactions', 'insert', nextTx.id, nextTx);
             }
           }
@@ -1881,6 +1933,7 @@ export function PlanningCalendar() {
           {
             payment_status: newStatus,
             payment_date: newPayDate,
+            ...(newStatus === 'paid' ? { time: effectiveItemTime } : {}),
           },
           { silent: true }
         );
@@ -1888,7 +1941,11 @@ export function PlanningCalendar() {
       } else {
         await updateTransaction(
           item.id,
-          { payment_status: newStatus, payment_date: newPayDate },
+          {
+            payment_status: newStatus,
+            payment_date: newPayDate,
+            ...(newStatus === 'paid' ? { time: effectiveItemTime } : {}),
+          },
           { silent: true }
         );
         if (item.kind === 'income') {
@@ -2010,6 +2067,7 @@ export function PlanningCalendar() {
           type: 'utilizacao',
           amount: item.amount,
           date: nextDate,
+          time: item.timeStr || null,
           due_date: nextDate,
           category: item.category,
           description: finalDesc,
@@ -2026,12 +2084,14 @@ export function PlanningCalendar() {
       }
     } else {
       const newId = generateUUID();
+      const dupTime = item.timeStr || null;
       const payload: Transaction = {
         id: newId,
         user_id: effectiveUid,
         type: item.kind,
         amount: item.amount,
         date: nextDate,
+        time: dupTime,
         due_date: nextDate,
         category: item.category,
         description: finalDesc,
@@ -2043,6 +2103,7 @@ export function PlanningCalendar() {
         ignore_in_charts: Boolean(raw.ignore_in_charts),
         created_at: new Date().toISOString(),
       };
+      setTxTimeEntry(effectiveUid, newId, dupTime);
       syncQueueManager.enqueue('transactions', 'insert', newId, payload);
       if (linkedCard) {
         planningStorage.linkTxsToCard(effectiveUid, [newId], linkedCard.id);
@@ -2124,6 +2185,7 @@ export function PlanningCalendar() {
   const handleSettleDayPending = () => {
     if (selectedDayPendingExpenses.length === 0) return;
     setPayConfirmDate(getTodayLocalDateStr());
+    setPayConfirmTime(getCurrentLocalTimeStr());
     setPayConfirmReserveId('__cash__');
     setPayConfirmTarget({
       mode: 'batch',
@@ -2138,6 +2200,7 @@ export function PlanningCalendar() {
     const overdueItems = globalPendingExpenseItems.filter(i => i.dateStr < todayStr);
     if (overdueItems.length === 0) return;
     setPayConfirmDate(getTodayLocalDateStr());
+    setPayConfirmTime(getCurrentLocalTimeStr());
     setPayConfirmReserveId('__cash__');
     setPayConfirmTarget({
       mode: 'batch',
@@ -2152,6 +2215,7 @@ export function PlanningCalendar() {
     const targets = monthItems.filter(i => selectedBatchIds.includes(i.id) && i.paymentStatus === 'pending');
     if (targets.length === 0) return;
     setPayConfirmDate(getTodayLocalDateStr());
+    setPayConfirmTime(getCurrentLocalTimeStr());
     setPayConfirmReserveId('__cash__');
     setPayConfirmTarget({
       mode: 'batch',
@@ -2188,6 +2252,7 @@ export function PlanningCalendar() {
 
     setSettleInvoiceModal({ card, pendingItems, totalPending });
     setSettleInvoiceDate(getTodayLocalDateStr());
+    setSettleInvoiceTime(getCurrentLocalTimeStr());
     setSettleInvoiceReserveId(allSameReserve && firstReserveId ? firstReserveId : '__cash__');
   };
 
@@ -2198,6 +2263,7 @@ export function PlanningCalendar() {
 
     const effectiveUid = userId || (await getEffectiveUserId()) || 'default';
     const payDate = settleInvoiceDate || getTodayLocalDateStr();
+    const payTime = normalizeTimeStr(settleInvoiceTime) || getCurrentLocalTimeStr();
     const useReserve = settleInvoiceReserveId !== '__cash__';
     const targetRes = useReserve
       ? activeReserves.find(r => r.id === settleInvoiceReserveId) || activeReserves[0]
@@ -2226,6 +2292,7 @@ export function PlanningCalendar() {
                 description: cardTaggedDesc,
                 payment_status: 'paid',
                 payment_date: payDate,
+                time: payTime,
               },
               { silent: true }
             );
@@ -2237,6 +2304,7 @@ export function PlanningCalendar() {
                 type: 'utilizacao',
                 amount: item.amount,
                 date: item.dateStr,
+                time: payTime,
                 due_date: item.dateStr,
                 category: item.category,
                 description: cardTaggedDesc,
@@ -2270,6 +2338,7 @@ export function PlanningCalendar() {
                 reserve_id: targetRes.id,
                 type: 'utilizacao',
                 date: item.dateStr,
+                time: item.timeStr || payTime,
                 due_date: item.dateStr,
                 description: cardTaggedDesc,
               };
@@ -2280,6 +2349,7 @@ export function PlanningCalendar() {
                   raw.recurrence_group_id,
                   effectiveUid
                 );
+                setRtTimeEntry(effectiveUid, nextRt.id, nextRt.time);
                 setReserveTransactions(prev => {
                   const nextState = [nextRt, ...prev];
                   cacheManager.set(`reserve_transactions_${effectiveUid}`, nextState, undefined, 'reserves');
@@ -2301,6 +2371,7 @@ export function PlanningCalendar() {
               type: 'expense',
               amount: item.amount,
               date: item.dateStr,
+              time: payTime,
               due_date: item.dateStr,
               category: item.category,
               description: cardTaggedDesc,
@@ -2322,6 +2393,7 @@ export function PlanningCalendar() {
             };
             const extraBatch: Transaction[] = [newTxPayload];
             const cardLinkIds: string[] = [newTxId];
+            setTxTimeEntry(effectiveUid, newTxId, payTime);
             if (isAutoRenewRecurring(raw) && raw.recurrence_group_id) {
               const nextDate = calculateNextOccurrence(
                 item.dateStr,
@@ -2330,13 +2402,14 @@ export function PlanningCalendar() {
               );
               if (!hasExistingNextOccurrence(transactions, newTxPayload, raw.recurrence_group_id, nextDate)) {
                 const nextTx = buildNextRecurringTransaction(
-                  newTxPayload,
+                  { ...newTxPayload, time: item.timeStr || payTime },
                   nextDate,
                   raw.recurrence_group_id,
                   effectiveUid
                 );
                 extraBatch.push(nextTx);
                 cardLinkIds.push(nextTx.id);
+                setTxTimeEntry(effectiveUid, nextTx.id, nextTx.time);
                 syncQueueManager.enqueue('transactions', 'insert', nextTx.id, nextTx);
               }
             }
@@ -2353,7 +2426,7 @@ export function PlanningCalendar() {
           } else {
             await updateTransaction(
               item.id,
-              { payment_status: 'paid', payment_date: payDate },
+              { payment_status: 'paid', payment_date: payDate, time: payTime },
               { silent: true }
             );
           }
@@ -2380,6 +2453,7 @@ export function PlanningCalendar() {
     );
     if (targets.length === 0) return;
     setPayConfirmDate(getTodayLocalDateStr());
+    setPayConfirmTime(getCurrentLocalTimeStr());
     setPayConfirmReserveId('__cash__');
     setPayConfirmTarget({
       mode: 'batch',
@@ -2407,6 +2481,7 @@ export function PlanningCalendar() {
     setEditingItem(item);
     setEditAmount(String(item.amount));
     setEditDate(item.dateStr);
+    setEditTime(item.timeStr || getEffectiveItemTime(item.rawTx) || '');
     setEditOriginalDate(item.dateStr);
     setEditCategory(item.category);
     setEditDescription((item.description || '').replace(/^\[Cart[ãa]o [^\]]+\]\s*/i, '').trim());
@@ -2474,12 +2549,14 @@ export function PlanningCalendar() {
         (editDescription.trim() || editCategory).replace(/^\[Cart[ãa]o [^\]]+\]\s*/i, '').trim() || editCategory;
       const cleanBaseDescNoSuffix = stripRecurrenceSuffix(rawBaseDesc) || editCategory;
 
+      const chosenEditTime = normalizeTimeStr(editTime) || null;
       // Helper to apply updates or Cash <-> Reserve conversion for a single NormalizedPlannedItem
       const persistSingleEditTarget = async (
         targetItem: NormalizedPlannedItem,
         opts: {
           amount: number;
           date: string;
+          time?: string | null;
           description: string;
           status: 'paid' | 'pending';
           payDate: string | null;
@@ -2499,6 +2576,7 @@ export function PlanningCalendar() {
               type: 'utilizacao',
               amount: opts.amount,
               date: opts.date,
+              time: opts.time ?? null,
               due_date: opts.date,
               category: editCategory,
               description: finalCardTaggedDesc,
@@ -2532,6 +2610,7 @@ export function PlanningCalendar() {
               type: 'utilizacao',
               amount: opts.amount,
               date: opts.date,
+              time: opts.time ?? null,
               due_date: opts.date,
               category: editCategory,
               description: finalCardTaggedDesc,
@@ -2542,6 +2621,7 @@ export function PlanningCalendar() {
             };
             if (!hasExistingNextOccurrence(reserveTransactions, syntheticSource, opts.recPatch.recurrence_group_id, nextDate)) {
               const nextRt = buildNextRecurringReserveTransaction(syntheticSource, nextDate, opts.recPatch.recurrence_group_id, effectiveUid);
+              setRtTimeEntry(effectiveUid, nextRt.id, nextRt.time);
               setReserveTransactions(prev => {
                 const nextState = [nextRt, ...prev];
                 cacheManager.set(`reserve_transactions_${effectiveUid}`, nextState, undefined, 'reserves');
@@ -2564,6 +2644,7 @@ export function PlanningCalendar() {
             type: 'expense',
             amount: opts.amount,
             date: opts.date,
+            time: opts.time ?? null,
             due_date: opts.date,
             category: editCategory,
             description: finalCardTaggedDesc,
@@ -2576,6 +2657,7 @@ export function PlanningCalendar() {
             ...opts.recPatch,
             created_at: new Date().toISOString(),
           };
+          setTxTimeEntry(effectiveUid, newTxId, opts.time ?? null);
 
           const extraBatch: Transaction[] = [newTxPayload];
           const linkIds: string[] = chosenCard ? [newTxId] : [];
@@ -2584,6 +2666,7 @@ export function PlanningCalendar() {
             if (!hasExistingNextOccurrence(transactions, newTxPayload, opts.recPatch.recurrence_group_id, nextDate)) {
               const nextTx = buildNextRecurringTransaction(newTxPayload, nextDate, opts.recPatch.recurrence_group_id, effectiveUid);
               extraBatch.push(nextTx);
+              setTxTimeEntry(effectiveUid, nextTx.id, nextTx.time);
               if (chosenCard) linkIds.push(nextTx.id);
               syncQueueManager.enqueue('transactions', 'insert', nextTx.id, nextTx);
             }
@@ -2616,6 +2699,7 @@ export function PlanningCalendar() {
               reserve_id: targetRes.id,
               amount: opts.amount,
               date: opts.date,
+              time: opts.time ?? null,
               due_date: opts.date,
               category: editCategory,
               description: finalCardTaggedDesc,
@@ -2641,6 +2725,7 @@ export function PlanningCalendar() {
               type: 'utilizacao',
               amount: opts.amount,
               date: opts.date,
+              time: opts.time ?? null,
               due_date: opts.date,
               category: editCategory,
               description: finalCardTaggedDesc,
@@ -2651,6 +2736,7 @@ export function PlanningCalendar() {
             };
             if (!hasExistingNextOccurrence(reserveTransactions, mergedSource, opts.recPatch.recurrence_group_id, nextDate)) {
               const nextRt = buildNextRecurringReserveTransaction(mergedSource, nextDate, opts.recPatch.recurrence_group_id, effectiveUid);
+              setRtTimeEntry(effectiveUid, nextRt.id, nextRt.time);
               setReserveTransactions(prev => {
                 const nextState = [nextRt, ...prev];
                 cacheManager.set(`reserve_transactions_${effectiveUid}`, nextState, undefined, 'reserves');
@@ -2676,6 +2762,7 @@ export function PlanningCalendar() {
           {
             amount: opts.amount,
             date: opts.date,
+            time: opts.time ?? null,
             due_date: opts.date,
             category: editCategory,
             description: finalCardTaggedDesc,
@@ -2695,6 +2782,7 @@ export function PlanningCalendar() {
             type: targetItem.kind,
             amount: opts.amount,
             date: opts.date,
+            time: opts.time ?? null,
             due_date: opts.date,
             category: editCategory,
             description: finalCardTaggedDesc,
@@ -2707,6 +2795,7 @@ export function PlanningCalendar() {
           };
           if (!hasExistingNextOccurrence(transactions, mergedSource, opts.recPatch.recurrence_group_id, nextDate)) {
             const nextTx = buildNextRecurringTransaction(mergedSource, nextDate, opts.recPatch.recurrence_group_id, effectiveUid);
+            setTxTimeEntry(effectiveUid, nextTx.id, nextTx.time);
             setTransactions(prev => {
               const nextState = [nextTx, ...prev];
               cacheManager.set(`transactions_${effectiveUid}`, nextState, undefined, 'transactions');
@@ -2739,6 +2828,7 @@ export function PlanningCalendar() {
         await persistSingleEditTarget(editingItem, {
           amount: firstInstAmt,
           date: editDate,
+          time: chosenEditTime,
           description: `${cleanBaseDescNoSuffix} (1/${nInst})`,
           status: editStatus,
           payDate: payDateVal,
@@ -2768,6 +2858,7 @@ export function PlanningCalendar() {
                 type: 'utilizacao',
                 amount: baseInstAmt,
                 date: instDate,
+                time: chosenEditTime,
                 due_date: instDate,
                 category: editCategory,
                 description: parcelDesc,
@@ -2803,6 +2894,7 @@ export function PlanningCalendar() {
               type: editingItem.kind,
               amount: baseInstAmt,
               date: instDate,
+              time: chosenEditTime,
               due_date: instDate,
               category: editCategory,
               description: parcelDesc,
@@ -2825,6 +2917,7 @@ export function PlanningCalendar() {
               created_at: new Date().toISOString(),
             };
             futureBatch.push(instPayload);
+            setTxTimeEntry(effectiveUid, instId, chosenEditTime);
             syncQueueManager.enqueue('transactions', 'insert', instId, instPayload);
           }
           if (futureBatch.length > 0) {
@@ -2918,6 +3011,7 @@ export function PlanningCalendar() {
         await persistSingleEditTarget(target, {
           amount: parsedAmt,
           date: targetDate,
+          time: isCurrentEdited ? chosenEditTime : (chosenEditTime ?? target.timeStr ?? null),
           description: descForTarget,
           status: targetStatus,
           payDate: targetPayDate,
@@ -3983,7 +4077,7 @@ export function PlanningCalendar() {
                               <button
                                 type="button"
                                 onClick={() => jumpToDate(item.dateStr)}
-                                className={`font-mono tabular-nums text-[11px] font-black px-1.5 py-0.5 rounded shrink-0 cursor-pointer ${
+                                className={`font-mono tabular-nums text-[11px] font-black px-1.5 py-0.5 rounded shrink-0 cursor-pointer inline-flex items-center gap-1 ${
                                   isProjected
                                     ? 'bg-violet-500/15 text-violet-700 dark:text-violet-300 border border-dashed border-violet-500/40'
                                     : isOverdue
@@ -3992,7 +4086,10 @@ export function PlanningCalendar() {
                                 }`}
                                 title="Selecionar dia"
                               >
-                                {format(new Date(item.dateStr + 'T12:00:00'), 'dd/MM')}
+                                <span>{format(new Date(item.dateStr + 'T12:00:00'), 'dd/MM')}</span>
+                                {item.timeStr && (
+                                  <span className="text-[9.5px] opacity-80 font-bold">· {item.timeStr}</span>
+                                )}
                               </button>
 
                               <div className="min-w-0">
@@ -4617,6 +4714,12 @@ export function PlanningCalendar() {
                                   <span className="font-semibold text-muted-foreground truncate">
                                     {item.category}
                                   </span>
+                                  {item.timeStr && (
+                                    <span className="inline-flex items-center gap-0.5 font-mono tabular-nums text-[9.5px] font-bold text-muted-foreground bg-muted/70 px-1.5 py-0.5 rounded">
+                                      <Clock className="w-2.5 h-2.5" />
+                                      {item.timeStr}
+                                    </span>
+                                  )}
                                   {!isProjected && item.installmentNumber && item.installmentTotal && (
                                     <span className="font-mono tabular-nums text-[9.5px] font-bold text-muted-foreground bg-muted/60 px-1 rounded">
                                       {item.installmentNumber}/{item.installmentTotal}
@@ -4854,6 +4957,7 @@ export function PlanningCalendar() {
                                   title="Ir para esta data no calendário"
                                 >
                                   {format(new Date(item.dateStr + 'T12:00:00'), 'dd/MM/yy')}
+                                  {item.timeStr ? ` · ${item.timeStr}` : ''}
                                 </button>
                                 {cardObj && (
                                   <span
@@ -5475,7 +5579,7 @@ export function PlanningCalendar() {
               </div>
             )}
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <label className="text-[10.5px] font-extrabold uppercase tracking-wider text-muted-foreground">
                   {entryMode === 'card'
@@ -5494,22 +5598,43 @@ export function PlanningCalendar() {
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-[10.5px] font-extrabold uppercase tracking-wider text-muted-foreground">
-                  Categoria
-                </label>
-                <Select value={entryCategory} onValueChange={setEntryCategory}>
-                  <SelectTrigger className="h-10 rounded-xl text-xs font-bold">
-                    <SelectValue>{val => val || 'Selecione a categoria'}</SelectValue>
-                  </SelectTrigger>
-                  <SelectContent>
-                    {(entryMode === 'income' ? incomeCategories : expenseCategories).map(cat => (
-                      <SelectItem key={cat} value={cat}>
-                        {cat}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <div className="flex items-center justify-between">
+                  <label className="text-[10.5px] font-extrabold uppercase tracking-wider text-muted-foreground">
+                    Hora
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setEntryTime(getCurrentLocalTimeStr())}
+                    className="text-[10px] font-black text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
+                  >
+                    Agora
+                  </button>
+                </div>
+                <Input
+                  type="time"
+                  value={entryTime}
+                  onChange={e => setEntryTime(e.target.value)}
+                  className="h-10 rounded-xl text-xs font-bold tabular-nums"
+                />
               </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-[10.5px] font-extrabold uppercase tracking-wider text-muted-foreground">
+                Categoria
+              </label>
+              <Select value={entryCategory} onValueChange={setEntryCategory}>
+                <SelectTrigger className="h-10 rounded-xl text-xs font-bold">
+                  <SelectValue>{val => val || 'Selecione a categoria'}</SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  {(entryMode === 'income' ? incomeCategories : expenseCategories).map(cat => (
+                    <SelectItem key={cat} value={cat}>
+                      {cat}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
             {entryMode === 'card' ? (
@@ -6066,7 +6191,7 @@ export function PlanningCalendar() {
               </div>
             )}
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
               <div className="space-y-1.5">
                 <label className="text-[10.5px] font-extrabold uppercase tracking-wider text-muted-foreground">
                   Valor (R$)
@@ -6088,6 +6213,26 @@ export function PlanningCalendar() {
                   onChange={e => setEditDate(e.target.value)}
                   className="h-10 rounded-xl text-xs font-bold tabular-nums"
                   required
+                />
+              </div>
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-[10.5px] font-extrabold uppercase tracking-wider text-muted-foreground">
+                    Hora
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setEditTime(getCurrentLocalTimeStr())}
+                    className="text-[10px] font-black text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
+                  >
+                    Agora
+                  </button>
+                </div>
+                <Input
+                  type="time"
+                  value={editTime}
+                  onChange={e => setEditTime(e.target.value)}
+                  className="h-10 rounded-xl text-xs font-bold tabular-nums"
                 />
               </div>
             </div>
@@ -6995,17 +7140,39 @@ export function PlanningCalendar() {
                 </span>
               </div>
 
-              <div className="space-y-1.5">
-                <label className="text-[10.5px] font-extrabold uppercase tracking-wider text-muted-foreground">
-                  Data do Pagamento
-                </label>
-                <Input
-                  type="date"
-                  value={settleInvoiceDate}
-                  onChange={e => setSettleInvoiceDate(e.target.value)}
-                  className="h-10 rounded-xl text-xs font-bold tabular-nums"
-                  required
-                />
+              <div className="grid grid-cols-2 gap-2.5">
+                <div className="space-y-1.5">
+                  <label className="text-[10.5px] font-extrabold uppercase tracking-wider text-muted-foreground">
+                    Data do Pagamento
+                  </label>
+                  <Input
+                    type="date"
+                    value={settleInvoiceDate}
+                    onChange={e => setSettleInvoiceDate(e.target.value)}
+                    className="h-10 rounded-xl text-xs font-bold tabular-nums"
+                    required
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[10.5px] font-extrabold uppercase tracking-wider text-muted-foreground">
+                      Hora
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setSettleInvoiceTime(getCurrentLocalTimeStr())}
+                      className="text-[10px] font-black text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
+                    >
+                      Agora
+                    </button>
+                  </div>
+                  <Input
+                    type="time"
+                    value={settleInvoiceTime}
+                    onChange={e => setSettleInvoiceTime(e.target.value)}
+                    className="h-10 rounded-xl text-xs font-bold tabular-nums"
+                  />
+                </div>
               </div>
 
               {activeReserves.length > 0 && (
@@ -7166,16 +7333,38 @@ export function PlanningCalendar() {
                 </div>
 
                 {!isReopening && (
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">
-                      {target.kind === 'income' ? 'Data do Recebimento' : 'Data do Pagamento'}
-                    </label>
-                    <Input
-                      type="date"
-                      value={payConfirmDate}
-                      onChange={e => setPayConfirmDate(e.target.value)}
-                      className="h-9 rounded-xl text-xs font-bold"
-                    />
+                  <div className="grid grid-cols-2 gap-2.5">
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">
+                        {target.kind === 'income' ? 'Data do Recebimento' : 'Data do Pagamento'}
+                      </label>
+                      <Input
+                        type="date"
+                        value={payConfirmDate}
+                        onChange={e => setPayConfirmDate(e.target.value)}
+                        className="h-9 rounded-xl text-xs font-bold"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">
+                          Hora
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => setPayConfirmTime(getCurrentLocalTimeStr())}
+                          className="text-[10px] font-black text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
+                        >
+                          Agora
+                        </button>
+                      </div>
+                      <Input
+                        type="time"
+                        value={payConfirmTime}
+                        onChange={e => setPayConfirmTime(e.target.value)}
+                        className="h-9 rounded-xl text-xs font-bold"
+                      />
+                    </div>
                   </div>
                 )}
 
@@ -7281,16 +7470,38 @@ export function PlanningCalendar() {
                 </div>
               </div>
 
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">
-                  Data da Quitação
-                </label>
-                <Input
-                  type="date"
-                  value={payConfirmDate}
-                  onChange={e => setPayConfirmDate(e.target.value)}
-                  className="h-9 rounded-xl text-xs font-bold"
-                />
+              <div className="grid grid-cols-2 gap-2.5">
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">
+                    Data da Quitação
+                  </label>
+                  <Input
+                    type="date"
+                    value={payConfirmDate}
+                    onChange={e => setPayConfirmDate(e.target.value)}
+                    className="h-9 rounded-xl text-xs font-bold"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">
+                      Hora
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setPayConfirmTime(getCurrentLocalTimeStr())}
+                      className="text-[10px] font-black text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
+                    >
+                      Agora
+                    </button>
+                  </div>
+                  <Input
+                    type="time"
+                    value={payConfirmTime}
+                    onChange={e => setPayConfirmTime(e.target.value)}
+                    className="h-9 rounded-xl text-xs font-bold"
+                  />
+                </div>
               </div>
 
               <div className="flex justify-end gap-2 pt-1">

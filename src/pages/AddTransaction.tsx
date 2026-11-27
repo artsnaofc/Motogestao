@@ -81,6 +81,7 @@ import { freightStorage } from '../lib/freightStorage';
 import { calculateNextOccurrence, getFrequencyLabel, generateUUID, parseLocalDate, buildNextRecurringTransaction, buildNextRecurringReserveTransaction } from '../lib/recurrenceUtils';
 import { getTodayLocalDateStr } from '../lib/utils';
 import { getEffectiveUserId } from '../lib/authUtils';
+import { compareByDateTimeDesc, getCurrentLocalTimeStr, setTxTimeEntry } from '../lib/timeUtils';
 import { RefreshCw, CalendarClock, CalendarRange, CheckCircle2, AlertCircle, EyeOff, Bookmark, X, ChevronDown, Plus, Trash2, SlidersHorizontal } from 'lucide-react';
 import { isVehicleRelatedCategory, shouldDefaultToNoVehicle } from '../lib/vehicleUtils';
 import { findMatchingReserveForExpense } from '../components/reserves/reserveUtils';
@@ -152,6 +153,7 @@ export function AddTransaction() {
 
   // Common Fields
   const [date, setDate] = useState(paramDate || getTodayLocalDateStr());
+  const [time, setTime] = useState(() => getCurrentLocalTimeStr());
   const [startKm, setStartKm] = useState('');
   const [endKm, setEndKm] = useState('');
   const [description, setDescription] = useState(
@@ -502,15 +504,8 @@ export function AddTransaction() {
       const txsWithKm = transactions.filter(t => t.end_km !== null && t.end_km !== undefined);
       if (txsWithKm.length > 0) {
         const sorted = [...txsWithKm].sort((a, b) => {
-          // Robust sorting: prioritize actual transaction date, then fallback to creation time
-          if (a.date !== b.date) {
-            return b.date.localeCompare(a.date);
-          }
-          const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
-          const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
-          if (timeA !== timeB) {
-            return timeB - timeA;
-          }
+          const cmp = compareByDateTimeDesc(a, b);
+          if (cmp !== 0) return cmp;
           // Secondary fallback to highest odometer to stay robust
           return (b.end_km || 0) - (a.end_km || 0);
         });
@@ -565,6 +560,7 @@ export function AddTransaction() {
     setDueDate('');
     setUseCustomSecondaryDate(false);
     setDate(getTodayLocalDateStr());
+    setTime(getCurrentLocalTimeStr());
     setIsRecurring(false);
     setRecurrenceMode('auto');
     setRecurrenceFrequency('monthly');
@@ -617,6 +613,7 @@ export function AddTransaction() {
       return;
     }
     const todayStr = getTodayLocalDateStr();
+    const nowTimeStr = getCurrentLocalTimeStr();
     const newId = generateUUID();
     const payload = {
       id: newId,
@@ -624,6 +621,7 @@ export function AddTransaction() {
       type: (tpl.tab === 'despesa' ? 'expense' : 'income') as TransactionType,
       amount: finalAmt,
       date: todayStr,
+      time: nowTimeStr,
       category: tpl.tab === 'pizzaria' ? 'Pizzaria' : tpl.tab === 'frete' ? 'Frete do Dia' : tpl.category || 'Outros',
       description: tpl.description || tpl.name,
       deliveries: tpl.tab === 'pizzaria' && tpl.deliveries ? Number(tpl.deliveries) : null,
@@ -635,6 +633,7 @@ export function AddTransaction() {
       ignore_in_charts: Boolean(tpl.ignoreInCharts),
       created_at: new Date().toISOString(),
     };
+    setTxTimeEntry(uid, newId, nowTimeStr);
     setTransactions(prev => {
       const next = [payload, ...prev];
       cacheManager.set(`transactions_${uid}`, next, undefined, 'transactions');
@@ -844,6 +843,7 @@ export function AddTransaction() {
             type: rtType,
             amount: finalAmt,
             date: date,
+            time: time || null,
             category: rtType === 'utilizacao' ? finalRtCategory : 'Aporte Extra',
             description: baseDesc,
             payment_status: effectivePaymentStatus,
@@ -870,6 +870,7 @@ export function AddTransaction() {
               type: rtType,
               amount: finalAmt,
               date: nextDate,
+              time: time || null,
               category: rtType === 'utilizacao' ? finalRtCategory : 'Aporte Extra',
               description: baseDesc,
               payment_status: 'pending',
@@ -913,6 +914,7 @@ export function AddTransaction() {
               type: rtType,
               amount: finalAmt,
               date: installmentDate,
+              time: time || null,
               category: rtType === 'utilizacao' ? finalRtCategory : 'Aporte Extra',
               description: installmentDesc,
               payment_status: installmentPaymentStatus,
@@ -948,6 +950,7 @@ export function AddTransaction() {
             type: rtType,
             amount: finalAmt,
             date: date,
+            time: time || null,
             category: rtType === 'utilizacao' ? finalRtCategory : 'Aporte Extra',
             description: description || (rtType === 'aporte' ? `Aporte para ${selectedRes?.name}` : `Uso da reserva ${selectedRes?.name}`),
             payment_status: effectivePaymentStatus,
@@ -1017,6 +1020,7 @@ export function AddTransaction() {
             type: 'utilizacao',
             amount: finalAmount,
             date: date,
+            time: time || null,
             category: finalCategory,
             description: baseDesc,
             payment_status: effectivePaymentStatus,
@@ -1043,6 +1047,7 @@ export function AddTransaction() {
               type: 'utilizacao',
               amount: finalAmount,
               date: nextDate,
+              time: time || null,
               category: finalCategory,
               description: baseDesc,
               payment_status: 'pending',
@@ -1081,6 +1086,7 @@ export function AddTransaction() {
               type: 'utilizacao',
               amount: finalAmount,
               date: instDate,
+              time: time || null,
               category: finalCategory,
               description: instDesc,
               payment_status: instPaymentStatus,
@@ -1106,6 +1112,7 @@ export function AddTransaction() {
             type: 'utilizacao',
             amount: finalAmount,
             date: date,
+            time: time || null,
             category: finalCategory,
             description: description || `${finalCategory} (Reserva ${selectedDeductReserve.name})`,
             payment_status: effectivePaymentStatus,
@@ -1159,6 +1166,7 @@ export function AddTransaction() {
               type: 'utilizacao',
               amount: finalAmount,
               date: statementDueDate,
+              time: time || null,
               due_date: statementDueDate,
               category: finalCategory,
               description: baseDesc,
@@ -1187,6 +1195,7 @@ export function AddTransaction() {
                   type: 'utilizacao',
                   amount: finalAmount,
                   date: statementDueDate,
+                  time: time || null,
                   due_date: statementDueDate,
                   category: finalCategory,
                   description: baseDesc,
@@ -1206,6 +1215,7 @@ export function AddTransaction() {
                 type: nextRt.type,
                 amount: nextRt.amount,
                 date: nextRt.date,
+                time: nextRt.time || null,
                 due_date: nextRt.due_date,
                 category: nextRt.category,
                 description: nextRt.description,
@@ -1246,6 +1256,7 @@ export function AddTransaction() {
             type: 'expense' as TransactionType,
             amount: finalAmount,
             date: statementDueDate,
+            time: time || null,
             due_date: statementDueDate,
             category: finalCategory,
             description: baseDesc,
@@ -1271,12 +1282,14 @@ export function AddTransaction() {
             ignore_in_charts: ignoreInCharts,
             created_at: new Date().toISOString(),
           };
+          setTxTimeEntry(userId, firstId, time || null);
           const cardBatch: any[] = [firstPayload];
           syncQueueManager.enqueue('transactions', 'insert', firstId, firstPayload);
 
           if (instStatus === 'paid') {
             const nextDate = calculateNextOccurrence(statementDueDate, cardRecurrenceFrequency, 1);
             const nextTx = buildNextRecurringTransaction(firstPayload, nextDate, groupId, userId);
+            setTxTimeEntry(userId, nextTx.id, nextTx.time || null);
             cardBatch.unshift(nextTx);
             cardBatchIds.push(nextTx.id);
             syncQueueManager.enqueue('transactions', 'insert', nextTx.id, nextTx);
@@ -1327,6 +1340,7 @@ export function AddTransaction() {
               type: 'utilizacao',
               amount: instAmt,
               date: statementDueDate,
+              time: time || null,
               due_date: statementDueDate,
               category: finalCategory,
               description: `${baseDesc}${parcelSuffix}`,
@@ -1388,6 +1402,7 @@ export function AddTransaction() {
             type: 'expense' as TransactionType,
             amount: instAmt,
             date: statementDueDate,
+            time: time || null,
             due_date: statementDueDate,
             category: finalCategory,
             description: `${baseDesc}${parcelSuffix}`,
@@ -1411,6 +1426,7 @@ export function AddTransaction() {
             ignore_in_charts: ignoreInCharts,
             created_at: new Date().toISOString(),
           };
+          setTxTimeEntry(userId, instId, time || null);
           cardBatch.push(payload);
           syncQueueManager.enqueue('transactions', 'insert', instId, payload);
         }
@@ -1451,6 +1467,7 @@ export function AddTransaction() {
           type: 'expense' as TransactionType,
           amount: finalAmount,
           date: date,
+          time: time || null,
           category: finalCategory,
           description: baseDesc,
           payment_status: paymentStatus,
@@ -1473,6 +1490,7 @@ export function AddTransaction() {
           created_at: new Date().toISOString()
         };
 
+        setTxTimeEntry(userId, firstTxId, time || null);
         const batchToInsert = [firstPayload];
         syncQueueManager.enqueue('transactions', 'insert', firstTxId, firstPayload);
 
@@ -1480,6 +1498,7 @@ export function AddTransaction() {
         if (paymentStatus === 'paid') {
           const nextDate = calculateNextOccurrence(effectiveDueDate, recurrenceFrequency, 1);
           const nextTx = buildNextRecurringTransaction(firstPayload, nextDate, recurrenceGroupId, userId);
+          setTxTimeEntry(userId, nextTx.id, nextTx.time || null);
           batchToInsert.unshift(nextTx);
           syncQueueManager.enqueue('transactions', 'insert', nextTx.id, nextTx);
           nextDateLabel = format(parseLocalDate(nextDate), 'dd/MM/yyyy');
@@ -1533,6 +1552,7 @@ export function AddTransaction() {
             type: 'expense' as TransactionType,
             amount: finalAmount,
             date: instDate,
+            time: time || null,
             category: finalCategory,
             description: instDesc,
             payment_status: instPaymentStatus,
@@ -1553,6 +1573,7 @@ export function AddTransaction() {
             created_at: new Date().toISOString()
           };
 
+          setTxTimeEntry(userId, instId, time || null);
           newTxBatch.push(payload);
           syncQueueManager.enqueue('transactions', 'insert', instId, payload);
         }
@@ -1585,6 +1606,7 @@ export function AddTransaction() {
         type: finalType as TransactionType,
         amount: finalAmount,
         date: date,
+        time: time || null,
         category: finalCategory,
         description: description,
         start_km: startKm ? Number(startKm) : null,
@@ -1599,6 +1621,8 @@ export function AddTransaction() {
         ignore_in_charts: ignoreInCharts,
         created_at: new Date().toISOString()
       };
+
+      setTxTimeEntry(userId, newTxId, time || null);
 
       // Optimistic state and cache update
       setTransactions(prev => {
@@ -1622,12 +1646,16 @@ export function AddTransaction() {
               ? getEffectiveVehicleId()
               : undefined;
 
+          const opId = generateUUID();
+          setTxTimeEntry(userId, opId, time || null);
+
           return {
-            id: generateUUID(),
+            id: opId,
             user_id: userId,
             type: 'expense' as TransactionType,
             amount: opVal,
             date: date,
+            time: time || null,
             category: chosenOpCategory,
             description: description
               ? `[${chosenOpCategory}] ${description}`
@@ -1793,29 +1821,52 @@ export function AddTransaction() {
         <CardContent className="w-full p-5 sm:p-6 md:p-8">
           <form onSubmit={handleSave} className="w-full space-y-5">
             
-            {/* Common Top */}
-            <div className="space-y-2 max-w-[240px]">
-              <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground/90">
-                {selectedCardObj
-                  ? 'Data da Compra'
-                  : (activeTab === 'despesa' || (activeTab === 'reserva' && rtType === 'utilizacao')) && !useCustomSecondaryDate
-                    ? (paymentStatus === 'pending' ? 'Data / Vencimento' : 'Data / Pagamento')
-                    : 'Data da Transação'}
-              </label>
-              <Input
-                type="date"
-                value={date}
-                className="h-11 rounded-xl border-border font-semibold focus:ring-1 focus:ring-primary focus-visible:ring-primary"
-                onChange={(e) => {
-                  const newDate = e.target.value;
-                  setDate(newDate);
-                  if (!useCustomSecondaryDate) {
-                    setPaymentDate(newDate);
-                    setDueDate(newDate);
-                  }
-                }}
-                required
-              />
+            {/* Common Top: Data e Hora */}
+            <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
+              <div className="sm:col-span-6 space-y-2">
+                <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground/90">
+                  {selectedCardObj
+                    ? 'Data da Compra'
+                    : (activeTab === 'despesa' || (activeTab === 'reserva' && rtType === 'utilizacao')) && !useCustomSecondaryDate
+                      ? (paymentStatus === 'pending' ? 'Data / Vencimento' : 'Data / Pagamento')
+                      : 'Data da Transação'}
+                </label>
+                <Input
+                  type="date"
+                  value={date}
+                  className="h-11 rounded-xl border-border font-semibold focus:ring-1 focus:ring-primary focus-visible:ring-primary"
+                  onChange={(e) => {
+                    const newDate = e.target.value;
+                    setDate(newDate);
+                    if (!useCustomSecondaryDate) {
+                      setPaymentDate(newDate);
+                      setDueDate(newDate);
+                    }
+                  }}
+                  required
+                />
+              </div>
+
+              <div className="sm:col-span-6 space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground/90 flex items-center gap-1">
+                    <Clock className="w-3 h-3 text-primary" /> Hora (HH:mm)
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setTime(getCurrentLocalTimeStr())}
+                    className="text-[10px] font-extrabold text-primary hover:underline cursor-pointer"
+                  >
+                    Agora
+                  </button>
+                </div>
+                <Input
+                  type="time"
+                  value={time}
+                  onChange={(e) => setTime(e.target.value)}
+                  className="h-11 rounded-xl border-border font-semibold font-mono focus:ring-1 focus:ring-primary focus-visible:ring-primary"
+                />
+              </div>
             </div>
 
             {/* ==== RESERVA TAB ==== */}

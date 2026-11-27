@@ -104,6 +104,14 @@ import {
 import { syncQueueManager } from '../lib/syncQueue';
 import { getTodayLocalDateStr, addBusinessDays, formatLocalDateBR } from '../lib/utils';
 import {
+  compareByDateTimeAsc,
+  compareByDateTimeDesc,
+  getCurrentLocalTimeStr,
+  getEffectiveItemTime,
+  setTxTimeEntry,
+  setRtTimeEntry,
+} from '../lib/timeUtils';
+import {
   getInvestmentTransactionNetAmount,
   isInvestmentPurchaseReserveUse,
   isInvestmentSaleReserveAporte,
@@ -535,6 +543,7 @@ export function History() {
   // Quick Settle & Agenda / Series Reconciliation States
   const [settleItem, setSettleItem] = useState<Transaction | null>(null);
   const [settlePaymentDate, setSettlePaymentDate] = useState<string>(getTodayLocalDateStr());
+  const [settlePaymentTime, setSettlePaymentTime] = useState<string>(() => getCurrentLocalTimeStr());
   const [settleReserveId, setSettleReserveId] = useState<string>('__cash__');
   const [isSettling, setIsSettling] = useState(false);
   const [instantSettlingId, setInstantSettlingId] = useState<string | null>(null);
@@ -548,6 +557,7 @@ export function History() {
   const handleOpenSettle = (t: Transaction) => {
     setSettleItem(t);
     setSettlePaymentDate(getTodayLocalDateStr());
+    setSettlePaymentTime(getCurrentLocalTimeStr());
     if ((t as any).isReserveTx && (t as any).reserveId) {
       setSettleReserveId((t as any).reserveId);
     } else {
@@ -562,6 +572,7 @@ export function History() {
       const effectiveUid = historyUserId || (await getEffectiveUserId()) || settleItem.user_id || 'local';
       const isReserveTx = Boolean((settleItem as any).isReserveTx);
       const finalPaymentDate = settlePaymentDate || getTodayLocalDateStr();
+      const finalPaymentTime = settlePaymentTime || getEffectiveItemTime(settleItem) || getCurrentLocalTimeStr();
       const matchedCardId = extractCardTagFromTransaction(settleItem as any, txCardMap, cards);
       const matchedCardObj = matchedCardId ? cards.find(c => c.id === matchedCardId) || null : null;
       const rawDesc = ((settleItem as any).rawDescription || settleItem.description || settleItem.category || '').trim();
@@ -576,6 +587,7 @@ export function History() {
             description: cardTaggedDesc,
             payment_status: 'paid',
             payment_date: finalPaymentDate,
+            time: finalPaymentTime,
           });
           if (matchedCardId) {
             planningStorage.linkTxsToCard(effectiveUid, [settleItem.id], matchedCardId);
@@ -591,6 +603,7 @@ export function History() {
             type: 'expense',
             amount: Number(settleItem.amount),
             date: baseDate,
+            time: finalPaymentTime,
             due_date: settleItem.due_date || baseDate,
             category: (settleItem as any).originalCategory || settleItem.category || 'Outros',
             description: cardTaggedDesc,
@@ -610,6 +623,7 @@ export function History() {
             ignore_in_charts: Boolean(settleItem.ignore_in_charts),
             created_at: new Date().toISOString(),
           };
+          setTxTimeEntry(effectiveUid, newTxId, finalPaymentTime);
           syncQueueManager.enqueue('transactions', 'insert', newTxId, newTxPayload);
           setTransactions(prev => {
             const next = [newTxPayload, ...prev];
@@ -633,6 +647,7 @@ export function History() {
             type: 'utilizacao',
             amount: Number(settleItem.amount),
             date: settleItem.date,
+            time: finalPaymentTime,
             due_date: settleItem.due_date || settleItem.date,
             category: settleItem.category,
             description: cardTaggedDesc,
@@ -671,6 +686,7 @@ export function History() {
               type: 'utilizacao',
               amount: Number(settleItem.amount),
               date: nextDate,
+              time: finalPaymentTime,
               due_date: nextDate,
               category: settleItem.category,
               description: stripRecurrenceSuffix(cardTaggedDesc) || settleItem.category,
@@ -705,6 +721,7 @@ export function History() {
         await updateTransaction(settleItem.id, {
           payment_status: 'paid',
           payment_date: finalPaymentDate,
+          time: finalPaymentTime,
         });
       }
       toast.success(settleItem.type === 'income' ? 'Entrada confirmada com sucesso!' : 'Despesa quitada com sucesso!');
@@ -723,15 +740,18 @@ export function History() {
     try {
       const isReserveTx = (t as any).isReserveTx;
       const todayStr = getTodayLocalDateStr();
+      const nowTimeStr = getCurrentLocalTimeStr();
       if (isReserveTx) {
         await updateReserveTransaction(t.id, {
           payment_status: 'paid',
           payment_date: todayStr,
+          time: nowTimeStr,
         });
       } else {
         await updateTransaction(t.id, {
           payment_status: 'paid',
           payment_date: todayStr,
+          time: nowTimeStr,
         });
       }
       toast.success('Conta quitada com 1 clique!');
@@ -826,6 +846,7 @@ export function History() {
   const [editDesc, setEditDesc] = useState('');
   const [editType, setEditType] = useState<'income' | 'expense'>('income');
   const [editDate, setEditDate] = useState('');
+  const [editTime, setEditTime] = useState('');
   const [editPaymentStatus, setEditPaymentStatus] = useState<'paid' | 'pending'>('paid');
   const [editPaymentDate, setEditPaymentDate] = useState('');
   const [editDueDate, setEditDueDate] = useState('');
@@ -966,6 +987,7 @@ export function History() {
       setEditReserveTxType((t as any).reserveTxType || 'aporte');
       setEditAmount(tAmount.toString());
       setEditDate(t.date);
+      setEditTime(getEffectiveItemTime(t) || '');
       setEditDesc(cleanedDescForEdit);
       setEditReserveCategory((t as any).reserveCategory || (t as any).originalCategory || '');
       setEditVehicleId((t as any).vehicle_id || '');
@@ -978,6 +1000,7 @@ export function History() {
         const rtBaseDate = normDate(matchRt.date || t.date);
         const rtPay = normDate(matchRt.payment_date || t.payment_date);
         const rtDue = normDate(matchRt.due_date || t.due_date);
+        setEditTime(getEffectiveItemTime(matchRt) || getEffectiveItemTime(t) || '');
         setEditPaymentStatus(rtStatus);
         setEditPaymentDate(rtPay || rtBaseDate);
         setEditDueDate(rtDue || rtBaseDate);
@@ -1027,6 +1050,7 @@ export function History() {
         setEditReserveTxType('utilizacao');
         setEditAmount(matchRt.amount.toString());
         setEditDate(matchRt.date);
+        setEditTime(getEffectiveItemTime(matchRt) || getEffectiveItemTime(t) || '');
         setEditDesc(
           matchRt.description
             ? matchRt.description.replace(/^\[Reserva\]\s*/, '').replace(/^\[Cart[ãa]o [^\]]+\]\s*/i, '').trim()
@@ -1067,6 +1091,7 @@ export function History() {
         setEditCategory(t.category);
         setEditDesc(cleanedDescForEdit);
         setEditDate(t.date);
+        setEditTime(getEffectiveItemTime(t) || '');
         setEditStartKm(t.start_km?.toString() || '');
         setEditEndKm(t.end_km?.toString() || '');
         setEditDeliveries(t.deliveries?.toString() || '');
@@ -1086,6 +1111,7 @@ export function History() {
       setEditCategory(t.category);
       setEditDesc(cleanedDescForEdit);
       setEditDate(t.date);
+      setEditTime(getEffectiveItemTime(t) || '');
       setEditStartKm(t.start_km?.toString() || '');
       setEditEndKm(t.end_km?.toString() || '');
       setEditDeliveries(t.deliveries?.toString() || '');
@@ -1179,6 +1205,7 @@ export function History() {
             type: 'expense',
             amount: isConvertingToFixed ? firstInstAmt : finalAmt,
             date: editDate,
+            time: editTime || null,
             due_date: effectiveDueDate || editDate,
             category: finalReserveCat || matchedRes?.default_use_category || 'Outras Despesas',
             description: withCardDesc(firstDescText),
@@ -1200,6 +1227,7 @@ export function History() {
             total_installments: editIsRecurring && !shouldAuto ? numInstallments : null,
             created_at: new Date().toISOString(),
           };
+          setTxTimeEntry(effectiveUid, newTxId, editTime || null);
 
           const createdCashTxs: Transaction[] = [newTxPayload];
           const cardLinkIds: string[] = chosenCard ? [newTxId] : [];
@@ -1218,6 +1246,7 @@ export function History() {
                 type: 'expense',
                 amount: baseInstAmt,
                 date: instDate,
+                time: editTime || null,
                 due_date: instDueDate,
                 category: finalReserveCat || matchedRes?.default_use_category || 'Outras Despesas',
                 description: withCardDesc(`${cleanLabelNoSuffix} (${i}/${numInstallments})`),
@@ -1239,6 +1268,7 @@ export function History() {
                 total_installments: numInstallments,
                 created_at: new Date().toISOString(),
               };
+              setTxTimeEntry(effectiveUid, instId, editTime || null);
               createdCashTxs.push(instPayload);
               if (chosenCard) cardLinkIds.push(instId);
               syncQueueManager.enqueue('transactions', 'insert', instId, instPayload);
@@ -1304,6 +1334,7 @@ export function History() {
               type: 'utilizacao',
               amount: finalAmt,
               date: editDate,
+              time: editTime || null,
               category: finalReserveCat || undefined,
               description: cleanBaseDesc,
               payment_status: effectivePaymentStatus,
@@ -1372,6 +1403,7 @@ export function History() {
                 type: 'utilizacao',
                 amount: finalAmt,
                 date: editDate,
+                time: editTime || null,
                 due_date: effectiveDueDate,
                 category: finalReserveCat || undefined,
                 description: cleanBaseDesc,
@@ -1386,6 +1418,7 @@ export function History() {
               };
               if (!hasExistingNextOccurrence(reserveTransactions || [], syntheticSource, currentGroup, nextDate)) {
                 const nextRt = buildNextRecurringReserveTransaction(syntheticSource, nextDate, currentGroup, userId);
+                if (nextRt.time) setRtTimeEntry(userId, nextRt.id, nextRt.time);
                 if (chosenCard) {
                   planningStorage.linkTxsToCard(userId, [nextRt.id], chosenCard.id);
                   setTxCardMap(planningStorage.getTxCardMap(userId));
@@ -1425,6 +1458,7 @@ export function History() {
                 type: 'utilizacao',
                 amount: firstInstAmt,
                 date: editDate,
+                time: editTime || null,
                 category: finalReserveCat || undefined,
                 description: inst1Desc,
                 payment_status: effectivePaymentStatus,
@@ -1461,6 +1495,7 @@ export function History() {
                     type: 'utilizacao',
                     amount: baseInstAmt,
                     date: instDate,
+                    time: editTime || null,
                     category: finalReserveCat || undefined,
                     description: instDesc,
                     payment_status: 'pending',
@@ -1478,6 +1513,7 @@ export function History() {
                     ignore_in_charts: editIgnoreInCharts,
                     created_at: new Date().toISOString()
                   };
+                  if (editTime) setRtTimeEntry(userId, instId, editTime);
 
                   futureBatch.push(instPayload);
                   syncQueueManager.enqueue('reserve_transactions', 'insert', instId, instPayload);
@@ -1515,6 +1551,7 @@ export function History() {
                 type: 'utilizacao',
                 amount: finalAmt,
                 date: editDate,
+                time: editTime || null,
                 category: finalReserveCat || undefined,
                 description: currentDesc,
                 payment_status: effectivePaymentStatus,
@@ -1595,6 +1632,7 @@ export function History() {
               type: 'utilizacao',
               amount: finalAmt,
               date: editDate,
+              time: editTime || null,
               category: finalReserveCat || undefined,
               description: withCardDesc(editDesc || defaultDesc),
               payment_status: effectivePaymentStatus,
@@ -1624,6 +1662,7 @@ export function History() {
             type: editReserveTxType,
             amount: finalAmt,
             date: editDate,
+            time: editTime || null,
             category: undefined,
             description: editDesc || defaultDesc,
             payment_status: 'paid',
@@ -1832,6 +1871,7 @@ export function History() {
                 type: editType,
                 amount: baseInstAmt,
                 date: instDate,
+                time: editTime || null,
                 category: editCategory,
                 description: instDesc,
                 payment_status: 'pending',
@@ -1857,6 +1897,7 @@ export function History() {
                 ignore_in_charts: editIgnoreInCharts,
                 created_at: new Date().toISOString()
               };
+              setTxTimeEntry(effectiveUid, instId, editTime || null);
 
               futureBatch.push(instPayload);
               syncQueueManager.enqueue('transactions', 'insert', instId, instPayload);
@@ -1990,6 +2031,7 @@ export function History() {
           type: 'utilizacao',
           amount: finalAmount,
           date: editDate,
+          time: editTime || null,
           due_date: effectiveDueDate || editDate,
           category: editCategory,
           description: finalCardDesc,
@@ -2017,6 +2059,7 @@ export function History() {
             type: 'utilizacao',
             amount: futureInst.amount,
             date: futureInst.date,
+            time: editTime || null,
             due_date: futureInst.dueDate,
             category: editCategory,
             description: futureInst.description,
@@ -2074,6 +2117,7 @@ export function History() {
       description: editType === 'expense' ? finalCardDesc : (recurrenceFields.description || editDesc),
       type: editType,
       date: editDate,
+      time: editTime || null,
       start_km: editStartKm ? Number(editStartKm) : null,
       end_km: editEndKm ? Number(editEndKm) : null,
       deliveries: editCategory === 'Pizzaria' && editDeliveries !== '' ? Number(editDeliveries) : null,
@@ -2108,6 +2152,7 @@ export function History() {
         type: editType,
         amount: finalAmount,
         date: editDate,
+        time: editTime || null,
         due_date: effectiveDueDate,
         category: editCategory,
         description: txUpdatePayload.description || editCategory,
@@ -2124,6 +2169,7 @@ export function History() {
       };
       if (!hasExistingNextOccurrence(transactions, mergedSource, recurrenceFields.recurrence_group_id, nextDate)) {
         const nextTx = buildNextRecurringTransaction(mergedSource, nextDate, recurrenceFields.recurrence_group_id, uid);
+        if (nextTx.time) setTxTimeEntry(uid, nextTx.id, nextTx.time);
         setTransactions(prev => {
           const newState = [nextTx, ...prev];
           cacheManager.set(`transactions_${uid}`, newState, undefined, 'transactions');
@@ -2150,6 +2196,7 @@ export function History() {
         await updateReserveTransaction(matchRt.id, {
           amount: finalAmount,
           date: editDate,
+          time: editTime || null,
           category: editCategory,
           description: editDesc?.startsWith('[Reserva]') ? editDesc.replace(/^\[Reserva\]\s*/, '') : editDesc,
           payment_status: effectivePaymentStatus,
@@ -2457,6 +2504,7 @@ export function History() {
           type: (isRendimento || isSaleSettlement) ? 'income' : 'expense' as const,
           amount: Number(rt.amount),
           date: settlementDate,
+          time: rt.time || null,
           category: effectiveCategory,
           description: isSaleSettlement
             ? (rt.description || `Crédito D+2 de venda (${settlementTicker || 'Ativo'}) na reserva ${reserveName}`)
@@ -3773,9 +3821,9 @@ export function History() {
 
     // 7. Sorting
     if (sortBy === 'date-desc') {
-      result.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+      result.sort(compareByDateTimeDesc);
     } else if (sortBy === 'date-asc') {
-      result.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+      result.sort(compareByDateTimeAsc);
     } else if (sortBy === 'amount-desc') {
       result.sort((a, b) => Number(b.amount || 0) - Number(a.amount || 0));
     } else if (sortBy === 'amount-asc') {
@@ -4088,8 +4136,8 @@ export function History() {
       g.transactions = [...g.transactions].sort((a, b) => {
         if (sortBy === 'amount-desc') return Number(b.amount || 0) - Number(a.amount || 0);
         if (sortBy === 'amount-asc') return Number(a.amount || 0) - Number(b.amount || 0);
-        if (sortBy === 'date-desc') return (b.date || '').localeCompare(a.date || '');
-        return (a.date || '').localeCompare(b.date || '');
+        if (sortBy === 'date-asc') return compareByDateTimeAsc(a, b);
+        return compareByDateTimeDesc(a, b);
       });
     });
 
@@ -4241,7 +4289,7 @@ export function History() {
       return;
     }
 
-    const headers = ['Data', 'Tipo', 'Categoria', 'Descrição', 'Valor (R$)', 'Origem', 'Detalhes (KM/Entregas)'];
+    const headers = ['Data', 'Hora', 'Tipo', 'Categoria', 'Descrição', 'Valor (R$)', 'Origem', 'Detalhes (KM/Entregas)'];
     const rows = filteredTransactions.map(t => {
       const isIncome = t.type === 'income';
       const amountVal = (t as any).rawAmount !== undefined ? (t as any).rawAmount : t.amount;
@@ -4262,9 +4310,11 @@ export function History() {
       }
 
       const cleanDesc = (t.description || '').replace(/"/g, '""').replace(/\n/g, ' ');
+      const rowTime = getEffectiveItemTime(t) || '';
 
       return [
         t.date,
+        rowTime,
         isIncome ? 'Receita' : 'Despesa',
         `"${t.category}"`,
         `"${cleanDesc}"`,
@@ -6986,6 +7036,15 @@ export function History() {
                                     <EyeOff className="w-2.5 h-2.5" /> Ignorado nos gráficos
                                   </span>
                                 )}
+                                {(() => {
+                                  const rowTime = getEffectiveItemTime(t);
+                                  if (!rowTime) return null;
+                                  return (
+                                    <span className="text-[9px] font-mono font-bold bg-muted/60 text-muted-foreground border border-border/60 rounded px-1.5 py-0.2 flex items-center gap-0.5 shrink-0">
+                                      <Clock className="w-2.5 h-2.5" /> {rowTime}
+                                    </span>
+                                  );
+                                })()}
                               </div>
                               <p className="text-[10px] sm:text-xs text-muted-foreground truncate font-medium mt-0.5">
                                 {t.description ? t.description.replace(/^\[Reserva\]\s*/, '') : 'Sem descrição cadastrada'}
@@ -7058,9 +7117,10 @@ export function History() {
                                     </p>
                                   </div>
                                   <div>
-                                    <p className="text-[10px] text-muted-foreground font-semibold lowercase tracking-wide">Data do lançamento</p>
+                                    <p className="text-[10px] text-muted-foreground font-semibold lowercase tracking-wide">Data / Hora do lançamento</p>
                                     <p className="font-semibold text-foreground mt-0.5">
                                       {format(parseLocalDate(t.date), "dd 'de' MMMM 'de' yyyy", { locale: ptBR })}
+                                      {getEffectiveItemTime(t) ? ` às ${getEffectiveItemTime(t)}` : ''}
                                     </p>
                                   </div>
                                   {t.description && (
@@ -7440,7 +7500,7 @@ export function History() {
                   />
                 </div>
 
-                {/* Date */}
+                {/* Date & Time */}
                 <div className="space-y-1.5">
                   <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
                     {editReserveTxType === 'utilizacao' && !editCustomSecondaryDate
@@ -7462,6 +7522,27 @@ export function History() {
                     required
                   />
                 </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1">
+                    <Clock className="w-3 h-3 text-primary" /> Hora (HH:mm)
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setEditTime(getCurrentLocalTimeStr())}
+                    className="text-[10px] font-extrabold text-primary hover:underline cursor-pointer"
+                  >
+                    Agora
+                  </button>
+                </div>
+                <Input
+                  type="time"
+                  value={editTime}
+                  onChange={(e) => setEditTime(e.target.value)}
+                  className="rounded-lg border-border font-mono"
+                />
               </div>
 
               {/* Vehicle Selection for Reserve Utilization - Right below Valor */}
@@ -8169,6 +8250,27 @@ export function History() {
                 </div>
               </div>
 
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground/90 flex items-center gap-1">
+                    <Clock className="w-3 h-3 text-primary" /> Hora (HH:mm)
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setEditTime(getCurrentLocalTimeStr())}
+                    className="text-[10px] font-extrabold text-primary hover:underline cursor-pointer"
+                  >
+                    Agora
+                  </button>
+                </div>
+                <Input
+                  type="time"
+                  value={editTime}
+                  onChange={(e) => setEditTime(e.target.value)}
+                  className="h-10 rounded-xl border-border font-mono font-semibold focus:ring-1 focus:ring-primary focus-visible:ring-primary"
+                />
+              </div>
+
               {/* Vehicle Selection in Edit Form - Placed right below Valor */}
               {vehicles && vehicles.length > 0 && (isEditCategoryVehicleRelated || (editVehicleId && editVehicleId !== '__none__')) && (
                 <div className="space-y-1 pt-1 animate-fade-in">
@@ -8841,17 +8943,39 @@ export function History() {
                 </div>
               )}
 
-              <div className="space-y-1.5 pt-2 border-t border-border/60">
-                <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground block">
-                  Data em que foi pago:
-                </label>
-                <Input
-                  type="date"
-                  value={settlePaymentDate}
-                  onChange={(e) => setSettlePaymentDate(e.target.value)}
-                  className="h-10 rounded-xl border-border bg-card font-semibold text-xs"
-                  required
-                />
+              <div className="grid grid-cols-2 gap-2.5 pt-2 border-t border-border/60">
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground block">
+                    Data em que foi pago:
+                  </label>
+                  <Input
+                    type="date"
+                    value={settlePaymentDate}
+                    onChange={(e) => setSettlePaymentDate(e.target.value)}
+                    className="h-10 rounded-xl border-border bg-card font-semibold text-xs"
+                    required
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground block">
+                      Hora:
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setSettlePaymentTime(getCurrentLocalTimeStr())}
+                      className="text-[10px] font-extrabold text-primary hover:underline cursor-pointer"
+                    >
+                      Agora
+                    </button>
+                  </div>
+                  <Input
+                    type="time"
+                    value={settlePaymentTime}
+                    onChange={(e) => setSettlePaymentTime(e.target.value)}
+                    className="h-10 rounded-xl border-border bg-card font-mono font-semibold text-xs"
+                  />
+                </div>
               </div>
 
               {settleItem.type === 'expense' && (reserves || []).filter(r => r.status !== 'inactive').length > 0 && (

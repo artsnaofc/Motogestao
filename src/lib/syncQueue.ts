@@ -203,57 +203,67 @@ class SyncQueueManager {
         // Auto fallback 1: If column does not exist in schema
         if (error && (error.code === '42703' || error.code === 'PGRST204' || error.message?.includes('column') || error.message?.includes('Could not find the'))) {
           console.warn(`[SyncQueue] Tentando payload simplificado para ${task.table}:${task.targetId}`, error);
-          if (task.table === 'vehicles') {
-            const sanitizedVehicle = { ...payloadToInsert };
-            const match = error.message?.match(/Could not find the ['"]?([a-zA-Z0-9_]+)['"]? column/i) ||
-                          error.message?.match(/column ['"]?([a-zA-Z0-9_]+)['"]? does not exist/i) ||
-                          error.message?.match(/column ['"]?([a-zA-Z0-9_]+)['"]? of relation/i);
-            if (match && match[1] && sanitizedVehicle[match[1]] !== undefined) {
-              delete sanitizedVehicle[match[1]];
-              const { error: vehicleRetryErr } = await supabase.from('vehicles').upsert(sanitizedVehicle, { onConflict: 'id' });
-              if (!vehicleRetryErr) {
+          const dynamicSanitized = { ...payloadToInsert };
+          let dynamicFixed = false;
+          for (let i = 0; i < 4; i++) {
+            const match = error?.message?.match(/Could not find the ['"]?([a-zA-Z0-9_]+)['"]? column/i) ||
+                          error?.message?.match(/column ['"]?([a-zA-Z0-9_]+)['"]? does not exist/i) ||
+                          error?.message?.match(/column ['"]?([a-zA-Z0-9_]+)['"]? of relation/i);
+            if (match && match[1] && dynamicSanitized[match[1]] !== undefined) {
+              delete dynamicSanitized[match[1]];
+              const { error: dynRetryErr } = await supabase.from(task.table).upsert(dynamicSanitized, { onConflict: 'id' });
+              if (!dynRetryErr) {
+                error = null;
+                dynamicFixed = true;
+                break;
+              }
+              error = dynRetryErr;
+            } else {
+              break;
+            }
+          }
+
+          if (!dynamicFixed && error) {
+            if (task.table === 'reserves') {
+              const optionalReserveKeys = [
+                'rule_history', 'regra_inicio_validade', 'regra_inicio_hora', 'require_category_on_use',
+                'default_use_category', 'regra_base', 'target_date',
+                'boost_ativo', 'boost_tipo', 'boost_valor', 'reset_suggestion_on_withdraw',
+                'weekly_goal_mode', 'weekly_goal_amount', 'weekly_goal_include_manual'
+              ];
+              const safeReserveInsert: Record<string, any> = {};
+              for (const k of Object.keys(payloadToInsert || {})) {
+                if (!optionalReserveKeys.includes(k)) {
+                  safeReserveInsert[k] = payloadToInsert[k];
+                }
+              }
+              const { error: resFallbackErr } = await supabase.from('reserves').upsert(safeReserveInsert, { onConflict: 'id' });
+              if (!resFallbackErr) {
                 error = null;
               }
-            }
-          } else if (task.table === 'reserves') {
-            const optionalReserveKeys = [
-              'rule_history', 'regra_inicio_validade', 'require_category_on_use',
-              'default_use_category', 'regra_base', 'target_date',
-              'boost_ativo', 'boost_tipo', 'boost_valor', 'reset_suggestion_on_withdraw',
-              'weekly_goal_mode', 'weekly_goal_amount', 'weekly_goal_include_manual'
-            ];
-            const safeReserveInsert: Record<string, any> = {};
-            for (const k of Object.keys(payloadToInsert || {})) {
-              if (!optionalReserveKeys.includes(k)) {
-                safeReserveInsert[k] = payloadToInsert[k];
+            } else if (task.table !== 'vehicles') {
+              const coreKeys = [
+                'id', 'user_id', 'reserve_id', 'type', 'amount', 'date', 'description', 
+                'category', 'operation', 'ticker', 'price', 'quantity', 'costs', 'cnpj', 
+                'transaction_id', 'linked_investment_id', 'asset_type', 'unit_amount', 
+                'status', 'data_com', 'data_ex', 'created_at', 'saldo_inicial', 'color', 
+                'payment_status', 'payment_date', 'due_date',
+                'ignore_in_charts', 'card_id', 'card_name', 'card_installments', 'card_installment_index',
+                'is_recurring', 'recurrence_frequency', 'recurrence_installments', 'recurrence_group_id',
+                'installment_number', 'installment_total',
+                'name', 'brand', 'closing_day', 'due_day', 'limit_amount',
+                'tab', 'deliveries', 'out_of_neighborhood', 'operational_expenses',
+                'monthly_limit', 'platform_category', 'period_start', 'period_end',
+                'expected_amount', 'actual_paid_amount', 'difference', 'reconciled_at', 'notes'
+              ];
+              const simplified: Record<string, any> = {};
+              for (const k of coreKeys) {
+                if (payloadToInsert[k] !== undefined) simplified[k] = payloadToInsert[k];
               }
-            }
-            const { error: resFallbackErr } = await supabase.from('reserves').upsert(safeReserveInsert, { onConflict: 'id' });
-            if (!resFallbackErr) {
-              error = null;
-            }
-          } else {
-            const coreKeys = [
-              'id', 'user_id', 'reserve_id', 'type', 'amount', 'date', 'description', 
-              'category', 'operation', 'ticker', 'price', 'quantity', 'costs', 'cnpj', 
-              'transaction_id', 'linked_investment_id', 'asset_type', 'unit_amount', 
-              'status', 'data_com', 'data_ex', 'created_at', 'saldo_inicial', 'color', 
-              'payment_status', 'payment_date', 'due_date',
-              'ignore_in_charts', 'card_id', 'card_name', 'card_installments', 'card_installment_index',
-              'is_recurring', 'recurrence_frequency', 'recurrence_installments', 'recurrence_group_id',
-              'installment_number', 'installment_total',
-              'name', 'brand', 'closing_day', 'due_day', 'limit_amount',
-              'tab', 'deliveries', 'out_of_neighborhood', 'operational_expenses',
-              'monthly_limit', 'platform_category', 'period_start', 'period_end',
-              'expected_amount', 'actual_paid_amount', 'difference', 'reconciled_at', 'notes'
-            ];
-            const simplified: Record<string, any> = {};
-            for (const k of coreKeys) {
-              if (payloadToInsert[k] !== undefined) simplified[k] = payloadToInsert[k];
-            }
-            const { error: fallbackErr } = await supabase.from(task.table).upsert(simplified, { onConflict: 'id' });
-            if (!fallbackErr) {
-              error = null;
+              const { error: fallbackErr } = await supabase.from(task.table).upsert(simplified, { onConflict: 'id' });
+              if (!fallbackErr) {
+                error = null;
+              }
             }
           }
         }
@@ -331,28 +341,36 @@ class SyncQueueManager {
         if (error && (error.code === '42703' || error.code === 'PGRST204' || error.message?.includes('column') || error.message?.includes('Could not find the'))) {
           console.warn(`[SyncQueue] Coluna inexistente no update de ${task.table}:${task.targetId}. Tentando payload limpo...`, error);
           const sanitizedUpdate = { ...task.payload };
-          
-          // Try to identify and remove specific column from error message
-          const match = error.message?.match(/Could not find the ['"]?([a-zA-Z0-9_]+)['"]? column/i) ||
-                        error.message?.match(/column ['"]?([a-zA-Z0-9_]+)['"]? does not exist/i) ||
-                        error.message?.match(/column ['"]?([a-zA-Z0-9_]+)['"]? of relation/i);
-          if (match && match[1] && sanitizedUpdate[match[1]] !== undefined) {
-            delete sanitizedUpdate[match[1]];
-            const { error: singleRetryErr } = await supabase
-              .from(task.table)
-              .update(sanitizedUpdate)
-              .eq('id', task.targetId);
-            if (!singleRetryErr) {
-              error = null;
+
+          for (let i = 0; i < 4; i++) {
+            const match = error?.message?.match(/Could not find the ['"]?([a-zA-Z0-9_]+)['"]? column/i) ||
+                          error?.message?.match(/column ['"]?([a-zA-Z0-9_]+)['"]? does not exist/i) ||
+                          error?.message?.match(/column ['"]?([a-zA-Z0-9_]+)['"]? of relation/i);
+            if (match && match[1] && sanitizedUpdate[match[1]] !== undefined) {
+              delete sanitizedUpdate[match[1]];
+              if (Object.keys(sanitizedUpdate).length === 0) {
+                error = null;
+                break;
+              }
+              const { error: singleRetryErr } = await supabase
+                .from(task.table)
+                .update(sanitizedUpdate)
+                .eq('id', task.targetId);
+              if (!singleRetryErr) {
+                error = null;
+                break;
+              } else {
+                error = singleRetryErr;
+              }
             } else {
-              error = singleRetryErr;
+              break;
             }
           }
 
           // If still failing and table is reserves, strip newer non-core columns
           if (error && task.table === 'reserves') {
             const optionalReserveKeys = [
-              'rule_history', 'regra_inicio_validade', 'require_category_on_use',
+              'rule_history', 'regra_inicio_validade', 'regra_inicio_hora', 'require_category_on_use',
               'default_use_category', 'regra_base', 'target_date',
               'boost_ativo', 'boost_tipo', 'boost_valor', 'reset_suggestion_on_withdraw',
               'weekly_goal_mode', 'weekly_goal_amount', 'weekly_goal_include_manual'
@@ -376,7 +394,7 @@ class SyncQueueManager {
 
           // If still failing and table is transactions, strip newer optional columns
           if (error && task.table === 'transactions') {
-            const optionalTransactionKeys = ['ignore_in_charts'];
+            const optionalTransactionKeys = ['ignore_in_charts', 'time'];
             const safeTxUpdate: Record<string, any> = {};
             for (const k of Object.keys(task.payload || {})) {
               if (!optionalTransactionKeys.includes(k)) {
@@ -391,12 +409,14 @@ class SyncQueueManager {
               if (!coreTxRetryErr) {
                 error = null;
               }
+            } else {
+              error = null;
             }
           }
 
           // If still failing and table is reserve_transactions, strip newer optional columns
           if (error && task.table === 'reserve_transactions') {
-            const optionalRtKeys = ['ignore_in_charts'];
+            const optionalRtKeys = ['ignore_in_charts', 'time'];
             const safeRtUpdate: Record<string, any> = {};
             for (const k of Object.keys(task.payload || {})) {
               if (!optionalRtKeys.includes(k)) {
@@ -411,6 +431,8 @@ class SyncQueueManager {
               if (!coreRtRetryErr) {
                 error = null;
               }
+            } else {
+              error = null;
             }
           }
         }

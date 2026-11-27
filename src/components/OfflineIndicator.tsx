@@ -36,7 +36,7 @@ export const OfflineIndicator: React.FC = () => {
               setIsModalOpen(true);
             }
           }}
-          className="fixed bottom-20 md:bottom-6 left-4 right-4 md:right-auto md:max-w-md z-30 flex items-center justify-between gap-3 rounded-2xl bg-amber-600/95 hover:bg-amber-600 text-white px-4 py-3 shadow-xl backdrop-blur-md border border-amber-400/40 animate-in fade-in slide-in-from-bottom-3 cursor-pointer group select-none transition-all active:scale-[0.98] ring-1 ring-amber-300/30 touch-manipulation"
+          className="fixed bottom-16 md:bottom-6 left-4 right-4 md:right-auto md:max-w-md z-30 flex items-center justify-between gap-3 rounded-2xl bg-amber-600/95 hover:bg-amber-600 text-white px-4 py-3 shadow-xl backdrop-blur-md border border-amber-400/40 animate-in fade-in slide-in-from-bottom-3 cursor-pointer group select-none transition-all active:scale-[0.98] ring-1 ring-amber-300/30 touch-manipulation"
           title="Clique para ver a lista de movimentações pendentes da base de dados"
         >
           <div className="flex items-center gap-3">

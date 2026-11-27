@@ -35,6 +35,7 @@ import {
   SlidersHorizontal
 } from 'lucide-react';
 import { getPaymentStatusMeta, formatRecurrenceFrequency } from '../../lib/recurrenceUtils';
+import { getEffectiveItemTime } from '../../lib/timeUtils';
 import { iconOptions } from '../reserves/reserveUtils';
 import { ExpenseBudgetsMap } from '../../lib/planningStorage';
 import { ExpenseWindowTotals, getCategoryBudgetStatuses } from '../../lib/budgetUtils';
@@ -106,6 +107,7 @@ export function TransactionDetailView({
 
   const isIncome = t.type === 'income';
   const displayAmount = (t as any).rawAmount !== undefined ? (t as any).rawAmount : t.amount;
+  const effectiveTime = getEffectiveItemTime(t);
 
   const matchedReserveInfo = isReserveUseEx ? (() => {
     const matchRt = (reserveTransactions || []).find(
@@ -753,9 +755,10 @@ export function TransactionDetailView({
               </span>
             </div>
             <div className="p-2 rounded-lg bg-card border border-border/60">
-              <span className="text-[8.5px] text-muted-foreground uppercase font-extrabold block">Data Registro</span>
+              <span className="text-[8.5px] text-muted-foreground uppercase font-extrabold block">Data / Hora</span>
               <span className="font-mono font-bold text-xs text-foreground mt-0.5 block">
                 {format(parseISO(t.date), "dd/MM/yyyy")}
+                {effectiveTime ? ` às ${effectiveTime}` : ''}
               </span>
             </div>
           </div>
@@ -856,6 +859,7 @@ export function TransactionDetailView({
                 <span className="text-[8.5px] text-emerald-700 dark:text-emerald-300 uppercase font-bold block">Data Pagamento</span>
                 <span className="font-bold font-mono text-emerald-700 dark:text-emerald-300">
                   {t.payment_date ? format(parseISO(t.payment_date), "dd/MM/yyyy") : format(parseISO(t.date), "dd/MM/yyyy")}
+                  {effectiveTime ? ` • ${effectiveTime}` : ''}
                 </span>
               </div>
             )}
@@ -917,7 +921,7 @@ export function TransactionDetailView({
       {/* Common Footer Actions Bar */}
       <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border/40 pt-2.5">
         <span className="text-[10px] text-muted-foreground font-mono">
-          ID: {t.id.slice(0, 8)}
+          ID: {t.id.slice(0, 8)}{effectiveTime ? ` • Hora: ${effectiveTime}` : ''}
         </span>
         <div className="flex flex-wrap items-center gap-1.5">
           {!isInvestmentTx && !isDividendTx && !isSaleSettlement && !(t as any).isTransferToCash && (!isReserveTx || (t as any).reserveTxType === 'utilizacao') && onToggleIgnoreInCharts && (

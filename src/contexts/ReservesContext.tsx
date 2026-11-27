@@ -15,6 +15,7 @@ import {
 } from '../lib/recurrenceUtils';
 import { format } from 'date-fns';
 import { planningStorage } from '../lib/planningStorage';
+import { setRtTimeEntry } from '../lib/timeUtils';
 
 export interface ReservesContextType {
   reserves: Reserve[];
@@ -79,7 +80,8 @@ export function ReservesProvider({
       fields.weekly_goal_mode === undefined &&
       fields.weekly_goal_amount === undefined &&
       fields.weekly_goal_include_manual === undefined &&
-      fields.regra_base === undefined
+      fields.regra_base === undefined &&
+      fields.regra_inicio_hora === undefined
     ) {
       return;
     }
@@ -94,6 +96,7 @@ export function ReservesProvider({
         weekly_goal_amount?: number | null;
         weekly_goal_include_manual?: boolean;
         regra_base?: Reserve['regra_base'];
+        regra_inicio_hora?: string | null;
       }> = raw ? JSON.parse(raw) : {};
       const prevEntry = currentMap[reserveId] || {};
       currentMap[reserveId] = {
@@ -120,6 +123,10 @@ export function ReservesProvider({
           fields.regra_base !== undefined
             ? fields.regra_base
             : prevEntry.regra_base,
+        regra_inicio_hora:
+          fields.regra_inicio_hora !== undefined
+            ? fields.regra_inicio_hora
+            : prevEntry.regra_inicio_hora,
       };
       localStorage.setItem(`reserve_boost_map_${userId}`, JSON.stringify(currentMap));
       cacheManager.set(`reserve_boost_map_${userId}`, currentMap, undefined, 'reserves');
@@ -245,6 +252,7 @@ export function ReservesProvider({
       date: rtObj.date,
       created_at: rtObj.created_at,
     };
+    if (rtObj.time) supabasePayload.time = rtObj.time;
     if (rtObj.description) supabasePayload.description = rtObj.description;
     if (rtObj.category) supabasePayload.category = rtObj.category;
     if (rtObj.linked_investment_id) supabasePayload.linked_investment_id = rtObj.linked_investment_id;
@@ -259,6 +267,10 @@ export function ReservesProvider({
     if (rtObj.installment_number !== undefined) supabasePayload.installment_number = rtObj.installment_number;
     if (rtObj.installment_total !== undefined) supabasePayload.installment_total = rtObj.installment_total;
     if (rtObj.ignore_in_charts !== undefined) supabasePayload.ignore_in_charts = rtObj.ignore_in_charts;
+
+    if (rtObj.time) {
+      setRtTimeEntry(userId, rtObj.id, rtObj.time);
+    }
 
     if (rtObj.boost_extra && rtObj.boost_extra > 0) {
       persistBoostExtra(userId, rtObj.id, rtObj.boost_extra);
@@ -359,6 +371,10 @@ export function ReservesProvider({
       return existing;
     });
 
+    if (effectiveUpdatedFields.time !== undefined) {
+      setRtTimeEntry(userId, id, effectiveUpdatedFields.time);
+    }
+
     // Sanitize payload for Supabase
     const { source, batch_id, boost_extra, ...supabasePayload } = effectiveUpdatedFields as any;
 
@@ -366,6 +382,9 @@ export function ReservesProvider({
     if (!options?.silent) toast.success('Movimentação de reserva atualizada!', { id: 'reserve-action' });
 
     if (nextRecurringRt) {
+      if (nextRecurringRt.time) {
+        setRtTimeEntry(userId, nextRecurringRt.id, nextRecurringRt.time);
+      }
       const nextPayload: Record<string, any> = {
         id: nextRecurringRt.id,
         user_id: nextRecurringRt.user_id,
@@ -383,6 +402,7 @@ export function ReservesProvider({
         installment_number: nextRecurringRt.installment_number,
         ignore_in_charts: nextRecurringRt.ignore_in_charts,
       };
+      if (nextRecurringRt.time) nextPayload.time = nextRecurringRt.time;
       if (nextRecurringRt.description) nextPayload.description = nextRecurringRt.description;
       if (nextRecurringRt.category) nextPayload.category = nextRecurringRt.category;
       if (nextRecurringRt.vehicle_id) nextPayload.vehicle_id = nextRecurringRt.vehicle_id;

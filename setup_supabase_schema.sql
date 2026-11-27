@@ -70,6 +70,7 @@ CREATE TABLE IF NOT EXISTS public.transactions (
     type TEXT NOT NULL CHECK (type IN ('income', 'expense')),
     amount NUMERIC NOT NULL DEFAULT 0,
     date DATE NOT NULL,
+    "time" TEXT,
     category TEXT NOT NULL,
     description TEXT,
     notes TEXT,
@@ -120,6 +121,7 @@ CREATE TABLE IF NOT EXISTS public.transactions (
 );
 
 CREATE INDEX IF NOT EXISTS idx_transactions_user_date ON public.transactions(user_id, date DESC);
+CREATE INDEX IF NOT EXISTS idx_transactions_user_date_time ON public.transactions(user_id, date DESC, "time" DESC NULLS LAST);
 CREATE INDEX IF NOT EXISTS idx_transactions_payment_status ON public.transactions(user_id, payment_status);
 CREATE INDEX IF NOT EXISTS idx_transactions_due_date ON public.transactions(due_date) WHERE payment_status = 'pending';
 CREATE INDEX IF NOT EXISTS idx_transactions_recurrence_group ON public.transactions(recurrence_group_id);
@@ -141,6 +143,7 @@ CREATE TABLE IF NOT EXISTS public.reserves (
     saldo_atual NUMERIC DEFAULT 0,
     suggested_balance NUMERIC DEFAULT 0,
     meta_objetivo NUMERIC,
+    target_date DATE,
     status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
     
     -- Automações de Aporte
@@ -154,6 +157,14 @@ CREATE TABLE IF NOT EXISTS public.reserves (
     rule_history JSONB DEFAULT '[]'::jsonb,
     is_paused BOOLEAN DEFAULT FALSE,
     regra_inicio_validade DATE,
+    regra_inicio_hora TEXT,
+    boost_ativo BOOLEAN DEFAULT FALSE,
+    boost_tipo TEXT,
+    boost_valor NUMERIC,
+    reset_suggestion_on_withdraw BOOLEAN DEFAULT TRUE,
+    weekly_goal_mode TEXT,
+    weekly_goal_amount NUMERIC,
+    weekly_goal_include_manual BOOLEAN DEFAULT FALSE,
     
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -161,6 +172,7 @@ CREATE TABLE IF NOT EXISTS public.reserves (
 
 -- Garantir adição de coluna se a tabela já existir no Supabase
 ALTER TABLE public.reserves ADD COLUMN IF NOT EXISTS suggested_balance NUMERIC DEFAULT 0;
+ALTER TABLE public.reserves ADD COLUMN IF NOT EXISTS regra_inicio_hora TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_reserves_user_status ON public.reserves(user_id, status);
 
@@ -174,6 +186,7 @@ CREATE TABLE IF NOT EXISTS public.reserve_transactions (
     type TEXT NOT NULL CHECK (type IN ('aporte', 'utilizacao', 'rendimento')),
     amount NUMERIC NOT NULL DEFAULT 0,
     date DATE NOT NULL,
+    "time" TEXT,
     category TEXT,
     description TEXT,
     linked_investment_id TEXT,
@@ -195,10 +208,12 @@ CREATE TABLE IF NOT EXISTS public.reserve_transactions (
     total_installments INTEGER,
 
     vehicle_id TEXT,
+    ignore_in_charts BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_reserve_tx_user_reserve ON public.reserve_transactions(user_id, reserve_id, date DESC);
+CREATE INDEX IF NOT EXISTS idx_reserve_tx_user_date_time ON public.reserve_transactions(user_id, reserve_id, date DESC, "time" DESC NULLS LAST);
 CREATE INDEX IF NOT EXISTS idx_reserve_tx_payment_status ON public.reserve_transactions(payment_status);
 
 -- ==============================================================================

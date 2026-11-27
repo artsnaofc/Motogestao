@@ -16,6 +16,7 @@ import {
 } from '../lib/recurrenceUtils';
 import { format } from 'date-fns';
 import { planningStorage } from '../lib/planningStorage';
+import { setTxTimeEntry } from '../lib/timeUtils';
 
 export interface TransactionsContextType {
   transactions: Transaction[];
@@ -168,9 +169,15 @@ export function TransactionsProvider({
     }
 
     // Always push to sync queue
+    if (userId && effectiveUpdatedFields.time !== undefined) {
+      setTxTimeEntry(userId, id, effectiveUpdatedFields.time);
+    }
     syncQueueManager.enqueue('transactions', 'update', id, cleanPayload);
 
     if (nextRecurringTx) {
+      if (userId && nextRecurringTx.time) {
+        setTxTimeEntry(userId, nextRecurringTx.id, nextRecurringTx.time);
+      }
       syncQueueManager.enqueue('transactions', 'insert', nextRecurringTx.id, nextRecurringTx);
       const effectiveUidForMap = userId || nextRecurringTx.user_id;
       const linkedCardId =

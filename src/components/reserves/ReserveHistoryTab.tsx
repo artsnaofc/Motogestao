@@ -88,6 +88,14 @@ import {
   doesExpenseCountForLiquido,
   getLiquidoProfitMode
 } from './reserveUtils';
+import {
+  getEffectiveItemTime,
+  getCurrentLocalTimeStr,
+  normalizeTimeStr,
+  compareByDateTimeAsc,
+  compareByDateTimeDesc,
+  DateTimeSortableItem
+} from '../../lib/timeUtils';
 import { toast } from '@/lib/toast';
 
 export interface RuleHistoryItem {
@@ -95,6 +103,7 @@ export interface RuleHistoryItem {
   reserve_id: string;
   historyIndex?: number;
   date: string; // YYYY-MM-DD
+  time?: string | null; // HH:mm
   updated_at?: string;
   regra_tipo?: string;
   regra_base?: 'bruto' | 'liquido' | 'lucro';
@@ -102,7 +111,9 @@ export interface RuleHistoryItem {
   regra_categorias?: string[];
   regra_ativa?: boolean;
   start_date?: string;
+  start_time?: string | null;
   end_date?: string | null;
+  end_time?: string | null;
   description?: string;
   isCurrentActive: boolean;
 }
@@ -112,6 +123,7 @@ export type UnifiedHistoryItem =
       kind: 'transaction';
       id: string;
       date: string;
+      time?: string | null;
       reserve_id: string;
       amount: number;
       tx: ReserveTransaction;
@@ -120,6 +132,7 @@ export type UnifiedHistoryItem =
       kind: 'rule_update';
       id: string;
       date: string;
+      time?: string | null;
       reserve_id: string;
       amount: number;
       rule: RuleHistoryItem;
@@ -182,7 +195,9 @@ export function ReserveHistoryTab({
   const [editRuleBase, setEditRuleBase] = useState<'lucro' | 'liquido'>('lucro');
   const [editRuleValue, setEditRuleValue] = useState<string>('');
   const [editRuleStartDate, setEditRuleStartDate] = useState<string>('');
+  const [editRuleStartTime, setEditRuleStartTime] = useState<string>('');
   const [editRuleEndDate, setEditRuleEndDate] = useState<string>('');
+  const [editRuleEndTime, setEditRuleEndTime] = useState<string>('');
   const [editRuleCategories, setEditRuleCategories] = useState<string>('');
   const [editRuleCategoryList, setEditRuleCategoryList] = useState<string[]>([]);
   const [editRuleActive, setEditRuleActive] = useState<boolean>(true);
@@ -193,6 +208,7 @@ export function ReserveHistoryTab({
   // Edit Transaction Form Fields
   const [editAmount, setEditAmount] = useState<string>('');
   const [editDate, setEditDate] = useState<string>('');
+  const [editTime, setEditTime] = useState<string>('');
   const [editDescription, setEditDescription] = useState<string>('');
   const [editCategory, setEditCategory] = useState<string>('');
   const [editReserveId, setEditReserveId] = useState<string>('');
@@ -389,13 +405,7 @@ export function ReserveHistoryTab({
       const res = reserveMap[reserveId];
       let running = Math.round(Number(res?.saldo_inicial || 0) * 100) / 100;
 
-      const sortedAsc = [...rts].sort((a, b) => {
-        const dCmp = (a.date || '').localeCompare(b.date || '');
-        if (dCmp !== 0) return dCmp;
-        const cCmp = (a.created_at || '').localeCompare(b.created_at || '');
-        if (cCmp !== 0) return cCmp;
-        return (a.id || '').localeCompare(b.id || '');
-      });
+      const sortedAsc = [...rts].sort(compareByDateTimeAsc);
 
       sortedAsc.forEach(rt => {
         const isPending = rt.payment_status === 'pending' || (rt as any).status === 'pending';
@@ -568,10 +578,16 @@ export function ReserveHistoryTab({
       if (res.regra_tipo && res.regra_valor !== undefined && res.regra_valor !== null) {
         const rawStart = res.regra_inicio_validade || res.created_at || getTodayLocalDateStr();
         const activeStartDate = toDateInputString(rawStart) || getTodayLocalDateStr();
+        const activeStartTime =
+          normalizeTimeStr(res.regra_inicio_hora) ||
+          normalizeTimeStr(res.updated_at) ||
+          normalizeTimeStr(res.created_at) ||
+          null;
         activeEvents.push({
           id: `rule_current_${res.id}`,
           reserve_id: res.id,
           date: activeStartDate,
+          time: activeStartTime,
           updated_at: res.updated_at || res.created_at || activeStartDate,
           regra_tipo: res.regra_tipo,
           regra_base: res.regra_base,
@@ -579,7 +595,9 @@ export function ReserveHistoryTab({
           regra_categorias: res.regra_categorias || [],
           regra_ativa: res.regra_ativa !== false,
           start_date: activeStartDate,
+          start_time: activeStartTime,
           end_date: null,
+          end_time: null,
           description: 'Regra ativa em vigor',
           isCurrentActive: true
         });
@@ -591,11 +609,20 @@ export function ReserveHistoryTab({
         const rawStart = h.start_date || h.date || h.updated_at || res.created_at || '2026-01-01';
         const startDate = toDateInputString(rawStart) || '2026-01-01';
         const endDate = toDateInputString(h.end_date) || null;
+        const histStartTime =
+          normalizeTimeStr(h.start_time) ||
+          normalizeTimeStr(h.updated_at) ||
+          null;
+        const histEndTime =
+          normalizeTimeStr(h.end_time) ||
+          (h.cutoff_at ? getCurrentLocalTimeStr(new Date(h.cutoff_at)) : null);
+        const histTime = histEndTime || histStartTime || normalizeTimeStr(h.updated_at) || null;
         historyEvents.push({
           id: `rule_hist_${res.id}_${idx}_${h.updated_at || startDate || idx}`,
           reserve_id: res.id,
           historyIndex: idx,
           date: startDate,
+          time: histTime,
           updated_at: h.updated_at || startDate,
           regra_tipo: h.regra_tipo,
           regra_base: h.regra_base || res.regra_base,
@@ -603,7 +630,9 @@ export function ReserveHistoryTab({
           regra_categorias: h.regra_categorias || [],
           regra_ativa: h.regra_ativa !== undefined ? Boolean(h.regra_ativa) : true,
           start_date: startDate,
+          start_time: histStartTime,
           end_date: endDate,
+          end_time: histEndTime,
           description: h.description || `Regra anterior arquivada`,
           isCurrentActive: false
         });
@@ -833,6 +862,7 @@ export function ReserveHistoryTab({
         kind: 'transaction',
         id: `tx_${tx.id}`,
         date: tx.date || '',
+        time: getEffectiveItemTime(tx),
         reserve_id: tx.reserve_id,
         amount: Number(tx.amount || 0),
         tx
@@ -845,6 +875,7 @@ export function ReserveHistoryTab({
         kind: 'rule_update',
         id: rule.id,
         date: rule.date || '',
+        time: rule.time || normalizeTimeStr(rule.start_time) || normalizeTimeStr(rule.updated_at) || null,
         reserve_id: rule.reserve_id,
         amount: rule.regra_valor,
         rule
@@ -1015,8 +1046,21 @@ export function ReserveHistoryTab({
           }
         }
 
-        const dateA = a.date || '';
-        const dateB = b.date || '';
+        const toSortable = (item: UnifiedHistoryItem): DateTimeSortableItem =>
+          item.kind === 'transaction'
+            ? {
+                id: item.id,
+                date: item.date,
+                time: item.time ?? getEffectiveItemTime(item.tx),
+                created_at: item.tx.created_at,
+              }
+            : {
+                id: item.id,
+                date: item.date,
+                time: item.time ?? item.rule.time ?? normalizeTimeStr(item.rule.start_time),
+                created_at: item.rule.updated_at,
+              };
+
         const amtA = Number(a.amount || 0);
         const amtB = Number(b.amount || 0);
         const resA = reserveMap[a.reserve_id]?.name || '';
@@ -1024,7 +1068,7 @@ export function ReserveHistoryTab({
 
         switch (sortBy) {
           case 'date_asc':
-            return dateA.localeCompare(dateB);
+            return compareByDateTimeAsc(toSortable(a), toSortable(b));
           case 'amount_desc':
             return amtB - amtA;
           case 'amount_asc':
@@ -1033,7 +1077,7 @@ export function ReserveHistoryTab({
             return resA.localeCompare(resB);
           case 'date_desc':
           default: {
-            const cmp = dateB.localeCompare(dateA);
+            const cmp = compareByDateTimeDesc(toSortable(a), toSortable(b));
             if (cmp !== 0) return cmp;
             if (a.kind === 'rule_update' && b.kind === 'rule_update') {
               if (a.rule.isCurrentActive && !b.rule.isCurrentActive) return -1;
@@ -1390,7 +1434,7 @@ export function ReserveHistoryTab({
       return;
     }
 
-    const headers = ['Data', 'Reserva', 'Tipo de Registro', 'Status', 'Categoria / Tags', 'Detalhes / Descrição', 'Valor / Fórmula', 'Bônus Boost', 'Saldo Após'];
+    const headers = ['Data', 'Hora', 'Reserva', 'Tipo de Registro', 'Status', 'Categoria / Tags', 'Detalhes / Descrição', 'Valor / Fórmula', 'Bônus Boost', 'Saldo Após'];
     const rows = filteredItems.map(item => {
       const res = reserveMap[item.reserve_id];
       const resName = res?.name || 'Reserva';
@@ -1401,8 +1445,10 @@ export function ReserveHistoryTab({
         const isPending = item.tx.payment_status === 'pending' || (item.tx as any).status === 'pending';
         const boostExtra = getBoostExtraFromRt(item.tx);
         const balInfo = runningBalanceMap[item.tx.id];
+        const txTime = getEffectiveItemTime(item.tx) || '';
         return [
           formatDateDisplay(item.tx.date),
+          `"${txTime}"`,
           `"${resName.replace(/"/g, '""')}"`,
           `"${info.label}"`,
           `"${isPending ? 'Pendente' : 'Liquidado'}"`,
@@ -1416,8 +1462,10 @@ export function ReserveHistoryTab({
         const formula = getRuleFormulaLabel(item.rule.regra_tipo, item.rule.regra_valor);
         const status = item.rule.isCurrentActive ? 'Em Vigor' : 'Histórico';
         const cats = (item.rule.regra_categorias || []).join(', ');
+        const ruleTime = item.rule.start_time || item.rule.time || '';
         return [
           formatDateDisplay(item.rule.date),
+          `"${ruleTime}"`,
           `"${resName.replace(/"/g, '""')}"`,
           `"Atualização de Regra (${status})"`,
           `"${item.rule.regra_ativa !== false ? 'Ativa' : 'Pausada'}"`,
@@ -1447,6 +1495,7 @@ export function ReserveHistoryTab({
     setTxToEdit(tx);
     setEditAmount(String(tx.amount || ''));
     setEditDate(tx.date || getTodayLocalDateStr());
+    setEditTime(getEffectiveItemTime(tx) || getCurrentLocalTimeStr());
     setEditDescription(tx.description || '');
     setEditCategory(tx.category || '');
     setEditReserveId(tx.reserve_id || '');
@@ -1468,6 +1517,7 @@ export function ReserveHistoryTab({
       await onEditTransaction(txToEdit.id, {
         amount: parsedAmount,
         date: editDate,
+        time: normalizeTimeStr(editTime) || null,
         description: editDescription.trim(),
         category: editCategory.trim() || undefined,
         reserve_id: editReserveId || txToEdit.reserve_id,
@@ -1497,7 +1547,13 @@ export function ReserveHistoryTab({
     const cleanStart = toDateInputString(rule.start_date || rule.date) || getTodayLocalDateStr();
     const cleanEnd = toDateInputString(rule.end_date);
     setEditRuleStartDate(cleanStart);
+    setEditRuleStartTime(
+      normalizeTimeStr(rule.start_time) ||
+      normalizeTimeStr(rule.time) ||
+      getCurrentLocalTimeStr()
+    );
     setEditRuleEndDate(cleanEnd);
+    setEditRuleEndTime(normalizeTimeStr(rule.end_time) || '');
     const initialCats = Array.isArray(rule.regra_categorias) ? rule.regra_categorias : [];
     setEditRuleCategories(initialCats.join(', '));
     setEditRuleCategoryList(initialCats);
@@ -1557,6 +1613,20 @@ export function ReserveHistoryTab({
       return;
     }
 
+    const normStartTime = normalizeTimeStr(editRuleStartTime);
+    const normEndTime = normalizeTimeStr(editRuleEndTime);
+    if (
+      editRuleStartDate &&
+      editRuleEndDate &&
+      editRuleEndDate === editRuleStartDate &&
+      normStartTime &&
+      normEndTime &&
+      normEndTime < normStartTime
+    ) {
+      toast.error('A hora de término não pode ser anterior à hora de início no mesmo dia.');
+      return;
+    }
+
     const parsedCats = editRuleCategoryList.length > 0 
       ? editRuleCategoryList 
       : editRuleCategories.split(',').map(c => c.trim()).filter(Boolean);
@@ -1567,16 +1637,21 @@ export function ReserveHistoryTab({
       if (ruleToEdit.isCurrentActive) {
         // Updating Current Active In-Force Rule of the reserve
         const currentHist = Array.isArray(reserve.rule_history) ? [...reserve.rule_history] : [];
-        
+        const cleanStart = toDateInputString(editRuleStartDate) || getTodayLocalDateStr();
+        const cleanStartTime = normStartTime || getCurrentLocalTimeStr();
+
         // Auto-archive previous active configuration to history if requested & there was an active rule
         if (editRuleAutoArchive && reserve.regra_tipo && reserve.regra_valor) {
           const rawPrevStart = reserve.regra_inicio_validade || reserve.created_at || editRuleStartDate;
           const prevStart = toDateInputString(rawPrevStart) || getTodayLocalDateStr();
+          const prevStartTime = normalizeTimeStr(reserve.regra_inicio_hora) || null;
           const formulaLabel = getRuleFormulaLabel(reserve.regra_tipo, reserve.regra_valor);
           
           currentHist.push({
             start_date: prevStart,
-            end_date: toDateInputString(editRuleStartDate) || getTodayLocalDateStr(),
+            start_time: prevStartTime,
+            end_date: cleanStart,
+            end_time: cleanStartTime,
             regra_tipo: reserve.regra_tipo,
             regra_base: reserve.regra_base,
             regra_valor: reserve.regra_valor,
@@ -1589,14 +1664,13 @@ export function ReserveHistoryTab({
           });
         }
 
-        const cleanStart = toDateInputString(editRuleStartDate) || getTodayLocalDateStr();
-
         await onUpdateReserve(ruleToEdit.reserve_id, {
           regra_tipo: editRuleType as any,
           regra_base: editRuleType === 'liquido' ? editRuleBase : 'lucro',
           regra_valor: numVal,
           regra_categorias: parsedCats,
           regra_inicio_validade: cleanStart,
+          regra_inicio_hora: cleanStartTime,
           regra_ativa: editRuleActive,
           ...(editRuleType === 'liquido' ? { reset_suggestion_on_withdraw: false } : {}),
           rule_history: currentHist,
@@ -1608,7 +1682,9 @@ export function ReserveHistoryTab({
         const currentHistory = Array.isArray(reserve.rule_history) ? [...reserve.rule_history] : [];
         const targetIdx = ruleToEdit.historyIndex !== undefined ? ruleToEdit.historyIndex : -1;
         const cleanHistStart = toDateInputString(editRuleStartDate) || getTodayLocalDateStr();
+        const cleanHistStartTime = normStartTime || null;
         const cleanHistEnd = toDateInputString(editRuleEndDate) || null;
+        const cleanHistEndTime = cleanHistEnd ? (normEndTime || null) : null;
 
         if (targetIdx >= 0 && targetIdx < currentHistory.length) {
           currentHistory[targetIdx] = {
@@ -1618,7 +1694,9 @@ export function ReserveHistoryTab({
             regra_valor: numVal,
             regra_categorias: parsedCats,
             start_date: cleanHistStart,
+            start_time: cleanHistStartTime,
             end_date: cleanHistEnd,
+            end_time: cleanHistEndTime,
             regra_ativa: editRuleActive,
             description: editRuleDescription,
             updated_at: new Date().toISOString()
@@ -1633,7 +1711,9 @@ export function ReserveHistoryTab({
               regra_valor: numVal,
               regra_categorias: parsedCats,
               start_date: cleanHistStart,
+              start_time: cleanHistStartTime,
               end_date: cleanHistEnd,
+              end_time: cleanHistEndTime,
               regra_ativa: editRuleActive,
               description: editRuleDescription,
               updated_at: new Date().toISOString()
@@ -1696,6 +1776,7 @@ export function ReserveHistoryTab({
             regra_categorias: fallbackRuleCandidate.regra_categorias || [],
             regra_ativa: fallbackRuleCandidate.regra_ativa !== false,
             regra_inicio_validade: getTodayLocalDateStr(),
+            regra_inicio_hora: getCurrentLocalTimeStr(),
             rule_history: remainingHistory,
             updated_at: new Date().toISOString()
           };
@@ -2953,17 +3034,23 @@ export function ReserveHistoryTab({
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-muted-foreground">Início da Vigência:</span>
-                <span className="font-bold text-foreground font-mono">{formatDateDisplay(ruleToViewDetails.start_date || ruleToViewDetails.date)}</span>
+                <span className="font-bold text-foreground font-mono">
+                  {formatDateDisplay(ruleToViewDetails.start_date || ruleToViewDetails.date)}
+                  {ruleToViewDetails.start_time ? ` às ${ruleToViewDetails.start_time}` : ''}
+                </span>
               </div>
               {ruleToViewDetails.end_date ? (
                 <div className="flex justify-between items-center">
                   <span className="text-muted-foreground">Término da Vigência:</span>
-                  <span className="font-bold text-foreground font-mono">{formatDateDisplay(ruleToViewDetails.end_date)}</span>
+                  <span className="font-bold text-foreground font-mono">
+                    {formatDateDisplay(ruleToViewDetails.end_date)}
+                    {ruleToViewDetails.end_time ? ` às ${ruleToViewDetails.end_time}` : ''}
+                  </span>
                 </div>
               ) : (
                 <div className="flex justify-between items-center">
                   <span className="text-muted-foreground">Validade:</span>
-                  <span className="font-bold text-emerald-600 dark:text-emerald-400">Ativa a partir desta data</span>
+                  <span className="font-bold text-emerald-600 dark:text-emerald-400">Ativa a partir desta data/hora</span>
                 </div>
               )}
               {ruleToViewDetails.regra_categorias && ruleToViewDetails.regra_categorias.length > 0 && (
@@ -3182,19 +3269,36 @@ export function ReserveHistoryTab({
                 )}
               </div>
 
-              {/* Start and End Date */}
+              {/* Start and End Date + Time */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                 <div className="space-y-1">
-                  <label className="text-muted-foreground font-bold flex items-center gap-1">
-                    <Calendar className="w-3.5 h-3.5 text-indigo-500" />
-                    Início da Vigência:
-                  </label>
-                  <input
-                    type="date"
-                    value={editRuleStartDate}
-                    onChange={e => setEditRuleStartDate(e.target.value)}
-                    className="w-full h-10 px-3 rounded-xl bg-background border border-border/80 font-medium text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-indigo-500/20 font-mono"
-                  />
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="text-muted-foreground font-bold flex items-center gap-1">
+                      <Calendar className="w-3.5 h-3.5 text-indigo-500" />
+                      Início da Vigência:
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setEditRuleStartTime(getCurrentLocalTimeStr())}
+                      className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
+                    >
+                      Agora
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-5 gap-1.5">
+                    <input
+                      type="date"
+                      value={editRuleStartDate}
+                      onChange={e => setEditRuleStartDate(e.target.value)}
+                      className="col-span-3 h-10 px-2.5 rounded-xl bg-background border border-border/80 font-medium text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-indigo-500/20 font-mono"
+                    />
+                    <input
+                      type="time"
+                      value={editRuleStartTime}
+                      onChange={e => setEditRuleStartTime(e.target.value)}
+                      className="col-span-2 h-10 px-2 rounded-xl bg-background border border-border/80 font-medium text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-indigo-500/20 font-mono"
+                    />
+                  </div>
                 </div>
 
                 <div className="space-y-1">
@@ -3202,13 +3306,22 @@ export function ReserveHistoryTab({
                     <Calendar className="w-3.5 h-3.5 text-muted-foreground" />
                     Término ({ruleToEdit.isCurrentActive ? 'Opcional / Futuro' : 'Vigência'}):
                   </label>
-                  <input
-                    type="date"
-                    value={editRuleEndDate}
-                    onChange={e => setEditRuleEndDate(e.target.value)}
-                    placeholder="YYYY-MM-DD"
-                    className="w-full h-10 px-3 rounded-xl bg-background border border-border/80 font-medium text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-indigo-500/20 font-mono"
-                  />
+                  <div className="grid grid-cols-5 gap-1.5">
+                    <input
+                      type="date"
+                      value={editRuleEndDate}
+                      onChange={e => setEditRuleEndDate(e.target.value)}
+                      placeholder="YYYY-MM-DD"
+                      className="col-span-3 h-10 px-2.5 rounded-xl bg-background border border-border/80 font-medium text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-indigo-500/20 font-mono"
+                    />
+                    <input
+                      type="time"
+                      value={editRuleEndTime}
+                      onChange={e => setEditRuleEndTime(e.target.value)}
+                      disabled={!editRuleEndDate}
+                      className="col-span-2 h-10 px-2 rounded-xl bg-background border border-border/80 font-medium text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-indigo-500/20 font-mono disabled:opacity-50"
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -3616,8 +3729,11 @@ export function ReserveHistoryTab({
                   {/* Detailed Key-Value Specs */}
                   <div className="p-3.5 bg-muted/40 rounded-2xl border border-border/80 space-y-2.5 text-xs">
                     <div className="flex justify-between items-center">
-                      <span className="text-muted-foreground">Data da Movimentação:</span>
-                      <span className="font-bold text-foreground">{formatDateDisplay(txToViewDetails.date)}</span>
+                      <span className="text-muted-foreground">Data e Hora:</span>
+                      <span className="font-bold text-foreground font-mono">
+                        {formatDateDisplay(txToViewDetails.date)}
+                        {getEffectiveItemTime(txToViewDetails) ? ` às ${getEffectiveItemTime(txToViewDetails)}` : ''}
+                      </span>
                     </div>
                     <div className="flex justify-between items-center">
                       <span className="text-muted-foreground">Reserva de Destino:</span>
@@ -3748,7 +3864,7 @@ export function ReserveHistoryTab({
                 />
               </div>
 
-              {/* Data + Status */}
+              {/* Data, Hora + Status */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                 <div className="space-y-1">
                   <label className="font-bold text-foreground flex items-center gap-1">
@@ -3765,34 +3881,56 @@ export function ReserveHistoryTab({
                 </div>
 
                 <div className="space-y-1">
-                  <label className="font-bold text-foreground flex items-center gap-1">
-                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
-                    Liquidação
-                  </label>
-                  <div className="grid grid-cols-2 gap-1.5 h-10 p-1 rounded-xl bg-muted/40 border border-border/80">
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="font-bold text-foreground flex items-center gap-1">
+                      <Clock className="w-3.5 h-3.5 text-indigo-500" />
+                      Hora
+                    </label>
                     <button
                       type="button"
-                      onClick={() => setEditPaymentStatus('paid')}
-                      className={`rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
-                        editPaymentStatus === 'paid'
-                          ? 'bg-emerald-600 text-white shadow-2xs'
-                          : 'text-muted-foreground hover:text-foreground'
-                      }`}
+                      onClick={() => setEditTime(getCurrentLocalTimeStr())}
+                      className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
                     >
-                      ✓ Liquidado
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setEditPaymentStatus('pending')}
-                      className={`rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
-                        editPaymentStatus === 'pending'
-                          ? 'bg-amber-500 text-white shadow-2xs'
-                          : 'text-muted-foreground hover:text-foreground'
-                      }`}
-                    >
-                      ⏳ Pendente
+                      Agora
                     </button>
                   </div>
+                  <Input
+                    type="time"
+                    value={editTime}
+                    onChange={e => setEditTime(e.target.value)}
+                    className="h-10 text-base sm:text-xs font-mono rounded-xl"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="font-bold text-foreground flex items-center gap-1">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                  Liquidação
+                </label>
+                <div className="grid grid-cols-2 gap-1.5 h-10 p-1 rounded-xl bg-muted/40 border border-border/80">
+                  <button
+                    type="button"
+                    onClick={() => setEditPaymentStatus('paid')}
+                    className={`rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                      editPaymentStatus === 'paid'
+                        ? 'bg-emerald-600 text-white shadow-2xs'
+                        : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    ✓ Liquidado
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEditPaymentStatus('pending')}
+                    className={`rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                      editPaymentStatus === 'pending'
+                        ? 'bg-amber-500 text-white shadow-2xs'
+                        : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    ⏳ Pendente
+                  </button>
                 </div>
               </div>
 
@@ -3909,8 +4047,11 @@ export function ReserveHistoryTab({
                 <span className="font-bold capitalize">{getTxCategoryInfo(txToDelete).label}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-muted-foreground">Data:</span>
-                <span className="font-medium">{formatDateDisplay(txToDelete.date)}</span>
+                <span className="text-muted-foreground">Data e Hora:</span>
+                <span className="font-medium font-mono">
+                  {formatDateDisplay(txToDelete.date)}
+                  {getEffectiveItemTime(txToDelete) ? ` às ${getEffectiveItemTime(txToDelete)}` : ''}
+                </span>
               </div>
               <div className="flex justify-between border-t border-border/60 pt-1.5">
                 <span className="font-bold text-foreground">Valor:</span>
@@ -4051,9 +4192,10 @@ export function ReserveHistoryTab({
             </div>
 
             <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground">
-              <span className="flex items-center gap-1 font-medium">
+              <span className="flex items-center gap-1 font-medium font-mono">
                 <Calendar className="w-3 h-3 text-muted-foreground/80" />
                 {formatDateDisplay(tx.date)}
+                {getEffectiveItemTime(tx) ? ` • ${getEffectiveItemTime(tx)}` : ''}
               </span>
               {tx.category && (
                 <span className="font-medium inline-flex items-center gap-1 px-1.5 py-0.2 rounded bg-muted/60 text-foreground">
@@ -4110,6 +4252,7 @@ export function ReserveHistoryTab({
                   onEditTransaction(tx.id, {
                     payment_status: 'paid',
                     payment_date: getTodayLocalDateStr(),
+                    time: tx.time || getCurrentLocalTimeStr(),
                     due_date: null as any,
                   })
                 }
@@ -4235,10 +4378,13 @@ export function ReserveHistoryTab({
                 <Calculator className="w-3 h-3 text-indigo-500" />
                 {formulaLabel}
               </span>
-              <span className="flex items-center gap-1 font-medium">
+              <span className="flex items-center gap-1 font-medium font-mono">
                 <Calendar className="w-3 h-3 text-muted-foreground/80" />
                 Vigência: {formatDateDisplay(rule.start_date || rule.date)}
-                {rule.end_date ? ` até ${formatDateDisplay(rule.end_date)}` : (rule.isCurrentActive ? ' (em vigor)' : '')}
+                {rule.start_time ? ` ${rule.start_time}` : ''}
+                {rule.end_date
+                  ? ` até ${formatDateDisplay(rule.end_date)}${rule.end_time ? ` ${rule.end_time}` : ''}`
+                  : (rule.isCurrentActive ? ' (em vigor)' : '')}
               </span>
               {rule.regra_categorias && rule.regra_categorias.length > 0 && (
                 <span className="font-medium inline-flex items-center gap-1 px-1.5 py-0.2 rounded bg-indigo-500/5 text-indigo-700 dark:text-indigo-300 border border-indigo-500/10 text-[10px]">

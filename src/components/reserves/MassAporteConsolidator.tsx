@@ -15,8 +15,10 @@ import {
   Calculator,
   ChevronDown,
   ChevronUp,
-  Rocket
+  Rocket,
+  Clock
 } from 'lucide-react';
+import { getCurrentLocalTimeStr, normalizeTimeStr } from '../../lib/timeUtils';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -43,6 +45,7 @@ interface MassAporteConsolidatorProps {
   onExecuteBatch: (batchData: {
     items: { reserve_id: string; amount: number; name: string; boostExtra?: number }[];
     date: string;
+    time?: string | null;
     description: string;
   }) => Promise<void>;
   onClose?: () => void;
@@ -68,6 +71,7 @@ export function MassAporteConsolidator({
   const [selectedReserves, setSelectedReserves] = useState<Record<string, boolean>>({});
   const [customAmounts, setCustomAmounts] = useState<Record<string, string>>({});
   const [batchDate, setBatchDate] = useState<string>(getTodayLocalDateStr());
+  const [batchTime, setBatchTime] = useState<string>(getCurrentLocalTimeStr());
   const [batchDesc, setBatchDesc] = useState<string>('Aporte Consolidado');
 
   // Search & Filter
@@ -324,6 +328,7 @@ export function MassAporteConsolidator({
           };
         }),
         date: batchDate,
+        time: normalizeTimeStr(batchTime) || getCurrentLocalTimeStr(),
         description: batchDesc || 'Aporte Consolidado de Reservas'
       });
     } catch (err) {
@@ -724,16 +729,34 @@ export function MassAporteConsolidator({
           )}
         </div>
 
-        {/* Batch Metadata (Date) */}
+        {/* Batch Metadata (Date & Time) */}
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 pt-2 border-t border-border/70">
-          <div className="flex items-center gap-2">
-            <label className="text-xs font-bold text-muted-foreground whitespace-nowrap">Data do Aporte:</label>
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="text-xs font-bold text-muted-foreground whitespace-nowrap">Data e Hora:</label>
             <Input
               type="date"
               value={batchDate}
               onChange={e => setBatchDate(e.target.value)}
               className="h-8 text-xs rounded-xl w-auto"
             />
+            <div className="flex items-center gap-1">
+              <div className="relative">
+                <Clock className="w-3 h-3 text-muted-foreground absolute left-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <Input
+                  type="time"
+                  value={batchTime}
+                  onChange={e => setBatchTime(e.target.value)}
+                  className="pl-6.5 h-8 text-xs rounded-xl w-auto font-mono"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={() => setBatchTime(getCurrentLocalTimeStr())}
+                className="h-8 px-2 rounded-xl border border-border/80 bg-card hover:bg-muted text-[10.5px] font-bold text-indigo-600 dark:text-indigo-400 cursor-pointer"
+              >
+                Agora
+              </button>
+            </div>
           </div>
           <div className="text-[11px] text-muted-foreground font-medium">
             Todos os valores serão creditados diretamente nos saldos das reservas.

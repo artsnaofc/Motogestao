@@ -14,8 +14,10 @@ import {
   AlertCircle,
   HelpCircle,
   Zap,
-  Rocket
+  Rocket,
+  Clock
 } from 'lucide-react';
+import { getCurrentLocalTimeStr, normalizeTimeStr } from '../../lib/timeUtils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -47,6 +49,7 @@ interface UpdateRuleModalProps {
     regra_valor?: number | null;
     regra_categorias?: string[];
     regra_inicio_validade?: string;
+    regra_inicio_hora?: string | null;
     require_category_on_use?: boolean;
     default_use_category?: string | null;
     boost_ativo?: boolean;
@@ -113,6 +116,7 @@ export function UpdateRuleModal({
   const [regraValor, setRegraValor] = useState('');
   const [regraCategorias, setRegraCategorias] = useState<string[]>([]);
   const [effectiveDate, setEffectiveDate] = useState<string>(getTodayLocalDateStr());
+  const [effectiveTime, setEffectiveTime] = useState<string>(getCurrentLocalTimeStr());
   const [requireCategoryOnUse, setRequireCategoryOnUse] = useState<boolean>(true);
   const [defaultUseCategory, setDefaultUseCategory] = useState<string>('');
   const [boostAtivo, setBoostAtivo] = useState<boolean>(false);
@@ -145,6 +149,7 @@ export function UpdateRuleModal({
         setRegraBase(reserve.regra_base === 'liquido' ? 'liquido' : 'lucro');
         const initialDate = toDateInputString(reserve.regra_inicio_validade) || getTodayLocalDateStr();
         setEffectiveDate(initialDate);
+        setEffectiveTime(normalizeTimeStr(reserve.regra_inicio_hora) || getCurrentLocalTimeStr());
         setRegraValor(
           reserve.regra_valor !== undefined && reserve.regra_valor !== null
             ? String(Math.round(Number(reserve.regra_valor) * 100) / 100)
@@ -224,6 +229,7 @@ export function UpdateRuleModal({
       regra_valor: baseVal,
       regra_categorias: regraCategorias,
       regra_inicio_validade: toDateInputString(effectiveDate) || getTodayLocalDateStr(),
+      regra_inicio_hora: normalizeTimeStr(effectiveTime) || getCurrentLocalTimeStr(),
       boost_ativo: boostAtivo,
       boost_tipo: boostTipo,
       boost_valor: !isNaN(parsedBoost) && parsedBoost > 0 ? parsedBoost : getDefaultBoostValue(regraTipo || 'km', boostTipo),
@@ -297,6 +303,7 @@ export function UpdateRuleModal({
         regra_valor: regraAtiva ? parsedVal : null,
         regra_categorias: regraAtiva ? regraCategorias : [],
         regra_inicio_validade: toDateInputString(effectiveDate) || getTodayLocalDateStr(),
+        regra_inicio_hora: regraAtiva ? (normalizeTimeStr(effectiveTime) || getCurrentLocalTimeStr()) : null,
         require_category_on_use: requireCategoryOnUse,
         default_use_category: !requireCategoryOnUse ? defaultUseCategory : null,
         boost_ativo: regraAtiva ? boostAtivo : false,
@@ -378,6 +385,7 @@ export function UpdateRuleModal({
                   setRegraAtiva(checked);
                   if (checked && reserve && !reserve.regra_ativa) {
                     setEffectiveDate(getTodayLocalDateStr());
+                    setEffectiveTime(getCurrentLocalTimeStr());
                   }
                 }}
                 className="sr-only peer"
@@ -592,26 +600,47 @@ export function UpdateRuleModal({
                 </div>
               )}
 
-              {/* Data de Início da Validade da Nova Regra */}
-              <div className="p-3 bg-muted/40 rounded-2xl border border-border/80 space-y-1.5 text-left">
+              {/* Data e Hora de Início da Validade da Nova Regra */}
+              <div className="p-3 bg-muted/40 rounded-2xl border border-border/80 space-y-2 text-left">
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-bold text-foreground flex items-center gap-1.5">
                     <Calendar className="w-3.5 h-3.5 text-indigo-500" />
                     Início da Validade Temporal da Nova Regra
                   </label>
                   <span className="text-[10px] text-muted-foreground font-medium">
-                    A partir desta data
+                    A partir desta data e hora
                   </span>
                 </div>
-                <Input
-                  type="date"
-                  required
-                  value={effectiveDate}
-                  onChange={e => setEffectiveDate(e.target.value)}
-                  className="h-10 text-xs rounded-xl bg-card"
-                />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <Input
+                    type="date"
+                    required
+                    value={effectiveDate}
+                    onChange={e => setEffectiveDate(e.target.value)}
+                    className="h-10 text-xs rounded-xl bg-card"
+                  />
+                  <div className="flex items-center gap-1.5">
+                    <div className="relative flex-1">
+                      <Clock className="w-3.5 h-3.5 text-muted-foreground absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                      <Input
+                        type="time"
+                        required
+                        value={effectiveTime}
+                        onChange={e => setEffectiveTime(e.target.value)}
+                        className="pl-8 h-10 text-xs rounded-xl bg-card font-mono"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setEffectiveTime(getCurrentLocalTimeStr())}
+                      className="h-10 px-2.5 rounded-xl border border-border/80 bg-card hover:bg-muted text-[11px] font-bold text-indigo-600 dark:text-indigo-400 shrink-0 cursor-pointer"
+                    >
+                      Agora
+                    </button>
+                  </div>
+                </div>
                 <p className="text-[10px] text-muted-foreground">
-                  Transações e aportes anteriores a esta data serão calculados com base na regra que estava ativa na época.
+                  Lançamentos e aportes anteriores a esta data e hora serão calculados com base na regra vigente na época.
                 </p>
               </div>
 

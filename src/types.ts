@@ -18,6 +18,7 @@ export interface Transaction {
   type: TransactionType;
   amount: number;
   date: string; // ISO format YYYY-MM-DD
+  time?: string | null; // Format HH:mm
   category: string;
   description?: string;
   start_km?: number | null;
@@ -139,6 +140,7 @@ export interface Reserve {
   rule_history?: any[];
   is_paused?: boolean;
   regra_inicio_validade?: string;
+  regra_inicio_hora?: string | null;
   boost_ativo?: boolean;
   boost_tipo?: 'increment' | 'multiplier' | null;
   boost_valor?: number | null;
@@ -159,6 +161,7 @@ export interface ReserveTransaction {
   type: ReserveTransactionType;
   amount: number;
   date: string; // YYYY-MM-DD
+  time?: string | null; // Format HH:mm
   category?: string; // used in 'utilizacao'
   description?: string;
   linked_investment_id?: string;
@@ -214,6 +217,7 @@ export interface InvestmentTransaction {
   reserve_id?: string;
   transaction_id?: string;
   date: string;
+  time?: string | null;
   description?: string;
   asset_type?: string;
   created_at?: string;
